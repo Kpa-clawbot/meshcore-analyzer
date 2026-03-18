@@ -3,6 +3,7 @@
 
 (function () {
   let nodes = [];
+  const PAYLOAD_TYPES = {0:'Request',1:'Response',2:'Direct Msg',3:'ACK',4:'Advert',5:'Channel Msg',7:'Anon Req',8:'Path',9:'Trace'};
 
   function escapeHtml(s) {
     if (!s) return '';
