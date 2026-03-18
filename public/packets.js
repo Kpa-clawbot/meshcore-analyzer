@@ -395,7 +395,25 @@
       <div class="hex-dump">${createColoredHexDump(pkt.raw_hex, ranges)}</div>` : ''}
 
       ${hasRawHex ? buildFieldTable(pkt, decoded, pathHops, ranges) : buildDecodedTable(decoded)}
+
+      <button class="replay-live-btn" title="Replay this packet on the live map">▶ Replay on Live Map</button>
     `;
+
+    // Wire up replay button
+    const replayBtn = panel.querySelector('.replay-live-btn');
+    if (replayBtn) {
+      replayBtn.addEventListener('click', () => {
+        // Store packet in sessionStorage for the live page to pick up
+        const livePkt = {
+          id: pkt.id, hash: pkt.hash,
+          _ts: new Date(pkt.timestamp).getTime(),
+          decoded: { header: { payloadTypeName: typeName }, payload: decoded, path: { hops: pathHops } },
+          snr: pkt.snr, rssi: pkt.rssi, observer: pkt.observer_name
+        };
+        sessionStorage.setItem('replay-packet', JSON.stringify(livePkt));
+        window.location.hash = '#/live';
+      });
+    }
   }
 
   function escapeHtml(s) {

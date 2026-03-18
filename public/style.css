@@ -1067,3 +1067,20 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .node-qr svg { max-width: 140px; border-radius: 4px; }
 [data-theme="dark"] .node-qr svg rect[fill="#ffffff"] { fill: var(--card-bg); }
 [data-theme="dark"] .node-qr svg rect[fill="#000000"] { fill: var(--text); }
+
+/* Replay on Live Map button in packet detail */
+.replay-live-btn {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  color: #c084fc;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.replay-live-btn:hover { background: rgba(168, 85, 247, 0.3); }

@@ -232,6 +232,7 @@
     const typeName = raw.type || pkt.payload_type_name || 'UNKNOWN';
     return {
       id: pkt.id, hash: pkt.hash,
+      _ts: new Date(pkt.timestamp || pkt.created_at).getTime(),
       decoded: { header: { payloadTypeName: typeName }, payload: raw, path: { hops } },
       snr: pkt.snr, rssi: pkt.rssi, observer: pkt.observer_name
     };
@@ -239,7 +240,8 @@
 
   // Buffer a packet from WS
   function bufferPacket(pkt) {
-    const entry = { ts: Date.now(), pkt };
+    pkt._ts = Date.now();
+    const entry = { ts: pkt._ts, pkt };
     VCR.buffer.push(entry);
     // Keep buffer capped at ~2000
     if (VCR.buffer.length > 2000) VCR.buffer.splice(0, 500);
@@ -419,6 +421,7 @@
             <div class="vcr-timeline-container">
               <canvas id="vcrTimeline" class="vcr-timeline"></canvas>
               <div id="vcrPlayhead" class="vcr-playhead"></div>
+              <div id="vcrTimeTooltip" class="vcr-time-tooltip hidden"></div>
             </div>
           </div>
           <div id="vcrPrompt" class="vcr-prompt hidden"></div>
@@ -519,6 +522,20 @@
     // Timeline click to scrub
     document.getElementById('vcrTimeline').addEventListener('click', handleTimelineClick);
 
+    // Timeline hover — show time tooltip
+    const timelineEl = document.getElementById('vcrTimeline');
+    const timeTooltip = document.getElementById('vcrTimeTooltip');
+    timelineEl.addEventListener('mousemove', (e) => {
+      const rect = timelineEl.getBoundingClientRect();
+      const pct = (e.clientX - rect.left) / rect.width;
+      const ts = Date.now() - VCR.timelineScope + pct * VCR.timelineScope;
+      const d = new Date(ts);
+      timeTooltip.textContent = d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      timeTooltip.style.left = (e.clientX - rect.left) + 'px';
+      timeTooltip.classList.remove('hidden');
+    });
+    timelineEl.addEventListener('mouseleave', () => { timeTooltip.classList.add('hidden'); });
+
     // Refresh timeline periodically
     setInterval(updateTimeline, 5000);
 
@@ -538,6 +555,16 @@
       livePage.addEventListener('click', showNav);
     }
     showNav();
+
+    // Check for replay packet from packets page
+    const replayData = sessionStorage.getItem('replay-packet');
+    if (replayData) {
+      sessionStorage.removeItem('replay-packet');
+      try {
+        const pkt = JSON.parse(replayData);
+        setTimeout(() => animatePacket(pkt), 1500); // let map load first
+      } catch {}
+    }
   }
 
   function injectSVGFilters() {
@@ -622,7 +649,8 @@
       const pkts = (data.packets || []).reverse();
       pkts.forEach((pkt, i) => {
         const livePkt = dbPacketToLive(pkt);
-        const ts = new Date(pkt.timestamp || pkt.created_at).getTime();
+        livePkt._ts = new Date(pkt.timestamp || pkt.created_at).getTime();
+        const ts = livePkt._ts;
         VCR.buffer.push({ ts, pkt: livePkt });
         setTimeout(() => animatePacket(livePkt), i * 400);
       });
@@ -902,7 +930,7 @@
       <span class="feed-type" style="color:${color}">${typeName}</span>
       ${hopStr}
       <span class="feed-text">${escapeHtml(preview)}</span>
-      <span class="feed-time">${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
+      <span class="feed-time">${new Date(pkt._ts || Date.now()).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
     `;
     item.addEventListener('click', () => showFeedCard(item, pkt, color));
     feed.prepend(item);

@@ -544,3 +544,20 @@
   .vcr-btn { padding: 3px 6px; font-size: 0.7rem; }
   .vcr-scope-btn { font-size: 0.6rem; padding: 1px 4px; }
 }
+
+/* Timeline time tooltip */
+.vcr-time-tooltip {
+  position: absolute;
+  top: -24px;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.85);
+  color: #e2e8f0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}
+.vcr-time-tooltip.hidden { display: none; }
