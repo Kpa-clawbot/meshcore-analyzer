@@ -1,0 +1,117 @@
+/* === MeshCore Analyzer — observers.js === */
+'use strict';
+
+(function () {
+  let observers = [];
+  let wsHandler = null;
+  let refreshTimer = null;
+
+  function init(app) {
+    app.innerHTML = `
+      <div class="observers-page">
+        <div class="page-header">
+          <h2>Observer Status</h2>
+          <button class="btn-icon" onclick="window._obsRefresh()" title="Refresh">🔄</button>
+        </div>
+        <div id="obsContent"><div class="text-center text-muted" style="padding:40px">Loading…</div></div>
+      </div>`;
+    loadObservers();
+    // Auto-refresh every 30s
+    refreshTimer = setInterval(loadObservers, 30000);
+    wsHandler = (msg) => {
+      if (msg.type === 'packet') loadObservers();
+    };
+    onWS(wsHandler);
+  }
+
+  function destroy() {
+    if (wsHandler) offWS(wsHandler);
+    wsHandler = null;
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = null;
+    observers = [];
+  }
+
+  async function loadObservers() {
+    try {
+      const data = await api('/observers');
+      observers = data.observers || [];
+      render();
+    } catch (e) {
+      document.getElementById('obsContent').innerHTML =
+        `<div class="text-muted" style="padding:40px">Error loading observers: ${e.message}</div>`;
+    }
+  }
+
+  function healthStatus(lastSeen) {
+    if (!lastSeen) return { cls: 'health-red', label: 'Unknown' };
+    const ago = Date.now() - new Date(lastSeen).getTime();
+    if (ago < 600000) return { cls: 'health-green', label: 'Online' };    // < 10 min
+    if (ago < 3600000) return { cls: 'health-yellow', label: 'Stale' };   // < 1 hour
+    return { cls: 'health-red', label: 'Offline' };
+  }
+
+  function uptimeStr(firstSeen) {
+    if (!firstSeen) return '—';
+    const ms = Date.now() - new Date(firstSeen).getTime();
+    const d = Math.floor(ms / 86400000);
+    const h = Math.floor((ms % 86400000) / 3600000);
+    if (d > 0) return `${d}d ${h}h`;
+    const m = Math.floor((ms % 3600000) / 60000);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  function sparkBar(count, max) {
+    if (max === 0) return '<div class="spark-bar"><div class="spark-fill" style="width:0"></div></div>';
+    const pct = Math.min(100, Math.round((count / max) * 100));
+    return `<div class="spark-bar"><div class="spark-fill" style="width:${pct}%"></div><span class="spark-label">${count}/hr</span></div>`;
+  }
+
+  function render() {
+    const el = document.getElementById('obsContent');
+    if (!el) return;
+
+    if (observers.length === 0) {
+      el.innerHTML = '<div class="text-center text-muted" style="padding:40px">No observers found.</div>';
+      return;
+    }
+
+    const maxPktsHr = Math.max(1, ...observers.map(o => o.packetsLastHour || 0));
+
+    // Summary counts
+    const online = observers.filter(o => healthStatus(o.last_seen).cls === 'health-green').length;
+    const stale = observers.filter(o => healthStatus(o.last_seen).cls === 'health-yellow').length;
+    const offline = observers.filter(o => healthStatus(o.last_seen).cls === 'health-red').length;
+
+    el.innerHTML = `
+      <div class="obs-summary">
+        <span class="obs-stat"><span class="health-dot health-green"></span> ${online} Online</span>
+        <span class="obs-stat"><span class="health-dot health-yellow"></span> ${stale} Stale</span>
+        <span class="obs-stat"><span class="health-dot health-red"></span> ${offline} Offline</span>
+        <span class="obs-stat">📡 ${observers.length} Total</span>
+      </div>
+      <table class="data-table obs-table" id="obsTable">
+        <thead><tr>
+          <th>Status</th><th>Name</th><th>Region</th><th>Last Seen</th>
+          <th>Packets</th><th>Packets/Hour</th><th>Uptime</th>
+        </tr></thead>
+        <tbody>${observers.map(o => {
+          const h = healthStatus(o.last_seen);
+          return `<tr>
+            <td><span class="health-dot ${h.cls}" title="${h.label}"></span> ${h.label}</td>
+            <td class="mono">${o.name || o.id}</td>
+            <td>${o.iata ? `<span class="badge-region">${o.iata}</span>` : '—'}</td>
+            <td>${timeAgo(o.last_seen)}</td>
+            <td>${(o.packet_count || 0).toLocaleString()}</td>
+            <td>${sparkBar(o.packetsLastHour || 0, maxPktsHr)}</td>
+            <td>${uptimeStr(o.first_seen)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+    makeColumnsResizable('#obsTable', 'meshcore-obs-col-widths');
+  }
+
+  window._obsRefresh = loadObservers;
+
+  registerPage('observers', { init, destroy });
+})();

@@ -1,0 +1,19 @@
+{
+  "name": "meshcore-analyzer",
+  "version": "1.0.0",
+  "description": "Community-run alternative to the closed-source `analyzer.letsmesh.net`. MQTT packet collection + open-source web analyzer for the Bay Area MeshCore mesh.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@michaelhart/meshcore-decoder": "^0.2.7",
+    "better-sqlite3": "^12.8.0",
+    "express": "^5.2.1",
+    "mqtt": "^5.15.0",
+    "ws": "^8.19.0"
+  }
+}

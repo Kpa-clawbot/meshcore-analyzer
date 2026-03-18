@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MeshCore Analyzer</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="home.css">
+  <link rel="stylesheet" href="live.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#app">Skip to content</a>
+  <nav class="top-nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-left">
+      <a href="#/" class="nav-brand">
+        <span class="brand-icon">🍄</span>
+        <span class="brand-text">MeshCore Analyzer</span>
+        <span class="live-dot" id="liveDot" title="WebSocket connected" aria-label="WebSocket connected"></span>
+      </a>
+      <div class="nav-links">
+        <a href="#/home" class="nav-link" data-route="home">Home</a>
+        <a href="#/packets" class="nav-link" data-route="packets">Packets</a>
+        <a href="#/map" class="nav-link" data-route="map">Map</a>
+        <a href="#/live" class="nav-link" data-route="live">🔴 Live</a>
+        <a href="#/channels" class="nav-link" data-route="channels">Channels</a>
+        <a href="#/nodes" class="nav-link" data-route="nodes">Nodes</a>
+        <a href="#/traces" class="nav-link" data-route="traces">Traces</a>
+        <a href="#/observers" class="nav-link" data-route="observers">Observers</a>
+        <a href="#/analytics" class="nav-link" data-route="analytics">Analytics</a>
+      </div>
+    </div>
+    <div class="nav-right">
+      <div class="nav-stats" id="navStats" title="Live stats"></div>
+      <div class="nav-fav-wrap">
+        <button class="nav-btn" id="favToggle" title="Favorites">⭐</button>
+        <div class="nav-fav-dropdown" id="favDropdown"></div>
+      </div>
+      <button class="nav-btn" id="searchToggle" title="Search (Ctrl+K)">🔍</button>
+      <button class="nav-btn" id="darkModeToggle" title="Toggle dark mode">☀️</button>
+      <button class="nav-btn hamburger" id="hamburger" title="Menu" aria-label="Toggle navigation menu">☰</button>
+    </div>
+  </nav>
+
+  <!-- Search overlay -->
+  <div id="searchOverlay" class="search-overlay hidden" aria-label="Search packets, nodes, channels">
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search packets, nodes, channels…" autofocus>
+      <div id="searchResults" class="search-results"></div>
+    </div>
+  </div>
+
+  <main id="app" role="main"></main>
+
+  <script src="vendor/qrcode.js"></script>
+  <script src="app.js"></script>
+  <script src="home.js"></script>
+  <script src="packets.js"></script>
+  <script src="map.js" onerror=""></script>
+  <script src="channels.js" onerror=""></script>
+  <script src="nodes.js" onerror=""></script>
+  <script src="traces.js" onerror=""></script>
+  <script src="analytics.js" onerror=""></script>
+  <script src="live.js" onerror=""></script>
+  <script src="observers.js" onerror=""></script>
+</body>
+</html>
