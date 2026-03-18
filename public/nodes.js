@@ -295,7 +295,11 @@
     panel.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading…</div>';
 
     try {
-      const data = await api('/nodes/' + encodeURIComponent(pubkey));
+      const [data, healthData] = await Promise.all([
+        api('/nodes/' + encodeURIComponent(pubkey)),
+        api('/nodes/' + encodeURIComponent(pubkey) + '/health').catch(() => null)
+      ]);
+      data.healthData = healthData;
       renderDetail(panel, data);
     } catch (e) {
       panel.innerHTML = `<div class="text-muted">Error: ${e.message}</div>`;
@@ -305,6 +309,7 @@
   function renderDetail(panel, data) {
     const n = data.node;
     const adverts = data.recentAdverts || [];
+    const recent = data.healthData?.recentPackets || [];
     const roleColor = ROLE_COLORS[n.role] || '#6b7280';
     const hasLoc = n.lat != null && n.lon != null;
     const nodeUrl = location.origin + '#/nodes/' + encodeURIComponent(n.public_key);
@@ -337,9 +342,9 @@
         </div>
 
         <div class="node-detail-section">
-          <h4>Recent Activity (${adverts.length})</h4>
+          <h4>Recent Activity (${recent.length})</h4>
           <div id="advertTimeline">
-            ${adverts.length ? adverts.map(a => {
+            ${recent.length ? recent.map(a => {
               let decoded;
               try { decoded = JSON.parse(a.decoded_json); } catch {}
               const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
