@@ -88,45 +88,56 @@
     onWS(wsHandler);
 
     loadNodes().then(() => {
-      // Check for highlight route param (from packet detail)
-      const hashQuery = location.hash.split('?')[1];
-      if (hashQuery) {
-        const params = new URLSearchParams(hashQuery);
-        const highlight = params.get('highlight');
-        if (highlight) drawPacketRoute(highlight.split(','));
+      // Check for route from packet detail (via sessionStorage)
+      const routeHopsJson = sessionStorage.getItem('map-route-hops');
+      if (routeHopsJson) {
+        sessionStorage.removeItem('map-route-hops');
+        try {
+          const hopKeys = JSON.parse(routeHopsJson);
+          drawPacketRoute(hopKeys);
+        } catch {}
       }
     });
   }
 
   function drawPacketRoute(hopKeys) {
-    // Resolve hop keys to positions
+    // Resolve hop short hashes to node positions via prefix match
     const positions = [];
     for (const hop of hopKeys) {
+      const hopLower = hop.toLowerCase();
       const node = nodes.find(n =>
-        n.public_key.toLowerCase().startsWith(hop.toLowerCase())
+        n.public_key.toLowerCase().startsWith(hopLower)
       );
       if (node && node.lat != null && node.lon != null && !(node.lat === 0 && node.lon === 0)) {
         positions.push({ lat: node.lat, lon: node.lon, name: node.name || hop });
       }
     }
-    if (positions.length < 2) return;
+    if (positions.length < 1) return;
 
-    // Draw route polyline
+    // Even a single node is worth showing (zoom to it)
     const coords = positions.map(p => [p.lat, p.lon]);
-    const routeLine = L.polyline(coords, {
-      color: '#f59e0b', weight: 3, opacity: 0.8, dashArray: '8 4'
-    }).addTo(markerLayer);
+
+    if (positions.length >= 2) {
+      // Draw route polyline
+      L.polyline(coords, {
+        color: '#f59e0b', weight: 3, opacity: 0.8, dashArray: '8 4'
+      }).addTo(markerLayer);
+    }
 
     // Add numbered markers at each hop
     positions.forEach((p, i) => {
       L.circleMarker([p.lat, p.lon], {
-        radius: 8, fillColor: i === 0 ? '#22c55e' : i === positions.length - 1 ? '#ef4444' : '#f59e0b',
+        radius: 10, fillColor: i === 0 ? '#22c55e' : i === positions.length - 1 ? '#ef4444' : '#f59e0b',
         fillOpacity: 0.9, color: '#fff', weight: 2
       }).addTo(markerLayer).bindTooltip(`${i + 1}. ${p.name}`, { permanent: true, direction: 'top', className: 'route-tooltip' });
     });
 
     // Fit map to route
-    map.fitBounds(L.latLngBounds(coords).pad(0.2));
+    if (coords.length >= 2) {
+      map.fitBounds(L.latLngBounds(coords).pad(0.3));
+    } else {
+      map.setView(coords[0], 13);
+    }
   }
 
   async function loadNodes() {

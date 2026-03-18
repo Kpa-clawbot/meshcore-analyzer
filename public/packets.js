@@ -445,7 +445,7 @@
         <dt>Timestamp</dt><dd>${pkt.timestamp}</dd>
         <dt>Path</dt><dd>${pathHops.length ? renderPath(pathHops) : '—'}</dd>
       </dl>
-      ${pathHops.length ? `<a class="detail-map-link" href="#/map?highlight=${encodeURIComponent(pathHops.join(','))}&packet=${pkt.hash || pkt.id}" onclick="event.stopPropagation()">🗺️ View route on map</a>` : ''}
+      ${pathHops.length ? `<button class="detail-map-link" id="viewRouteBtn">🗺️ View route on map</button>` : ''}
 
       ${hasRawHex ? `<div class="hex-legend">${buildHexLegend(ranges)}</div>
       <div class="hex-dump">${createColoredHexDump(pkt.raw_hex, ranges)}</div>` : ''}
@@ -459,7 +459,6 @@
     const replayBtn = panel.querySelector('.replay-live-btn');
     if (replayBtn) {
       replayBtn.addEventListener('click', () => {
-        // Store packet in sessionStorage for the live page to pick up
         const livePkt = {
           id: pkt.id, hash: pkt.hash,
           _ts: new Date(pkt.timestamp).getTime(),
@@ -468,6 +467,27 @@
         };
         sessionStorage.setItem('replay-packet', JSON.stringify(livePkt));
         window.location.hash = '#/live';
+      });
+    }
+
+    // Wire up view route on map button
+    const routeBtn = document.getElementById('viewRouteBtn');
+    if (routeBtn && pathHops.length) {
+      routeBtn.addEventListener('click', async () => {
+        try {
+          const resp = await fetch('/api/resolve-hops?hops=' + encodeURIComponent(pathHops.join(',')));
+          const data = await resp.json();
+          // Build array of {hop, name, pubkey} with resolved full pubkeys
+          const resolvedHops = pathHops.map(h => {
+            const name = data.resolved[h];
+            // Find full pubkey from name if possible
+            return name || h;
+          });
+          sessionStorage.setItem('map-route-hops', JSON.stringify(pathHops));
+          window.location.hash = '#/map?route=1';
+        } catch {
+          window.location.hash = '#/map';
+        }
       });
     }
   }
