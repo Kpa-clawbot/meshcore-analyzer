@@ -806,10 +806,18 @@
     let r = 2, op = 0.9;
     const iv = setInterval(() => {
       r += 1.5; op -= 0.03;
-      if (op <= 0) { clearInterval(iv); animLayer.removeLayer(ring); return; }
-      ring.setRadius(r);
-      ring.setStyle({ opacity: op, weight: Math.max(0.3, 3 - r * 0.04) });
+      if (op <= 0) {
+        clearInterval(iv);
+        try { animLayer.removeLayer(ring); } catch {}
+        return;
+      }
+      try {
+        ring.setRadius(r);
+        ring.setStyle({ opacity: op, weight: Math.max(0.3, 3 - r * 0.04) });
+      } catch { clearInterval(iv); }
     }, 26);
+    // Safety cleanup — never let a ring live longer than 2s
+    setTimeout(() => { clearInterval(iv); try { animLayer.removeLayer(ring); } catch {} }, 2000);
 
     const baseColor = marker._baseColor || '#6b7280';
     const baseSize = marker._baseSize || 6;
