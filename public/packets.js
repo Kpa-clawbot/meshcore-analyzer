@@ -184,6 +184,10 @@
       </div>
       <div class="filter-bar" id="pktFilters">
         <input type="text" placeholder="Packet hash…" id="fHash">
+        <div class="node-filter-wrap" style="position:relative">
+          <input type="text" placeholder="Node name…" id="fNode" autocomplete="off">
+          <div class="node-filter-dropdown hidden" id="fNodeDropdown"></div>
+        </div>
         <select id="fObserver"><option value="">All Observers</option></select>
         <select id="fRegion"><option value="">All Regions</option></select>
         <select id="fType"><option value="">All Types</option></select>
@@ -221,6 +225,39 @@
     document.getElementById('fRegion').addEventListener('change', (e) => { filters.region = e.target.value || undefined; loadPackets(); });
     document.getElementById('fType').addEventListener('change', (e) => { filters.type = e.target.value !== '' ? e.target.value : undefined; loadPackets(); });
     document.getElementById('fGroup').addEventListener('click', () => { groupByHash = !groupByHash; loadPackets(); });
+
+    // Node name filter with autocomplete
+    const fNode = document.getElementById('fNode');
+    const fNodeDrop = document.getElementById('fNodeDropdown');
+    fNode.value = filters.nodeName || '';
+    fNode.addEventListener('input', debounce(async (e) => {
+      const q = e.target.value.trim();
+      if (!q) {
+        fNodeDrop.classList.add('hidden');
+        if (filters.node) { filters.node = undefined; filters.nodeName = undefined; loadPackets(); }
+        return;
+      }
+      try {
+        const resp = await fetch('/api/nodes/search?q=' + encodeURIComponent(q));
+        const data = await resp.json();
+        const nodes = data.nodes || [];
+        if (nodes.length === 0) { fNodeDrop.classList.add('hidden'); return; }
+        fNodeDrop.innerHTML = nodes.map(n =>
+          `<div class="node-filter-option" data-key="${n.public_key}" data-name="${escapeHtml(n.name || n.public_key.slice(0,8))}">${escapeHtml(n.name || n.public_key.slice(0,8))} <span style="color:var(--muted);font-size:0.8em">${n.public_key.slice(0,8)}</span></div>`
+        ).join('');
+        fNodeDrop.classList.remove('hidden');
+        fNodeDrop.querySelectorAll('.node-filter-option').forEach(opt => {
+          opt.addEventListener('click', () => {
+            filters.node = opt.dataset.key;
+            filters.nodeName = opt.dataset.name;
+            fNode.value = opt.dataset.name;
+            fNodeDrop.classList.add('hidden');
+            loadPackets();
+          });
+        });
+      } catch {}
+    }, 250));
+    fNode.addEventListener('blur', () => { setTimeout(() => fNodeDrop.classList.add('hidden'), 200); });
 
     renderTableRows();
     makeColumnsResizable('#pktTable', 'meshcore-pkt-col-widths');

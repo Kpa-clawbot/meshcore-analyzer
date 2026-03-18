@@ -1084,3 +1084,27 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
   transition: background 0.15s;
 }
 .replay-live-btn:hover { background: rgba(168, 85, 247, 0.3); }
+
+/* Node filter dropdown */
+.node-filter-wrap { display: inline-block; }
+.node-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--surface-1, #1e293b);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.node-filter-dropdown.hidden { display: none; }
+.node-filter-option {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.1s;
+}
+.node-filter-option:hover { background: var(--surface-2, rgba(255,255,255,0.08)); }
