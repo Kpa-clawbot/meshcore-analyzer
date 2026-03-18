@@ -1035,7 +1035,15 @@ app.get('/api/nodes/:pubkey/health', (req, res) => {
 });
 
 // Static files + SPA fallback
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }
+}));
 app.get('/{*splat}', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   const fs = require('fs');
