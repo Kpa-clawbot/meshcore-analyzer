@@ -3,6 +3,7 @@
 
 (function () {
   let map = null;
+  let routeLayer = null;
   let markerLayer = null;
   let clusterGroup = null;
   let nodes = [];
@@ -68,6 +69,7 @@
     }).addTo(map);
 
     markerLayer = L.layerGroup().addTo(map);
+    routeLayer = L.layerGroup().addTo(map);
 
     // Fix map size on SPA load
     setTimeout(() => map.invalidateSize(), 100);
@@ -121,7 +123,7 @@
       // Draw route polyline
       L.polyline(coords, {
         color: '#f59e0b', weight: 3, opacity: 0.8, dashArray: '8 4'
-      }).addTo(markerLayer);
+      }).addTo(routeLayer);
     }
 
     // Add numbered markers at each hop
@@ -129,7 +131,7 @@
       L.circleMarker([p.lat, p.lon], {
         radius: 10, fillColor: i === 0 ? '#22c55e' : i === positions.length - 1 ? '#ef4444' : '#f59e0b',
         fillOpacity: 0.9, color: '#fff', weight: 2
-      }).addTo(markerLayer).bindTooltip(`${i + 1}. ${p.name}`, { permanent: true, direction: 'top', className: 'route-tooltip' });
+      }).addTo(routeLayer).bindTooltip(`${i + 1}. ${p.name}`, { permanent: true, direction: 'top', className: 'route-tooltip' });
     });
 
     // Fit map to route
@@ -272,6 +274,7 @@
       map = null;
     }
     markerLayer = null;
+    routeLayer = null;
     if (heatLayer) { heatLayer = null; }
   }
 
