@@ -1003,8 +1003,13 @@ app.get('/api/channels/:hash/messages', (req, res) => {
     }
   }
 
-  const messages = [...msgMap.values()].slice(Number(offset), Number(offset) + Number(limit));
-  res.json({ messages, total: msgMap.size });
+  const allMessages = [...msgMap.values()];
+  const total = allMessages.length;
+  // Return the latest messages (tail), not the oldest (head)
+  const start = Math.max(0, total - Number(limit) - Number(offset));
+  const end = total - Number(offset);
+  const messages = allMessages.slice(Math.max(0, start), Math.max(0, end));
+  res.json({ messages, total });
 });
 
 app.get('/api/observers', (req, res) => {
