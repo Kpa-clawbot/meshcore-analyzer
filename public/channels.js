@@ -251,9 +251,10 @@
     });
 
     wsHandler = (msg) => {
-      if (msg.type === 'message') {
+      const isMessage = msg.type === 'message';
+      const isChannelPacket = msg.type === 'packet' && msg.data?.decoded?.header?.payloadTypeName === 'GRP_TXT';
+      if (isMessage || isChannelPacket) {
         loadChannels(true);
-        // Refresh active channel messages
         if (selectedHash) {
           refreshMessages();
         }
@@ -355,7 +356,10 @@
     try {
       const data = await api(`/channels/${selectedHash}/messages?limit=200`);
       const newMsgs = data.messages || [];
-      if (newMsgs.length === messages.length) return; // no change
+      // Compare last message timestamp instead of count — count stays same at limit
+      const lastOld = messages.length ? messages[messages.length - 1]?.timestamp : null;
+      const lastNew = newMsgs.length ? newMsgs[newMsgs.length - 1]?.timestamp : null;
+      if (newMsgs.length === messages.length && lastOld === lastNew) return;
       messages = newMsgs;
       renderMessages();
       if (wasAtBottom) scrollToBottom();
