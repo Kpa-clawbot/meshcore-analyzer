@@ -140,37 +140,21 @@
         </div>` : ''}
 
         <div class="node-full-card">
-          <h4>Recent Activity (${recent.length})</h4>
+          <h4>Recent Packets (${adverts.length})</h4>
           <div class="node-activity-list">
-            ${recent.length ? recent.slice(0, 20).map(p => {
+            ${adverts.length ? adverts.map(p => {
               let decoded; try { decoded = JSON.parse(p.decoded_json); } catch {}
-              const typeLabel = p.payload_type === 4 ? '📡 Advert' : p.payload_type === 5 ? '💬 Channel' : p.payload_type === 2 ? '✉️ DM' : 'Packet';
-              const detail = decoded?.text ? ': ' + escapeHtml(truncate(decoded.text, 50)) : '';
-              const snr = p.snr != null ? ` · SNR ${p.snr}dB` : (decoded?.SNR != null ? ` · SNR ${decoded.SNR}dB` : '');
+              const typeLabel = p.payload_type === 4 ? '📡 Advert' : p.payload_type === 5 ? '💬 Channel' : p.payload_type === 2 ? '✉️ DM' : '📦 Packet';
+              const detail = decoded?.text ? ': ' + escapeHtml(truncate(decoded.text, 50)) : decoded?.name ? ' — ' + escapeHtml(decoded.name) : '';
+              const obs = p.observer_name || p.observer_id;
+              const snr = p.snr != null ? ` · SNR ${p.snr}dB` : '';
+              const rssi = p.rssi != null ? ` · RSSI ${p.rssi}dBm` : '';
               return `<div class="node-activity-item">
                 <span class="node-activity-time">${timeAgo(p.timestamp)}</span>
-                <span>${typeLabel}${detail}${snr}</span>
+                <span>${typeLabel}${detail}${obs ? ' via ' + escapeHtml(obs) : ''}${snr}${rssi}</span>
                 <a href="#/packets/id/${p.id}" class="ch-analyze-link" style="margin-left:8px;font-size:0.8em">Analyze →</a>
               </div>`;
-            }).join('') : '<div class="text-muted">No recent activity</div>'}
-          </div>
-        </div>
-
-        <div class="node-full-card">
-          <h4>Recent Adverts (${adverts.length})</h4>
-          <div id="advertTimeline">
-            ${adverts.length ? adverts.map(a => {
-              const ts = a.timestamp || a.created_at;
-              const obs = a.observer_name || a.observer_id || '—';
-              const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
-              return `<div class="advert-entry">
-                <span class="advert-dot" style="background:${roleColor}"></span>
-                <div class="advert-info" style="color:var(--text)">
-                  <strong>${timeAgo(ts)}</strong> · ${pType} via ${escapeHtml(obs)}
-                  ${a.snr != null ? ` · SNR ${a.snr}dB` : ''}${a.rssi != null ? ` · RSSI ${a.rssi}dBm` : ''}
-                </div>
-              </div>`;
-            }).join('') : '<div class="text-muted">No recent adverts</div>'}
+            }).join('') : '<div class="text-muted">No recent packets</div>'}
           </div>
         </div>
 
@@ -447,41 +431,25 @@
         </div>
 
         <div class="node-detail-section">
-          <h4>Recent Adverts (${adverts.length})</h4>
+          <h4>Recent Packets (${adverts.length})</h4>
           <div id="advertTimeline">
             ${adverts.length ? adverts.map(a => {
-              const ts = a.timestamp || a.created_at;
-              const obs = a.observer_name || a.observer_id || '—';
-              const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
-              return `<div class="advert-entry">
-                <span class="advert-dot" style="background:${roleColor}"></span>
-                <div class="advert-info">
-                  <strong>${timeAgo(ts)}</strong> · ${pType} via ${escapeHtml(obs)}
-                  ${a.snr != null ? ` · SNR ${a.snr}dB` : ''}${a.rssi != null ? ` · RSSI ${a.rssi}dBm` : ''}
-                </div>
-              </div>`;
-            }).join('') : '<div class="text-muted" style="padding:8px">No recent adverts</div>'}
-          </div>
-        </div>
-
-        <div class="node-detail-section">
-          <h4>Recent Activity (${recent.length})</h4>
-          <div id="advertTimeline">
-            ${recent.length ? recent.map(a => {
               let decoded;
               try { decoded = JSON.parse(a.decoded_json); } catch {}
               const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
               const icon = a.payload_type === 4 ? '📡' : a.payload_type === 5 ? '💬' : a.payload_type === 2 ? '✉️' : '📦';
               const detail = decoded?.text ? ': ' + escapeHtml(truncate(decoded.text, 50)) : decoded?.name ? ' — ' + escapeHtml(decoded.name) : '';
+              const obs = a.observer_name || a.observer_id;
               return `<div class="advert-entry">
                 <span class="advert-dot" style="background:${roleColor}"></span>
                 <div class="advert-info">
                   <strong>${timeAgo(a.timestamp)}</strong> ${icon} ${pType}${detail}
+                  ${obs ? ' via ' + escapeHtml(obs) : ''}
                   ${a.snr != null ? ` · SNR ${a.snr}dB` : ''}${a.rssi != null ? ` · RSSI ${a.rssi}dBm` : ''}
                   <br><a href="#/packets/id/${a.id}" class="ch-analyze-link">Analyze →</a>
                 </div>
               </div>`;
-            }).join('') : '<div class="text-muted" style="padding:8px">No recent activity</div>'}
+            }).join('') : '<div class="text-muted" style="padding:8px">No recent packets</div>'}
           </div>
         </div>
       </div>`;
