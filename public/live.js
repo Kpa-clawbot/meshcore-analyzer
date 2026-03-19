@@ -121,7 +121,7 @@
     loadNodes(targetTs);
 
     // Fetch ALL packets from scrub point to now (no limit, no until)
-    fetch(`/api/packets?limit=10000&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
+    fetch(`/api/packets?limit=2000&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
       .then(r => r.json())
       .then(data => {
         const pkts = (data.packets || []).reverse(); // chronological order
@@ -146,6 +146,8 @@
   function showVCRPrompt(count) {
     const prompt = document.getElementById('vcrPrompt');
     if (!prompt) return;
+    prompt.setAttribute('role', 'alertdialog');
+    prompt.setAttribute('aria-label', 'Missed packets prompt');
     prompt.innerHTML = `
       <span>You missed <strong>${count}</strong> packets.</span>
       <button id="vcrPromptReplay" class="vcr-prompt-btn">▶ Replay</button>
@@ -160,6 +162,8 @@
       prompt.classList.add('hidden');
       vcrResumeLive();
     });
+    // Focus first button for keyboard users (#59)
+    document.getElementById('vcrPromptReplay').focus();
   }
 
   function vcrReplayMissed() {
@@ -176,7 +180,7 @@
     // Fetch packets from DB for the time window
     const now = Date.now();
     const from = new Date(now - ms).toISOString();
-    fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(from)}`)
+    fetch(`/api/packets?limit=2000&grouped=false&since=${encodeURIComponent(from)}`)
       .then(r => r.json())
       .then(data => {
         const pkts = (data.packets || []).reverse(); // oldest first
@@ -383,8 +387,14 @@
     pkt._ts = Date.now();
     const entry = { ts: pkt._ts, pkt };
     VCR.buffer.push(entry);
-    // Keep buffer capped at ~2000
-    if (VCR.buffer.length > 2000) VCR.buffer.splice(0, 500);
+    // Keep buffer capped at ~2000 — adjust playhead to avoid stale indices (#63)
+    if (VCR.buffer.length > 2000) {
+      const trimCount = 500;
+      VCR.buffer.splice(0, trimCount);
+      if (VCR.playhead >= 0) {
+        VCR.playhead = Math.max(0, VCR.playhead - trimCount);
+      }
+    }
 
     if (VCR.mode === 'LIVE') {
       animatePacket(pkt);
@@ -538,26 +548,33 @@
           </div>
           <button class="live-sound-btn" id="liveSoundBtn" title="Toggle sound">🔇</button>
           <div class="live-toggles">
-            <label><input type="checkbox" id="liveHeatToggle" checked> Heat</label>
-            <label><input type="checkbox" id="liveGhostToggle" checked> Ghosts</label>
+            <label><input type="checkbox" id="liveHeatToggle" checked aria-describedby="heatDesc"> Heat</label>
+            <span id="heatDesc" class="sr-only">Overlay a density heat map on the mesh nodes</span>
+            <label><input type="checkbox" id="liveGhostToggle" checked aria-describedby="ghostDesc"> Ghosts</label>
+            <span id="ghostDesc" class="sr-only">Show interpolated ghost markers for unknown hops</span>
           </div>
         </div>
         <div class="live-overlay live-feed" id="liveFeed">
           <button class="feed-hide-btn" id="feedHideBtn" title="Hide feed">✕</button>
         </div>
         <button class="feed-show-btn hidden" id="feedShowBtn" title="Show feed">📋</button>
-        <div class="live-overlay live-legend">
-          <div class="legend-title">PACKET TYPES</div>
-          <div><span class="live-dot" style="background:#22c55e"></span> Advert</div>
-          <div><span class="live-dot" style="background:#3b82f6"></span> Message</div>
-          <div><span class="live-dot" style="background:#f59e0b"></span> Direct</div>
-          <div><span class="live-dot" style="background:#a855f7"></span> Request</div>
-          <div><span class="live-dot" style="background:#ec4899"></span> Trace</div>
-          <div class="legend-title" style="margin-top:8px">NODE ROLES</div>
-          <div><span class="live-dot" style="background:#3b82f6"></span> Repeater</div>
-          <div><span class="live-dot" style="background:#06b6d4"></span> Companion</div>
-          <div><span class="live-dot" style="background:#a855f7"></span> Room</div>
-          <div><span class="live-dot" style="background:#f59e0b"></span> Sensor</div>
+        <button class="legend-toggle-btn hidden" id="legendToggleBtn" aria-label="Show legend" title="Show legend">🎨</button>
+        <div class="live-overlay live-legend" id="liveLegend" role="region" aria-label="Map legend">
+          <h3 class="legend-title">PACKET TYPES</h3>
+          <ul class="legend-list">
+            <li><span class="live-dot" style="background:#22c55e" aria-hidden="true"></span> Advert — Node advertisement</li>
+            <li><span class="live-dot" style="background:#3b82f6" aria-hidden="true"></span> Message — Group text</li>
+            <li><span class="live-dot" style="background:#f59e0b" aria-hidden="true"></span> Direct — Direct message</li>
+            <li><span class="live-dot" style="background:#a855f7" aria-hidden="true"></span> Request — Data request</li>
+            <li><span class="live-dot" style="background:#ec4899" aria-hidden="true"></span> Trace — Route trace</li>
+          </ul>
+          <h3 class="legend-title" style="margin-top:8px">NODE ROLES</h3>
+          <ul class="legend-list">
+            <li><span class="live-dot" style="background:#3b82f6" aria-hidden="true"></span> Repeater</li>
+            <li><span class="live-dot" style="background:#06b6d4" aria-hidden="true"></span> Companion</li>
+            <li><span class="live-dot" style="background:#a855f7" aria-hidden="true"></span> Room</li>
+            <li><span class="live-dot" style="background:#f59e0b" aria-hidden="true"></span> Sensor</li>
+          </ul>
         </div>
 
         <!-- VCR Bar -->
@@ -571,11 +588,11 @@
             <div id="vcrMode" class="vcr-mode vcr-mode-live"><span class="vcr-live-dot"></span> LIVE</div>
           </div>
           <div class="vcr-timeline-wrap">
-            <div class="vcr-scope-btns">
-              <button class="vcr-scope-btn active" data-scope="3600000" aria-label="Scope 1 hour">1h</button>
-              <button class="vcr-scope-btn" data-scope="21600000" aria-label="Scope 6 hours">6h</button>
-              <button class="vcr-scope-btn" data-scope="43200000" aria-label="Scope 12 hours">12h</button>
-              <button class="vcr-scope-btn" data-scope="86400000" aria-label="Scope 24 hours">24h</button>
+            <div class="vcr-scope-btns" role="radiogroup" aria-label="Timeline scope">
+              <button class="vcr-scope-btn active" data-scope="3600000" role="radio" aria-checked="true" aria-label="Scope 1 hour">1h</button>
+              <button class="vcr-scope-btn" data-scope="21600000" role="radio" aria-checked="false" aria-label="Scope 6 hours">6h</button>
+              <button class="vcr-scope-btn" data-scope="43200000" role="radio" aria-checked="false" aria-label="Scope 12 hours">12h</button>
+              <button class="vcr-scope-btn" data-scope="86400000" role="radio" aria-checked="false" aria-label="Scope 24 hours">24h</button>
             </div>
             <div class="vcr-timeline-container">
               <canvas id="vcrTimeline" class="vcr-timeline"></canvas>
@@ -670,6 +687,39 @@
       localStorage.setItem('live-feed-hidden', 'false');
     });
 
+    // Legend toggle for mobile (#60)
+    const legendEl = document.getElementById('liveLegend');
+    const legendToggleBtn = document.getElementById('legendToggleBtn');
+    if (legendToggleBtn && legendEl) {
+      legendToggleBtn.addEventListener('click', () => {
+        const isHidden = legendEl.classList.toggle('legend-mobile-hidden');
+        legendToggleBtn.setAttribute('aria-label', isHidden ? 'Show legend' : 'Hide legend');
+        legendToggleBtn.textContent = isHidden ? '🎨' : '✕';
+      });
+    }
+
+    // Feed panel resize handle (#27)
+    const savedFeedWidth = localStorage.getItem('live-feed-width');
+    if (savedFeedWidth) feedEl.style.width = savedFeedWidth + 'px';
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'feed-resize-handle';
+    resizeHandle.setAttribute('aria-label', 'Resize feed panel');
+    feedEl.appendChild(resizeHandle);
+    let feedResizing = false;
+    resizeHandle.addEventListener('mousedown', (e) => {
+      feedResizing = true; e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!feedResizing) return;
+      const newWidth = Math.max(200, Math.min(800, e.clientX - feedEl.getBoundingClientRect().left));
+      feedEl.style.width = newWidth + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!feedResizing) return;
+      feedResizing = false;
+      localStorage.setItem('live-feed-width', parseInt(feedEl.style.width));
+    });
+
     // Save/restore map view
     const savedView = localStorage.getItem('live-map-view');
     if (savedView) {
@@ -696,8 +746,9 @@
     // Scope buttons
     document.querySelectorAll('.vcr-scope-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.vcr-scope-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.vcr-scope-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-checked', 'false'); });
         btn.classList.add('active');
+        btn.setAttribute('aria-checked', 'true');
         VCR.timelineScope = parseInt(btn.dataset.scope);
         fetchTimelineTimestamps().then(() => updateTimeline());
       });
@@ -719,6 +770,20 @@
       timeTooltip.classList.remove('hidden');
     });
     timelineEl.addEventListener('mouseleave', () => { timeTooltip.classList.add('hidden'); });
+
+    // Touch tooltip for timeline (#19)
+    timelineEl.addEventListener('touchmove', (e) => {
+      if (!VCR.dragging) return;
+      const touch = e.touches[0];
+      const rect = timelineEl.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+      const ts = Date.now() - VCR.timelineScope + pct * VCR.timelineScope;
+      const d = new Date(ts);
+      timeTooltip.textContent = d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      timeTooltip.style.left = (touch.clientX - rect.left) + 'px';
+      timeTooltip.classList.remove('hidden');
+    });
+    timelineEl.addEventListener('touchend', () => { timeTooltip.classList.add('hidden'); });
 
     // Drag scrubbing on timeline
     VCR.dragging = false;
@@ -788,14 +853,38 @@
       if (VCR.mode === 'LIVE') updateVCRClock(Date.now());
     }, 1000);
 
-    // Auto-hide nav
+    // Auto-hide nav with pin toggle (#62)
     const topNav = document.querySelector('.top-nav');
     if (topNav) { topNav.style.position = 'fixed'; topNav.style.width = '100%'; topNav.style.zIndex = '1100'; }
-    _navCleanup = { timeout: null, fn: null };
+    _navCleanup = { timeout: null, fn: null, pinned: false };
+    // Add pin button to nav
+    if (topNav) {
+      const pinBtn = document.createElement('button');
+      pinBtn.id = 'navPinBtn';
+      pinBtn.className = 'nav-pin-btn';
+      pinBtn.setAttribute('aria-label', 'Pin navigation open');
+      pinBtn.setAttribute('title', 'Pin navigation open');
+      pinBtn.textContent = '📌';
+      pinBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _navCleanup.pinned = !_navCleanup.pinned;
+        pinBtn.classList.toggle('pinned', _navCleanup.pinned);
+        pinBtn.setAttribute('aria-pressed', _navCleanup.pinned);
+        if (_navCleanup.pinned) {
+          clearTimeout(_navCleanup.timeout);
+          topNav.classList.remove('nav-autohide');
+        } else {
+          _navCleanup.timeout = setTimeout(() => { topNav.classList.add('nav-autohide'); }, 4000);
+        }
+      });
+      topNav.appendChild(pinBtn);
+    }
     function showNav() {
       if (topNav) topNav.classList.remove('nav-autohide');
       clearTimeout(_navCleanup.timeout);
-      _navCleanup.timeout = setTimeout(() => { if (topNav) topNav.classList.add('nav-autohide'); }, 4000);
+      if (!_navCleanup.pinned) {
+        _navCleanup.timeout = setTimeout(() => { if (topNav) topNav.classList.add('nav-autohide'); }, 4000);
+      }
     }
     _navCleanup.fn = showNav;
     const livePage = document.querySelector('.live-page');
