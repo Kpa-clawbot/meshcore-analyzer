@@ -1260,13 +1260,7 @@ app.get('/api/traces/:hash', (req, res) => {
   res.json({ traces });
 });
 
-app.get('/api/nodes/:pubkey/health', (req, res) => {
-  const health = db.getNodeHealth(req.params.pubkey);
-  if (!health) return res.status(404).json({ error: 'Not found' });
-  res.json(health);
-});
-
-// Bulk health summary for analytics — single query approach
+// Bulk health summary for analytics — single query approach (MUST be before :pubkey routes)
 app.get('/api/nodes/bulk-health', (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 50, 200);
   const nodes = db.db.prepare(`SELECT * FROM nodes ORDER BY last_seen DESC LIMIT ?`).all(limit);
@@ -1305,6 +1299,12 @@ app.get('/api/nodes/bulk-health', (req, res) => {
   });
 
   res.json(results);
+});
+
+app.get('/api/nodes/:pubkey/health', (req, res) => {
+  const health = db.getNodeHealth(req.params.pubkey);
+  if (!health) return res.status(404).json({ error: 'Not found' });
+  res.json(health);
 });
 
 app.get('/api/nodes/:pubkey/analytics', (req, res) => {
