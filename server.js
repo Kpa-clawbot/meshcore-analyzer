@@ -45,10 +45,30 @@ function computeContentHash(rawHex) {
     return crypto.createHash('sha256').update(toHash).digest('hex').slice(0, 16);
   } catch { return rawHex.slice(0, 16); }
 }
-const db = require('./db');
+const db = require('./db')
 const pktStore = new PacketStore(db, config.packetStore || {}).load();
-const channelKeys = require("./config.json").channelKeys || {};
-console.log(`[channels] ${Object.keys(channelKeys).length} channel key(s) configured`);
+const configuredChannelKeys = config.channelKeys || {};
+const hashChannels = Array.isArray(config.hashChannels) ? config.hashChannels : [];
+
+function deriveHashtagChannelKey(channelName) {
+  return crypto.createHash('sha256').update(channelName).digest('hex').slice(0, 32);
+}
+
+const derivedHashChannelKeys = {};
+for (const rawChannel of hashChannels) {
+  if (typeof rawChannel !== 'string') continue;
+  const trimmed = rawChannel.trim();
+  if (!trimmed) continue;
+  const channelName = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
+  if (Object.prototype.hasOwnProperty.call(configuredChannelKeys, channelName)) continue;
+  derivedHashChannelKeys[channelName] = deriveHashtagChannelKey(channelName);
+}
+
+const channelKeys = { ...derivedHashChannelKeys, ...configuredChannelKeys };
+
+const totalKeys = Object.keys(channelKeys).length;
+const derivedCount = Object.keys(derivedHashChannelKeys).length;
+console.log(`[channels] ${totalKeys} channel key(s) (${derivedCount} derived from hashChannels)`);
 
 // --- Cache TTL config (seconds → ms) ---
 const _ttlCfg = config.cacheTTL || {};
