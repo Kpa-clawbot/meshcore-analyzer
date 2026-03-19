@@ -65,20 +65,23 @@
     _onResize = function() {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
+        // Set live-page height from JS — most reliable across all mobile browsers
+        const page = document.querySelector('.live-page');
+        const appEl = document.getElementById('app');
+        const h = window.innerHeight;
+        if (page) page.style.height = h + 'px';
+        if (appEl) appEl.style.height = h + 'px';
         if (map) {
-          // Force container size recalc
-          const page = document.querySelector('.live-page');
-          if (page) { page.style.height = window.innerHeight + 'px'; }
-          map.invalidateSize({ animate: false });
+          map.invalidateSize({ animate: false, pan: false });
         }
-      }, 150);
+      }, 50);
     };
+    // Run immediately to set correct initial height
+    _onResize();
     window.addEventListener('resize', _onResize);
     window.addEventListener('orientationchange', () => {
-      setTimeout(_onResize, 100);
-      setTimeout(_onResize, 400);
-      setTimeout(_onResize, 800);
-      setTimeout(_onResize, 1500);
+      // Orientation change is async — viewport dimensions settle late
+      [50, 200, 500, 1000, 2000].forEach(ms => setTimeout(_onResize, ms));
     });
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', _onResize);
@@ -1458,6 +1461,9 @@
       window.removeEventListener('orientationchange', _onResize);
       if (window.visualViewport) window.visualViewport.removeEventListener('resize', _onResize);
     }
+    // Restore #app height to CSS default
+    const appEl = document.getElementById('app');
+    if (appEl) appEl.style.height = '';
     const topNav = document.querySelector('.top-nav');
     if (topNav) { topNav.classList.remove('nav-autohide'); topNav.style.position = ''; topNav.style.width = ''; topNav.style.zIndex = ''; }
     if (_navCleanup) {
