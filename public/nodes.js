@@ -348,8 +348,9 @@
 
     tbody.innerHTML = sorted.map(n => {
       const roleColor = ROLE_COLORS[n.role] || '#6b7280';
-      return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}">
-        <td>${favStar(n.public_key, 'node-fav')}<strong>${n.name || '(unnamed)'}</strong></td>
+      const isClaimed = myKeys.has(n.public_key);
+      return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}${isClaimed ? ' claimed-row' : ''}">
+        <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh">★</span> ' : ''}<strong>${n.name || '(unnamed)'}</strong></td>
         <td class="mono">${truncate(n.public_key, 16)}</td>
         <td><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span></td>
         <td>${timeAgo(n.last_seen)}</td>

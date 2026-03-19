@@ -1372,3 +1372,8 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .analytics-peer-table tr:hover td { background: var(--card-bg); }
 @media (max-width: 768px) { .analytics-stats { grid-template-columns: repeat(2, 1fr); } .analytics-charts { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .analytics-stats { grid-template-columns: 1fr; } }
+
+/* Claimed (My Mesh) node rows */
+.claimed-row { background: color-mix(in srgb, var(--accent) 8%, transparent) !important; border-left: 3px solid var(--accent); }
+.claimed-row:hover { background: color-mix(in srgb, var(--accent) 14%, transparent) !important; }
+.claimed-badge { color: var(--accent); font-size: 13px; margin-right: 2px; }
