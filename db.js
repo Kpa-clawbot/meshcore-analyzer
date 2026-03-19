@@ -345,4 +345,152 @@ function getNodeHealth(pubkey) {
   };
 }
 
-module.exports = { db, insertPacket, insertPath, upsertNode, upsertObserver, getPackets, getPacket, getNodes, getNode, getObservers, getStats, seed, searchNodes, getNodeHealth };
+function getNodeAnalytics(pubkey, days) {
+  const node = stmts.getNode.get(pubkey);
+  if (!node) return null;
+
+  const now = new Date();
+  const from = new Date(now.getTime() - days * 86400000);
+  const fromISO = from.toISOString();
+  const toISO = now.toISOString();
+
+  const keyPattern = `%${pubkey}%`;
+  const namePattern = node.name ? `%${node.name.replace(/[%_]/g, '')}%` : null;
+  const whereClause = namePattern
+    ? `(decoded_json LIKE @keyPattern OR decoded_json LIKE @namePattern)`
+    : `decoded_json LIKE @keyPattern`;
+  const timeWhere = `${whereClause} AND timestamp > @fromISO`;
+  const params = namePattern ? { keyPattern, namePattern, fromISO } : { keyPattern, fromISO };
+
+  // Activity timeline
+  const activityTimeline = db.prepare(`
+    SELECT strftime('%Y-%m-%dT%H:00:00Z', timestamp) as bucket, COUNT(*) as count
+    FROM packets WHERE ${timeWhere} GROUP BY bucket ORDER BY bucket
+  `).all(params);
+
+  // SNR trend
+  const snrTrend = db.prepare(`
+    SELECT timestamp, snr, rssi, observer_id, observer_name
+    FROM packets WHERE ${timeWhere} AND snr IS NOT NULL ORDER BY timestamp
+  `).all(params);
+
+  // Packet type breakdown
+  const packetTypeBreakdown = db.prepare(`
+    SELECT payload_type, COUNT(*) as count FROM packets WHERE ${timeWhere} GROUP BY payload_type
+  `).all(params);
+
+  // Observer coverage
+  const observerCoverage = db.prepare(`
+    SELECT observer_id, observer_name, COUNT(*) as packetCount,
+      AVG(snr) as avgSnr, AVG(rssi) as avgRssi, MIN(timestamp) as firstSeen, MAX(timestamp) as lastSeen
+    FROM packets WHERE ${timeWhere} AND observer_id IS NOT NULL
+    GROUP BY observer_id ORDER BY packetCount DESC
+  `).all(params);
+
+  // Hop distribution
+  const pathRows = db.prepare(`
+    SELECT path_json FROM packets WHERE ${timeWhere} AND path_json IS NOT NULL
+  `).all(params);
+
+  const hopCounts = {};
+  let totalWithPath = 0, relayedCount = 0;
+  for (const row of pathRows) {
+    try {
+      const hops = JSON.parse(row.path_json);
+      if (Array.isArray(hops)) {
+        const h = hops.length;
+        const key = h >= 4 ? '4+' : String(h);
+        hopCounts[key] = (hopCounts[key] || 0) + 1;
+        totalWithPath++;
+        if (h > 1) relayedCount++;
+      }
+    } catch {}
+  }
+  const hopDistribution = Object.entries(hopCounts).map(([hops, count]) => ({ hops, count }))
+    .sort((a, b) => a.hops.localeCompare(b.hops, undefined, { numeric: true }));
+
+  // Peer interactions from decoded_json
+  const decodedRows = db.prepare(`
+    SELECT decoded_json, timestamp FROM packets WHERE ${timeWhere} AND decoded_json IS NOT NULL
+  `).all(params);
+
+  const peerMap = {};
+  for (const row of decodedRows) {
+    try {
+      const d = JSON.parse(row.decoded_json);
+      // Look for sender/recipient pubkeys that aren't this node
+      const candidates = [];
+      if (d.sender_key && d.sender_key !== pubkey) candidates.push({ key: d.sender_key, name: d.sender_name || d.sender_short_name });
+      if (d.recipient_key && d.recipient_key !== pubkey) candidates.push({ key: d.recipient_key, name: d.recipient_name || d.recipient_short_name });
+      if (d.pubkey && d.pubkey !== pubkey) candidates.push({ key: d.pubkey, name: d.name });
+      for (const c of candidates) {
+        if (!c.key) continue;
+        if (!peerMap[c.key]) peerMap[c.key] = { peer_key: c.key, peer_name: c.name || c.key.slice(0, 12), messageCount: 0, lastContact: row.timestamp };
+        peerMap[c.key].messageCount++;
+        if (row.timestamp > peerMap[c.key].lastContact) peerMap[c.key].lastContact = row.timestamp;
+      }
+    } catch {}
+  }
+  const peerInteractions = Object.values(peerMap).sort((a, b) => b.messageCount - a.messageCount).slice(0, 20);
+
+  // Uptime heatmap
+  const uptimeHeatmap = db.prepare(`
+    SELECT CAST(strftime('%w', timestamp) AS INTEGER) as dayOfWeek,
+      CAST(strftime('%H', timestamp) AS INTEGER) as hour, COUNT(*) as count
+    FROM packets WHERE ${timeWhere} GROUP BY dayOfWeek, hour
+  `).all(params);
+
+  // Computed stats
+  const totalPackets = db.prepare(`SELECT COUNT(*) as count FROM packets WHERE ${timeWhere}`).get(params).count;
+  const uniqueObservers = observerCoverage.length;
+  const uniquePeers = peerInteractions.length;
+  const avgPacketsPerDay = days > 0 ? Math.round(totalPackets / days * 10) / 10 : totalPackets;
+
+  // Availability: distinct hours with packets / total hours
+  const distinctHours = activityTimeline.length;
+  const totalHours = days * 24;
+  const availabilityPct = totalHours > 0 ? Math.round(distinctHours / totalHours * 1000) / 10 : 0;
+
+  // Longest silence
+  const timestamps = db.prepare(`
+    SELECT timestamp FROM packets WHERE ${timeWhere} ORDER BY timestamp
+  `).all(params).map(r => new Date(r.timestamp).getTime());
+
+  let longestSilenceMs = 0, longestSilenceStart = null;
+  for (let i = 1; i < timestamps.length; i++) {
+    const gap = timestamps[i] - timestamps[i - 1];
+    if (gap > longestSilenceMs) { longestSilenceMs = gap; longestSilenceStart = new Date(timestamps[i - 1]).toISOString(); }
+  }
+
+  // Signal grade
+  const snrValues = snrTrend.map(r => r.snr);
+  const snrMean = snrValues.length > 0 ? snrValues.reduce((a, b) => a + b, 0) / snrValues.length : 0;
+  const snrStdDev = snrValues.length > 1 ? Math.sqrt(snrValues.reduce((s, v) => s + (v - snrMean) ** 2, 0) / snrValues.length) : 0;
+  let signalGrade = 'D';
+  if (snrMean > 15 && snrStdDev < 2) signalGrade = 'A';
+  else if (snrMean > 15) signalGrade = 'A-';
+  else if (snrMean > 12 && snrStdDev < 3) signalGrade = 'B+';
+  else if (snrMean > 8) signalGrade = 'B';
+  else if (snrMean > 3) signalGrade = 'C';
+
+  const relayPct = totalWithPath > 0 ? Math.round(relayedCount / totalWithPath * 1000) / 10 : 0;
+
+  return {
+    node,
+    timeRange: { from: fromISO, to: toISO, days },
+    activityTimeline,
+    snrTrend,
+    packetTypeBreakdown,
+    observerCoverage,
+    hopDistribution,
+    peerInteractions,
+    uptimeHeatmap,
+    computedStats: {
+      availabilityPct, longestSilenceMs, longestSilenceStart, signalGrade,
+      snrMean: Math.round(snrMean * 10) / 10, snrStdDev: Math.round(snrStdDev * 10) / 10,
+      relayPct, totalPackets, uniqueObservers, uniquePeers, avgPacketsPerDay
+    }
+  };
+}
+
+module.exports = { db, insertPacket, insertPath, upsertNode, upsertObserver, getPackets, getPacket, getNodes, getNode, getObservers, getStats, seed, searchNodes, getNodeHealth, getNodeAnalytics };

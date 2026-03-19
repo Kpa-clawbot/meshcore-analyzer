@@ -1266,6 +1266,13 @@ app.get('/api/nodes/:pubkey/health', (req, res) => {
   res.json(health);
 });
 
+app.get('/api/nodes/:pubkey/analytics', (req, res) => {
+  const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 365);
+  const data = db.getNodeAnalytics(req.params.pubkey, days);
+  if (!data) return res.status(404).json({ error: 'Not found' });
+  res.json(data);
+});
+
 // Subpath frequency analysis
 app.get('/api/analytics/subpaths', (req, res) => {
   const minLen = Math.max(2, Number(req.query.minLen) || 2);

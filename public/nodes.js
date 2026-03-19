@@ -160,6 +160,7 @@
 
         <div style="text-align:center;padding:16px">
           <button class="btn-primary" id="copyUrlBtn">📋 Copy URL</button>
+          <a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="btn-primary" style="display:inline-block;margin-left:8px;text-decoration:none">📊 Analytics</a>
         </div>`;
 
       // Map
@@ -428,6 +429,7 @@
 
         <div style="text-align:center;margin-bottom:16px">
           <button class="btn-primary" id="copyUrlBtn">📋 Copy URL</button>
+          <a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="btn-primary" style="display:inline-block;margin-left:8px;text-decoration:none">📊 Analytics</a>
         </div>
 
         <div class="node-detail-section">

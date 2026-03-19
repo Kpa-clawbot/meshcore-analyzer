@@ -200,6 +200,11 @@ function navigate() {
     routeParam = decodeURIComponent(route.substring(slashIdx + 1));
   }
 
+  // Special route: nodes/PUBKEY/analytics → node-analytics page
+  if (basePage === 'nodes' && routeParam && routeParam.endsWith('/analytics')) {
+    basePage = 'node-analytics';
+  }
+
   // Update nav active state
   document.querySelectorAll('.nav-link[data-route]').forEach(el => {
     el.classList.toggle('active', el.dataset.route === basePage);
