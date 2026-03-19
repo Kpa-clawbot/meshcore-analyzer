@@ -790,7 +790,7 @@
             const prefixDisplay = rawHops.join(' → ');
             return `<tr data-hops="${esc(rawHops.join(','))}" ${hasSelfLoop ? 'class="subpath-selfloop"' : ''} style="cursor:pointer">
               <td>${i + 1}</td>
-              <td style="white-space:nowrap">${routeDisplay}${hasSelfLoop ? ' <span title="Contains self-loop — likely 1-byte prefix collision" style="cursor:help">🔄</span>' : ''}<br><span class="hop-prefix mono">${esc(prefixDisplay)}</span></td>
+              <td>${routeDisplay}${hasSelfLoop ? ' <span title="Contains self-loop — likely 1-byte prefix collision" style="cursor:help">🔄</span>' : ''}<br><span class="hop-prefix mono">${esc(prefixDisplay)}</span></td>
               <td>${s.count.toLocaleString()}</td>
               <td>${s.pct}%</td>
               <td><div style="background:${hasSelfLoop ? '#f59e0b' : 'var(--accent,#3b82f6)'};height:14px;border-radius:3px;width:${barW}%;opacity:0.7"></div></td>
@@ -819,7 +819,7 @@
             <div id="sp-quads">${renderTable(d4, 'Quads (4-hop chains)')}</div>
             <div id="sp-long">${renderTable(d5, 'Long chains (5+ hops)')}</div>
           </div>
-          <div class="subpath-detail" id="subpathDetail">
+          <div class="subpath-detail collapsed" id="subpathDetail">
             <div class="text-muted" style="padding:40px;text-align:center">Select a route to view details</div>
           </div>
         </div>`;
@@ -858,6 +858,7 @@
 
   async function loadSubpathDetail(hopsStr) {
     const panel = document.getElementById('subpathDetail');
+    panel.classList.remove('collapsed');
     panel.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading…</div>';
     try {
       const data = await api('/analytics/subpath-detail?hops=' + encodeURIComponent(hopsStr));
