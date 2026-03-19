@@ -45,6 +45,69 @@ function broadcast(msg) {
 // Auto-create stub nodes from path hops (≥2 bytes / 4 hex chars)
 // When an advert arrives later with a full pubkey matching the prefix, upsertNode will upgrade it
 const hopNodeCache = new Set(); // Avoid repeated DB lookups for known hops
+
+// Shared distance helper (degrees, ~111km/lat, ~85km/lon at 37°N)
+function geoDist(lat1, lon1, lat2, lon2) { return Math.sqrt((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2); }
+
+// Sequential hop disambiguation: resolve 1-byte prefixes to best-matching nodes
+// Returns array of {hop, name, lat, lon, pubkey, ambiguous, unreliable} per hop
+function disambiguateHops(hops, allNodes) {
+  const MAX_HOP_DIST = 1.8; // ~200km
+
+  // First pass: find candidates per hop
+  const resolved = hops.map(hop => {
+    const h = hop.toLowerCase();
+    const candidates = allNodes.filter(n => n.public_key.toLowerCase().startsWith(h) && n.lat && n.lon && !(n.lat === 0 && n.lon === 0));
+    if (candidates.length === 1) {
+      return { hop, name: candidates[0].name, lat: candidates[0].lat, lon: candidates[0].lon, pubkey: candidates[0].public_key, known: true };
+    } else if (candidates.length > 1) {
+      return { hop, name: hop, lat: null, lon: null, pubkey: null, known: false, candidates };
+    }
+    // No candidates with coords — try name-only match
+    const nameMatch = allNodes.find(n => n.public_key.toLowerCase().startsWith(h));
+    return { hop, name: nameMatch?.name || hop, lat: null, lon: null, pubkey: nameMatch?.public_key || null, known: false };
+  });
+
+  // Forward pass: resolve ambiguous hops by distance to previous
+  let lastPos = null;
+  for (const r of resolved) {
+    if (r.known && r.lat) { lastPos = [r.lat, r.lon]; continue; }
+    if (!r.candidates) continue;
+    if (lastPos) r.candidates.sort((a, b) => geoDist(a.lat, a.lon, lastPos[0], lastPos[1]) - geoDist(b.lat, b.lon, lastPos[0], lastPos[1]));
+    const best = r.candidates[0];
+    r.name = best.name; r.lat = best.lat; r.lon = best.lon; r.pubkey = best.public_key; r.known = true;
+    lastPos = [r.lat, r.lon];
+  }
+
+  // Backward pass
+  let nextPos = null;
+  for (let i = resolved.length - 1; i >= 0; i--) {
+    const r = resolved[i];
+    if (r.known && r.lat) { nextPos = [r.lat, r.lon]; continue; }
+    if (!r.candidates || !nextPos) continue;
+    r.candidates.sort((a, b) => geoDist(a.lat, a.lon, nextPos[0], nextPos[1]) - geoDist(b.lat, b.lon, nextPos[0], nextPos[1]));
+    const best = r.candidates[0];
+    r.name = best.name; r.lat = best.lat; r.lon = best.lon; r.pubkey = best.public_key; r.known = true;
+    nextPos = [r.lat, r.lon];
+  }
+
+  // Distance sanity check
+  for (let i = 0; i < resolved.length; i++) {
+    const r = resolved[i];
+    if (!r.lat) continue;
+    const prev = i > 0 && resolved[i-1].lat ? resolved[i-1] : null;
+    const next = i < resolved.length-1 && resolved[i+1].lat ? resolved[i+1] : null;
+    if (!prev && !next) continue;
+    const dPrev = prev ? geoDist(r.lat, r.lon, prev.lat, prev.lon) : 0;
+    const dNext = next ? geoDist(r.lat, r.lon, next.lat, next.lon) : 0;
+    if ((prev && dPrev > MAX_HOP_DIST) && (next && dNext > MAX_HOP_DIST)) { r.unreliable = true; r.lat = null; r.lon = null; }
+    else if (prev && !next && dPrev > MAX_HOP_DIST) { r.unreliable = true; r.lat = null; r.lon = null; }
+    else if (!prev && next && dNext > MAX_HOP_DIST) { r.unreliable = true; r.lat = null; r.lon = null; }
+  }
+
+  return resolved.map(r => ({ hop: r.hop, name: r.name, lat: r.lat, lon: r.lon, pubkey: r.pubkey, ambiguous: !!r.candidates, unreliable: !!r.unreliable }));
+}
+
 function autoLearnHopNodes(hops, now) {
   for (const hop of hops) {
     if (hop.length < 4) continue; // Skip 1-byte hops — too ambiguous
@@ -1195,16 +1258,7 @@ app.get('/api/analytics/subpaths', (req, res) => {
   const packets = db.db.prepare(`SELECT path_json FROM packets WHERE path_json IS NOT NULL AND path_json != '[]'`).all();
   const allNodes = db.db.prepare('SELECT public_key, name, lat, lon FROM nodes WHERE name IS NOT NULL').all();
 
-  // Simple resolver (no geographic context needed here — just first match)
-  const nameCache = {};
-  function resolveName(hop) {
-    if (nameCache[hop] !== undefined) return nameCache[hop];
-    const h = hop.toLowerCase();
-    const m = allNodes.find(n => n.public_key.toLowerCase().startsWith(h));
-    nameCache[hop] = m ? m.name : hop;
-    return nameCache[hop];
-  }
-
+  // Disambiguate per path, then extract subpaths with resolved names
   const subpathCounts = {};
   let totalPaths = 0;
 
@@ -1214,8 +1268,8 @@ app.get('/api/analytics/subpaths', (req, res) => {
     if (!Array.isArray(hops) || hops.length < 2) continue;
     totalPaths++;
 
-    // Resolve all hops to names
-    const named = hops.map(h => resolveName(h));
+    const resolved = disambiguateHops(hops, allNodes);
+    const named = resolved.map(r => r.name);
 
     // Extract all subpaths of length minLen..maxLen
     for (let len = minLen; len <= Math.min(maxLen, named.length); len++) {
@@ -1252,14 +1306,8 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
   const packets = db.db.prepare(`SELECT path_json, snr, rssi, timestamp, decoded_json, observer_name FROM packets WHERE path_json IS NOT NULL AND path_json != '[]'`).all();
   const allNodes = db.db.prepare('SELECT public_key, name, lat, lon FROM nodes WHERE name IS NOT NULL').all();
 
-  const nameCache = {};
-  function resolveName(hop) {
-    if (nameCache[hop] !== undefined) return nameCache[hop];
-    const h = hop.toLowerCase();
-    const m = allNodes.find(n => n.public_key.toLowerCase().startsWith(h));
-    nameCache[hop] = m ? { name: m.name, lat: m.lat, lon: m.lon, pubkey: m.public_key } : null;
-    return nameCache[hop];
-  }
+  // Disambiguate the requested hops
+  const resolvedHops = disambiguateHops(rawHops, allNodes);
 
   const matching = [];
   const parentPaths = {};
@@ -1290,19 +1338,14 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
     if (pkt.rssi != null) { rssiSum += pkt.rssi; rssiCount++; }
     if (pkt.observer_name) observers[pkt.observer_name] = (observers[pkt.observer_name] || 0) + 1;
 
-    // Track full parent paths (resolved names)
-    const fullPath = hops.map(h => {
-      const r = resolveName(h);
-      return r ? r.name : h;
-    }).join(' → ');
+    // Track full parent paths (disambiguated)
+    const fullResolved = disambiguateHops(hops, allNodes);
+    const fullPath = fullResolved.map(r => r.name).join(' → ');
     parentPaths[fullPath] = (parentPaths[fullPath] || 0) + 1;
   }
 
-  // Resolve hop nodes for map
-  const nodes = rawHops.map(h => {
-    const r = resolveName(h);
-    return { hop: h, name: r?.name || h, lat: r?.lat || null, lon: r?.lon || null, pubkey: r?.pubkey || null };
-  });
+  // Use disambiguated nodes for map
+  const nodes = resolvedHops.map(r => ({ hop: r.hop, name: r.name, lat: r.lat, lon: r.lon, pubkey: r.pubkey }));
 
   const topParents = Object.entries(parentPaths)
     .sort((a, b) => b[1] - a[1])
