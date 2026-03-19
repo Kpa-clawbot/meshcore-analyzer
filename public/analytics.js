@@ -784,10 +784,15 @@
           ${data.subpaths.map((s, i) => {
             const barW = Math.max(2, Math.round(s.count / maxCount * 100));
             const hops = s.path.split(' → ');
+            const rawHops = s.rawHops || [];
             const hasSelfLoop = hops.some((h, j) => j > 0 && h === hops[j - 1]);
+            const routeDisplay = hops.map((h, j) => {
+              const prefix = rawHops[j] || '';
+              return `<span title="${esc(prefix)}">${esc(h)} <span class="hop-prefix">[${esc(prefix)}]</span></span>`;
+            }).join(' → ');
             return `<tr${hasSelfLoop ? ' class="subpath-selfloop"' : ''}>
               <td>${i + 1}</td>
-              <td class="mono" style="white-space:nowrap">${esc(s.path)}${hasSelfLoop ? ' <span title="Contains self-loop — likely 1-byte prefix collision" style="cursor:help">🔄</span>' : ''}</td>
+              <td class="mono" style="white-space:nowrap">${routeDisplay}${hasSelfLoop ? ' <span title="Contains self-loop — likely 1-byte prefix collision" style="cursor:help">🔄</span>' : ''}</td>
               <td>${s.count.toLocaleString()}</td>
               <td>${s.pct}%</td>
               <td><div style="background:${hasSelfLoop ? '#f59e0b' : 'var(--accent,#3b82f6)'};height:14px;border-radius:3px;width:${barW}%;opacity:0.7"></div></td>

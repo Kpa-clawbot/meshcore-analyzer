@@ -1150,3 +1150,6 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 /* Self-loop subpath rows */
 .subpath-selfloop { opacity: 0.6; }
 .subpath-selfloop td:first-child::after { content: ''; }
+
+/* Hop prefix in subpath routes */
+.hop-prefix { color: #9ca3af; font-size: 0.8em; }

@@ -1137,7 +1137,9 @@ app.get('/api/analytics/subpaths', (req, res) => {
     for (let len = minLen; len <= Math.min(maxLen, named.length); len++) {
       for (let start = 0; start <= named.length - len; start++) {
         const sub = named.slice(start, start + len).join(' → ');
-        subpathCounts[sub] = (subpathCounts[sub] || 0) + 1;
+        const raw = hops.slice(start, start + len).join(',');
+        if (!subpathCounts[sub]) subpathCounts[sub] = { count: 0, raw };
+        subpathCounts[sub].count++;
       }
     }
   }
@@ -1145,11 +1147,12 @@ app.get('/api/analytics/subpaths', (req, res) => {
   // Sort by frequency, return top results
   const limit = Number(req.query.limit) || 100;
   const ranked = Object.entries(subpathCounts)
-    .map(([path, count]) => ({
+    .map(([path, data]) => ({
       path,
-      count,
+      rawHops: data.raw.split(','),
+      count: data.count,
       hops: path.split(' → ').length,
-      pct: totalPaths > 0 ? Math.round(count / totalPaths * 1000) / 10 : 0
+      pct: totalPaths > 0 ? Math.round(data.count / totalPaths * 1000) / 10 : 0
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, limit);
