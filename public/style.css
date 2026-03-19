@@ -22,8 +22,12 @@
   --surface-3: #ffffff;
   --content-bg: var(--surface-0);
   --card-bg: var(--surface-1);
+  --hover-bg: rgba(0,0,0, 0.04);
 }
 
+/* ⚠️ DARK THEME VARIABLES — KEEP BOTH BLOCKS IN SYNC
+   The media query handles OS-level dark mode (auto); [data-theme="dark"] handles manual toggle.
+   When changing dark theme variables, update BOTH blocks below. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --surface-0: #0f0f23;
@@ -40,9 +44,10 @@
     --detail-bg: #232340;
     --input-bg: #1e1e34;
     --selected-bg: #1e3a5f;
+    --hover-bg: rgba(255,255,255, 0.06);
   }
 }
-
+/* ⚠️ DARK THEME VARIABLES — KEEP IN SYNC with @media block above */
 [data-theme="dark"] {
   --surface-0: #0f0f23;
   --surface-1: #1a1a2e;
@@ -58,6 +63,7 @@
   --detail-bg: #232340;
   --input-bg: #1e1e34;
   --selected-bg: #1e3a5f;
+  --hover-bg: rgba(255,255,255, 0.06);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -74,7 +80,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* === Touch Targets === */
-.nav-btn { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 .nav-link { min-height: 44px; display: inline-flex; align-items: center; }
 
 /* === Nav === */
@@ -214,7 +219,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .data-table th.sortable:hover { color: var(--accent); }
 .data-table td {
   padding: 3px 6px; border-bottom: 1px solid var(--border);
-  vertical-align: middle; white-space: nowrap; max-width: 180px;
+  vertical-align: middle; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
 }
 .data-table tbody tr:nth-child(even) { background: var(--row-stripe); }
@@ -1203,3 +1208,27 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .subpath-list .analytics-table td:nth-child(2) { white-space: normal; word-break: break-word; max-width: 50vw; }
 .subpath-list .analytics-table { table-layout: auto; }
 .subpath-list h4 { margin-top: 24px; }
+
+/* #70 — BYOP textarea larger on mobile */
+@media (max-width: 640px) {
+  .byop-input { min-height: 120px; }
+}
+
+/* #71 — Column visibility toggle */
+.col-toggle-wrap { position: relative; display: inline-block; }
+.col-toggle-btn { font-size: .8rem; padding: 4px 8px; cursor: pointer; background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+.col-toggle-menu { display: none; position: absolute; top: 100%; left: 0; z-index: 50; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 0; min-width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+.col-toggle-menu.open { display: block; }
+.col-toggle-menu label { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: .82rem; cursor: pointer; color: var(--text); }
+.col-toggle-menu label:hover { background: var(--row-hover); }
+
+/* Column hide classes */
+.hide-col-region .col-region,
+.hide-col-time .col-time,
+.hide-col-hash .col-hash,
+.hide-col-size .col-size,
+.hide-col-type .col-type,
+.hide-col-observer .col-observer,
+.hide-col-path .col-path,
+.hide-col-rpt .col-rpt,
+.hide-col-details .col-details { display: none; }
