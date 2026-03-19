@@ -112,9 +112,10 @@
 
   function vcrReplayFromTs(targetTs) {
     const fetchFrom = new Date(targetTs - 5000).toISOString();
+    const fetchTo = new Date(targetTs + 300000).toISOString(); // 5 min window
     stopReplay();
     vcrSetMode('REPLAY');
-    fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
+    fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(fetchFrom)}&until=${encodeURIComponent(fetchTo)}`)
       .then(r => r.json())
       .then(data => {
         const pkts = (data.packets || []).reverse();

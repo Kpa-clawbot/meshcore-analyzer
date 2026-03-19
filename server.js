@@ -277,7 +277,7 @@ app.get('/api/stats', (req, res) => {
 });
 
 app.get('/api/packets', (req, res) => {
-  const { limit = 50, offset = 0, type, route, region, observer, hash, since, groupByHash, node } = req.query;
+  const { limit = 50, offset = 0, type, route, region, observer, hash, since, until, groupByHash, node } = req.query;
   
   if (groupByHash === 'true') {
     let where = [];
@@ -288,6 +288,7 @@ app.get('/api/packets', (req, res) => {
     if (observer) { where.push('observer_id = @observer'); params.observer = observer; }
     if (hash) { where.push('hash = @hash'); params.hash = hash; }
     if (since) { where.push('timestamp > @since'); params.since = since; }
+    if (until) { where.push('timestamp < @until'); params.until = until; }
     if (node) { where.push("(decoded_json LIKE @nodePattern OR decoded_json LIKE @nodeNamePattern)"); params.nodePattern = `%${node}%`; const n = db.db.prepare('SELECT name FROM nodes WHERE public_key = ?').get(node); params.nodeNamePattern = n ? `%${n.name}%` : `%${node}%`; }
     const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const packets = db.db.prepare(`SELECT hash, COUNT(DISTINCT observer_id) as observer_count, COUNT(*) as count, MAX(timestamp) as latest, (SELECT observer_id FROM packets pObs WHERE pObs.hash = packets.hash ORDER BY pObs.timestamp ASC LIMIT 1) as observer_id, (SELECT observer_name FROM packets pOn WHERE pOn.hash = packets.hash ORDER BY pOn.timestamp ASC LIMIT 1) as observer_name, (SELECT path_json FROM packets p2 WHERE p2.hash = packets.hash ORDER BY p2.timestamp DESC LIMIT 1) as path_json, (SELECT payload_type FROM packets p3 WHERE p3.hash = packets.hash ORDER BY p3.timestamp DESC LIMIT 1) as payload_type, (SELECT raw_hex FROM packets p4 WHERE p4.hash = packets.hash ORDER BY p4.timestamp DESC LIMIT 1) as raw_hex, (SELECT decoded_json FROM packets p5 WHERE p5.hash = packets.hash ORDER BY p5.timestamp DESC LIMIT 1) as decoded_json FROM packets ${clause} GROUP BY hash ORDER BY latest DESC LIMIT @limit OFFSET @offset`).all({ ...params, limit: Number(limit), offset: Number(offset) });
@@ -303,6 +304,7 @@ app.get('/api/packets', (req, res) => {
   if (observer) { where.push('observer_id = @observer'); params.observer = observer; }
   if (hash) { where.push('hash = @hash'); params.hash = hash; }
   if (since) { where.push('timestamp > @since'); params.since = since; }
+  if (until) { where.push('timestamp < @until'); params.until = until; }
   if (node) { where.push("(decoded_json LIKE @nodePattern OR decoded_json LIKE @nodeNamePattern)"); params.nodePattern = `%${node}%`; const nn = db.db.prepare('SELECT name FROM nodes WHERE public_key = ?').get(node); params.nodeNamePattern = nn ? `%${nn.name}%` : `%${node}%`; }
   const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const packets = db.db.prepare(`SELECT * FROM packets ${clause} ORDER BY timestamp DESC LIMIT @limit OFFSET @offset`).all({ ...params, limit: Number(limit), offset: Number(offset) });
