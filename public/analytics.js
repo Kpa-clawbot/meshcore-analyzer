@@ -2,6 +2,7 @@
 'use strict';
 
 (function () {
+  let _analyticsData = {};
   function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
 
   // --- SVG helpers ---
@@ -103,14 +104,14 @@
     }
 
     try {
-      window._analyticsData = {};
+      _analyticsData = {};
       const [hashData, rfData, topoData, chanData] = await Promise.all([
         api('/analytics/hash-sizes'),
         api('/analytics/rf'),
         api('/analytics/topology'),
         api('/analytics/channels'),
       ]);
-      window._analyticsData = { hashData, rfData, topoData, chanData };
+      _analyticsData = { hashData, rfData, topoData, chanData };
       renderTab('overview');
     } catch (e) {
       document.getElementById('analyticsContent').innerHTML =
@@ -120,7 +121,7 @@
 
   function renderTab(tab) {
     const el = document.getElementById('analyticsContent');
-    const d = window._analyticsData;
+    const d = _analyticsData;
     switch (tab) {
       case 'overview': renderOverview(el, d); break;
       case 'rf': renderRF(el, d.rfData); break;
@@ -1133,7 +1134,7 @@
     }
   }
 
-function destroy() { delete window._analyticsData; }
+function destroy() { _analyticsData = {}; }
 
   registerPage('analytics', { init, destroy });
 })();

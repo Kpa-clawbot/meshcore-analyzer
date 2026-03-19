@@ -63,8 +63,7 @@
     }, 250));
 
     loadNodes();
-    wsHandler = msg => { if (msg.type === 'packet') loadNodes(); };
-    onWS(wsHandler);
+    wsHandler = debouncedOnWS(function (msgs) { if (msgs.some(function (m) { return m.type === 'packet'; })) loadNodes(); });
   }
 
   async function loadFullNode(pubkey) {

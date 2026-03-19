@@ -11,17 +11,21 @@
       <div class="observers-page">
         <div class="page-header">
           <h2>Observer Status</h2>
-          <button class="btn-icon" onclick="window._obsRefresh()" title="Refresh">🔄</button>
+          <button class="btn-icon" data-action="obs-refresh" title="Refresh">🔄</button>
         </div>
         <div id="obsContent"><div class="text-center text-muted" style="padding:40px">Loading…</div></div>
       </div>`;
     loadObservers();
+    // Event delegation for data-action buttons
+    app.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-action]');
+      if (btn && btn.dataset.action === 'obs-refresh') loadObservers();
+    });
     // Auto-refresh every 30s
     refreshTimer = setInterval(loadObservers, 30000);
-    wsHandler = (msg) => {
-      if (msg.type === 'packet') loadObservers();
-    };
-    onWS(wsHandler);
+    wsHandler = debouncedOnWS(function (msgs) {
+      if (msgs.some(function (m) { return m.type === 'packet'; })) loadObservers();
+    });
   }
 
   function destroy() {
@@ -111,7 +115,6 @@
     makeColumnsResizable('#obsTable', 'meshcore-obs-col-widths');
   }
 
-  window._obsRefresh = loadObservers;
 
   registerPage('observers', { init, destroy });
 })();
