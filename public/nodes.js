@@ -257,6 +257,20 @@
       th.addEventListener('click', () => { sortBy = th.dataset.sort; loadNodes(); });
     });
 
+    // Delegated click/keyboard handler for table rows
+    const tbody = document.getElementById('nodesBody');
+    if (tbody) {
+      const handler = (e) => {
+        const row = e.target.closest('tr[data-action="select"]');
+        if (!row) return;
+        if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+        if (e.type === 'keydown') e.preventDefault();
+        selectNode(row.dataset.value);
+      };
+      tbody.addEventListener('click', handler);
+      tbody.addEventListener('keydown', handler);
+    }
+
     renderRows();
   }
 
@@ -271,7 +285,7 @@
 
     tbody.innerHTML = nodes.map(n => {
       const roleColor = ROLE_COLORS[n.role] || '#6b7280';
-      return `<tr data-key="${n.public_key}" onclick="window._nodeSelect('${n.public_key}')" class="${selectedKey === n.public_key ? 'selected' : ''}">
+      return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}">
         <td>${favStar(n.public_key, 'node-fav')}<strong>${n.name || '(unnamed)'}</strong></td>
         <td class="mono">${truncate(n.public_key, 16)}</td>
         <td><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span></td>
@@ -406,8 +420,6 @@
     let t;
     return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
-
-  window._nodeSelect = selectNode;
 
   registerPage('nodes', { init, destroy });
 })();

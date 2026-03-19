@@ -88,6 +88,20 @@
       renderTab(btn.dataset.tab);
     });
 
+    // Delegated click/keyboard handler for clickable table rows
+    const analyticsContent = document.getElementById('analyticsContent');
+    if (analyticsContent) {
+      const handler = (e) => {
+        const row = e.target.closest('tr[data-action="navigate"]');
+        if (!row) return;
+        if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+        if (e.type === 'keydown') e.preventDefault();
+        location.hash = row.dataset.value;
+      };
+      analyticsContent.addEventListener('click', handler);
+      analyticsContent.addEventListener('keydown', handler);
+    }
+
     try {
       window._analyticsData = {};
       const [hashData, rfData, topoData, chanData] = await Promise.all([
@@ -568,7 +582,7 @@
         <table class="analytics-table">
           <thead><tr><th>Channel</th><th>Hash</th><th>Messages</th><th>Unique Senders</th><th>Last Activity</th><th>Decrypted</th></tr></thead>
           <tbody>
-            ${ch.channels.map(c => `<tr class="clickable-row" onclick="location.hash='#/channels?ch=${c.hash}'">
+            ${ch.channels.map(c => `<tr class="clickable-row" data-action="navigate" data-value="#/channels?ch=${c.hash}" tabindex="0" role="row">
               <td><strong>${esc(c.name || 'Unknown')}</strong></td>
               <td class="mono">${c.hash}</td>
               <td>${c.messages}</td>
@@ -679,7 +693,7 @@
           <table class="analytics-table">
             <thead><tr><th>Node</th><th>Hash Size</th><th>Adverts</th><th>Last Seen</th></tr></thead>
             <tbody>
-              ${data.multiByteNodes.map(n => `<tr class="clickable-row" onclick="location.hash='#/nodes/${n.pubkey ? encodeURIComponent(n.pubkey) : ''}'">
+              ${data.multiByteNodes.map(n => `<tr class="clickable-row" data-action="navigate" data-value="#/nodes/${n.pubkey ? encodeURIComponent(n.pubkey) : ''}" tabindex="0" role="row">
                 <td><strong>${esc(n.name)}</strong></td>
                 <td><span class="badge badge-hash-${n.hashSize}">${n.hashSize}-byte</span></td>
                 <td>${n.packets}</td>
@@ -697,7 +711,7 @@
           <tbody>
             ${data.topHops.map(h => {
               const link = h.pubkey ? `#/nodes/${encodeURIComponent(h.pubkey)}` : `#/packets?search=${h.hex}`;
-              return `<tr class="clickable-row" onclick="location.hash='${link}'">
+              return `<tr class="clickable-row" data-action="navigate" data-value="${link}" tabindex="0" role="row">
               <td class="mono">${h.hex}</td>
               <td>${h.name ? `<strong>${esc(h.name)}</strong>` : '<span class="text-muted">unknown</span>'}</td>
               <td><span class="badge badge-hash-${h.size}">${h.size}-byte</span></td>

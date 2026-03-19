@@ -290,6 +290,24 @@
     }, 250));
     fNode.addEventListener('blur', () => { setTimeout(() => fNodeDrop.classList.add('hidden'), 200); });
 
+    // Delegated click/keyboard handler for table rows
+    const pktBody = document.getElementById('pktBody');
+    if (pktBody) {
+      const handler = (e) => {
+        const row = e.target.closest('tr[data-action]');
+        if (!row) return;
+        if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+        if (e.type === 'keydown') e.preventDefault();
+        const action = row.dataset.action;
+        const value = row.dataset.value;
+        if (action === 'select') selectPacket(Number(value));
+        else if (action === 'select-hash') pktSelectHash(value);
+        else if (action === 'toggle-select') { pktToggleGroup(value); pktSelectHash(value); }
+      };
+      pktBody.addEventListener('click', handler);
+      pktBody.addEventListener('keydown', handler);
+    }
+
     renderTableRows();
     makeColumnsResizable('#pktTable', 'meshcore-pkt-col-widths');
   }
@@ -310,10 +328,7 @@
         const groupTypeClass = payloadTypeColor(p.payload_type);
         const groupSize = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
         const isSingle = p.count <= 1;
-        const rowClick = isSingle
-          ? `window._pktSelectHash('${p.hash}')`
-          : `window._pktToggleGroup('${p.hash}'); window._pktSelectHash('${p.hash}')`;
-        html += `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" onclick="${rowClick}">
+        html += `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" tabindex="0" role="row">
           <td style="width:28px;text-align:center;cursor:pointer">${isSingle ? '' : (isExpanded ? '▼' : '▶')}</td>
           <td>${groupRegion ? `<span class="badge-region">${groupRegion}</span>` : '—'}</td>
           <td>${timeAgo(p.latest)}</td>
@@ -335,7 +350,7 @@
             let childPath = [];
             try { childPath = JSON.parse(c.path_json || '[]'); } catch {}
             const childPathStr = renderPath(childPath);
-            html += `<tr class="group-child" data-id="${c.id}" onclick="window._pktSelect(${c.id})">
+            html += `<tr class="group-child" data-id="${c.id}" data-action="select" data-value="${c.id}" tabindex="0" role="row">
               <td></td><td>${childRegion ? `<span class="badge-region">${childRegion}</span>` : '—'}</td>
               <td>${timeAgo(c.timestamp)}</td>
               <td class="mono">${truncate(c.hash || '', 8)}</td>
@@ -365,7 +380,7 @@
       const pathStr = renderPath(pathHops);
       const detail = getDetailPreview(decoded);
 
-      return `<tr data-id="${p.id}" onclick="window._pktSelect(${p.id})" class="${selectedId === p.id ? 'selected' : ''}">
+      return `<tr data-id="${p.id}" data-action="select" data-value="${p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
         <td></td><td>${region ? `<span class="badge-region">${region}</span>` : '—'}</td>
         <td>${timeAgo(p.timestamp)}</td>
         <td class="mono">${truncate(p.hash || String(p.id), 8)}</td>
@@ -741,8 +756,7 @@
   })();
 
   // Global handlers
-  window._pktSelect = selectPacket;
-  window._pktToggleGroup = async (hash) => {
+  async function pktToggleGroup(hash) {
     if (expandedHashes.has(hash)) {
       expandedHashes.delete(hash);
       renderTableRows();
@@ -763,14 +777,14 @@
       expandedHashes.add(hash);
       renderTableRows();
     } catch {}
-  };
-  window._pktSelectHash = async (hash) => {
+  }
+  async function pktSelectHash(hash) {
     // When grouped, find first packet with this hash
     try {
       const data = await api(`/packets?hash=${hash}&limit=1`);
       if (data.packets?.[0]) selectPacket(data.packets[0].id);
     } catch {}
-  };
+  }
   window._pktRefresh = loadPackets;
   window._pktBYOP = showBYOP;
 
