@@ -143,10 +143,13 @@
           <h4>Recent Adverts (${adverts.length})</h4>
           <div id="advertTimeline">
             ${adverts.length ? adverts.map(a => {
+              const ts = a.timestamp || a.created_at;
+              const obs = a.observer_name || a.observer_id || '—';
+              const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
               return `<div class="advert-entry">
                 <span class="advert-dot" style="background:${roleColor}"></span>
-                <div class="advert-info">
-                  <strong>${timeAgo(a.timestamp)}</strong> — Observer: ${a.observer_id || '—'}
+                <div class="advert-info" style="color:var(--text)">
+                  <strong>${timeAgo(ts)}</strong> · ${pType} via ${escapeHtml(obs)}
                   ${a.snr != null ? ` · SNR ${a.snr}dB` : ''}${a.rssi != null ? ` · RSSI ${a.rssi}dBm` : ''}
                 </div>
               </div>`;
@@ -388,10 +391,13 @@
           <h4>Recent Adverts (${adverts.length})</h4>
           <div id="advertTimeline">
             ${adverts.length ? adverts.map(a => {
+              const ts = a.timestamp || a.created_at;
+              const obs = a.observer_name || a.observer_id || '—';
+              const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
               return `<div class="advert-entry">
                 <span class="advert-dot" style="background:${roleColor}"></span>
-                <div class="advert-info">
-                  <strong>${timeAgo(a.timestamp)}</strong> — Observer: ${escapeHtml(a.observer_name || a.observer_id || '—')}
+                <div class="advert-info" style="color:var(--text)">
+                  <strong>${timeAgo(ts)}</strong> · ${pType} via ${escapeHtml(obs)}
                   ${a.snr != null ? ` · SNR ${a.snr}dB` : ''}${a.rssi != null ? ` · RSSI ${a.rssi}dBm` : ''}
                 </div>
               </div>`;
