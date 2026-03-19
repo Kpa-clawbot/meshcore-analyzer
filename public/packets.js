@@ -38,13 +38,11 @@
         const w = Math.max(280, Math.min(window.innerWidth * 0.7, startW - (e2.clientX - startX)));
         panel.style.width = w + 'px';
         panel.style.minWidth = w + 'px';
-        // Force left panel and table to match new available width
+        // Explicitly size left panel so table reflows within it
         const left = document.getElementById('pktLeft');
-        const table = document.getElementById('pktTable');
-        if (left && table) {
+        if (left) {
           const available = left.parentElement.clientWidth - w;
           left.style.width = available + 'px';
-          table.style.width = available + 'px';
         }
       }
       function onUp() {
@@ -54,9 +52,7 @@
         localStorage.setItem(PANEL_WIDTH_KEY, panel.offsetWidth);
         // Clear forced widths, let flex take over
         const left = document.getElementById('pktLeft');
-        const table = document.getElementById('pktTable');
         if (left) left.style.width = '';
-        if (table) table.style.width = '';
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }

@@ -466,6 +466,20 @@ function makeColumnsResizable(tableSelector, storageKey) {
 
   if (saved) {
     try { widths = JSON.parse(saved); } catch { widths = null; }
+    // Validate: must be array of correct length with values summing to ~100 (percentages)
+    if (widths && Array.isArray(widths) && widths.length === ths.length) {
+      const sum = widths.reduce((s, w) => s + w, 0);
+      if (sum > 90 && sum < 110) {
+        // Saved percentages — apply directly
+        table.style.tableLayout = 'fixed';
+        table.style.width = '100%';
+        ths.forEach((th, i) => { th.style.width = widths[i] + '%'; });
+        // Skip measurement, jump to adding handles
+        addResizeHandles();
+        return;
+      }
+    }
+    widths = null; // Force remeasure
   }
 
   if (!widths) {
@@ -532,9 +546,13 @@ function makeColumnsResizable(tableSelector, storageKey) {
     topN.forEach(x => { finalWidths[x.i] += Math.round(surplus * (x.w / topTotal)); });
   }
 
-  table.style.width = containerW + 'px';
-  ths.forEach((th, i) => { th.style.width = finalWidths[i] + 'px'; });
+  table.style.width = '100%';
+  const totalFinal = finalWidths.reduce((s, w) => s + w, 0);
+  ths.forEach((th, i) => { th.style.width = (finalWidths[i] / totalFinal * 100) + '%'; });
 
+  addResizeHandles();
+
+  function addResizeHandles() {
   // Add resize handles
   ths.forEach((th, i) => {
     if (i === ths.length - 1) return;
@@ -554,15 +572,25 @@ function makeColumnsResizable(tableSelector, storageKey) {
       function onMove(e2) {
         const dx = e2.clientX - startX;
         const newW = Math.max(30, startW + dx);
-        th.style.width = newW + 'px';
-        table.style.width = (startTableW + (newW - startW)) + 'px';
+        // Steal/give space from next column (Excel behavior)
+        const nextTh = ths[i + 1];
+        const nextW = nextTh ? nextTh.offsetWidth : 0;
+        const delta = newW - th.offsetWidth;
+        if (nextTh && nextW - delta >= 30) {
+          th.style.width = newW + 'px';
+          nextTh.style.width = (nextW - delta) + 'px';
+        }
       }
       function onUp() {
         handle.classList.remove('active');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
-        const ws = ths.map(t => t.offsetWidth);
+        // Save as percentages
+        const tableW = table.offsetWidth;
+        const ws = ths.map(t => (t.offsetWidth / tableW * 100));
         localStorage.setItem(storageKey, JSON.stringify(ws));
+        // Re-apply as percentages
+        ths.forEach((t, j) => { t.style.width = ws[j] + '%'; });
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }
@@ -571,4 +599,5 @@ function makeColumnsResizable(tableSelector, storageKey) {
     });
     th.appendChild(handle);
   });
+  } // end addResizeHandles
 }
