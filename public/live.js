@@ -611,10 +611,10 @@
           VCR.playhead = closest;
           // Only replay ~50 packets from scrub point, not entire buffer to end
           VCR.scrubEnd = Math.min(closest + 50, VCR.buffer.length);
-          // dragPct no longer drives playhead; frozenNow + buffer timestamps do
+          VCR.dragging = false;
           startReplay();
         })
-        .catch(() => {});
+        .catch(() => { VCR.dragging = false; });
     }
 
     timelineEl.addEventListener('mousedown', (e) => {
@@ -629,8 +629,7 @@
     });
     document.addEventListener('mouseup', () => {
       if (!VCR.dragging) return;
-      VCR.dragging = false;
-      scrubCommit();
+      scrubCommit(); // keeps VCR.dragging=true until fetch completes
     });
     // Touch support
     timelineEl.addEventListener('touchstart', (e) => {
@@ -645,8 +644,7 @@
     });
     timelineEl.addEventListener('touchend', () => {
       if (!VCR.dragging) return;
-      VCR.dragging = false;
-      scrubCommit();
+      scrubCommit(); // keeps VCR.dragging=true until fetch completes
     });
 
     // Fetch historical timestamps for timeline, then start refresh
