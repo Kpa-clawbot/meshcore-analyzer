@@ -9,9 +9,14 @@
   let autoScroll = true;
   let nodeCache = {};
   let selectedNode = null;
+  var _nodeCacheTTL = 5 * 60 * 1000; // 5 minutes
 
   async function lookupNode(name) {
-    if (nodeCache[name] !== undefined) return nodeCache[name];
+    var cached = nodeCache[name];
+    if (cached !== undefined) {
+      if (cached && cached.fetchedAt && (Date.now() - cached.fetchedAt < _nodeCacheTTL)) return cached.data;
+      if (cached && !cached.fetchedAt) return cached; // legacy null entries
+    }
     try {
       const data = await api('/nodes/search?q=' + encodeURIComponent(name));
       // Try exact match first, then case-insensitive, then contains
@@ -20,7 +25,7 @@
         || nodes.find(n => n.name && n.name.toLowerCase() === name.toLowerCase())
         || nodes.find(n => n.name && n.name.toLowerCase().includes(name.toLowerCase()))
         || nodes[0] || null;
-      nodeCache[name] = match;
+      nodeCache[name] = { data: match, fetchedAt: Date.now() };
       return match;
     } catch { nodeCache[name] = null; return null; }
   }

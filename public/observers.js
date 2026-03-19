@@ -11,7 +11,7 @@
       <div class="observers-page">
         <div class="page-header">
           <h2>Observer Status</h2>
-          <button class="btn-icon" data-action="obs-refresh" title="Refresh">🔄</button>
+          <button class="btn-icon" data-action="obs-refresh" title="Refresh" aria-label="Refresh observers">🔄</button>
         </div>
         <div id="obsContent"><div class="text-center text-muted" style="padding:40px">Loading…</div></div>
       </div>`;
@@ -47,11 +47,14 @@
     }
   }
 
+  // NOTE: Comparing server timestamps to Date.now() can skew if client/server
+  // clocks differ. We add ±30s tolerance to thresholds to reduce false positives.
   function healthStatus(lastSeen) {
     if (!lastSeen) return { cls: 'health-red', label: 'Unknown' };
     const ago = Date.now() - new Date(lastSeen).getTime();
-    if (ago < 600000) return { cls: 'health-green', label: 'Online' };    // < 10 min
-    if (ago < 3600000) return { cls: 'health-yellow', label: 'Stale' };   // < 1 hour
+    const tolerance = 30000; // 30s tolerance for clock skew
+    if (ago < 600000 + tolerance) return { cls: 'health-green', label: 'Online' };    // < 10 min + tolerance
+    if (ago < 3600000 + tolerance) return { cls: 'health-yellow', label: 'Stale' };   // < 1 hour + tolerance
     return { cls: 'health-red', label: 'Offline' };
   }
 
@@ -66,9 +69,10 @@
   }
 
   function sparkBar(count, max) {
-    if (max === 0) return '<div class="spark-bar"><div class="spark-fill" style="width:0"></div></div>';
+    const aria = `role="meter" aria-valuenow="${count}" aria-valuemin="0" aria-valuemax="${max}" aria-label="Packet rate"`;
+    if (max === 0) return `<div class="spark-bar" ${aria}><div class="spark-fill" style="width:0"></div></div>`;
     const pct = Math.min(100, Math.round((count / max) * 100));
-    return `<div class="spark-bar"><div class="spark-fill" style="width:${pct}%"></div><span class="spark-label">${count}/hr</span></div>`;
+    return `<div class="spark-bar" ${aria}><div class="spark-fill" style="width:${pct}%"></div><span class="spark-label">${count}/hr</span></div>`;
   }
 
   function render() {
@@ -95,6 +99,7 @@
         <span class="obs-stat">📡 ${observers.length} Total</span>
       </div>
       <table class="data-table obs-table" id="obsTable">
+        <caption class="sr-only">Observer status and statistics</caption>
         <thead><tr>
           <th>Status</th><th>Name</th><th>Region</th><th>Last Seen</th>
           <th>Packets</th><th>Packets/Hour</th><th>Uptime</th>

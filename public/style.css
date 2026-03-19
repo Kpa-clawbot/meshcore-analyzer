@@ -672,7 +672,8 @@ button.ch-item.selected { background: var(--selected-bg); }
 .health-dot.health-yellow { background: #eab308; box-shadow: 0 0 6px #eab30880; }
 .health-dot.health-red { background: #ef4444; box-shadow: 0 0 6px #ef444480; }
 .obs-table td:first-child { white-space: nowrap; }
-.spark-bar { position: relative; width: 100px; height: 18px; background: var(--border); border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; }
+.spark-bar { position: relative; min-width: 60px; max-width: 100px; flex: 1; height: 18px; background: var(--border); border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; }
+@media (max-width: 640px) { .spark-bar { max-width: 60px; } }
 .spark-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #60a5fa); border-radius: 4px; transition: width 0.3s; }
 .spark-label { position: absolute; right: 4px; top: 0; line-height: 18px; font-size: 11px; color: var(--text); font-weight: 500; }
 
