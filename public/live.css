@@ -446,6 +446,16 @@
   50% { opacity: 0.3; }
 }
 
+.vcr-clock {
+  font-family: 'Courier New', 'Consolas', monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #f87171;
+  letter-spacing: 1.5px;
+  text-shadow: 0 0 6px rgba(248, 113, 113, 0.5);
+  min-width: 5.5em;
+  text-align: center;
+}
 .vcr-missed {
   font-size: 0.7rem;
   font-weight: 700;

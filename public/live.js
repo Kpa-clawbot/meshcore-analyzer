@@ -173,6 +173,7 @@
       }
       const entry = VCR.buffer[VCR.playhead];
       animatePacket(entry.pkt);
+      updateVCRClock(entry.ts);
       VCR.playhead++;
       updateVCRUI();
       updateTimelinePlayhead();
@@ -205,6 +206,16 @@
     }
   }
 
+  function updateVCRClock(tsMs) {
+    const el = document.getElementById('vcrClock');
+    if (!el) return;
+    const d = new Date(tsMs);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    el.textContent = `${hh}:${mm}:${ss}`;
+  }
+
   function updateVCRUI() {
     const modeEl = document.getElementById('vcrMode');
     const pauseBtn = document.getElementById('vcrPauseBtn');
@@ -217,6 +228,7 @@
       modeEl.className = 'vcr-mode vcr-mode-live';
       if (pauseBtn) pauseBtn.textContent = '⏸';
       if (missedEl) missedEl.classList.add('hidden');
+      updateVCRClock(Date.now());
     } else if (VCR.mode === 'PAUSED') {
       modeEl.textContent = '⏸ PAUSED';
       modeEl.className = 'vcr-mode vcr-mode-paused';
@@ -433,6 +445,7 @@
             <button id="vcrLiveBtn" class="vcr-btn vcr-live-btn" title="Jump to live">LIVE</button>
             <button id="vcrSpeedBtn" class="vcr-btn" title="Playback speed">1x</button>
             <div id="vcrMode" class="vcr-mode vcr-mode-live"><span class="vcr-live-dot"></span> LIVE</div>
+            <span id="vcrClock" class="vcr-clock">--:--:--</span>
             <span id="vcrMissed" class="vcr-missed hidden">+0</span>
           </div>
           <div class="vcr-timeline-wrap">
@@ -581,6 +594,10 @@
       VCR.dragPct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       const playheadEl = document.getElementById('vcrPlayhead');
       if (playheadEl) playheadEl.style.left = (VCR.dragPct * rect.width) + 'px';
+      // Update VCR clock to show drag target time
+      const now = VCR.frozenNow || Date.now();
+      const targetTs = now - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
+      updateVCRClock(targetTs);
     }
 
     function scrubCommit() {
