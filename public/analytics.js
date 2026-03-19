@@ -70,6 +70,7 @@
             <button class="tab-btn" data-tab="topology">Topology</button>
             <button class="tab-btn" data-tab="channels">Channels</button>
             <button class="tab-btn" data-tab="hashsizes">Hash Sizes</button>
+            <button class="tab-btn" data-tab="subpaths">Route Patterns</button>
           </div>
         </div>
         <div id="analyticsContent" class="analytics-content">
@@ -111,6 +112,7 @@
       case 'topology': renderTopology(el, d.topoData); break;
       case 'channels': renderChannels(el, d.chanData); break;
       case 'hashsizes': renderHashSizes(el, d.hashData); break;
+      case 'subpaths': renderSubpaths(el); break;
     }
     // Auto-apply column resizing to all analytics tables
     requestAnimationFrame(() => {
@@ -761,7 +763,52 @@
     } catch { el.innerHTML = '<div class="text-muted">Failed to load</div>'; }
   }
 
-  function destroy() { delete window._analyticsData; }
+    async function renderSubpaths(el) {
+    el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Analyzing route patterns…</div>';
+    try {
+      const [d2, d3, d4, d5] = await Promise.all([
+        api('/analytics/subpaths?minLen=2&maxLen=2&limit=50'),
+        api('/analytics/subpaths?minLen=3&maxLen=3&limit=30'),
+        api('/analytics/subpaths?minLen=4&maxLen=4&limit=20'),
+        api('/analytics/subpaths?minLen=5&maxLen=8&limit=15')
+      ]);
+
+      function renderTable(data, title) {
+        if (!data.subpaths.length) return `<h4>${title}</h4><div class="text-muted">No data</div>`;
+        const maxCount = data.subpaths[0]?.count || 1;
+        return `<h4>${title}</h4>
+          <p class="text-muted" style="margin:4px 0 8px">From ${data.totalPaths.toLocaleString()} paths with 2+ hops</p>
+          <table class="analytics-table"><thead><tr>
+            <th>#</th><th>Route</th><th>Occurrences</th><th>% of paths</th><th>Frequency</th>
+          </tr></thead><tbody>
+          ${data.subpaths.map((s, i) => {
+            const barW = Math.max(2, Math.round(s.count / maxCount * 100));
+            return `<tr>
+              <td>${i + 1}</td>
+              <td class="mono" style="white-space:nowrap">${escapeHtml(s.path)}</td>
+              <td>${s.count.toLocaleString()}</td>
+              <td>${s.pct}%</td>
+              <td><div style="background:var(--accent,#3b82f6);height:14px;border-radius:3px;width:${barW}%;opacity:0.7"></div></td>
+            </tr>`;
+          }).join('')}
+          </tbody></table>`;
+      }
+
+      el.innerHTML = `
+        <div class="analytics-section">
+          <h3>🛤️ Route Pattern Analysis</h3>
+          <p>Most common subpaths in the mesh — reveals backbone routes, bottlenecks, and preferred relay chains regardless of where they appear in the full path.</p>
+          ${renderTable(d2, 'Pairs (2-hop links)')}
+          ${renderTable(d3, 'Triples (3-hop chains)')}
+          ${renderTable(d4, 'Quads (4-hop chains)')}
+          ${renderTable(d5, 'Long chains (5+ hops)')}
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div class="text-muted">Error loading subpath data: ${e.message}</div>`;
+    }
+  }
+
+function destroy() { delete window._analyticsData; }
 
   registerPage('analytics', { init, destroy });
 })();

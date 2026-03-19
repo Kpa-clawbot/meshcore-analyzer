@@ -1104,6 +1104,59 @@ app.get('/api/nodes/:pubkey/health', (req, res) => {
   res.json(health);
 });
 
+// Subpath frequency analysis
+app.get('/api/analytics/subpaths', (req, res) => {
+  const minLen = Math.max(2, Number(req.query.minLen) || 2);
+  const maxLen = Number(req.query.maxLen) || 8;
+  const packets = db.db.prepare(`SELECT path_json FROM packets WHERE path_json IS NOT NULL AND path_json != '[]'`).all();
+  const allNodes = db.db.prepare('SELECT public_key, name, lat, lon FROM nodes WHERE name IS NOT NULL').all();
+
+  // Simple resolver (no geographic context needed here — just first match)
+  const nameCache = {};
+  function resolveName(hop) {
+    if (nameCache[hop] !== undefined) return nameCache[hop];
+    const h = hop.toLowerCase();
+    const m = allNodes.find(n => n.public_key.toLowerCase().startsWith(h));
+    nameCache[hop] = m ? m.name : hop;
+    return nameCache[hop];
+  }
+
+  const subpathCounts = {};
+  let totalPaths = 0;
+
+  for (const pkt of packets) {
+    let hops;
+    try { hops = JSON.parse(pkt.path_json); } catch { continue; }
+    if (!Array.isArray(hops) || hops.length < 2) continue;
+    totalPaths++;
+
+    // Resolve all hops to names
+    const named = hops.map(h => resolveName(h));
+
+    // Extract all subpaths of length minLen..maxLen
+    for (let len = minLen; len <= Math.min(maxLen, named.length); len++) {
+      for (let start = 0; start <= named.length - len; start++) {
+        const sub = named.slice(start, start + len).join(' → ');
+        subpathCounts[sub] = (subpathCounts[sub] || 0) + 1;
+      }
+    }
+  }
+
+  // Sort by frequency, return top results
+  const limit = Number(req.query.limit) || 100;
+  const ranked = Object.entries(subpathCounts)
+    .map(([path, count]) => ({
+      path,
+      count,
+      hops: path.split(' → ').length,
+      pct: totalPaths > 0 ? Math.round(count / totalPaths * 1000) / 10 : 0
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+
+  res.json({ subpaths: ranked, totalPaths });
+});
+
 // Static files + SPA fallback
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: false,
