@@ -148,6 +148,26 @@ function connectWS() {
 function onWS(fn) { wsListeners.push(fn); }
 function offWS(fn) { wsListeners = wsListeners.filter(f => f !== fn); }
 
+/* Debounced WS helper — batches rapid messages, calls fn with array of msgs */
+function debouncedOnWS(fn, ms) {
+  if (typeof ms === 'undefined') ms = 250;
+  let pending = [];
+  let timer = null;
+  function handler(msg) {
+    pending.push(msg);
+    if (!timer) {
+      timer = setTimeout(function () {
+        const batch = pending;
+        pending = [];
+        timer = null;
+        fn(batch);
+      }, ms);
+    }
+  }
+  onWS(handler);
+  return handler; // caller stores this to pass to offWS() in destroy
+}
+
 // --- Router ---
 const pages = {};
 
@@ -368,7 +388,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   updateNavStats();
   setInterval(updateNavStats, 15000);
-  onWS(() => updateNavStats());
+  debouncedOnWS(function () { updateNavStats(); });
 
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   else navigate();

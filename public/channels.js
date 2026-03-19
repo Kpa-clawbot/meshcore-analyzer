@@ -67,7 +67,7 @@
     if (!node) {
       panel.innerHTML = `<div class="ch-node-panel-header">
           <strong>${escapeHtml(name)}</strong>
-          <button class="ch-node-close" onclick="window._chCloseNode()" aria-label="Close">✕</button>
+          <button class="ch-node-close" data-action="ch-close-node" aria-label="Close">✕</button>
         </div>
         <div class="ch-node-panel-body">
           <div class="ch-node-field" style="color:var(--text-muted)">No node record found — this sender has only been seen in channel messages, not via adverts.</div>
@@ -84,7 +84,7 @@
 
       panel.innerHTML = `<div class="ch-node-panel-header">
           <strong>${escapeHtml(n.name || 'Unknown')}</strong>
-          <button class="ch-node-close" onclick="window._chCloseNode()" aria-label="Close">✕</button>
+          <button class="ch-node-close" data-action="ch-close-node" aria-label="Close">✕</button>
         </div>
         <div class="ch-node-panel-body">
           <div class="ch-node-field"><span class="ch-node-label">Role</span> ${role}</div>
@@ -98,7 +98,7 @@
           <a href="#/nodes/${n.public_key}" class="ch-node-link">View full node detail →</a>
         </div>`;
     } catch (e) {
-      panel.innerHTML = `<div class="ch-node-panel-header"><strong>${escapeHtml(name)}</strong><button class="ch-node-close" onclick="window._chCloseNode()">✕</button></div><div class="ch-node-panel-body ch-empty">Failed to load</div>`;
+      panel.innerHTML = `<div class="ch-node-panel-header"><strong>${escapeHtml(name)}</strong><button class="ch-node-close" data-action="ch-close-node">✕</button></div><div class="ch-node-panel-body ch-empty">Failed to load</div>`;
     }
   }
 
@@ -108,14 +108,10 @@
     selectedNode = null;
   }
 
-  window._chShowNode = showNodeDetail;
-  window._chCloseNode = closeNodeDetail;
-  window._chHoverNode = showNodeTooltip;
-  window._chUnhoverNode = hideNodeTooltip;
-  window._chBack = function() {
+  function chBack() {
     closeNodeDetail();
     document.querySelector('.ch-layout')?.classList.remove('ch-show-main');
-  };
+  }
 
   // WCAG AA compliant colors — ≥4.5:1 contrast on both white and dark backgrounds
   // Channel badge colors (white text on colored background)
@@ -181,7 +177,7 @@
       </div>
       <div class="ch-main" role="region" aria-label="Channel messages">
         <div class="ch-main-header" id="chHeader">
-          <button class="ch-back-btn" id="chBackBtn" aria-label="Back to channels" onclick="window._chBack()">←</button>
+          <button class="ch-back-btn" id="chBackBtn" aria-label="Back to channels" data-action="ch-back">←</button>
           <span class="ch-header-text">Select a channel</span>
         </div>
         <div class="ch-messages" id="chMessages">
@@ -192,6 +188,15 @@
     </div>`;
 
     loadChannels();
+
+    // Event delegation for data-action buttons
+    app.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      var action = btn.dataset.action;
+      if (action === 'ch-close-node') closeNodeDetail();
+      else if (action === 'ch-back') chBack();
+    });
 
     // Event delegation for channel selection (touch-friendly)
     document.getElementById('chList').addEventListener('click', (e) => {
@@ -250,17 +255,17 @@
       }
     });
 
-    wsHandler = (msg) => {
-      const isMessage = msg.type === 'message';
-      const isChannelPacket = msg.type === 'packet' && msg.data?.decoded?.header?.payloadTypeName === 'GRP_TXT';
-      if (isMessage || isChannelPacket) {
+    wsHandler = debouncedOnWS(function (msgs) {
+      var dominated = msgs.some(function (m) {
+        return m.type === 'message' || (m.type === 'packet' && m.data?.decoded?.header?.payloadTypeName === 'GRP_TXT');
+      });
+      if (dominated) {
         loadChannels(true);
         if (selectedHash) {
           refreshMessages();
         }
       }
-    };
-    onWS(wsHandler);
+    });
   }
 
   function destroy() {
@@ -413,6 +418,5 @@
     if (msgEl) { msgEl.scrollTop = msgEl.scrollHeight; autoScroll = true; document.getElementById('chScrollBtn')?.classList.add('hidden'); }
   }
 
-  window._chSelect = selectChannel;
   registerPage('channels', { init, destroy });
 })();

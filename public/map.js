@@ -96,12 +96,11 @@
     document.getElementById('mcLastHeard').addEventListener('change', e => { filters.lastHeard = e.target.value; loadNodes(); });
 
     // WS for live advert updates
-    wsHandler = msg => {
-      if (msg.type === 'packet' && msg.data?.decoded?.header?.payloadTypeName === 'ADVERT') {
+    wsHandler = debouncedOnWS(function (msgs) {
+      if (msgs.some(function (m) { return m.type === 'packet' && m.data?.decoded?.header?.payloadTypeName === 'ADVERT'; })) {
         loadNodes();
       }
-    };
-    onWS(wsHandler);
+    });
 
     loadNodes().then(() => {
       // Check for route from packet detail (via sessionStorage)

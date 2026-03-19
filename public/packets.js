@@ -8,6 +8,7 @@
   let filters = {};
   let wsHandler = null;
   let observers = [];
+  let regionMap = {};
   const TYPE_NAMES = { 0:'Request', 1:'Response', 2:'Direct Msg', 3:'ACK', 4:'Advert', 5:'Channel Msg', 7:'Anon Req', 8:'Path', 9:'Trace', 11:'Control' };
   function typeName(t) { return TYPE_NAMES[t] ?? `Type ${t}`; }
   let totalCount = 0;
@@ -105,6 +106,14 @@
     await loadObservers();
     loadPackets();
 
+    // Event delegation for data-action buttons
+    app.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      if (btn.dataset.action === 'pkt-refresh') loadPackets();
+      else if (btn.dataset.action === 'pkt-byop') showBYOP();
+    });
+
     // If linked directly to a packet by ID, load its detail and filter list
     if (directPacketId) {
       const pktId = Number(directPacketId);
@@ -135,12 +144,11 @@
         }
       } catch {}
     }
-    wsHandler = (msg) => {
-      if (msg.type === 'packet') {
-        loadPackets(); // refresh on new packet
+    wsHandler = debouncedOnWS(function (msgs) {
+      if (msgs.some(function (m) { return m.type === 'packet'; })) {
+        loadPackets();
       }
-    };
-    onWS(wsHandler);
+    });
   }
 
   function destroy() {
@@ -218,8 +226,8 @@
       <div class="page-header">
         <h2>Latest Packets <span class="count">(${totalCount})</span></h2>
         <div>
-          <button class="btn-icon" onclick="window._pktRefresh()" title="Refresh">🔄</button>
-          <button class="btn-icon" onclick="window._pktBYOP()" title="Bring Your Own Packet">📦 BYOP</button>
+          <button class="btn-icon" data-action="pkt-refresh" title="Refresh">🔄</button>
+          <button class="btn-icon" data-action="pkt-byop" title="Bring Your Own Packet">📦 BYOP</button>
         </div>
       </div>
       <div class="filter-bar" id="pktFilters">
@@ -244,7 +252,7 @@
 
     // Populate filter dropdowns
     const regionSel = document.getElementById('fRegion');
-    for (const [code, name] of Object.entries(window._regions || {})) {
+    for (const [code, name] of Object.entries(regionMap || {})) {
       regionSel.innerHTML += `<option value="${code}" ${filters.region === code ? 'selected' : ''}>${code}</option>`;
     }
 
@@ -766,7 +774,7 @@
   (async () => {
     try {
       // We'll use a simple approach - hardcode from config
-      window._regions = {"SJC":"San Jose, US","SFO":"San Francisco, US","OAK":"Oakland, US","MRY":"Monterey, US","LAR":"Los Angeles, US"};
+      regionMap = {"SJC":"San Jose, US","SFO":"San Francisco, US","OAK":"Oakland, US","MRY":"Monterey, US","LAR":"Los Angeles, US"};
     } catch {}
   })();
 
@@ -800,8 +808,6 @@
       if (data.packets?.[0]) selectPacket(data.packets[0].id);
     } catch {}
   }
-  window._pktRefresh = loadPackets;
-  window._pktBYOP = showBYOP;
 
   registerPage('packets', { init, destroy });
 })();
