@@ -168,7 +168,7 @@
 
 /* ---- Legend ---- */
 .live-legend {
-  bottom: 12px;
+  bottom: 58px;
   right: 12px;
   background: color-mix(in srgb, var(--surface-1) 92%, transparent);
   backdrop-filter: blur(12px);
