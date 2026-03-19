@@ -994,8 +994,8 @@
 
     if (!showGhostHops) return raw.filter(h => h.known);
 
-    const knownPositions = raw.filter(h => h.known);
-    if (knownPositions.length < 2) return raw.filter(h => h.known);
+    const knownPos2 = raw.filter(h => h.known);
+    if (knownPos2.length < 2) return raw.filter(h => h.known);
 
     for (let i = 0; i < raw.length; i++) {
       if (raw[i].known) continue;
