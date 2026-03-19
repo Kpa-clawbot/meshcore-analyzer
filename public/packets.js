@@ -507,13 +507,12 @@
         try {
           const resp = await fetch('/api/resolve-hops?hops=' + encodeURIComponent(pathHops.join(',')));
           const data = await resp.json();
-          // Build array of {hop, name, pubkey} with resolved full pubkeys
-          const resolvedHops = pathHops.map(h => {
-            const name = data.resolved[h];
-            // Find full pubkey from name if possible
-            return name || h;
+          // Pass full pubkeys (server-disambiguated) to map, falling back to short prefix
+          const resolvedKeys = pathHops.map(h => {
+            const r = data.resolved?.[h];
+            return r?.pubkey || h;
           });
-          sessionStorage.setItem('map-route-hops', JSON.stringify(pathHops));
+          sessionStorage.setItem('map-route-hops', JSON.stringify(resolvedKeys));
           window.location.hash = '#/map?route=1';
         } catch {
           window.location.hash = '#/map';
