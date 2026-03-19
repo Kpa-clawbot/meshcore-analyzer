@@ -39,6 +39,7 @@
     const tip = document.createElement('div');
     tip.id = 'chNodeTooltip';
     tip.className = 'ch-node-tooltip';
+    tip.setAttribute('role', 'tooltip');
     const role = node.is_repeater ? '📡 Repeater' : node.is_room ? '🏠 Room' : node.is_sensor ? '🌡 Sensor' : '📻 Companion';
     const lastSeen = node.last_seen ? timeAgo(node.last_seen) : 'unknown';
     tip.innerHTML = `<div class="ch-tooltip-name">${escapeHtml(node.name)}</div>
@@ -46,12 +47,16 @@
       <div class="ch-tooltip-meta">Last seen: ${lastSeen}</div>
       <div class="ch-tooltip-key mono">${(node.public_key || '').slice(0, 16)}…</div>`;
     document.body.appendChild(tip);
-    const rect = e.target.getBoundingClientRect();
+    var trigger = e.target.closest('[data-node]') || e.target;
+    trigger.setAttribute('aria-describedby', 'chNodeTooltip');
+    const rect = trigger.getBoundingClientRect();
     tip.style.left = Math.min(rect.left, window.innerWidth - 220) + 'px';
     tip.style.top = (rect.bottom + 4) + 'px';
   }
 
   function hideNodeTooltip() {
+    var trigger = document.querySelector('[aria-describedby="chNodeTooltip"]');
+    if (trigger) trigger.removeAttribute('aria-describedby');
     const tip = document.getElementById('chNodeTooltip');
     if (tip) tip.remove();
   }
@@ -205,13 +210,14 @@
 
   function init(app) {
     app.innerHTML = `<div class="ch-layout">
-      <div class="ch-sidebar" role="navigation" aria-label="Channel list">
+      <div class="ch-sidebar" aria-label="Channel list">
         <div class="ch-sidebar-header">
           <div class="ch-sidebar-title"><span class="ch-icon">💬</span> Channels</div>
         </div>
-        <div class="ch-channel-list" id="chList">
+        <div class="ch-channel-list" id="chList" role="listbox" aria-label="Channels">
           <div class="ch-loading">Loading channels…</div>
         </div>
+        <div class="ch-sidebar-resize" aria-hidden="true"></div>
       </div>
       <div class="ch-main" role="region" aria-label="Channel messages">
         <div class="ch-main-header" id="chHeader">
@@ -221,11 +227,44 @@
         <div class="ch-messages" id="chMessages">
           <div class="ch-empty">Choose a channel from the sidebar to view messages</div>
         </div>
-        <button class="ch-scroll-btn hidden" id="chScrollBtn" aria-live="polite">↓ New messages</button>
+        <span id="chAriaLive" class="sr-only" aria-live="polite"></span>
+        <button class="ch-scroll-btn hidden" id="chScrollBtn">↓ New messages</button>
       </div>
     </div>`;
 
     loadChannels();
+
+    // #89: Sidebar resize handle
+    (function () {
+      var sidebar = app.querySelector('.ch-sidebar');
+      var handle = app.querySelector('.ch-sidebar-resize');
+      var saved = localStorage.getItem('channels-sidebar-width');
+      if (saved) { var w = parseInt(saved, 10); if (w >= 180 && w <= 600) { sidebar.style.width = w + 'px'; sidebar.style.minWidth = w + 'px'; } }
+      var dragging = false, startX, startW;
+      handle.addEventListener('mousedown', function (e) { dragging = true; startX = e.clientX; startW = sidebar.getBoundingClientRect().width; e.preventDefault(); });
+      document.addEventListener('mousemove', function (e) { if (!dragging) return; var w = Math.max(180, Math.min(600, startW + e.clientX - startX)); sidebar.style.width = w + 'px'; sidebar.style.minWidth = w + 'px'; });
+      document.addEventListener('mouseup', function () { if (!dragging) return; dragging = false; localStorage.setItem('channels-sidebar-width', parseInt(sidebar.style.width, 10)); });
+    })();
+
+    // #90: Theme change observer — re-render messages on theme toggle
+    var _themeObserver = new MutationObserver(function (muts) {
+      for (var i = 0; i < muts.length; i++) {
+        if (muts[i].attributeName === 'data-theme') { if (selectedHash) renderMessages(); break; }
+      }
+    });
+    _themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    // #87: Fix pointer-events during mobile slide transition
+    var chMain = app.querySelector('.ch-main');
+    var chSidebar = app.querySelector('.ch-sidebar');
+    chMain.addEventListener('transitionend', function () {
+      var layout = app.querySelector('.ch-layout');
+      if (layout && layout.classList.contains('ch-show-main')) {
+        chSidebar.style.pointerEvents = 'none';
+      } else {
+        chSidebar.style.pointerEvents = '';
+      }
+    });
 
     // Event delegation for data-action buttons
     app.addEventListener('click', function (e) {
@@ -304,6 +343,21 @@
         hoverTimeout = setTimeout(hideNodeTooltip, 100);
       }
     });
+    // #86: Show tooltip on focus for keyboard users
+    msgEl.addEventListener('focusin', (e) => {
+      const el = e.target.closest('[data-node]');
+      if (el) {
+        clearTimeout(hoverTimeout);
+        const name = decodeURIComponent(atob(el.dataset.node));
+        showNodeTooltip(e, name);
+      }
+    });
+    msgEl.addEventListener('focusout', (e) => {
+      const el = e.target.closest('[data-node]');
+      if (el) {
+        hoverTimeout = setTimeout(hideNodeTooltip, 100);
+      }
+    });
 
     wsHandler = debouncedOnWS(function (msgs) {
       var dominated = msgs.some(function (m) {
@@ -366,7 +420,7 @@
       const encClass = ch.encrypted ? ' ch-item-encrypted' : '';
       const abbr = name.startsWith('#') ? name.slice(0, 3) : name.slice(0, 2).toUpperCase();
 
-      return `<button class="ch-item${sel}${encClass}" data-hash="${ch.hash}" type="button" aria-label="${escapeHtml(name)}">
+      return `<button class="ch-item${sel}${encClass}" data-hash="${ch.hash}" type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}">
         <div class="ch-badge" style="background:${color}" aria-hidden="true">${escapeHtml(abbr)}</div>
         <div class="ch-item-body">
           <div class="ch-item-top">
@@ -411,15 +465,17 @@
     try {
       const data = await api(`/channels/${selectedHash}/messages?limit=200`);
       const newMsgs = data.messages || [];
-      // Compare last message timestamp instead of count — count stays same at limit
-      const lastOld = messages.length ? messages[messages.length - 1]?.timestamp : null;
-      const lastNew = newMsgs.length ? newMsgs[newMsgs.length - 1]?.timestamp : null;
-      if (newMsgs.length === messages.length && lastOld === lastNew) return;
+      // #92: Use message ID/hash for change detection instead of count + timestamp
+      var _getLastId = function (arr) { var m = arr.length ? arr[arr.length - 1] : null; return m ? (m.id || m.packetId || m.timestamp || '') : ''; };
+      if (newMsgs.length === messages.length && _getLastId(newMsgs) === _getLastId(messages)) return;
+      var prevLen = messages.length;
       messages = newMsgs;
       renderMessages();
       if (wasAtBottom) scrollToBottom();
       else {
         document.getElementById('chScrollBtn')?.classList.remove('hidden');
+        var liveEl = document.getElementById('chAriaLive');
+        if (liveEl) liveEl.textContent = Math.max(1, newMsgs.length - prevLen) + ' new messages';
       }
     } catch {}
   }

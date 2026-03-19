@@ -83,8 +83,10 @@
   }
 
   let directPacketId = null;
+  let initGeneration = 0;
 
   async function init(app, routeParam) {
+    const gen = ++initGeneration;
     // Detect route param type: "id/123" for direct packet, short hex for hash, long hex for node
     if (routeParam) {
       if (routeParam.startsWith('id/')) {
@@ -120,6 +122,7 @@
       directPacketId = null;
       try {
         const data = await api(`/packets/${pktId}`);
+        if (gen !== initGeneration) return;
         if (data.packet?.hash) {
           filters.hash = data.packet.hash;
           const hashInput = document.getElementById('fHash');
@@ -158,6 +161,14 @@
     selectedId = null;
     filtersBuilt = false;
     delete filters.node;
+    expandedHashes = new Set();
+    hopNameCache = {};
+    totalCount = 0;
+    observers = [];
+    directPacketId = null;
+    groupByHash = true;
+    filters = {};
+    regionMap = {};
   }
 
   async function loadObservers() {
@@ -243,8 +254,8 @@
       </div>
       <table class="data-table" id="pktTable">
         <thead><tr>
-          <th></th><th class="col-region">Region</th><th>Time</th><th>Hash</th><th class="col-size">Size</th>
-          <th>Type</th><th>Observer</th><th>Path</th><th class="col-rpt">Rpt</th><th>Details</th>
+          <th></th><th class="col-region">Region</th><th class="col-time">Time</th><th class="col-hash">Hash</th><th class="col-size">Size</th>
+          <th class="col-type">Type</th><th class="col-observer">Observer</th><th class="col-path">Path</th><th class="col-rpt">Rpt</th><th class="col-details">Details</th>
         </tr></thead>
         <tbody id="pktBody"></tbody>
       </table>
@@ -412,14 +423,14 @@
         html += `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" tabindex="0" role="row">
           <td style="width:28px;text-align:center;cursor:pointer">${isSingle ? '' : (isExpanded ? '▼' : '▶')}</td>
           <td class="col-region">${groupRegion ? `<span class="badge-region">${groupRegion}</span>` : '—'}</td>
-          <td>${timeAgo(p.latest)}</td>
-          <td class="mono">${truncate(p.hash || '—', 8)}</td>
+          <td class="col-time">${timeAgo(p.latest)}</td>
+          <td class="mono col-hash">${truncate(p.hash || '—', 8)}</td>
           <td class="col-size">${groupSize ? groupSize + 'B' : '—'}</td>
-          <td>${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>` : '—'}</td>
-          <td>${isSingle ? truncate(p.observer_name || p.observer_id || '—', 16) : truncate(p.observer_name || p.observer_id || '—', 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
-          <td><span class="path-hops">${groupPathStr}</span></td>
+          <td class="col-type">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>` : '—'}</td>
+          <td class="col-observer">${isSingle ? truncate(p.observer_name || p.observer_id || '—', 16) : truncate(p.observer_name || p.observer_id || '—', 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
+          <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
           <td class="col-rpt">${isSingle ? '' : p.count}</td>
-          <td>${getDetailPreview((() => { try { return JSON.parse(p.decoded_json || '{}'); } catch { return {}; } })())}</td>
+          <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(p.decoded_json || '{}'); } catch { return {}; } })())}</td>
         </tr>`;
         // Child rows (loaded async when expanded)
         if (isExpanded && p._children) {
@@ -433,14 +444,14 @@
             const childPathStr = renderPath(childPath);
             html += `<tr class="group-child" data-id="${c.id}" data-action="select" data-value="${c.id}" tabindex="0" role="row">
               <td></td><td class="col-region">${childRegion ? `<span class="badge-region">${childRegion}</span>` : '—'}</td>
-              <td>${timeAgo(c.timestamp)}</td>
-              <td class="mono">${truncate(c.hash || '', 8)}</td>
+              <td class="col-time">${timeAgo(c.timestamp)}</td>
+              <td class="mono col-hash">${truncate(c.hash || '', 8)}</td>
               <td class="col-size">${size}B</td>
-              <td><span class="badge badge-${typeClass}">${typeName}</span></td>
-              <td>${truncate(c.observer_name || c.observer_id || '—', 16)}</td>
-              <td><span class="path-hops">${childPathStr}</span></td>
+              <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span></td>
+              <td class="col-observer">${truncate(c.observer_name || c.observer_id || '—', 16)}</td>
+              <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
               <td class="col-rpt"></td>
-              <td>${getDetailPreview((() => { try { return JSON.parse(c.decoded_json); } catch { return {}; } })())}</td>
+              <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(c.decoded_json); } catch { return {}; } })())}</td>
             </tr>`;
           }
         }
@@ -463,8 +474,8 @@
 
       return `<tr data-id="${p.id}" data-action="select" data-value="${p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
         <td></td><td class="col-region">${region ? `<span class="badge-region">${region}</span>` : '—'}</td>
-        <td>${timeAgo(p.timestamp)}</td>
-        <td class="mono">${truncate(p.hash || String(p.id), 8)}</td>
+        <td class="col-time">${timeAgo(p.timestamp)}</td>
+        <td class="mono col-hash">${truncate(p.hash || String(p.id), 8)}</td>
         <td class="col-size">${size}B</td>
         <td><span class="badge badge-${typeClass}">${typeName}</span></td>
         <td>${truncate(p.observer_name || p.observer_id || '—', 16)}</td>

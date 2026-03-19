@@ -121,7 +121,7 @@
     }
   }
 
-  function renderTab(tab) {
+  async function renderTab(tab) {
     const el = document.getElementById('analyticsContent');
     const d = _analyticsData;
     switch (tab) {
@@ -130,14 +130,14 @@
       case 'topology': renderTopology(el, d.topoData); break;
       case 'channels': renderChannels(el, d.chanData); break;
       case 'hashsizes': renderHashSizes(el, d.hashData); break;
-      case 'collisions': renderCollisionTab(el, d.hashData); break;
-      case 'subpaths': renderSubpaths(el); break;
+      case 'collisions': await renderCollisionTab(el, d.hashData); break;
+      case 'subpaths': await renderSubpaths(el); break;
     }
     // Auto-apply column resizing to all analytics tables
     requestAnimationFrame(() => {
       el.querySelectorAll('.analytics-table').forEach((tbl, i) => {
         tbl.id = tbl.id || `analytics-tbl-${tab}-${i}`;
-        makeColumnsResizable('#' + tbl.id, `meshcore-analytics-${tab}-${i}-col-widths`);
+        if (typeof makeColumnsResizable === 'function') makeColumnsResizable('#' + tbl.id, `meshcore-analytics-${tab}-${i}-col-widths`);
       });
     });
   }
@@ -728,7 +728,7 @@
     `;
   }
 
-  function renderCollisionTab(el, data) {
+  async function renderCollisionTab(el, data) {
     el.innerHTML = `
       <div class="analytics-card">
         <h3>1-Byte Hash Usage Matrix</h3>
@@ -741,8 +741,10 @@
         <div id="collisionList"><div class="text-muted" style="padding:8px">Loading…</div></div>
       </div>
     `;
-    renderHashMatrix(data.topHops);
-    renderCollisions(data.topHops);
+    let allNodes = [];
+    try { const nd = await api('/nodes?limit=2000'); allNodes = nd.nodes || []; } catch {}
+    renderHashMatrix(data.topHops, allNodes);
+    renderCollisions(data.topHops, allNodes);
   }
 
   function renderHashTimeline(hourly) {
@@ -769,15 +771,8 @@
     return svg;
   }
 
-  async function renderHashMatrix(topHops) {
+  async function renderHashMatrix(topHops, allNodes) {
     const el = document.getElementById('hashMatrix');
-
-    // Fetch all nodes for lookup
-    let allNodes = [];
-    try {
-      const nd = await api('/nodes?limit=2000');
-      allNodes = nd.nodes || [];
-    } catch {}
 
     // Build prefix → node count map
     const prefixNodes = {};
@@ -824,10 +819,10 @@
     html += '</table></div>';
     html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>
     <div style="margin-top:8px;font-size:0.8em;display:flex;gap:16px;align-items:center">
-      <span><span style="display:inline-block;width:12px;height:12px;background:#166534;border:1px solid var(--border);vertical-align:middle"></span> 0 — Available</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#854d0e;border:1px solid var(--border);vertical-align:middle"></span> 1 — One node</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:rgb(200,80,30);border:1px solid var(--border);vertical-align:middle"></span> ⚠2 — Two nodes (collision)</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:rgb(200,0,30);border:1px solid var(--border);vertical-align:middle"></span> ⚠3+ — Three+ nodes (collision)</span>
+      <span><span class="legend-swatch" style="background:#166534"></span> 0 — Available</span>
+      <span><span class="legend-swatch" style="background:#854d0e"></span> 1 — One node</span>
+      <span><span class="legend-swatch" style="background:rgb(200,80,30)"></span> ⚠2 — Two nodes (collision)</span>
+      <span><span class="legend-swatch" style="background:rgb(200,0,30)"></span> ⚠3+ — Three+ nodes (collision)</span>
     </div>`;
     el.innerHTML = html;
 
@@ -855,13 +850,12 @@
     });
   }
 
-  async function renderCollisions(topHops) {
+  async function renderCollisions(topHops, allNodes) {
     const el = document.getElementById('collisionList');
     const oneByteHops = topHops.filter(h => h.size === 1);
     if (!oneByteHops.length) { el.innerHTML = '<div class="text-muted">No 1-byte hops</div>'; return; }
     try {
-      const nodesData = await api('/nodes?limit=2000');
-      const nodes = nodesData.nodes || [];
+      const nodes = allNodes;
       const collisions = [];
       for (const hop of oneByteHops) {
         const prefix = hop.hex.toLowerCase();
