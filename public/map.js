@@ -117,17 +117,39 @@
   }
 
   function drawPacketRoute(hopKeys) {
-    // Resolve hop short hashes to node positions via prefix match
-    const positions = [];
-    for (const hop of hopKeys) {
+    // Resolve hop short hashes to node positions with geographic disambiguation
+    const raw = hopKeys.map(hop => {
       const hopLower = hop.toLowerCase();
-      const node = nodes.find(n =>
-        n.public_key.toLowerCase().startsWith(hopLower)
+      const candidates = nodes.filter(n =>
+        n.public_key.toLowerCase().startsWith(hopLower) &&
+        n.lat != null && n.lon != null && !(n.lat === 0 && n.lon === 0)
       );
-      if (node && node.lat != null && node.lon != null && !(node.lat === 0 && node.lon === 0)) {
-        positions.push({ lat: node.lat, lon: node.lon, name: node.name || hop });
+      if (candidates.length === 1) {
+        return { lat: candidates[0].lat, lon: candidates[0].lon, name: candidates[0].name || hop, resolved: true };
+      } else if (candidates.length > 1) {
+        return { name: hop, resolved: false, candidates };
+      }
+      return { name: hop, resolved: false };
+    });
+
+    // Disambiguate: pick candidate closest to center of already-resolved hops
+    const knownPos = raw.filter(h => h.resolved);
+    if (knownPos.length > 0) {
+      const cLat = knownPos.reduce((s, p) => s + p.lat, 0) / knownPos.length;
+      const cLon = knownPos.reduce((s, p) => s + p.lon, 0) / knownPos.length;
+      const dist = (lat, lon) => Math.sqrt((lat - cLat) ** 2 + (lon - cLon) ** 2);
+      for (const hop of raw) {
+        if (!hop.resolved && hop.candidates) {
+          hop.candidates.sort((a, b) => dist(a.lat, a.lon) - dist(b.lat, b.lon));
+          const best = hop.candidates[0];
+          hop.lat = best.lat; hop.lon = best.lon;
+          hop.name = best.name || hop.name;
+          hop.resolved = true;
+        }
       }
     }
+
+    const positions = raw.filter(h => h.resolved);
     if (positions.length < 1) return;
 
     // Even a single node is worth showing (zoom to it)
