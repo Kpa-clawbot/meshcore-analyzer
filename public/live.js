@@ -835,9 +835,8 @@
   }
 
   function clearNodeMarkers() {
-    for (const [key, marker] of Object.entries(nodeMarkers)) {
-      if (map) map.removeLayer(marker);
-    }
+    if (nodesLayer) nodesLayer.clearLayers();
+    if (animLayer) animLayer.clearLayers();
     nodeMarkers = {};
     nodeData = {};
     nodeActivity = {};
