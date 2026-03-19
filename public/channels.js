@@ -153,7 +153,10 @@
 
   function chBack() {
     closeNodeDetail();
-    document.querySelector('.ch-layout')?.classList.remove('ch-show-main');
+    var layout = document.querySelector('.ch-layout');
+    if (layout) layout.classList.remove('ch-show-main');
+    var sidebar = document.querySelector('.ch-sidebar');
+    if (sidebar) sidebar.style.pointerEvents = '';
   }
 
   // WCAG AA compliant colors — ≥4.5:1 contrast on both white and dark backgrounds
