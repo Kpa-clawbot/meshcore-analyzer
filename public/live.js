@@ -729,9 +729,9 @@
     const legendToggleBtn = document.getElementById('legendToggleBtn');
     if (legendToggleBtn && legendEl) {
       legendToggleBtn.addEventListener('click', () => {
-        const isHidden = legendEl.classList.toggle('legend-mobile-hidden');
-        legendToggleBtn.setAttribute('aria-label', isHidden ? 'Show legend' : 'Hide legend');
-        legendToggleBtn.textContent = isHidden ? '🎨' : '✕';
+        const isVisible = legendEl.classList.toggle('legend-mobile-visible');
+        legendToggleBtn.setAttribute('aria-label', isVisible ? 'Hide legend' : 'Show legend');
+        legendToggleBtn.textContent = isVisible ? '✕' : '🎨';
       });
     }
 

@@ -254,14 +254,20 @@
 
 /* ---- Responsive ---- */
 @media (max-width: 640px) {
-  .live-feed { width: calc(100vw - 24px); max-height: 180px; }
-  .live-legend { display: none; }
-  .live-legend.legend-mobile-hidden { display: none !important; }
+  .live-feed { width: calc(100vw - 24px); max-height: 40vh; }
+  /* Legend: hidden by default on mobile, toggle button shows it */
+  .live-legend { display: none !important; }
+  .live-legend.legend-mobile-visible { display: flex !important; }
   .legend-toggle-btn { display: block !important; }
-  .live-legend:not(.legend-mobile-hidden) { display: flex !important; }
-  .live-header { flex-wrap: wrap; gap: 8px; }
-  .live-stats-row { flex-wrap: wrap; }
-  .live-header { flex-wrap: wrap; gap: 6px; }
+  /* Header: compact on mobile */
+  .live-header { 
+    flex-wrap: wrap; gap: 6px; padding: 6px 10px;
+    top: 56px; left: 8px; right: 8px; max-width: calc(100vw - 16px);
+  }
+  .live-stats-row { flex-wrap: wrap; gap: 4px; }
+  .live-stat-pill { font-size: 11px; padding: 2px 7px; }
+  .live-toggles { font-size: 10px; gap: 6px; margin-left: 0; }
+  .live-title { font-size: 12px; letter-spacing: 1px; }
   /* Feed detail card as bottom sheet on mobile (#61) */
   .feed-detail-card {
     position: fixed !important;
@@ -272,10 +278,20 @@
     transform: none !important;
     width: 100% !important;
     max-width: 100vw !important;
+    max-height: 50vh !important;
+    overflow-y: auto !important;
     border-radius: 10px 10px 0 0 !important;
     animation: slideUp 0.2s ease-out !important;
   }
   @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  /* Touch targets */
+  .feed-hide-btn { width: 36px; height: 36px; font-size: 16px; }
+  .feed-show-btn { padding: 10px 12px; min-width: 44px; min-height: 44px; }
+  .legend-toggle-btn { min-width: 44px; min-height: 44px; }
+  /* Feed resize handle: disable on mobile (can't drag easily) */
+  .feed-resize-handle { display: none; }
+  /* Leaflet zoom controls */
+  .live-page .leaflet-top.leaflet-right { top: 56px; }
 }
 
 /* Feed item hover */
@@ -605,15 +621,15 @@
 .feed-show-btn { bottom: 68px !important; }
 
 /* Mobile VCR */
-@media (max-width: 600px) {
-  .vcr-bar { padding: 4px 6px; overflow-x: auto; flex-wrap: nowrap; }
-  .vcr-btn { padding: 6px 10px; font-size: 0.8rem; min-height: 36px; min-width: 36px; }
-  .vcr-scope-btn { font-size: 0.7rem; padding: 4px 8px; min-height: 36px; }
-  .vcr-lcd { display: flex; }
-  .live-feed { display: none; }
-  .feed-show-btn { display: none !important; }
-  .live-legend { display: none; }
-  .legend-toggle-btn { display: none !important; }
+@media (max-width: 640px) {
+  .vcr-bar { padding: 4px 6px; overflow: hidden; flex-wrap: nowrap; }
+  .vcr-btn { padding: 6px 8px; font-size: 0.8rem; min-height: 44px; min-width: 44px; }
+  .vcr-scope-btns { gap: 1px; }
+  .vcr-scope-btn { font-size: 0.65rem; padding: 4px 6px; min-height: 36px; }
+  .vcr-lcd { display: none; }
+  .vcr-mode { font-size: 0.65rem; padding: 2px 6px; }
+  .vcr-timeline-container { min-width: 60px; }
+  .vcr-prompt { font-size: 0.7rem; }
 }
 
 /* Timeline time tooltip */
