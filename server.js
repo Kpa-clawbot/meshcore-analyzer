@@ -54,17 +54,31 @@ function geoDist(lat1, lon1, lat2, lon2) { return Math.sqrt((lat1 - lat2) ** 2 +
 function disambiguateHops(hops, allNodes) {
   const MAX_HOP_DIST = 1.8; // ~200km
 
+  // Build prefix index on first call (cached on allNodes array)
+  if (!allNodes._prefixIdx) {
+    allNodes._prefixIdx = {};
+    allNodes._prefixIdxName = {};
+    for (const n of allNodes) {
+      const pk = n.public_key.toLowerCase();
+      for (let len = 1; len <= 3; len++) {
+        const p = pk.slice(0, len * 2);
+        if (!allNodes._prefixIdx[p]) allNodes._prefixIdx[p] = [];
+        allNodes._prefixIdx[p].push(n);
+        if (!allNodes._prefixIdxName[p]) allNodes._prefixIdxName[p] = n;
+      }
+    }
+  }
+
   // First pass: find candidates per hop
   const resolved = hops.map(hop => {
     const h = hop.toLowerCase();
-    const candidates = allNodes.filter(n => n.public_key.toLowerCase().startsWith(h) && n.lat && n.lon && !(n.lat === 0 && n.lon === 0));
-    if (candidates.length === 1) {
-      return { hop, name: candidates[0].name, lat: candidates[0].lat, lon: candidates[0].lon, pubkey: candidates[0].public_key, known: true };
-    } else if (candidates.length > 1) {
-      return { hop, name: hop, lat: null, lon: null, pubkey: null, known: false, candidates };
+    const withCoords = (allNodes._prefixIdx[h] || []).filter(n => n.lat && n.lon && !(n.lat === 0 && n.lon === 0));
+    if (withCoords.length === 1) {
+      return { hop, name: withCoords[0].name, lat: withCoords[0].lat, lon: withCoords[0].lon, pubkey: withCoords[0].public_key, known: true };
+    } else if (withCoords.length > 1) {
+      return { hop, name: hop, lat: null, lon: null, pubkey: null, known: false, candidates: withCoords };
     }
-    // No candidates with coords — try name-only match
-    const nameMatch = allNodes.find(n => n.public_key.toLowerCase().startsWith(h));
+    const nameMatch = allNodes._prefixIdxName[h];
     return { hop, name: nameMatch?.name || hop, lat: null, lon: null, pubkey: nameMatch?.public_key || null, known: false };
   });
 
@@ -1258,7 +1272,16 @@ app.get('/api/analytics/subpaths', (req, res) => {
   const packets = db.db.prepare(`SELECT path_json FROM packets WHERE path_json IS NOT NULL AND path_json != '[]'`).all();
   const allNodes = db.db.prepare('SELECT public_key, name, lat, lon FROM nodes WHERE name IS NOT NULL').all();
 
-  // Disambiguate per path, then extract subpaths with resolved names
+  // Disambiguate per path with caching (same hop sequence = same result)
+  const disambigCache = {};
+  function cachedDisambiguate(hops) {
+    const key = hops.join(',');
+    if (disambigCache[key]) return disambigCache[key];
+    const result = disambiguateHops(hops, allNodes);
+    disambigCache[key] = result;
+    return result;
+  }
+
   const subpathCounts = {};
   let totalPaths = 0;
 
@@ -1268,7 +1291,7 @@ app.get('/api/analytics/subpaths', (req, res) => {
     if (!Array.isArray(hops) || hops.length < 2) continue;
     totalPaths++;
 
-    const resolved = disambiguateHops(hops, allNodes);
+    const resolved = cachedDisambiguate(hops);
     const named = resolved.map(r => r.name);
 
     // Extract all subpaths of length minLen..maxLen
@@ -1314,6 +1337,7 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
   const hourBuckets = new Array(24).fill(0);
   let snrSum = 0, snrCount = 0, rssiSum = 0, rssiCount = 0;
   const observers = {};
+  const _detailCache = {};
 
   for (const pkt of packets) {
     let hops;
@@ -1338,9 +1362,10 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
     if (pkt.rssi != null) { rssiSum += pkt.rssi; rssiCount++; }
     if (pkt.observer_name) observers[pkt.observer_name] = (observers[pkt.observer_name] || 0) + 1;
 
-    // Track full parent paths (disambiguated)
-    const fullResolved = disambiguateHops(hops, allNodes);
-    const fullPath = fullResolved.map(r => r.name).join(' → ');
+    // Track full parent paths (disambiguated, cached)
+    const cacheKey = hops.join(',');
+    if (!_detailCache[cacheKey]) _detailCache[cacheKey] = disambiguateHops(hops, allNodes);
+    const fullPath = _detailCache[cacheKey].map(r => r.name).join(' → ');
     parentPaths[fullPath] = (parentPaths[fullPath] || 0) + 1;
   }
 
