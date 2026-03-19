@@ -471,7 +471,18 @@
     connectWS();
     initResizeHandler();
     startRateCounter();
-    replayRecent();
+
+    // Check for single packet replay from packets page
+    const replayData = sessionStorage.getItem('replay-packet');
+    if (replayData) {
+      sessionStorage.removeItem('replay-packet');
+      try {
+        const pkt = JSON.parse(replayData);
+        setTimeout(() => animatePacket(pkt), 1500);
+      } catch {}
+    } else {
+      replayRecent();
+    }
 
     map.on('zoomend', rescaleMarkers);
 
@@ -654,16 +665,6 @@
       livePage.addEventListener('click', showNav);
     }
     showNav();
-
-    // Check for replay packet from packets page
-    const replayData = sessionStorage.getItem('replay-packet');
-    if (replayData) {
-      sessionStorage.removeItem('replay-packet');
-      try {
-        const pkt = JSON.parse(replayData);
-        setTimeout(() => animatePacket(pkt), 1500); // let map load first
-      } catch {}
-    }
   }
 
   function injectSVGFilters() {
