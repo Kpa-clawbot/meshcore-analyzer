@@ -925,7 +925,7 @@ button.ch-item.selected { background: var(--selected-bg); }
 .nav-fav-dropdown {
   display: none; position: absolute; top: 100%; right: 0; z-index: 1000;
   min-width: 260px; max-height: 360px; overflow-y: auto;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-1, var(--detail-bg)); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,.15); margin-top: 6px;
 }
 .nav-fav-dropdown.open { display: block; }

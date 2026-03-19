@@ -640,7 +640,12 @@
       zoomAnimation: true, markerZoomAnimation: true
     }).setView([37.45, -122.0], 9);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+      (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const tileUrl = isDark
+      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+      : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+    L.tileLayer(tileUrl, { maxZoom: 19 }).addTo(map);
     L.control.zoom({ position: 'topright' }).addTo(map);
 
     nodesLayer = L.layerGroup().addTo(map);
