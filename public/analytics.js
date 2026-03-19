@@ -1140,20 +1140,18 @@
   async function renderNodesTab(el) {
     el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading node analytics…</div>';
     try {
-      const nodesResp = await api('/nodes?limit=200&sortBy=lastSeen');
+      const [nodesResp, bulkHealth] = await Promise.all([
+        api('/nodes?limit=200&sortBy=lastSeen'),
+        api('/nodes/bulk-health?limit=50')
+      ]);
       const nodes = nodesResp.nodes || nodesResp;
       const myNodes = JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]');
       const myKeys = new Set(myNodes.map(n => n.pubkey));
 
-      // Fetch health data for top nodes (limit to avoid hammering)
-      const topNodes = nodes.slice(0, 50);
-      const healthResults = await Promise.allSettled(
-        topNodes.map(n => api('/nodes/' + encodeURIComponent(n.public_key) + '/health').then(h => ({ ...n, health: h })))
-      );
-      const enriched = healthResults
-        .filter(r => r.status === 'fulfilled')
-        .map(r => r.value)
-        .filter(n => n.health);
+      // Map bulk health by pubkey
+      const healthMap = {};
+      bulkHealth.forEach(h => { healthMap[h.public_key] = h; });
+      const enriched = nodes.filter(n => healthMap[n.public_key]).map(n => ({ ...n, health: { stats: healthMap[n.public_key].stats, observers: healthMap[n.public_key].observers } }));
 
       // Compute rankings
       const byPackets = [...enriched].sort((a, b) => (b.health.stats.totalPackets || 0) - (a.health.stats.totalPackets || 0));
