@@ -346,14 +346,14 @@
     // Redraw sparkline (cheap, avoids double-buffer complexity)
     // Just draw playhead line on top — clear only the line area
     let x;
-    if (VCR.mode === 'LIVE' || VCR.playhead < 0) {
+    if (VCR.mode === 'LIVE') {
       x = cw; // rightmost = now
+    } else if (VCR.dragPct != null && (VCR.mode === 'REPLAY' || VCR.mode === 'PAUSED')) {
+      // After scrub: hold at drag position until replay tick updates it
+      x = VCR.dragPct * cw;
     } else if (VCR.playhead >= 0 && VCR.playhead < VCR.buffer.length) {
       const playTs = VCR.buffer[VCR.playhead].ts;
       x = ((playTs - startTs) / scopeMs) * cw;
-    } else if (VCR.mode === 'PAUSED' && VCR.dragPct != null) {
-      // After scrub, hold at last drag position
-      x = VCR.dragPct * cw;
     } else {
       x = cw;
     }
@@ -618,6 +618,7 @@
           VCR.playhead = closest;
           // Only replay ~50 packets from scrub point, not entire buffer to end
           VCR.scrubEnd = Math.min(closest + 50, VCR.buffer.length);
+          VCR.dragPct = null; // let replay tick drive playhead now
           startReplay();
         })
         .catch(() => {});
