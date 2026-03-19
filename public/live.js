@@ -64,14 +64,25 @@
     let resizeTimer = null;
     _onResize = function() {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => { if (map) map.invalidateSize({ animate: false }); }, 150);
+      resizeTimer = setTimeout(() => {
+        if (map) {
+          // Force container size recalc
+          const page = document.querySelector('.live-page');
+          if (page) { page.style.height = window.innerHeight + 'px'; }
+          map.invalidateSize({ animate: false });
+        }
+      }, 150);
     };
     window.addEventListener('resize', _onResize);
     window.addEventListener('orientationchange', () => {
-      setTimeout(_onResize, 200);
-      setTimeout(_onResize, 600);
-      setTimeout(_onResize, 1200);
+      setTimeout(_onResize, 100);
+      setTimeout(_onResize, 400);
+      setTimeout(_onResize, 800);
+      setTimeout(_onResize, 1500);
     });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', _onResize);
+    }
   }
 
   // === VCR Controls ===
@@ -1442,7 +1453,11 @@
     if (_rateCounterInterval) { clearInterval(_rateCounterInterval); _rateCounterInterval = null; }
     if (ws) { ws.onclose = null; ws.close(); ws = null; }
     if (map) { map.remove(); map = null; }
-    if (_onResize) { window.removeEventListener('resize', _onResize); window.removeEventListener('orientationchange', _onResize); }
+    if (_onResize) {
+      window.removeEventListener('resize', _onResize);
+      window.removeEventListener('orientationchange', _onResize);
+      if (window.visualViewport) window.visualViewport.removeEventListener('resize', _onResize);
+    }
     const topNav = document.querySelector('.top-nav');
     if (topNav) { topNav.classList.remove('nav-autohide'); topNav.style.position = ''; topNav.style.width = ''; topNav.style.zIndex = ''; }
     if (_navCleanup) {

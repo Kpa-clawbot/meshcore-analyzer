@@ -254,12 +254,10 @@
 
 /* ---- Responsive ---- */
 @media (max-width: 640px) {
-  .live-feed { width: calc(100vw - 24px); max-height: 40vh; }
-  /* Legend: hidden by default on mobile, toggle button shows it */
+  .live-feed { display: none !important; }
+  .feed-show-btn { display: none !important; }
   .live-legend { display: none !important; }
-  .live-legend.legend-mobile-visible { display: flex !important; }
-  .legend-toggle-btn { display: block !important; }
-  /* Header: compact on mobile */
+  .legend-toggle-btn { display: none !important; }
   .live-header { 
     flex-wrap: wrap; gap: 6px; padding: 6px 10px;
     top: 56px; left: 8px; right: 8px; max-width: calc(100vw - 16px);
@@ -268,7 +266,6 @@
   .live-stat-pill { font-size: 11px; padding: 2px 7px; }
   .live-toggles { font-size: 10px; gap: 6px; margin-left: 0; }
   .live-title { font-size: 12px; letter-spacing: 1px; }
-  /* Feed detail card as bottom sheet on mobile (#61) */
   .feed-detail-card {
     position: fixed !important;
     right: 0 !important;
@@ -622,11 +619,11 @@
 
 /* Mobile VCR */
 @media (max-width: 640px) {
-  .vcr-bar { padding: 4px 6px; overflow: hidden; flex-wrap: nowrap; }
+  .vcr-bar { padding: 4px 6px; overflow-x: auto; overflow-y: hidden; flex-wrap: nowrap; }
   .vcr-btn { padding: 6px 8px; font-size: 0.8rem; min-height: 44px; min-width: 44px; }
   .vcr-scope-btns { gap: 1px; }
   .vcr-scope-btn { font-size: 0.65rem; padding: 4px 6px; min-height: 36px; }
-  .vcr-lcd { display: none; }
+  .vcr-lcd { display: flex; }
   .vcr-mode { font-size: 0.65rem; padding: 2px 6px; }
   .vcr-timeline-container { min-width: 60px; }
   .vcr-prompt { font-size: 0.7rem; }
