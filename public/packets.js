@@ -400,7 +400,7 @@
     // Anonymous requests
     if (decoded.type === 'ANON_REQ') return `🔒 anon → ${decoded.destHash?.slice(0,8) || '?'}`;
     // Companion bridge text
-    if (decoded.text) return decoded.text.length > 80 ? decoded.text.slice(0, 80) + '…' : decoded.text;
+    if (decoded.text) return escapeHtml(decoded.text.length > 80 ? decoded.text.slice(0, 80) + '…' : decoded.text);
     // Bare adverts with just pubkey
     if (decoded.public_key) return `📡 ${decoded.public_key.slice(0, 16)}…`;
     return '';
@@ -591,7 +591,7 @@
           fOff += 8;
         }
         if (decoded.flags.hasName) {
-          rows += fieldRow(fOff, 'Node Name', decoded.name || '', '');
+          rows += fieldRow(fOff, 'Node Name', escapeHtml(decoded.name || ''), '');
         }
       }
     } else if (decoded.type === 'GRP_TXT') {

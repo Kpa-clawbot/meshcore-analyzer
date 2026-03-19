@@ -350,7 +350,7 @@
               try { decoded = JSON.parse(a.decoded_json); } catch {}
               const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
               const icon = a.payload_type === 4 ? '📡' : a.payload_type === 5 ? '💬' : a.payload_type === 2 ? '✉️' : '📦';
-              const detail = decoded?.text ? ': ' + truncate(decoded.text, 50) : decoded?.name ? ' — ' + decoded.name : '';
+              const detail = decoded?.text ? ': ' + escapeHtml(truncate(decoded.text, 50)) : decoded?.name ? ' — ' + escapeHtml(decoded.name) : '';
               return `<div class="advert-entry">
                 <span class="advert-dot" style="background:${roleColor}"></span>
                 <div class="advert-info">
