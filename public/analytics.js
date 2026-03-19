@@ -22,13 +22,13 @@
       const y = h - 2 - (v / max) * (h - 4);
       return `${x},${y}`;
     }).join(' ');
-    return `<svg viewBox="0 0 ${w} ${h}" style="width:${w}px;height:${h}px"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
+    return `<svg viewBox="0 0 ${w} ${h}" style="width:${w}px;height:${h}px" role="img" aria-label="Sparkline showing trend of ${data.length} data points"><title>Sparkline showing trend of ${data.length} data points</title><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
   }
 
   function barChart(data, labels, colors, w = 800, h = 220, pad = 40) {
     const max = Math.max(...data, 1);
     const barW = Math.min((w - pad * 2) / data.length - 2, 30);
-    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px">`;
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Bar chart showing data distribution"><title>Bar chart showing data distribution</title>`;
     // Grid
     for (let i = 0; i <= 4; i++) {
       const y = pad + (h - pad * 2) * i / 4;
@@ -81,7 +81,9 @@
       </div>`;
 
     // Tab handling
-    document.getElementById('analyticsTabs').addEventListener('click', e => {
+    const analyticsTabs = document.getElementById('analyticsTabs');
+    initTabBar(analyticsTabs);
+    analyticsTabs.addEventListener('click', e => {
       const btn = e.target.closest('.tab-btn');
       if (!btn) return;
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -289,7 +291,7 @@
   function renderScatter(data) {
     const w = 600, h = 300, pad = 40;
     const snrMin = -12, snrMax = 15, rssiMin = -130, rssiMax = -5;
-    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:300px">`;
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:300px" role="img" aria-label="SNR vs RSSI scatter plot showing signal quality distribution"><title>SNR vs RSSI scatter plot showing signal quality distribution</title>`;
     // Axes
     svg += `<line x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}" stroke="var(--text-muted)" stroke-width="0.5"/>`;
     svg += `<line x1="${pad}" y1="${pad}" x2="${pad}" y2="${h-pad}" stroke="var(--text-muted)" stroke-width="0.5"/>`;
@@ -351,8 +353,7 @@
     if (!data.length) return '<div class="text-muted">No data</div>';
     const w = 400, h = 160, pad = 35;
     const maxPkts = Math.max(...data.map(d => d.count), 1);
-    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:160px">`;
-    // SNR line
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:160px" role="img" aria-label="Signal quality over time showing SNR trend and packet volume"><title>Signal quality over time showing SNR trend and packet volume</title>`;
     const snrPts = data.map((d, i) => {
       const x = pad + i * ((w - pad * 2) / Math.max(data.length - 1, 1));
       const y = h - pad - ((d.avgSnr + 12) / 27) * (h - pad * 2);
@@ -442,6 +443,7 @@
     // Observer selector event handling
     const selector = document.getElementById('obsSelector');
     if (selector) {
+      initTabBar(selector);
       selector.addEventListener('click', e => {
         const btn = e.target.closest('.tab-btn');
         if (!btn) return;
@@ -486,7 +488,7 @@
     if (!data.length) return '<div class="text-muted">No data</div>';
     const w = 380, h = 160, pad = 40;
     const maxHop = Math.max(...data.map(d => d.hops));
-    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:160px">`;
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:160px" role="img" aria-label="Hops vs SNR bubble chart showing signal degradation over distance"><title>Hops vs SNR bubble chart showing signal degradation over distance</title>`;
     data.forEach(d => {
       const x = pad + (d.hops / maxHop) * (w - pad * 2);
       const y = h - pad - ((d.avgSnr + 12) / 27) * (h - pad * 2);
@@ -619,7 +621,7 @@
     const channels = [...new Set(data.map(d => d.channel))];
     const colors = ['#ef4444','#22c55e','#3b82f6','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#64748b'];
     const w = 600, h = 180, pad = 35;
-    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:180px">`;
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:180px" role="img" aria-label="Channel message activity over time"><title>Channel message activity over time</title>`;
     channels.forEach((ch, ci) => {
       const pts = hours.map((hr, i) => {
         const entry = data.find(d => d.hour === hr && d.channel === ch);
@@ -748,7 +750,7 @@
     const w = 800, h = 180, pad = 35;
     const maxVal = Math.max(...hourly.map(h => Math.max(h[1] || 0, h[2] || 0, h[3] || 0)), 1);
     const colors = { 1: '#ef4444', 2: '#22c55e', 3: '#3b82f6' };
-    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:180px">`;
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:180px" role="img" aria-label="Hash size distribution over time showing 1-byte, 2-byte, and 3-byte hash trends"><title>Hash size distribution over time showing 1-byte, 2-byte, and 3-byte hash trends</title>`;
     for (const size of [1, 2, 3]) {
       const pts = hourly.map((d, i) => {
         const x = pad + i * ((w - pad * 2) / Math.max(hourly.length - 1, 1));
@@ -813,17 +815,19 @@
           bg = `rgb(200,${g},30)`; color = '#fff';
         }
         const status = count === 0 ? 'available' : count === 1 ? `1 node: ${nodes[0].name || nodes[0].public_key.slice(0,12)}` : `${count} nodes — COLLISION`;
-        html += `<td class="hash-cell${count ? ' hash-active' : ''}" data-hex="${hex}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;background:${bg};color:${color};border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:0.85em" title="0x${hex}: ${status}">${hex}</td>`;
+        const countLabel = count === 0 ? '0' : count >= 3 ? '3+' : String(count);
+        const cellText = count >= 2 ? `<strong>⚠${countLabel}</strong>` : countLabel;
+        html += `<td class="hash-cell${count ? ' hash-active' : ''}" data-hex="${hex}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;background:${bg};color:${color};border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:0.85em" title="0x${hex}: ${status}">${cellText}</td>`;
       }
       html += '</tr>';
     }
     html += '</table></div>';
     html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>
     <div style="margin-top:8px;font-size:0.8em;display:flex;gap:16px;align-items:center">
-      <span><span style="display:inline-block;width:12px;height:12px;background:#166534;border:1px solid var(--border);vertical-align:middle"></span> Available</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:#854d0e;border:1px solid var(--border);vertical-align:middle"></span> 1 node</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:rgb(200,80,30);border:1px solid var(--border);vertical-align:middle"></span> 2 nodes</span>
-      <span><span style="display:inline-block;width:12px;height:12px;background:rgb(200,0,30);border:1px solid var(--border);vertical-align:middle"></span> 3+ nodes (collision)</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#166534;border:1px solid var(--border);vertical-align:middle"></span> 0 — Available</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:#854d0e;border:1px solid var(--border);vertical-align:middle"></span> 1 — One node</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:rgb(200,80,30);border:1px solid var(--border);vertical-align:middle"></span> ⚠2 — Two nodes (collision)</span>
+      <span><span style="display:inline-block;width:12px;height:12px;background:rgb(200,0,30);border:1px solid var(--border);vertical-align:middle"></span> ⚠3+ — Three+ nodes (collision)</span>
     </div>`;
     el.innerHTML = html;
 

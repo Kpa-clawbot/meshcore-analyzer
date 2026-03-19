@@ -89,9 +89,9 @@
 
     el.innerHTML = `
       <div class="obs-summary">
-        <span class="obs-stat"><span class="health-dot health-green"></span> ${online} Online</span>
-        <span class="obs-stat"><span class="health-dot health-yellow"></span> ${stale} Stale</span>
-        <span class="obs-stat"><span class="health-dot health-red"></span> ${offline} Offline</span>
+        <span class="obs-stat"><span class="health-dot health-green">●</span> ${online} Online</span>
+        <span class="obs-stat"><span class="health-dot health-yellow">▲</span> ${stale} Stale</span>
+        <span class="obs-stat"><span class="health-dot health-red">✕</span> ${offline} Offline</span>
         <span class="obs-stat">📡 ${observers.length} Total</span>
       </div>
       <table class="data-table obs-table" id="obsTable">
@@ -101,8 +101,9 @@
         </tr></thead>
         <tbody>${observers.map(o => {
           const h = healthStatus(o.last_seen);
+          const shape = h.cls === 'health-green' ? '●' : h.cls === 'health-yellow' ? '▲' : '✕';
           return `<tr>
-            <td><span class="health-dot ${h.cls}" title="${h.label}"></span> ${h.label}</td>
+            <td><span class="health-dot ${h.cls}" title="${h.label}">${shape}</span> ${h.label}</td>
             <td class="mono">${o.name || o.id}</td>
             <td>${o.iata ? `<span class="badge-region">${o.iata}</span>` : '—'}</td>
             <td>${timeAgo(o.last_seen)}</td>
