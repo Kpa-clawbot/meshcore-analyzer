@@ -576,67 +576,77 @@
 
     // Drag scrubbing on timeline
     VCR.dragging = false;
-    function scrubToX(clientX, isFinal) {
+    VCR.dragPct = 0;
+
+    function scrubVisual(clientX) {
       const rect = timelineEl.getBoundingClientRect();
-      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const now = Date.now();
-      const targetTs = now - VCR.timelineScope + pct * VCR.timelineScope;
-
-      // Always move playhead visually during drag
+      VCR.dragPct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       const playheadEl = document.getElementById('vcrPlayhead');
-      if (playheadEl) {
-        playheadEl.style.left = (pct * rect.width) + 'px';
-      }
-
-      // If buffer is empty or target is before buffer start, fetch from DB on release
-      if (VCR.buffer.length === 0 || targetTs < VCR.buffer[0].ts - 5000) {
-        if (isFinal) vcrRewind(now - targetTs);
-        return;
-      }
-
-      let closest = 0;
-      let minDist = Infinity;
-      VCR.buffer.forEach((entry, i) => {
-        const dist = Math.abs(entry.ts - targetTs);
-        if (dist < minDist) { minDist = dist; closest = i; }
-      });
-
-      stopReplay();
-      VCR.playhead = closest;
-      vcrSetMode('REPLAY');
-      updateVCRUI();
+      if (playheadEl) playheadEl.style.left = (VCR.dragPct * rect.width) + 'px';
     }
+
+    function scrubCommit() {
+      const now = Date.now();
+      const targetTs = now - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
+
+      // Always fetch from DB for the target time window and replay from there
+      stopReplay();
+      vcrSetMode('REPLAY');
+      const fetchFrom = new Date(targetTs - 30000).toISOString(); // 30s before target
+      fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
+        .then(r => r.json())
+        .then(data => {
+          const pkts = (data.packets || []).reverse(); // oldest first
+          const existingIds = new Set(VCR.buffer.map(b => b.pkt.id).filter(Boolean));
+          const newEntries = pkts.filter(p => !existingIds.has(p.id)).map(p => ({
+            ts: new Date(p.timestamp || p.created_at).getTime(),
+            pkt: dbPacketToLive(p)
+          }));
+          if (newEntries.length) {
+            VCR.buffer = [...newEntries, ...VCR.buffer].sort((a,b) => a.ts - b.ts);
+          }
+          // Find closest entry to target timestamp
+          let closest = 0, minDist = Infinity;
+          VCR.buffer.forEach((entry, i) => {
+            const dist = Math.abs(entry.ts - targetTs);
+            if (dist < minDist) { minDist = dist; closest = i; }
+          });
+          VCR.playhead = closest;
+          startReplay();
+        })
+        .catch(() => {});
+    }
+
     timelineEl.addEventListener('mousedown', (e) => {
       VCR.dragging = true;
-      scrubToX(e.clientX, false);
+      stopReplay();
+      scrubVisual(e.clientX);
       e.preventDefault();
     });
     document.addEventListener('mousemove', (e) => {
       if (!VCR.dragging) return;
-      scrubToX(e.clientX, false);
+      scrubVisual(e.clientX);
     });
-    document.addEventListener('mouseup', (e) => {
+    document.addEventListener('mouseup', () => {
       if (!VCR.dragging) return;
       VCR.dragging = false;
-      scrubToX(e.clientX, true);
-      if (VCR.mode === 'REPLAY') startReplay();
+      scrubCommit();
     });
     // Touch support
     timelineEl.addEventListener('touchstart', (e) => {
       VCR.dragging = true;
-      scrubToX(e.touches[0].clientX, false);
+      stopReplay();
+      scrubVisual(e.touches[0].clientX);
       e.preventDefault();
     }, { passive: false });
     timelineEl.addEventListener('touchmove', (e) => {
       if (!VCR.dragging) return;
-      scrubToX(e.touches[0].clientX, false);
+      scrubVisual(e.touches[0].clientX);
     });
-    timelineEl.addEventListener('touchend', (e) => {
+    timelineEl.addEventListener('touchend', () => {
       if (!VCR.dragging) return;
-      const lastTouch = e.changedTouches[0];
       VCR.dragging = false;
-      scrubToX(lastTouch.clientX, true);
-      if (VCR.mode === 'REPLAY') startReplay();
+      scrubCommit();
     });
 
     // Fetch historical timestamps for timeline, then start refresh
