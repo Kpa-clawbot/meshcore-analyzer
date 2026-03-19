@@ -65,6 +65,7 @@
             <button class="tab-btn" data-tab="hashsizes">Hash Stats</button>
             <button class="tab-btn" data-tab="collisions">Hash Collisions</button>
             <button class="tab-btn" data-tab="subpaths">Route Patterns</button>
+            <button class="tab-btn" data-tab="nodes">Nodes</button>
           </div>
         </div>
         <div id="analyticsContent" class="analytics-content">
@@ -124,6 +125,7 @@
       case 'hashsizes': renderHashSizes(el, d.hashData); break;
       case 'collisions': await renderCollisionTab(el, d.hashData); break;
       case 'subpaths': await renderSubpaths(el); break;
+      case 'nodes': await renderNodesTab(el); break;
     }
     // Auto-apply column resizing to all analytics tables
     requestAnimationFrame(() => {
@@ -1132,6 +1134,169 @@
 
       L.polyline(latlngs, { color: '#f59e0b', weight: 3, dashArray: '8,6', opacity: 0.8 }).addTo(map);
       map.fitBounds(L.latLngBounds(latlngs).pad(0.3));
+    }
+  }
+
+  async function renderNodesTab(el) {
+    el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading node analytics…</div>';
+    try {
+      const nodes = await api('/nodes?limit=200&sortBy=lastSeen');
+      const myNodes = JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]');
+      const myKeys = new Set(myNodes.map(n => n.pubkey));
+
+      // Fetch health data for top nodes (limit to avoid hammering)
+      const topNodes = nodes.slice(0, 50);
+      const healthResults = await Promise.allSettled(
+        topNodes.map(n => api('/nodes/' + encodeURIComponent(n.public_key) + '/health').then(h => ({ ...n, health: h })))
+      );
+      const enriched = healthResults
+        .filter(r => r.status === 'fulfilled')
+        .map(r => r.value)
+        .filter(n => n.health);
+
+      // Compute rankings
+      const byPackets = [...enriched].sort((a, b) => (b.health.stats.totalPackets || 0) - (a.health.stats.totalPackets || 0));
+      const bySnr = [...enriched].filter(n => n.health.stats.avgSnr != null).sort((a, b) => b.health.stats.avgSnr - a.health.stats.avgSnr);
+      const byObservers = [...enriched].sort((a, b) => (b.health.observers?.length || 0) - (a.health.observers?.length || 0));
+      const byRecent = [...enriched].filter(n => n.health.stats.lastHeard).sort((a, b) => new Date(b.health.stats.lastHeard) - new Date(a.health.stats.lastHeard));
+
+      // Status counts
+      const now = Date.now();
+      let active = 0, degraded = 0, silent = 0;
+      enriched.forEach(n => {
+        const lh = n.health.stats.lastHeard;
+        const age = lh ? now - new Date(lh).getTime() : Infinity;
+        const role = (n.role || '').toLowerCase();
+        const isInfra = role === 'repeater' || role === 'room';
+        const degradedMs = isInfra ? 86400000 : 3600000;
+        const silentMs = isInfra ? 259200000 : 86400000;
+        if (age < degradedMs) active++;
+        else if (age < silentMs) degraded++;
+        else silent++;
+      });
+
+      // Role breakdown
+      const roleCounts = {};
+      nodes.forEach(n => { const r = n.role || 'unknown'; roleCounts[r] = (roleCounts[r] || 0) + 1; });
+
+      function nodeLink(n) {
+        return `<a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="analytics-link">${esc(n.name || n.public_key.slice(0, 12))}</a>`;
+      }
+      function claimedBadge(n) {
+        return myKeys.has(n.public_key) ? ' <span style="color:var(--accent);font-size:10px">★ MINE</span>' : '';
+      }
+
+      const ROLE_COLORS = { repeater: '#dc2626', companion: '#2563eb', room: '#16a34a', sensor: '#d97706' };
+
+      el.innerHTML = `
+        <div class="analytics-section">
+          <h3>🔍 Network Status</h3>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px">
+            <div class="analytics-stat-card" style="flex:1;min-width:120px;text-align:center;padding:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">
+              <div style="font-size:28px;font-weight:700;color:#22c55e">${active}</div>
+              <div style="font-size:11px;text-transform:uppercase;color:var(--text-muted)">🟢 Active</div>
+            </div>
+            <div class="analytics-stat-card" style="flex:1;min-width:120px;text-align:center;padding:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">
+              <div style="font-size:28px;font-weight:700;color:#eab308">${degraded}</div>
+              <div style="font-size:11px;text-transform:uppercase;color:var(--text-muted)">🟡 Degraded</div>
+            </div>
+            <div class="analytics-stat-card" style="flex:1;min-width:120px;text-align:center;padding:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">
+              <div style="font-size:28px;font-weight:700;color:#ef4444">${silent}</div>
+              <div style="font-size:11px;text-transform:uppercase;color:var(--text-muted)">🔴 Silent</div>
+            </div>
+            <div class="analytics-stat-card" style="flex:1;min-width:120px;text-align:center;padding:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">
+              <div style="font-size:28px;font-weight:700">${nodes.length}</div>
+              <div style="font-size:11px;text-transform:uppercase;color:var(--text-muted)">Total Nodes</div>
+            </div>
+          </div>
+
+          <h3>📊 Role Breakdown</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:24px">
+            ${Object.entries(roleCounts).sort((a,b) => b[1]-a[1]).map(([role, count]) => {
+              const c = ROLE_COLORS[role] || '#6b7280';
+              return `<span class="badge" style="background:${c}20;color:${c};padding:6px 12px;font-size:13px">${role}: ${count}</span>`;
+            }).join('')}
+          </div>
+
+          ${myKeys.size ? `<h3>⭐ My Claimed Nodes</h3>
+          <table class="analytics-table" style="margin-bottom:24px">
+            <thead><tr><th>Node</th><th>Role</th><th>Packets</th><th>Avg SNR</th><th>Observers</th><th>Last Heard</th></tr></thead>
+            <tbody>
+              ${enriched.filter(n => myKeys.has(n.public_key)).map(n => {
+                const s = n.health.stats;
+                return `<tr>
+                  <td>${nodeLink(n)}</td>
+                  <td><span class="badge" style="background:${(ROLE_COLORS[n.role]||'#6b7280')}20;color:${ROLE_COLORS[n.role]||'#6b7280'}">${n.role}</span></td>
+                  <td>${s.totalPackets || 0}</td>
+                  <td>${s.avgSnr != null ? s.avgSnr.toFixed(1) + ' dB' : '—'}</td>
+                  <td>${n.health.observers?.length || 0}</td>
+                  <td>${s.lastHeard ? timeAgo(s.lastHeard) : '—'}</td>
+                </tr>`;
+              }).join('') || '<tr><td colspan="6" class="text-muted">No claimed nodes have health data</td></tr>'}
+            </tbody>
+          </table>` : ''}
+
+          <h3>🏆 Most Active Nodes</h3>
+          <table class="analytics-table" style="margin-bottom:24px">
+            <thead><tr><th>#</th><th>Node</th><th>Role</th><th>Total Packets</th><th>Packets Today</th><th>Analytics</th></tr></thead>
+            <tbody>
+              ${byPackets.slice(0, 15).map((n, i) => `<tr>
+                <td>${i + 1}</td>
+                <td>${nodeLink(n)}${claimedBadge(n)}</td>
+                <td><span class="badge" style="background:${(ROLE_COLORS[n.role]||'#6b7280')}20;color:${ROLE_COLORS[n.role]||'#6b7280'}">${n.role}</span></td>
+                <td>${n.health.stats.totalPackets || 0}</td>
+                <td>${n.health.stats.packetsToday || 0}</td>
+                <td><a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="analytics-link">📊</a></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+
+          <h3>📶 Best Signal Quality</h3>
+          <table class="analytics-table" style="margin-bottom:24px">
+            <thead><tr><th>#</th><th>Node</th><th>Role</th><th>Avg SNR</th><th>Observers</th><th>Analytics</th></tr></thead>
+            <tbody>
+              ${bySnr.slice(0, 15).map((n, i) => `<tr>
+                <td>${i + 1}</td>
+                <td>${nodeLink(n)}${claimedBadge(n)}</td>
+                <td><span class="badge" style="background:${(ROLE_COLORS[n.role]||'#6b7280')}20;color:${ROLE_COLORS[n.role]||'#6b7280'}">${n.role}</span></td>
+                <td>${n.health.stats.avgSnr.toFixed(1)} dB</td>
+                <td>${n.health.observers?.length || 0}</td>
+                <td><a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="analytics-link">📊</a></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+
+          <h3>👀 Most Observed Nodes</h3>
+          <table class="analytics-table" style="margin-bottom:24px">
+            <thead><tr><th>#</th><th>Node</th><th>Role</th><th>Observers</th><th>Avg SNR</th><th>Analytics</th></tr></thead>
+            <tbody>
+              ${byObservers.slice(0, 15).map((n, i) => `<tr>
+                <td>${i + 1}</td>
+                <td>${nodeLink(n)}${claimedBadge(n)}</td>
+                <td><span class="badge" style="background:${(ROLE_COLORS[n.role]||'#6b7280')}20;color:${ROLE_COLORS[n.role]||'#6b7280'}">${n.role}</span></td>
+                <td>${n.health.observers?.length || 0}</td>
+                <td>${n.health.stats.avgSnr != null ? n.health.stats.avgSnr.toFixed(1) + ' dB' : '—'}</td>
+                <td><a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="analytics-link">📊</a></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+
+          <h3>⏰ Recently Active</h3>
+          <table class="analytics-table" style="margin-bottom:24px">
+            <thead><tr><th>Node</th><th>Role</th><th>Last Heard</th><th>Packets Today</th><th>Analytics</th></tr></thead>
+            <tbody>
+              ${byRecent.slice(0, 15).map(n => `<tr>
+                <td>${nodeLink(n)}${claimedBadge(n)}</td>
+                <td><span class="badge" style="background:${(ROLE_COLORS[n.role]||'#6b7280')}20;color:${ROLE_COLORS[n.role]||'#6b7280'}">${n.role}</span></td>
+                <td>${timeAgo(n.health.stats.lastHeard)}</td>
+                <td>${n.health.stats.packetsToday || 0}</td>
+                <td><a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="analytics-link">📊</a></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    } catch (e) {
+      el.innerHTML = `<div style="padding:40px;text-align:center;color:#ff6b6b">Failed to load node analytics: ${esc(e.message)}</div>`;
     }
   }
 
