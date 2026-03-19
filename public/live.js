@@ -206,6 +206,7 @@
       const entry = VCR.buffer[VCR.playhead];
       animatePacket(entry.pkt);
       updateVCRClock(entry.ts);
+      updateVCRLcd();
       VCR.playhead++;
       updateVCRUI();
       updateTimelinePlayhead();
@@ -239,13 +240,32 @@
   }
 
   function updateVCRClock(tsMs) {
-    const el = document.getElementById('vcrClock');
+    const el = document.getElementById('vcrLcdTime');
     if (!el) return;
     const d = new Date(tsMs);
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
     const ss = String(d.getSeconds()).padStart(2, '0');
     el.textContent = `${hh}:${mm}:${ss}`;
+  }
+
+  function updateVCRLcd() {
+    const modeEl = document.getElementById('vcrLcdMode');
+    const pktsEl = document.getElementById('vcrLcdPkts');
+    if (modeEl) {
+      if (VCR.mode === 'LIVE') modeEl.textContent = 'LIVE';
+      else if (VCR.mode === 'PAUSED') modeEl.textContent = 'PAUSE';
+      else if (VCR.mode === 'REPLAY') modeEl.textContent = `PLAY ${VCR.speed}x`;
+    }
+    if (pktsEl) {
+      if (VCR.mode === 'PAUSED' && VCR.missedCount > 0) {
+        pktsEl.textContent = `+${VCR.missedCount} PKTS`;
+      } else if (VCR.mode === 'REPLAY' && VCR.playhead >= 0) {
+        pktsEl.textContent = `${VCR.playhead}/${VCR.buffer.length}`;
+      } else {
+        pktsEl.textContent = '';
+      }
+    }
   }
 
   function updateVCRUI() {
@@ -276,6 +296,7 @@
       if (missedEl) missedEl.classList.add('hidden');
     }
     if (speedBtn) speedBtn.textContent = VCR.speed + 'x';
+    updateVCRLcd();
   }
 
   function dbPacketToLive(pkt) {
@@ -474,14 +495,13 @@
 
         <!-- VCR Bar -->
         <div class="vcr-bar" id="vcrBar">
+          <div class="vcr-left">
           <div class="vcr-controls">
             <button id="vcrRewindBtn" class="vcr-btn" title="Rewind">⏪</button>
             <button id="vcrPauseBtn" class="vcr-btn" title="Pause/Play">⏸</button>
             <button id="vcrLiveBtn" class="vcr-btn vcr-live-btn" title="Jump to live">LIVE</button>
             <button id="vcrSpeedBtn" class="vcr-btn" title="Playback speed">1x</button>
             <div id="vcrMode" class="vcr-mode vcr-mode-live"><span class="vcr-live-dot"></span> LIVE</div>
-            <span id="vcrClock" class="vcr-clock">--:--:--</span>
-            <span id="vcrMissed" class="vcr-missed hidden">+0</span>
           </div>
           <div class="vcr-timeline-wrap">
             <div class="vcr-scope-btns">
@@ -495,6 +515,12 @@
               <div id="vcrPlayhead" class="vcr-playhead"></div>
               <div id="vcrTimeTooltip" class="vcr-time-tooltip hidden"></div>
             </div>
+          </div>
+          </div>
+          <div class="vcr-lcd">
+            <div class="vcr-lcd-row vcr-lcd-mode" id="vcrLcdMode">LIVE</div>
+            <div class="vcr-lcd-row vcr-lcd-time" id="vcrLcdTime">--:--:--</div>
+            <div class="vcr-lcd-row vcr-lcd-pkts" id="vcrLcdPkts"></div>
           </div>
           <div id="vcrPrompt" class="vcr-prompt hidden"></div>
         </div>
