@@ -244,7 +244,6 @@
           <th class="sortable" data-sort="name" aria-sort="${sortBy === 'name' ? 'ascending' : 'none'}">Name</th>
           <th>Public Key</th>
           <th>Role</th>
-          <th>Regions</th>
           <th class="sortable" data-sort="lastSeen" aria-sort="${sortBy === 'lastSeen' ? 'descending' : 'none'}">Last Seen</th>
           <th class="sortable" data-sort="packetCount" aria-sort="${sortBy === 'packetCount' ? 'descending' : 'none'}">Adverts</th>
         </tr></thead>
@@ -312,7 +311,6 @@
         <td>${favStar(n.public_key, 'node-fav')}<strong>${n.name || '(unnamed)'}</strong></td>
         <td class="mono">${truncate(n.public_key, 16)}</td>
         <td><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span></td>
-        <td>—</td>
         <td>${timeAgo(n.last_seen)}</td>
         <td>${n.advert_count || 0}</td>
       </tr>`;
