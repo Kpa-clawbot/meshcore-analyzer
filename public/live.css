@@ -511,7 +511,6 @@
   background: #f87171;
   border-radius: 1px;
   pointer-events: none;
-  transition: left 0.3s ease;
   box-shadow: 0 0 4px rgba(248,113,113,0.5);
 }
 
