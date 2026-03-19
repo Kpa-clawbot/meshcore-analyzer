@@ -389,19 +389,18 @@
 
         <div class="node-detail-section">
           <h4>Recent Adverts (${adverts.length})</h4>
-          <div id="advertTimeline">
-            ${adverts.length ? adverts.map(a => {
-              const ts = a.timestamp || a.created_at;
-              const obs = a.observer_name || a.observer_id || '—';
-              const pType = PAYLOAD_TYPES[a.payload_type] || 'Packet';
-              return `<div class="advert-entry">
-                <span class="advert-dot" style="background:${roleColor}"></span>
-                <div class="advert-info" style="color:var(--text)">
-                  <strong>${timeAgo(ts)}</strong> · ${pType} via ${escapeHtml(obs)}
-                  ${a.snr != null ? ` · SNR ${a.snr}dB` : ''}${a.rssi != null ? ` · RSSI ${a.rssi}dBm` : ''}
-                </div>
-              </div>`;
-            }).join('') : '<div class="text-muted" style="padding:8px">No recent adverts</div>'}
+          <div id="sidebarAdvertList">
+            ${adverts.length ? adverts.map((a, i) => {
+              const ts = a.timestamp || a.created_at || 'no-ts';
+              const obs = a.observer_name || a.observer_id || 'no-obs';
+              const pType = PAYLOAD_TYPES[a.payload_type] || 'Pkt';
+              const snr = a.snr != null ? ' SNR:' + a.snr + 'dB' : '';
+              const rssi = a.rssi != null ? ' RSSI:' + a.rssi : '';
+              const age = typeof timeAgo === 'function' ? timeAgo(ts) : ts;
+              return '<div style="padding:6px 0;border-bottom:1px solid #ddd;font-size:13px;color:#111">'
+                + '<b>' + age + '</b> ' + pType + ' via ' + obs + snr + rssi
+                + '</div>';
+            }).join('') : '<div style="padding:8px;color:#999">No recent adverts</div>'}
           </div>
         </div>
 
