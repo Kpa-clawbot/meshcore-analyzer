@@ -474,8 +474,10 @@
         <dt>Timestamp</dt><dd>${pkt.timestamp}</dd>
         <dt>Path</dt><dd>${pathHops.length ? renderPath(pathHops) : '—'}</dd>
       </dl>
-      ${pathHops.length ? `<button class="detail-map-link" id="viewRouteBtn">🗺️ View route on map</button>` : ''}
-      <button class="replay-live-btn" title="Replay this packet on the live map">▶ Replay on Live Map</button>
+      <div class="detail-actions">
+        ${pathHops.length ? `<button class="detail-map-link" id="viewRouteBtn">🗺️ View route on map</button>` : ''}
+        <button class="replay-live-btn" title="Replay this packet on the live map">▶ Replay</button>
+      </div>
 
       ${hasRawHex ? `<div class="hex-legend">${buildHexLegend(ranges)}</div>
       <div class="hex-dump">${createColoredHexDump(pkt.raw_hex, ranges)}</div>` : ''}

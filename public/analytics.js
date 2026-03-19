@@ -566,7 +566,7 @@
         <table class="analytics-table">
           <thead><tr><th>Channel</th><th>Hash</th><th>Messages</th><th>Unique Senders</th><th>Last Activity</th><th>Decrypted</th></tr></thead>
           <tbody>
-            ${ch.channels.map(c => `<tr class="clickable-row" onclick="location.hash='#/channels'">
+            ${ch.channels.map(c => `<tr class="clickable-row" onclick="location.hash='#/channels?ch=${c.hash}'">
               <td><strong>${esc(c.name || 'Unknown')}</strong></td>
               <td class="mono">${c.hash}</td>
               <td>${c.messages}</td>

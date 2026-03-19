@@ -1069,15 +1069,17 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 [data-theme="dark"] .node-qr svg rect[fill="#000000"] { fill: var(--text); }
 
 /* Replay on Live Map button in packet detail */
-.replay-live-btn {
-  display: block;
-  width: 100%;
+.detail-actions {
+  display: flex;
+  gap: 8px;
   margin-top: 12px;
-  padding: 8px 16px;
+}
+.replay-live-btn {
+  padding: 5px 12px;
   background: rgba(168, 85, 247, 0.15);
   border: 1px solid rgba(168, 85, 247, 0.3);
   color: #c084fc;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 600;
   border-radius: 6px;
   cursor: pointer;
@@ -1120,16 +1122,15 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 
 /* Detail map link */
 .detail-map-link {
-  display: inline-block;
-  margin: 8px 0;
-  padding: 6px 12px;
+  padding: 5px 12px;
   background: rgba(245, 158, 11, 0.12);
   border: 1px solid rgba(245, 158, 11, 0.25);
   color: #fbbf24;
   border-radius: 6px;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 600;
   text-decoration: none;
+  cursor: pointer;
   transition: background 0.15s;
 }
 .detail-map-link:hover { background: rgba(245, 158, 11, 0.25); }
