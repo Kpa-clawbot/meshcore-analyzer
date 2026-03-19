@@ -71,6 +71,8 @@
 
   function vcrSetMode(mode) {
     VCR.mode = mode;
+    if (mode !== 'LIVE' && !VCR.frozenNow) VCR.frozenNow = Date.now();
+    if (mode === 'LIVE') VCR.frozenNow = null;
     updateVCRUI();
   }
 
@@ -291,7 +293,7 @@
 
     ctx.clearRect(0, 0, cw, ch);
 
-    const now = Date.now();
+    const now = VCR.frozenNow || Date.now();
     const scopeMs = VCR.timelineScope;
     const startTs = now - scopeMs;
 
@@ -333,34 +335,26 @@
   }
 
   function updateTimelinePlayhead() {
-    if (VCR.dragging) return; // don't fight the user's drag
+    if (VCR.dragging) return;
+    const playheadEl = document.getElementById('vcrPlayhead');
+    if (!playheadEl) return;
     const canvas = document.getElementById('vcrTimeline');
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
     const cw = canvas.offsetWidth;
-    const ch = canvas.offsetHeight;
-    const now = Date.now();
+    const now = VCR.frozenNow || Date.now();
     const scopeMs = VCR.timelineScope;
     const startTs = now - scopeMs;
 
-    // Redraw sparkline (cheap, avoids double-buffer complexity)
-    // Just draw playhead line on top — clear only the line area
     let x;
     if (VCR.mode === 'LIVE') {
-      x = cw; // rightmost = now
-    } else if (VCR.dragPct != null && (VCR.mode === 'REPLAY' || VCR.mode === 'PAUSED')) {
-      // After scrub: hold at drag position until replay tick updates it
-      x = VCR.dragPct * cw;
+      x = cw;
     } else if (VCR.playhead >= 0 && VCR.playhead < VCR.buffer.length) {
       const playTs = VCR.buffer[VCR.playhead].ts;
       x = ((playTs - startTs) / scopeMs) * cw;
     } else {
       x = cw;
     }
-    const playheadEl = document.getElementById('vcrPlayhead');
-    if (playheadEl) {
-      playheadEl.style.left = Math.max(0, Math.min(cw - 2, x)) + 'px';
-    }
+    playheadEl.style.left = Math.max(0, Math.min(cw - 2, x)) + 'px';
   }
 
   function handleTimelineClick(e) {
@@ -590,10 +584,9 @@
     }
 
     function scrubCommit() {
-      const now = Date.now();
-      const targetTs = now - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
+      VCR.frozenNow = Date.now(); // freeze timeline at scrub moment
+      const targetTs = VCR.frozenNow - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
 
-      // Always fetch from DB for the target time window and replay from there
       stopReplay();
       vcrSetMode('REPLAY');
       const fetchFrom = new Date(targetTs - 30000).toISOString(); // 30s before target
@@ -618,7 +611,7 @@
           VCR.playhead = closest;
           // Only replay ~50 packets from scrub point, not entire buffer to end
           VCR.scrubEnd = Math.min(closest + 50, VCR.buffer.length);
-          VCR.dragPct = null; // let replay tick drive playhead now
+          // dragPct no longer drives playhead; frozenNow + buffer timestamps do
           startReplay();
         })
         .catch(() => {});
