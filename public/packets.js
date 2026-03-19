@@ -38,6 +38,9 @@
         const w = Math.max(280, Math.min(window.innerWidth * 0.7, startW - (e2.clientX - startX)));
         panel.style.width = w + 'px';
         panel.style.minWidth = w + 'px';
+        // Force table to reflow with new available width
+        const left = document.getElementById('pktLeft');
+        if (left) { left.style.overflow = 'hidden'; void left.offsetWidth; left.style.overflow = ''; }
       }
       function onUp() {
         handle.classList.remove('dragging');
