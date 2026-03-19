@@ -816,8 +816,7 @@
           bg = `rgb(${r},${g},30)`; color = '#fff';
         }
         const status = count === 0 ? 'available' : count === 1 ? `1 node: ${nodes[0].name || nodes[0].public_key.slice(0,12)}` : `${count} nodes — COLLISION`;
-        const countLabel = count === 0 ? '·' : count >= 3 ? '3+' : String(count);
-        const cellText = count >= 2 ? `<strong>${countLabel}</strong>` : countLabel;
+        const cellText = count === 0 ? `<span style="font-size:11px">${hex}</span>` : count >= 2 ? `<strong>${count >= 3 ? '3+' : count}</strong>` : String(count);
         html += `<td class="hash-cell${count ? ' hash-active' : ''}" data-hex="${hex}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;background:${bg};color:${color};border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:13px;font-weight:${count >= 2 ? '700' : '400'}" title="0x${hex}: ${status}">${cellText}</td>`;
       }
       html += '</tr>';
