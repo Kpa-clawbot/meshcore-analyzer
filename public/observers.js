@@ -98,7 +98,7 @@
         <span class="obs-stat"><span class="health-dot health-red">✕</span> ${offline} Offline</span>
         <span class="obs-stat">📡 ${observers.length} Total</span>
       </div>
-      <table class="data-table obs-table" id="obsTable">
+      <div class="obs-table-scroll"><table class="data-table obs-table" id="obsTable">
         <caption class="sr-only">Observer status and statistics</caption>
         <thead><tr>
           <th>Status</th><th>Name</th><th>Region</th><th>Last Seen</th>
@@ -117,7 +117,7 @@
             <td>${uptimeStr(o.first_seen)}</td>
           </tr>`;
         }).join('')}</tbody>
-      </table>`;
+      </table></div>`;
     makeColumnsResizable('#obsTable', 'meshcore-obs-col-widths');
   }
 
