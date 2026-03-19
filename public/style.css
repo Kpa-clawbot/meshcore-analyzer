@@ -1273,3 +1273,4 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 @media (pointer: coarse) {
   .panel-resize-handle { width: 12px !important; }
 }
+/* #21 — max-width applied via .ch-msg-bubble rule above */
