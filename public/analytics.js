@@ -648,33 +648,33 @@
     const maxCount = Math.max(d[1] || 0, d[2] || 0, d[3] || 0, 1);
 
     el.innerHTML = `
-      <div class="analytics-card">
-        <h3>Hash Size Distribution</h3>
-        <p class="text-muted">${total.toLocaleString()} packets with path hops</p>
-        <div class="hash-bars">
-          ${[1, 2, 3].map(size => {
-            const count = d[size] || 0;
-            const width = Math.max((count / maxCount) * 100, count ? 2 : 0);
-            const colors = { 1: '#ef4444', 2: '#22c55e', 3: '#3b82f6' };
-            return `<div class="hash-bar-row">
+      <div class="analytics-row">
+        <div class="analytics-card flex-1">
+          <h3>Hash Size Distribution</h3>
+          <p class="text-muted">${total.toLocaleString()} packets with path hops</p>
+          <div class="hash-bars">
+            ${[1, 2, 3].map(size => {
+              const count = d[size] || 0;
+              const width = Math.max((count / maxCount) * 100, count ? 2 : 0);
+              const colors = { 1: '#ef4444', 2: '#22c55e', 3: '#3b82f6' };
+              return `<div class="hash-bar-row">
               <div class="hash-bar-label"><strong>${size}-byte</strong> <span class="text-muted">(${size * 8}-bit, ${Math.pow(256, size).toLocaleString()} IDs)</span></div>
               <div class="hash-bar-track"><div class="hash-bar-fill" style="width:${width}%;background:${colors[size]}"></div></div>
               <div class="hash-bar-value">${count.toLocaleString()} <span class="text-muted">(${pct(count)}%)</span></div>
             </div>`;
-          }).join('')}
+            }).join('')}
+          </div>
         </div>
-      </div>
-
-      <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>📈 Hash Size Over Time</h3>
           ${renderHashTimeline(data.hourly)}
         </div>
       </div>
 
-      <div class="analytics-card">
-        <h3>Multi-Byte Hash Adopters</h3>
-        <p class="text-muted">Nodes advertising with 2+ byte hash paths</p>
+      <div class="analytics-row">
+        <div class="analytics-card flex-1">
+          <h3>Multi-Byte Hash Adopters</h3>
+          <p class="text-muted">Nodes advertising with 2+ byte hash paths</p>
         ${data.multiByteNodes.length ? `
           <table class="analytics-table">
             <thead><tr><th>Node</th><th>Hash Size</th><th>Adverts</th><th>Last Seen</th></tr></thead>
@@ -688,10 +688,10 @@
             </tbody>
           </table>
         ` : '<div class="text-muted" style="padding:16px">No multi-byte adopters found</div>'}
-      </div>
+        </div>
 
-      <div class="analytics-card">
-        <h3>Top Path Hops</h3>
+        <div class="analytics-card flex-1">
+          <h3>Top Path Hops</h3>
         <table class="analytics-table">
           <thead><tr><th>Hop</th><th>Node</th><th>Bytes</th><th>Appearances</th></tr></thead>
           <tbody>
@@ -706,6 +706,7 @@
             }).join('')}
           </tbody>
         </table>
+        </div>
       </div>
     `;
   }

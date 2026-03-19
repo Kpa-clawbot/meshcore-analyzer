@@ -998,10 +998,13 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .node-activity-time { color: var(--text-muted); white-space: nowrap; min-width: 70px; font-size: 12px; }
 
 /* Analytics page */
-.analytics-page { padding: 16px; max-width: 900px; margin: 0 auto; overflow-y: auto; height: 100%; }
+.analytics-page { padding: 16px 24px; max-width: 1600px; margin: 0 auto; overflow-y: auto; height: 100%; }
 .analytics-header { margin-bottom: 20px; }
 .analytics-header h2 { margin: 0 0 4px; }
 .analytics-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.analytics-grid .analytics-card { margin-bottom: 0; }
+.analytics-full { grid-column: 1 / -1; }
 .analytics-card h3 { margin: 0 0 8px; font-size: 15px; }
 .analytics-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .analytics-table th { text-align: left; padding: 8px; border-bottom: 2px solid var(--border); font-size: 12px; text-transform: uppercase; color: var(--text-muted); }
