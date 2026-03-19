@@ -202,6 +202,9 @@
       if (VCR.mode !== 'REPLAY') return;
       const endIdx = VCR.scrubEnd != null ? VCR.scrubEnd : VCR.buffer.length;
       if (VCR.playhead >= endIdx) {
+        // Hold playhead at the last replayed packet's time
+        const lastEntry = VCR.buffer[Math.max(0, VCR.playhead - 1)];
+        if (lastEntry) VCR.scrubTs = lastEntry.ts;
         VCR.scrubEnd = null;
         vcrSetMode('PAUSED');
         return;
@@ -845,6 +848,7 @@
     }
     nodeMarkers = {};
     nodeData = {};
+    nodeActivity = {};
     if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
   }
 
