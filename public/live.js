@@ -972,24 +972,34 @@
       }
     }
 
-    // Second pass: disambiguate by geographic proximity to known hops
-    const knownPositions = raw.filter(h => h.known && h.pos).map(h => h.pos);
-    if (knownPositions.length > 0) {
-      const centerLat = knownPositions.reduce((s, p) => s + p[0], 0) / knownPositions.length;
-      const centerLon = knownPositions.reduce((s, p) => s + p[1], 0) / knownPositions.length;
-      const dist = (lat, lon) => Math.sqrt((lat - centerLat) ** 2 + (lon - centerLon) ** 2);
+    // Sequential disambiguation: each hop nearest to previous (like server-side)
+    const dist = (lat1, lon1, lat2, lon2) => Math.sqrt((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2);
 
-      for (const hop of raw) {
-        if (hop.candidates) {
-          hop.candidates.sort((a, b) => dist(a.lat, a.lon) - dist(b.lat, b.lon));
-          const best = hop.candidates[0];
-          hop.key = best.public_key;
-          hop.pos = [best.lat, best.lon];
-          hop.name = best.name || best.public_key.slice(0, 8);
-          hop.known = true;
-          delete hop.candidates;
-        }
+    // Forward pass: resolve ambiguous hops using previous hop's position
+    let lastPos = null;
+    for (const hop of raw) {
+      if (hop.known && hop.pos) { lastPos = hop.pos; continue; }
+      if (!hop.candidates) continue;
+      if (lastPos) {
+        hop.candidates.sort((a, b) => dist(a.lat, a.lon, lastPos[0], lastPos[1]) - dist(b.lat, b.lon, lastPos[0], lastPos[1]));
       }
+      const best = hop.candidates[0];
+      hop.key = best.public_key; hop.pos = [best.lat, best.lon];
+      hop.name = best.name || best.public_key.slice(0, 8);
+      hop.known = true; lastPos = hop.pos;
+    }
+
+    // Backward pass: catch any remaining from the tail
+    let nextPos = null;
+    for (let i = raw.length - 1; i >= 0; i--) {
+      const hop = raw[i];
+      if (hop.known && hop.pos) { nextPos = hop.pos; continue; }
+      if (!hop.candidates || !nextPos) continue;
+      hop.candidates.sort((a, b) => dist(a.lat, a.lon, nextPos[0], nextPos[1]) - dist(b.lat, b.lon, nextPos[0], nextPos[1]));
+      const best = hop.candidates[0];
+      hop.key = best.public_key; hop.pos = [best.lat, best.lon];
+      hop.name = best.name || best.public_key.slice(0, 8);
+      hop.known = true; nextPos = hop.pos;
     }
 
     if (!showGhostHops) return raw.filter(h => h.known);
