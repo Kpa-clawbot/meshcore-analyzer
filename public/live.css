@@ -413,11 +413,11 @@
   background: color-mix(in srgb, var(--surface-1) 95%, transparent);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
-  padding: 3px 8px;
+  padding: 8px 12px;
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
 }
 .vcr-bar > .vcr-controls {
   display: flex; align-items: center; gap: 4px; flex-shrink: 0;
@@ -436,8 +436,8 @@
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 0.8rem;
+  padding: 6px 14px;
+  font-size: 0.9rem;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -538,9 +538,9 @@
   background: none;
   border: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 0.65rem;
-  padding: 2px 6px;
-  border-radius: 3px;
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -553,7 +553,7 @@
 .vcr-timeline-container {
   flex: 1;
   position: relative;
-  height: 12px;
+  height: 28px;
 }
 .vcr-timeline {
   width: 100%;
@@ -601,8 +601,8 @@
 .vcr-prompt-btn:hover { background: rgba(59,130,246,0.3); }
 
 /* Adjust feed position to not overlap VCR bar */
-.live-feed { bottom: 40px; }
-.feed-show-btn { bottom: 50px !important; }
+.live-feed { bottom: 58px; }
+.feed-show-btn { bottom: 68px !important; }
 
 /* Mobile VCR */
 @media (max-width: 600px) {
