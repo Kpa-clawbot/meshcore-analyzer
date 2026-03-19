@@ -337,7 +337,6 @@
             ${hasLoc ? `<dt>Location</dt><dd>${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}</dd>` : ''}
           </dl>
         </div>
-        </div>
 
         <div style="text-align:center;margin-bottom:16px">
           <button class="btn-primary" id="copyUrlBtn">📋 Copy URL</button>
