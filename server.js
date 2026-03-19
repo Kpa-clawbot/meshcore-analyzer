@@ -903,18 +903,26 @@ app.get('/api/resolve-hops', (req, res) => {
 
   const allNodes = db.db.prepare('SELECT public_key, name, lat, lon FROM nodes WHERE name IS NOT NULL').all();
 
-  // Build observer geographic center from nodes it typically hears
+  // Build observer geographic position
   let observerLat = null, observerLon = null;
   if (observerId) {
-    const obsNodes = db.db.prepare(`
-      SELECT DISTINCT n.lat, n.lon FROM packets p
-      JOIN nodes n ON p.decoded_json LIKE '%' || n.public_key || '%'
-      WHERE p.observer_id = ? AND n.lat IS NOT NULL AND n.lat != 0 AND n.lon != 0
-      LIMIT 50
-    `).all(observerId);
-    if (obsNodes.length) {
-      observerLat = obsNodes.reduce((s, n) => s + n.lat, 0) / obsNodes.length;
-      observerLon = obsNodes.reduce((s, n) => s + n.lon, 0) / obsNodes.length;
+    // Try exact name match first
+    const obsNode = allNodes.find(n => n.name === observerId);
+    if (obsNode && obsNode.lat && obsNode.lon && !(obsNode.lat === 0 && obsNode.lon === 0)) {
+      observerLat = obsNode.lat;
+      observerLon = obsNode.lon;
+    } else {
+      // Fall back to averaging nodes it typically hears
+      const obsNodes = db.db.prepare(`
+        SELECT DISTINCT n.lat, n.lon FROM packets p
+        JOIN nodes n ON p.decoded_json LIKE '%' || n.public_key || '%'
+        WHERE p.observer_id = ? AND n.lat IS NOT NULL AND n.lat != 0 AND n.lon != 0
+        LIMIT 50
+      `).all(observerId);
+      if (obsNodes.length) {
+        observerLat = obsNodes.reduce((s, n) => s + n.lat, 0) / obsNodes.length;
+        observerLon = obsNodes.reduce((s, n) => s + n.lon, 0) / obsNodes.length;
+      }
     }
   }
 
@@ -950,13 +958,18 @@ app.get('/api/resolve-hops', (req, res) => {
     const centerLat = knownPositions.reduce((s, p) => s + p.lat, 0) / knownPositions.length;
     const centerLon = knownPositions.reduce((s, p) => s + p.lon, 0) / knownPositions.length;
     const dist = (lat, lon) => Math.sqrt((lat - centerLat) ** 2 + (lon - centerLon) ** 2);
+    const distObs = (observerLat != null) ? ((lat, lon) => Math.sqrt((lat - observerLat) ** 2 + (lon - observerLon) ** 2)) : null;
 
-    for (const hop of hops) {
+    for (let hi = 0; hi < hops.length; hi++) {
+      const hop = hops[hi];
       const r = resolved[hop];
       if (r && r.ambiguous) {
         const withLoc = r.candidates.filter(c => c.lat && c.lon && !(c.lat === 0 && c.lon === 0));
         if (withLoc.length > 0) {
-          withLoc.sort((a, b) => dist(a.lat, a.lon) - dist(b.lat, b.lon));
+          // Last hop: prefer candidate closest to observer (it delivered the packet)
+          const isLastHop = (hi === hops.length - 1) && distObs;
+          const sortFn = isLastHop ? ((a, b) => distObs(a.lat, a.lon) - distObs(b.lat, b.lon)) : ((a, b) => dist(a.lat, a.lon) - dist(b.lat, b.lon));
+          withLoc.sort(sortFn);
           r.name = withLoc[0].name;
           r.pubkey = withLoc[0].pubkey;
         }

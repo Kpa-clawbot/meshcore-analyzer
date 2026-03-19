@@ -505,7 +505,8 @@
     if (routeBtn && pathHops.length) {
       routeBtn.addEventListener('click', async () => {
         try {
-          const resp = await fetch('/api/resolve-hops?hops=' + encodeURIComponent(pathHops.join(',')));
+          const observerParam = pkt.observer_name ? '&observer=' + encodeURIComponent(pkt.observer_name) : '';
+          const resp = await fetch('/api/resolve-hops?hops=' + encodeURIComponent(pathHops.join(',')) + observerParam);
           const data = await resp.json();
           // Pass full pubkeys (server-disambiguated) to map, falling back to short prefix
           const resolvedKeys = pathHops.map(h => {
