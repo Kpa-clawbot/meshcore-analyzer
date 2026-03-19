@@ -72,7 +72,7 @@
         </div>
       </section>
 
-      ${hasNodes ? '<div class="my-nodes-grid" id="myNodesGrid"><div class="my-nodes-loading">Loading your nodes…</div></div>' : ''}
+      ${hasNodes ? '<div class="my-nodes-grid" id="myNodesGrid"><div class="my-nodes-loading">Loading your nodes…</div></div>' : '<div class="my-nodes-grid" id="myNodesGrid"></div>'}
 
       ${!hasNodes ? `
         <div class="onboarding-prompt">
@@ -209,6 +209,18 @@
     const grid = document.getElementById('myNodesGrid');
     if (!grid) return;
     const myNodes = getMyNodes();
+
+    // Update hero text dynamically
+    const h1 = document.querySelector('.home-hero h1');
+    const heroP = document.querySelector('.home-hero p');
+    if (myNodes.length) {
+      if (h1) h1.textContent = 'My Mesh';
+      if (heroP) heroP.textContent = 'Your nodes at a glance. Add more by searching below.';
+      // Hide onboarding prompt
+      const onboard = document.querySelector('.onboarding-prompt');
+      if (onboard) onboard.style.display = 'none';
+    }
+
     if (!myNodes.length) {
       grid.innerHTML = '';
       return;
