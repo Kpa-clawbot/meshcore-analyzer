@@ -251,6 +251,10 @@
         <select id="fRegion" aria-label="Filter by region"><option value="">All Regions</option></select>
         <select id="fType" aria-label="Filter by packet type"><option value="">All Types</option></select>
         <button class="btn ${groupByHash ? 'active' : ''}" id="fGroup">Group by Hash</button>
+        <div class="col-toggle-wrap">
+          <button class="col-toggle-btn" id="colToggleBtn">Columns ▾</button>
+          <div class="col-toggle-menu" id="colToggleMenu"></div>
+        </div>
       </div>
       <table class="data-table" id="pktTable">
         <thead><tr>
@@ -284,6 +288,50 @@
     document.getElementById('fRegion').addEventListener('change', (e) => { filters.region = e.target.value || undefined; loadPackets(); });
     document.getElementById('fType').addEventListener('change', (e) => { filters.type = e.target.value !== '' ? e.target.value : undefined; loadPackets(); });
     document.getElementById('fGroup').addEventListener('click', () => { groupByHash = !groupByHash; loadPackets(); });
+
+    // Column visibility toggle (#71)
+    const COL_DEFS = [
+      { key: 'region', label: 'Region' },
+      { key: 'time', label: 'Time' },
+      { key: 'hash', label: 'Hash' },
+      { key: 'size', label: 'Size' },
+      { key: 'type', label: 'Type' },
+      { key: 'observer', label: 'Observer' },
+      { key: 'path', label: 'Path' },
+      { key: 'rpt', label: 'Rpt' },
+      { key: 'details', label: 'Details' },
+    ];
+    const defaultHidden = ['region'];
+    let visibleCols;
+    try {
+      visibleCols = JSON.parse(localStorage.getItem('packets-visible-cols'));
+    } catch {}
+    if (!visibleCols) visibleCols = COL_DEFS.map(c => c.key).filter(k => !defaultHidden.includes(k));
+    const colMenu = document.getElementById('colToggleMenu');
+    const pktTable = document.getElementById('pktTable');
+    function applyColVisibility() {
+      COL_DEFS.forEach(c => {
+        pktTable.classList.toggle('hide-col-' + c.key, !visibleCols.includes(c.key));
+      });
+      localStorage.setItem('packets-visible-cols', JSON.stringify(visibleCols));
+    }
+    colMenu.innerHTML = COL_DEFS.map(c =>
+      `<label><input type="checkbox" data-col="${c.key}" ${visibleCols.includes(c.key) ? 'checked' : ''}> ${c.label}</label>`
+    ).join('');
+    colMenu.addEventListener('change', (e) => {
+      const cb = e.target;
+      const col = cb.dataset.col;
+      if (!col) return;
+      if (cb.checked) { if (!visibleCols.includes(col)) visibleCols.push(col); }
+      else { visibleCols = visibleCols.filter(k => k !== col); }
+      applyColVisibility();
+    });
+    document.getElementById('colToggleBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      colMenu.classList.toggle('open');
+    });
+    document.addEventListener('click', () => colMenu.classList.remove('open'));
+    applyColVisibility();
 
     // Node name filter with autocomplete
     const fNode = document.getElementById('fNode');
@@ -477,11 +525,11 @@
         <td class="col-time">${timeAgo(p.timestamp)}</td>
         <td class="mono col-hash">${truncate(p.hash || String(p.id), 8)}</td>
         <td class="col-size">${size}B</td>
-        <td><span class="badge badge-${typeClass}">${typeName}</span></td>
-        <td>${truncate(p.observer_name || p.observer_id || '—', 16)}</td>
-        <td><span class="path-hops">${pathStr}</span></td>
+        <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span></td>
+        <td class="col-observer">${truncate(p.observer_name || p.observer_id || '—', 16)}</td>
+        <td class="col-path"><span class="path-hops">${pathStr}</span></td>
         <td class="col-rpt"></td>
-        <td>${detail}</td>
+        <td class="col-details">${detail}</td>
       </tr>`;
     }).join('');
   }
