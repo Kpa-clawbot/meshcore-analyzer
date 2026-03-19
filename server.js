@@ -1160,6 +1160,93 @@ app.get('/api/analytics/subpaths', (req, res) => {
   res.json({ subpaths: ranked, totalPaths });
 });
 
+// Subpath detail — stats for a specific subpath (by raw hop prefixes)
+app.get('/api/analytics/subpath-detail', (req, res) => {
+  const rawHops = (req.query.hops || '').split(',').filter(Boolean);
+  if (rawHops.length < 2) return res.json({ error: 'Need at least 2 hops' });
+
+  const packets = db.db.prepare(`SELECT path_json, snr, rssi, timestamp, decoded_json, observer_name FROM packets WHERE path_json IS NOT NULL AND path_json != '[]'`).all();
+  const allNodes = db.db.prepare('SELECT public_key, name, lat, lon FROM nodes WHERE name IS NOT NULL').all();
+
+  const nameCache = {};
+  function resolveName(hop) {
+    if (nameCache[hop] !== undefined) return nameCache[hop];
+    const h = hop.toLowerCase();
+    const m = allNodes.find(n => n.public_key.toLowerCase().startsWith(h));
+    nameCache[hop] = m ? { name: m.name, lat: m.lat, lon: m.lon, pubkey: m.public_key } : null;
+    return nameCache[hop];
+  }
+
+  const matching = [];
+  const parentPaths = {};
+  const hourBuckets = new Array(24).fill(0);
+  let snrSum = 0, snrCount = 0, rssiSum = 0, rssiCount = 0;
+  const observers = {};
+
+  for (const pkt of packets) {
+    let hops;
+    try { hops = JSON.parse(pkt.path_json); } catch { continue; }
+    if (!Array.isArray(hops) || hops.length < rawHops.length) continue;
+
+    // Check if rawHops appears as a contiguous subsequence
+    let found = false;
+    for (let i = 0; i <= hops.length - rawHops.length; i++) {
+      let match = true;
+      for (let j = 0; j < rawHops.length; j++) {
+        if (hops[i + j].toLowerCase() !== rawHops[j].toLowerCase()) { match = false; break; }
+      }
+      if (match) { found = true; break; }
+    }
+    if (!found) continue;
+
+    matching.push(pkt);
+    const hr = new Date(pkt.timestamp).getUTCHours();
+    hourBuckets[hr]++;
+    if (pkt.snr != null) { snrSum += pkt.snr; snrCount++; }
+    if (pkt.rssi != null) { rssiSum += pkt.rssi; rssiCount++; }
+    if (pkt.observer_name) observers[pkt.observer_name] = (observers[pkt.observer_name] || 0) + 1;
+
+    // Track full parent paths (resolved names)
+    const fullPath = hops.map(h => {
+      const r = resolveName(h);
+      return r ? r.name : h;
+    }).join(' → ');
+    parentPaths[fullPath] = (parentPaths[fullPath] || 0) + 1;
+  }
+
+  // Resolve hop nodes for map
+  const nodes = rawHops.map(h => {
+    const r = resolveName(h);
+    return { hop: h, name: r?.name || h, lat: r?.lat || null, lon: r?.lon || null, pubkey: r?.pubkey || null };
+  });
+
+  const topParents = Object.entries(parentPaths)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([path, count]) => ({ path, count }));
+
+  const topObservers = Object.entries(observers)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([name, count]) => ({ name, count }));
+
+  res.json({
+    hops: rawHops,
+    nodes,
+    totalMatches: matching.length,
+    firstSeen: matching.length ? matching[0].timestamp : null,
+    lastSeen: matching.length ? matching[matching.length - 1].timestamp : null,
+    signal: {
+      avgSnr: snrCount ? Math.round(snrSum / snrCount * 10) / 10 : null,
+      avgRssi: rssiCount ? Math.round(rssiSum / rssiCount) : null,
+      samples: snrCount
+    },
+    hourDistribution: hourBuckets,
+    parentPaths: topParents,
+    observers: topObservers
+  });
+});
+
 // Static files + SPA fallback
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: false,

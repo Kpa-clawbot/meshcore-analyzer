@@ -1153,3 +1153,28 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 
 /* Hop prefix in subpath routes */
 .hop-prefix { color: #9ca3af; font-size: 0.8em; }
+
+/* Subpath split layout */
+.subpath-layout { display: flex; gap: 0; height: calc(100vh - 160px); }
+.subpath-list { flex: 1; overflow-y: auto; padding: 16px; }
+.subpath-detail { width: 380px; min-width: 320px; border-left: 1px solid var(--border, #e5e7eb); overflow-y: auto; padding: 16px; }
+.subpath-detail-inner h4 { margin: 0 0 4px; }
+.subpath-meta { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; color: #9ca3af; font-size: 0.9em; }
+.subpath-section { margin: 16px 0; }
+.subpath-section h5 { margin: 0 0 6px; font-size: 0.9em; }
+.subpath-selected { background: var(--accent, #3b82f6) !important; color: #fff; }
+.subpath-selected .hop-prefix { color: rgba(255,255,255,0.6); }
+tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
+
+/* Hour distribution chart */
+.hour-chart { display: flex; align-items: flex-end; gap: 2px; height: 60px; }
+.hour-bar { flex: 1; background: var(--accent, #3b82f6); border-radius: 2px 2px 0 0; min-width: 4px; }
+.hour-labels { display: flex; justify-content: space-between; font-size: 0.7em; color: #9ca3af; }
+
+/* Parent paths */
+.parent-path { padding: 3px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+
+@media (max-width: 768px) {
+  .subpath-layout { flex-direction: column; height: auto; }
+  .subpath-detail { width: 100%; border-left: none; border-top: 1px solid var(--border, #e5e7eb); }
+}

@@ -788,7 +788,7 @@
             const hasSelfLoop = hops.some((h, j) => j > 0 && h === hops[j - 1]);
             const routeDisplay = hops.map(h => esc(h)).join(' → ');
             const prefixDisplay = rawHops.join(' → ');
-            return `<tr${hasSelfLoop ? ' class="subpath-selfloop"' : ''}>
+            return `<tr data-hops="${esc(rawHops.join(','))}" ${hasSelfLoop ? 'class="subpath-selfloop"' : ''} style="cursor:pointer">
               <td>${i + 1}</td>
               <td style="white-space:nowrap">${routeDisplay}${hasSelfLoop ? ' <span title="Contains self-loop — likely 1-byte prefix collision" style="cursor:help">🔄</span>' : ''}<br><span class="hop-prefix mono">${esc(prefixDisplay)}</span></td>
               <td>${s.count.toLocaleString()}</td>
@@ -800,16 +800,115 @@
       }
 
       el.innerHTML = `
-        <div class="analytics-section">
-          <h3>🛤️ Route Pattern Analysis</h3>
-          <p>Most common subpaths in the mesh — reveals backbone routes, bottlenecks, and preferred relay chains regardless of where they appear in the full path.</p>
-          ${renderTable(d2, 'Pairs (2-hop links)')}
-          ${renderTable(d3, 'Triples (3-hop chains)')}
-          ${renderTable(d4, 'Quads (4-hop chains)')}
-          ${renderTable(d5, 'Long chains (5+ hops)')}
+        <div class="subpath-layout">
+          <div class="subpath-list" id="subpathList">
+            <h3>🛤️ Route Pattern Analysis</h3>
+            <p>Click a route to see details. Most common subpaths — reveals backbone routes, bottlenecks, and preferred relay chains.</p>
+            ${renderTable(d2, 'Pairs (2-hop links)')}
+            ${renderTable(d3, 'Triples (3-hop chains)')}
+            ${renderTable(d4, 'Quads (4-hop chains)')}
+            ${renderTable(d5, 'Long chains (5+ hops)')}
+          </div>
+          <div class="subpath-detail" id="subpathDetail">
+            <div class="text-muted" style="padding:40px;text-align:center">Select a route to view details</div>
+          </div>
         </div>`;
+
+      // Click handler for rows
+      el.addEventListener('click', e => {
+        const tr = e.target.closest('tr[data-hops]');
+        if (!tr) return;
+        el.querySelectorAll('tr.subpath-selected').forEach(r => r.classList.remove('subpath-selected'));
+        tr.classList.add('subpath-selected');
+        loadSubpathDetail(tr.dataset.hops);
+      });
     } catch (e) {
       el.innerHTML = `<div class="text-muted">Error loading subpath data: ${e.message}</div>`;
+    }
+  }
+
+  async function loadSubpathDetail(hopsStr) {
+    const panel = document.getElementById('subpathDetail');
+    panel.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading…</div>';
+    try {
+      const data = await api('/analytics/subpath-detail?hops=' + encodeURIComponent(hopsStr));
+      renderSubpathDetail(panel, data);
+    } catch (e) {
+      panel.innerHTML = `<div class="text-muted">Error: ${e.message}</div>`;
+    }
+  }
+
+  function renderSubpathDetail(panel, data) {
+    const nodesWithLoc = data.nodes.filter(n => n.lat && n.lon && !(n.lat === 0 && n.lon === 0));
+    const hasMap = nodesWithLoc.length >= 2;
+    const maxHour = Math.max(...data.hourDistribution, 1);
+
+    panel.innerHTML = `
+      <div class="subpath-detail-inner">
+        <h4>${data.nodes.map(n => esc(n.name)).join(' → ')}</h4>
+        <div class="subpath-meta">
+          <span class="hop-prefix mono">${data.hops.join(' → ')}</span>
+          <span>${data.totalMatches.toLocaleString()} occurrences</span>
+        </div>
+
+        ${hasMap ? '<div id="subpathMap" style="height:200px;border-radius:8px;margin:12px 0;border:1px solid var(--border,#e5e7eb)"></div>' : ''}
+
+        <div class="subpath-section">
+          <h5>📡 Signal Quality</h5>
+          ${data.signal.avgSnr != null
+            ? `<div>Avg SNR: <strong>${data.signal.avgSnr} dB</strong> · Avg RSSI: <strong>${data.signal.avgRssi} dBm</strong> · ${data.signal.samples} samples</div>`
+            : '<div class="text-muted">No signal data</div>'}
+        </div>
+
+        <div class="subpath-section">
+          <h5>🕐 Activity by Hour (UTC)</h5>
+          <div class="hour-chart">
+            ${data.hourDistribution.map((c, h) => `<div class="hour-bar" title="${h}:00 UTC — ${c} packets" style="height:${Math.max(2, c / maxHour * 100)}%"></div>`).join('')}
+          </div>
+          <div class="hour-labels"><span>0</span><span>6</span><span>12</span><span>18</span><span>23</span></div>
+        </div>
+
+        <div class="subpath-section">
+          <h5>⏱️ Timeline</h5>
+          <div>First seen: ${data.firstSeen ? new Date(data.firstSeen).toLocaleString() : '—'}</div>
+          <div>Last seen: ${data.lastSeen ? new Date(data.lastSeen).toLocaleString() : '—'}</div>
+        </div>
+
+        ${data.observers.length ? `
+        <div class="subpath-section">
+          <h5>👁️ Observers</h5>
+          ${data.observers.map(o => `<div>${esc(o.name)}: ${o.count}</div>`).join('')}
+        </div>` : ''}
+
+        ${data.parentPaths.length ? `
+        <div class="subpath-section">
+          <h5>🔗 Full Paths Containing This Route</h5>
+          <div class="parent-paths">
+            ${data.parentPaths.map(p => `<div class="parent-path"><span class="mono" style="font-size:0.85em">${esc(p.path)}</span> <span class="text-muted">×${p.count}</span></div>`).join('')}
+          </div>
+        </div>` : ''}
+      </div>`;
+
+    // Render minimap
+    if (hasMap && typeof L !== 'undefined') {
+      const map = L.map('subpathMap', { zoomControl: false, attributionControl: false });
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(map);
+
+      const latlngs = [];
+      nodesWithLoc.forEach((n, i) => {
+        const ll = [n.lat, n.lon];
+        latlngs.push(ll);
+        const isEnd = i === 0 || i === nodesWithLoc.length - 1;
+        L.circleMarker(ll, {
+          radius: isEnd ? 8 : 5,
+          color: isEnd ? (i === 0 ? '#22c55e' : '#ef4444') : '#f59e0b',
+          fillColor: isEnd ? (i === 0 ? '#22c55e' : '#ef4444') : '#f59e0b',
+          fillOpacity: 0.9, weight: 2
+        }).bindTooltip(n.name, { permanent: false }).addTo(map);
+      });
+
+      L.polyline(latlngs, { color: '#f59e0b', weight: 3, dashArray: '8,6', opacity: 0.8 }).addTo(map);
+      map.fitBounds(L.latLngBounds(latlngs).pad(0.3));
     }
   }
 
