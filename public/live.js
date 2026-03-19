@@ -845,6 +845,7 @@
     }
     nodeMarkers = {};
     nodeData = {};
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
   }
 
   function addNodeMarker(n) {
