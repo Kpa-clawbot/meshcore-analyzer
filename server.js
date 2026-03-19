@@ -912,13 +912,17 @@ app.get('/api/resolve-hops', (req, res) => {
       observerLat = obsNode.lat;
       observerLon = obsNode.lon;
     } else {
-      // Fall back to averaging nodes it typically hears
+      // Fall back to averaging nearby nodes from adverts this observer received
       const obsNodes = db.db.prepare(`
-        SELECT DISTINCT n.lat, n.lon FROM packets p
-        JOIN nodes n ON p.decoded_json LIKE '%' || n.public_key || '%'
-        WHERE p.observer_id = ? AND n.lat IS NOT NULL AND n.lat != 0 AND n.lon != 0
-        LIMIT 50
-      `).all(observerId);
+        SELECT n.lat, n.lon FROM packets p
+        JOIN nodes n ON n.public_key = json_extract(p.decoded_json, '$.pubKey')
+        WHERE (p.observer_id = ? OR p.observer_name = ?)
+          AND p.payload_type = 4
+          AND n.lat IS NOT NULL AND n.lat != 0 AND n.lon != 0
+        GROUP BY n.public_key
+        ORDER BY COUNT(*) DESC
+        LIMIT 20
+      `).all(observerId, observerId);
       if (obsNodes.length) {
         observerLat = obsNodes.reduce((s, n) => s + n.lat, 0) / obsNodes.length;
         observerLon = obsNodes.reduce((s, n) => s + n.lon, 0) / obsNodes.length;
