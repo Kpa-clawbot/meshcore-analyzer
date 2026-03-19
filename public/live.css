@@ -104,7 +104,7 @@
   left: 12px;
   width: 360px;
   max-height: 340px;
-  overflow: hidden;
+  overflow-y: auto;
   background: rgba(6, 6, 18, 0.82);
   backdrop-filter: blur(12px);
   border-radius: 10px;

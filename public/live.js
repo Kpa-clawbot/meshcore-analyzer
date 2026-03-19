@@ -13,6 +13,9 @@
   let showGhostHops = localStorage.getItem('live-ghost-hops') !== 'false';
   let _onResize = null;
   let _navCleanup = null;
+  let _timelineRefreshInterval = null;
+  let _lcdClockInterval = null;
+  let _rateCounterInterval = null;
 
   // === VCR State Machine ===
   const VCR = {
@@ -279,15 +282,15 @@
     let x = (cw - totalW) / 2;
     const y = 2;
     
-    // Draw ghost segments (dim background)
-    const dimColor = color.replace(/[\d.]+\)$/, '0.07)').replace(/^#/, '');
+    // Draw ghost segments (dim background) — hardcoded to match LCD green
+    const ghostColor = 'rgba(74,222,128,0.07)';
     for (let i = 0; i < text.length; i++) {
       const ch2 = text[i];
       if (ch2 === ':') {
-        drawSegDigit(ctx, x, y, digitW * 0.5, digitH, 0x80, `rgba(74,222,128,0.07)`);
+        drawSegDigit(ctx, x, y, digitW * 0.5, digitH, 0x80, ghostColor);
         x += digitW * 0.5;
       } else {
-        drawSegDigit(ctx, x, y, digitW, digitH, 0x7F, `rgba(74,222,128,0.07)`);
+        drawSegDigit(ctx, x, y, digitW, digitH, 0x7F, ghostColor);
         x += digitW + 1;
       }
     }
@@ -341,13 +344,13 @@
     if (VCR.mode === 'LIVE') {
       modeEl.innerHTML = '<span class="vcr-live-dot"></span> LIVE';
       modeEl.className = 'vcr-mode vcr-mode-live';
-      if (pauseBtn) pauseBtn.textContent = '⏸';
+      if (pauseBtn) { pauseBtn.textContent = '⏸'; pauseBtn.setAttribute('aria-label', 'Pause'); }
       if (missedEl) missedEl.classList.add('hidden');
       updateVCRClock(Date.now());
     } else if (VCR.mode === 'PAUSED') {
       modeEl.textContent = '⏸ PAUSED';
       modeEl.className = 'vcr-mode vcr-mode-paused';
-      if (pauseBtn) pauseBtn.textContent = '▶';
+      if (pauseBtn) { pauseBtn.textContent = '▶'; pauseBtn.setAttribute('aria-label', 'Play'); }
       if (missedEl && VCR.missedCount > 0) {
         missedEl.textContent = `+${VCR.missedCount}`;
         missedEl.classList.remove('hidden');
@@ -355,10 +358,10 @@
     } else if (VCR.mode === 'REPLAY') {
       modeEl.textContent = `⏪ REPLAY`;
       modeEl.className = 'vcr-mode vcr-mode-replay';
-      if (pauseBtn) pauseBtn.textContent = '⏸';
+      if (pauseBtn) { pauseBtn.textContent = '⏸'; pauseBtn.setAttribute('aria-label', 'Pause'); }
       if (missedEl) missedEl.classList.add('hidden');
     }
-    if (speedBtn) speedBtn.textContent = VCR.speed + 'x';
+    if (speedBtn) { speedBtn.textContent = VCR.speed + 'x'; speedBtn.setAttribute('aria-label', 'Speed ' + VCR.speed + 'x'); }
     updateVCRLcd();
   }
 
@@ -560,18 +563,18 @@
         <div class="vcr-bar" id="vcrBar">
           <div class="vcr-left">
           <div class="vcr-controls">
-            <button id="vcrRewindBtn" class="vcr-btn" title="Rewind">⏪</button>
-            <button id="vcrPauseBtn" class="vcr-btn" title="Pause/Play">⏸</button>
-            <button id="vcrLiveBtn" class="vcr-btn vcr-live-btn" title="Jump to live">LIVE</button>
-            <button id="vcrSpeedBtn" class="vcr-btn" title="Playback speed">1x</button>
+            <button id="vcrRewindBtn" class="vcr-btn" title="Rewind" aria-label="Rewind">⏪</button>
+            <button id="vcrPauseBtn" class="vcr-btn" title="Pause/Play" aria-label="Pause">⏸</button>
+            <button id="vcrLiveBtn" class="vcr-btn vcr-live-btn" title="Jump to live" aria-label="Snap to Live">LIVE</button>
+            <button id="vcrSpeedBtn" class="vcr-btn" title="Playback speed" aria-label="Speed 1x">1x</button>
             <div id="vcrMode" class="vcr-mode vcr-mode-live"><span class="vcr-live-dot"></span> LIVE</div>
           </div>
           <div class="vcr-timeline-wrap">
             <div class="vcr-scope-btns">
-              <button class="vcr-scope-btn active" data-scope="3600000">1h</button>
-              <button class="vcr-scope-btn" data-scope="21600000">6h</button>
-              <button class="vcr-scope-btn" data-scope="43200000">12h</button>
-              <button class="vcr-scope-btn" data-scope="86400000">24h</button>
+              <button class="vcr-scope-btn active" data-scope="3600000" aria-label="Scope 1 hour">1h</button>
+              <button class="vcr-scope-btn" data-scope="21600000" aria-label="Scope 6 hours">6h</button>
+              <button class="vcr-scope-btn" data-scope="43200000" aria-label="Scope 12 hours">12h</button>
+              <button class="vcr-scope-btn" data-scope="86400000" aria-label="Scope 24 hours">24h</button>
             </div>
             <div class="vcr-timeline-container">
               <canvas id="vcrTimeline" class="vcr-timeline"></canvas>
@@ -767,14 +770,13 @@
 
     // Fetch historical timestamps for timeline, then start refresh
     fetchTimelineTimestamps().then(() => updateTimeline());
-    setInterval(() => {
-      // Re-fetch if scope changed or periodically to pick up new data
+    _timelineRefreshInterval = setInterval(() => {
       VCR.timelineFetchedScope = 0; // force refetch
       fetchTimelineTimestamps().then(() => updateTimeline());
     }, 30000);
 
     // Live clock tick — update LCD every second when in LIVE mode
-    setInterval(() => {
+    _lcdClockInterval = setInterval(() => {
       if (VCR.mode === 'LIVE') updateVCRClock(Date.now());
     }, 1000);
 
@@ -808,7 +810,7 @@
 
   let pktTimestamps = [];
   function startRateCounter() {
-    setInterval(() => {
+    _rateCounterInterval = setInterval(() => {
       const now = Date.now();
       pktTimestamps = pktTimestamps.filter(t => now - t < 60000);
       const el = document.getElementById('livePktRate');
@@ -1303,6 +1305,9 @@
 
   function destroy() {
     stopReplay();
+    if (_timelineRefreshInterval) { clearInterval(_timelineRefreshInterval); _timelineRefreshInterval = null; }
+    if (_lcdClockInterval) { clearInterval(_lcdClockInterval); _lcdClockInterval = null; }
+    if (_rateCounterInterval) { clearInterval(_rateCounterInterval); _rateCounterInterval = null; }
     if (ws) { ws.onclose = null; ws.close(); ws = null; }
     if (map) { map.remove(); map = null; }
     if (_onResize) { window.removeEventListener('resize', _onResize); window.removeEventListener('orientationchange', _onResize); }
