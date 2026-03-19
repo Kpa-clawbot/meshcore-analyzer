@@ -1011,6 +1011,8 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .hash-bar-label { min-width: 160px; font-size: 13px; }
 .hash-bar-track { flex: 1; height: 24px; background: var(--border); border-radius: 4px; overflow: hidden; }
 .hash-bar-fill { height: 100%; border-radius: 4px; transition: width .3s; }
+.hash-cell.hash-active:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.hash-cell.hash-selected { outline: 2px solid var(--accent); outline-offset: -2px; box-shadow: 0 0 6px var(--accent); }
 .hash-bar-value { min-width: 120px; text-align: right; font-size: 13px; font-weight: 600; }
 .badge-hash-1 { background: #ef444420; color: #ef4444; }
 .badge-hash-2 { background: #22c55e20; color: #22c55e; }

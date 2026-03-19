@@ -745,12 +745,19 @@
     return svg;
   }
 
-  function renderHashMatrix(topHops) {
+  async function renderHashMatrix(topHops) {
     const el = document.getElementById('hashMatrix');
     const oneByteHops = topHops.filter(h => h.size === 1);
     if (!oneByteHops.length) { el.innerHTML = '<div class="text-muted">No 1-byte hops</div>'; return; }
 
-    // Build 16x16 grid: row = high nibble, col = low nibble
+    // Fetch all nodes for lookup
+    let allNodes = [];
+    try {
+      const nd = await api('/nodes?limit=2000');
+      allNodes = nd.nodes || [];
+    } catch {}
+
+    // Build 16x16 grid
     const grid = Array.from({ length: 16 }, () => Array(16).fill(0));
     let maxCount = 0;
     for (const hop of oneByteHops) {
@@ -766,8 +773,7 @@
     const cellSize = 36;
     const headerSize = 24;
 
-    let html = `<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:0.75em;font-family:monospace">`;
-    // Header row
+    let html = `<div style="display:flex;gap:16px;flex-wrap:wrap"><div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:0.75em;font-family:monospace">`;
     html += `<tr><td style="width:${headerSize}px"></td>`;
     for (const n of nibbles) {
       html += `<td style="width:${cellSize}px;text-align:center;padding:2px 0;font-weight:bold;color:var(--text-muted)">${n}</td>`;
@@ -789,12 +795,38 @@
           bg = `rgb(${r},${g},${b})`;
           color = intensity > 0.5 ? '#fff' : 'var(--text)';
         }
-        html += `<td style="width:${cellSize}px;height:${cellSize}px;text-align:center;background:${bg};color:${color};border:1px solid var(--border);cursor:default" title="0x${hex}: ${count.toLocaleString()} packets">${count || ''}</td>`;
+        const nodeCount = allNodes.filter(n => n.public_key.toLowerCase().startsWith(hex.toLowerCase())).length;
+        html += `<td class="hash-cell${count ? ' hash-active' : ''}" data-hex="${hex}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;background:${bg};color:${color};border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'}" title="0x${hex}: ${count.toLocaleString()} packets, ${nodeCount} node${nodeCount !== 1 ? 's' : ''}">${count || ''}</td>`;
       }
       html += '</tr>';
     }
     html += '</table></div>';
+    html += '<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>';
     el.innerHTML = html;
+
+    // Click handler for cells
+    el.querySelectorAll('.hash-active').forEach(td => {
+      td.addEventListener('click', () => {
+        const hex = td.dataset.hex.toLowerCase();
+        const matches = allNodes.filter(n => n.public_key.toLowerCase().startsWith(hex));
+        const detail = document.getElementById('hashDetail');
+        if (!matches.length) {
+          detail.innerHTML = `<strong class="mono">0x${hex.toUpperCase()}</strong><br><span class="text-muted">No known nodes</span>`;
+          return;
+        }
+        detail.innerHTML = `<strong class="mono" style="font-size:1.1em">0x${hex.toUpperCase()}</strong> — ${matches.length} node${matches.length !== 1 ? 's' : ''}` +
+          `<div style="margin-top:8px">${matches.map(m => {
+            const coords = (m.lat && m.lon && !(m.lat === 0 && m.lon === 0))
+              ? `<span class="text-muted" style="font-size:0.8em">(${m.lat.toFixed(2)}, ${m.lon.toFixed(2)})</span>`
+              : '<span class="text-muted" style="font-size:0.8em">(no coords)</span>';
+            const role = m.role ? `<span class="badge" style="font-size:0.7em;padding:1px 4px;background:var(--border)">${esc(m.role)}</span> ` : '';
+            return `<div style="padding:3px 0">${role}<a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a> ${coords}</div>`;
+          }).join('')}</div>`;
+        // Highlight selected cell
+        el.querySelectorAll('.hash-selected').forEach(c => c.classList.remove('hash-selected'));
+        td.classList.add('hash-selected');
+      });
+    });
   }
 
   async function renderCollisions(topHops) {
