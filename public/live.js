@@ -109,8 +109,7 @@
   }
 
   function vcrReplayFromTs(targetTs) {
-    const fetchFrom = new Date(targetTs - 5000).toISOString();
-    const fetchTo = new Date(targetTs + 300000).toISOString(); // 5 min window
+    const fetchFrom = new Date(targetTs).toISOString();
     stopReplay();
     vcrSetMode('REPLAY');
 
@@ -118,11 +117,11 @@
     clearNodeMarkers();
     loadNodes(targetTs);
 
-    fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(fetchFrom)}&until=${encodeURIComponent(fetchTo)}`)
+    // Fetch ALL packets from scrub point to now (no limit, no until)
+    fetch(`/api/packets?limit=10000&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
       .then(r => r.json())
       .then(data => {
-        const pkts = (data.packets || []).reverse();
-        // Build a fresh replay buffer from ONLY the fetched packets
+        const pkts = (data.packets || []).reverse(); // chronological order
         const replayEntries = pkts.map(p => ({
           ts: new Date(p.timestamp || p.created_at).getTime(),
           pkt: dbPacketToLive(p)
@@ -131,13 +130,11 @@
           vcrSetMode('PAUSED');
           return;
         }
-        // Replace buffer with fetched packets for clean replay
-        // (keep existing buffer entries that are newer for when we resume live)
-        const oldNew = VCR.buffer.filter(b => b.ts > replayEntries[replayEntries.length - 1].ts);
-        VCR.buffer = [...replayEntries, ...oldNew];
-        VCR.playhead = 0; // start from first fetched packet
-        VCR.scrubEnd = replayEntries.length;
+        VCR.buffer = replayEntries;
+        VCR.playhead = 0;
+        VCR.scrubEnd = null;
         VCR.scrubTs = null;
+        VCR.dragPct = null;
         startReplay();
       })
       .catch(() => { vcrResumeLive(); });
@@ -200,13 +197,8 @@
     stopReplay();
     function tick() {
       if (VCR.mode !== 'REPLAY') return;
-      const endIdx = VCR.scrubEnd != null ? VCR.scrubEnd : VCR.buffer.length;
-      if (VCR.playhead >= endIdx) {
-        // Hold playhead at the last replayed packet's time
-        const lastEntry = VCR.buffer[Math.max(0, VCR.playhead - 1)];
-        if (lastEntry) VCR.scrubTs = lastEntry.ts;
-        VCR.scrubEnd = null;
-        vcrSetMode('PAUSED');
+      if (VCR.playhead >= VCR.buffer.length) {
+        vcrResumeLive();
         return;
       }
       const entry = VCR.buffer[VCR.playhead];
