@@ -805,14 +805,15 @@
         const count = nodes.length;
         let bg, color;
         if (count === 0) {
-          bg = '#166534'; color = '#86efac'; // green — available
+          bg = 'var(--card-bg)'; color = 'var(--text-muted)'; // empty — subtle
         } else if (count === 1) {
-          bg = '#854d0e'; color = '#fde047'; // yellow — taken, no collision
+          bg = '#dcfce7'; color = '#166534'; // light green — taken, no collision
         } else {
-          // 2+ nodes: interpolate orange→red
+          // 2+ nodes: orange→red
           const t = Math.min((count - 2) / 4, 1);
-          const g = Math.round(80 * (1 - t));
-          bg = `rgb(200,${g},30)`; color = '#fff';
+          const r = Math.round(220 + 35 * t);
+          const g = Math.round(120 * (1 - t));
+          bg = `rgb(${r},${g},30)`; color = '#fff';
         }
         const status = count === 0 ? 'available' : count === 1 ? `1 node: ${nodes[0].name || nodes[0].public_key.slice(0,12)}` : `${count} nodes — COLLISION`;
         const countLabel = count === 0 ? '·' : count >= 3 ? '3+' : String(count);
@@ -824,8 +825,8 @@
     html += '</table></div>';
     html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>
     <div style="margin-top:8px;font-size:0.8em;display:flex;gap:16px;align-items:center">
-      <span><span class="legend-swatch" style="background:#166534"></span> 0 — Available</span>
-      <span><span class="legend-swatch" style="background:#854d0e"></span> 1 — One node</span>
+      <span><span class="legend-swatch" style="background:var(--card-bg);border:1px solid var(--border)"></span> 0 — Available</span>
+      <span><span class="legend-swatch" style="background:#dcfce7"></span> 1 — One node</span>
       <span><span class="legend-swatch" style="background:rgb(200,80,30)"></span> 2 — Two nodes (collision)</span>
       <span><span class="legend-swatch" style="background:rgb(200,0,30)"></span> 3+ — Three+ nodes (collision)</span>
     </div>`;
