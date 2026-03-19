@@ -1178,3 +1178,9 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   .subpath-layout { flex-direction: column; height: auto; }
   .subpath-detail { width: 100%; border-left: none; border-top: 1px solid var(--border, #e5e7eb); }
 }
+
+/* Subpath jump nav */
+.subpath-jump-nav { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; font-size: 0.9em; flex-wrap: wrap; }
+.subpath-jump-nav span { color: #9ca3af; }
+.subpath-jump-nav a { padding: 4px 12px; border-radius: 4px; background: var(--accent, #3b82f6); color: #fff; text-decoration: none; font-size: 0.85em; }
+.subpath-jump-nav a:hover { opacity: 0.8; }

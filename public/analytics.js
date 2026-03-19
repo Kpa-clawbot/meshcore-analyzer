@@ -807,10 +807,17 @@
             <label style="display:inline-flex;align-items:center;gap:6px;margin-bottom:12px;cursor:pointer;font-size:0.9em">
               <input type="checkbox" id="hideCollisions" ${localStorage.getItem('subpath-hide-collisions') === '1' ? 'checked' : ''}> Hide likely prefix collisions (self-loops)
             </label>
-            ${renderTable(d2, 'Pairs (2-hop links)')}
-            ${renderTable(d3, 'Triples (3-hop chains)')}
-            ${renderTable(d4, 'Quads (4-hop chains)')}
-            ${renderTable(d5, 'Long chains (5+ hops)')}
+            <div class="subpath-jump-nav">
+              <span>Jump to:</span>
+              <a href="#sp-pairs">Pairs</a>
+              <a href="#sp-triples">Triples</a>
+              <a href="#sp-quads">Quads</a>
+              <a href="#sp-long">5+ hops</a>
+            </div>
+            <div id="sp-pairs">${renderTable(d2, 'Pairs (2-hop links)')}</div>
+            <div id="sp-triples">${renderTable(d3, 'Triples (3-hop chains)')}</div>
+            <div id="sp-quads">${renderTable(d4, 'Quads (4-hop chains)')}</div>
+            <div id="sp-long">${renderTable(d5, 'Long chains (5+ hops)')}</div>
           </div>
           <div class="subpath-detail" id="subpathDetail">
             <div class="text-muted" style="padding:40px;text-align:center">Select a route to view details</div>
@@ -824,6 +831,15 @@
         el.querySelectorAll('tr.subpath-selected').forEach(r => r.classList.remove('subpath-selected'));
         tr.classList.add('subpath-selected');
         loadSubpathDetail(tr.dataset.hops);
+      });
+
+      // Jump nav — scroll within list panel
+      el.querySelectorAll('.subpath-jump-nav a').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          const target = document.getElementById(a.getAttribute('href').slice(1));
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
       });
 
       // Collision toggle
