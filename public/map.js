@@ -138,24 +138,42 @@
   }
 
   function drawPacketRoute(hopKeys) {
-    // Match hop keys to nodes - supports both full pubkeys and short prefixes
-    // Bidirectional prefix match handles DB nodes with truncated or full keys
-    function findNode(hop) {
+    // Resolve hop short hashes to node positions with geographic disambiguation
+    const raw = hopKeys.map(hop => {
       const hopLower = hop.toLowerCase();
-      return nodes.find(n => {
+      const candidates = nodes.filter(n => {
         const pk = n.public_key.toLowerCase();
         return (pk === hopLower || pk.startsWith(hopLower) || hopLower.startsWith(pk)) &&
           n.lat != null && n.lon != null && !(n.lat === 0 && n.lon === 0);
       });
-    }
-
-    const positions = hopKeys.map(hop => {
-      const node = findNode(hop);
-      if (node) {
-        return { lat: node.lat, lon: node.lon, name: node.name || hop.slice(0,8), pubkey: node.public_key, role: node.role, resolved: true };
+      if (candidates.length === 1) {
+        const c = candidates[0];
+        return { lat: c.lat, lon: c.lon, name: c.name || hop.slice(0,8), pubkey: c.public_key, role: c.role, resolved: true };
+      } else if (candidates.length > 1) {
+        return { name: hop.slice(0,8), resolved: false, candidates };
       }
       return null;
-    }).filter(Boolean);
+    });
+
+    // Disambiguate: pick candidate closest to center of already-resolved hops
+    const knownPos = raw.filter(h => h && h.resolved);
+    if (knownPos.length > 0) {
+      const cLat = knownPos.reduce((s, p) => s + p.lat, 0) / knownPos.length;
+      const cLon = knownPos.reduce((s, p) => s + p.lon, 0) / knownPos.length;
+      const dist = (lat, lon) => Math.sqrt((lat - cLat) ** 2 + (lon - cLon) ** 2);
+      for (const hop of raw) {
+        if (hop && !hop.resolved && hop.candidates) {
+          hop.candidates.sort((a, b) => dist(a.lat, a.lon) - dist(b.lat, b.lon));
+          const best = hop.candidates[0];
+          hop.lat = best.lat; hop.lon = best.lon;
+          hop.name = best.name || hop.name;
+          hop.pubkey = best.public_key; hop.role = best.role;
+          hop.resolved = true;
+        }
+      }
+    }
+
+    const positions = raw.filter(h => h && h.resolved);
     if (positions.length < 1) return;
 
     // Even a single node is worth showing (zoom to it)
