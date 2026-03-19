@@ -583,15 +583,17 @@ function makeColumnsResizable(tableSelector, storageKey) {
 
       function onMove(e2) {
         const dx = e2.clientX - startX;
-        const newW = Math.max(30, startW + dx);
-        // Steal/give space from next column (Excel behavior)
-        const nextTh = ths[i + 1];
-        const nextW = nextTh ? nextTh.offsetWidth : 0;
+        const newW = Math.max(50, startW + dx);
         const delta = newW - th.offsetWidth;
-        if (nextTh && nextW - delta >= 30) {
-          th.style.width = newW + 'px';
-          nextTh.style.width = (nextW - delta) + 'px';
-        }
+        if (delta === 0) return;
+        // Steal/give space from columns to the right, proportionally
+        const rightThs = ths.slice(i + 1);
+        const rightWidths = rightThs.map(t => t.offsetWidth);
+        const rightTotal = rightWidths.reduce((s, w) => s + w, 0);
+        if (rightTotal - delta < rightThs.length * 50) return; // can't squeeze below 50px each
+        th.style.width = newW + 'px';
+        const scale = (rightTotal - delta) / rightTotal;
+        rightThs.forEach(t => { t.style.width = Math.max(50, t.offsetWidth * scale) + 'px'; });
       }
       function onUp() {
         handle.classList.remove('active');
