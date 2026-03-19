@@ -333,7 +333,15 @@
       return;
     }
 
-    tbody.innerHTML = nodes.map(n => {
+    // Favorites always on top
+    const favs = getFavorites();
+    const sorted = [...nodes].sort((a, b) => {
+      const aFav = favs.includes(a.public_key) ? 0 : 1;
+      const bFav = favs.includes(b.public_key) ? 0 : 1;
+      return aFav - bFav;
+    });
+
+    tbody.innerHTML = sorted.map(n => {
       const roleColor = ROLE_COLORS[n.role] || '#6b7280';
       return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}">
         <td>${favStar(n.public_key, 'node-fav')}<strong>${n.name || '(unnamed)'}</strong></td>
