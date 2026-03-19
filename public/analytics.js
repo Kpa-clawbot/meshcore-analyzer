@@ -790,7 +790,7 @@
     const cellSize = 36;
     const headerSize = 24;
 
-    let html = `<div style="display:flex;gap:16px;flex-wrap:wrap"><div class="hash-matrix-scroll"><table class="hash-matrix-table" style="border-collapse:collapse;font-size:0.7em;font-family:monospace">`;
+    let html = `<div style="display:flex;gap:16px;flex-wrap:wrap"><div class="hash-matrix-scroll"><table class="hash-matrix-table" style="border-collapse:collapse;font-size:12px;font-family:monospace">`;
     html += `<tr><td style="width:${headerSize}px"></td>`;
     for (const n of nibbles) {
       html += `<td style="width:${cellSize}px;text-align:center;padding:2px 0;font-weight:bold;color:var(--text-muted)">${n}</td>`;
@@ -815,9 +815,9 @@
           bg = `rgb(200,${g},30)`; color = '#fff';
         }
         const status = count === 0 ? 'available' : count === 1 ? `1 node: ${nodes[0].name || nodes[0].public_key.slice(0,12)}` : `${count} nodes — COLLISION`;
-        const countLabel = count === 0 ? '0' : count >= 3 ? '3+' : String(count);
-        const cellText = count >= 2 ? `<strong>⚠${countLabel}</strong>` : countLabel;
-        html += `<td class="hash-cell${count ? ' hash-active' : ''}" data-hex="${hex}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;background:${bg};color:${color};border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:0.85em" title="0x${hex}: ${status}">${cellText}</td>`;
+        const countLabel = count === 0 ? '·' : count >= 3 ? '3+' : String(count);
+        const cellText = count >= 2 ? `<strong>${countLabel}</strong>` : countLabel;
+        html += `<td class="hash-cell${count ? ' hash-active' : ''}" data-hex="${hex}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;background:${bg};color:${color};border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:13px;font-weight:${count >= 2 ? '700' : '400'}" title="0x${hex}: ${status}">${cellText}</td>`;
       }
       html += '</tr>';
     }
@@ -826,8 +826,8 @@
     <div style="margin-top:8px;font-size:0.8em;display:flex;gap:16px;align-items:center">
       <span><span class="legend-swatch" style="background:#166534"></span> 0 — Available</span>
       <span><span class="legend-swatch" style="background:#854d0e"></span> 1 — One node</span>
-      <span><span class="legend-swatch" style="background:rgb(200,80,30)"></span> ⚠2 — Two nodes (collision)</span>
-      <span><span class="legend-swatch" style="background:rgb(200,0,30)"></span> ⚠3+ — Three+ nodes (collision)</span>
+      <span><span class="legend-swatch" style="background:rgb(200,80,30)"></span> 2 — Two nodes (collision)</span>
+      <span><span class="legend-swatch" style="background:rgb(200,0,30)"></span> 3+ — Three+ nodes (collision)</span>
     </div>`;
     el.innerHTML = html;
 
@@ -890,8 +890,8 @@
       }
       if (!collisions.length) { el.innerHTML = '<div class="text-muted" style="padding:8px">No collisions detected</div>'; return; }
       
-      // Sort: distant first (most interesting), then regional, local, incomplete
-      const classOrder = { distant: 0, regional: 1, local: 2, incomplete: 3, unknown: 4 };
+      // Sort: local first (most likely to collide), then regional, distant, incomplete
+      const classOrder = { local: 0, regional: 1, distant: 2, incomplete: 3, unknown: 4 };
       collisions.sort((a, b) => classOrder[a.classification] - classOrder[b.classification] || b.count - a.count);
 
       el.innerHTML = `<table class="analytics-table">
