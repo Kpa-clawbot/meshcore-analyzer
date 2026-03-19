@@ -148,6 +148,18 @@ function connectWS() {
 function onWS(fn) { wsListeners.push(fn); }
 function offWS(fn) { wsListeners = wsListeners.filter(f => f !== fn); }
 
+/* Global escapeHtml — used by multiple pages */
+function escapeHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* Global debounce */
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
 /* Debounced WS helper — batches rapid messages, calls fn with array of msgs */
 function debouncedOnWS(fn, ms) {
   if (typeof ms === 'undefined') ms = 250;

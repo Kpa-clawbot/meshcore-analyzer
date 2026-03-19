@@ -5,10 +5,6 @@
   let nodes = [];
   const PAYLOAD_TYPES = {0:'Request',1:'Response',2:'Direct Msg',3:'ACK',4:'Advert',5:'Channel Msg',7:'Anon Req',8:'Path',9:'Trace'};
 
-  function escapeHtml(s) {
-    if (!s) return '';
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
   let counts = {};
   let selectedKey = null;
   let activeTab = 'all';
@@ -202,6 +198,8 @@
       renderLeft();
     } catch (e) {
       console.error('Failed to load nodes:', e);
+      const tbody = document.getElementById('nodesBody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding:24px;color:var(--error,#ef4444)"><div role="alert" aria-live="polite">Failed to load nodes. Please try again.</div></td></tr>';
     }
   }
 
@@ -439,12 +437,6 @@
         setTimeout(() => btn.textContent = '📋 Copy URL', 2000);
       }).catch(() => {});
     });
-  }
-
-  // Minimal QR-like visual (encode pubkey as a grid pattern - not a real QR but visually useful)
-  function debounce(fn, ms) {
-    let t;
-    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
 
   registerPage('nodes', { init, destroy });

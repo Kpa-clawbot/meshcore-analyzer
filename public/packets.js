@@ -253,6 +253,8 @@
       renderLeft();
     } catch (e) {
       console.error('Failed to load packets:', e);
+      const tbody = document.getElementById('pktBody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center" style="padding:24px;color:var(--error,#ef4444)"><div role="alert" aria-live="polite">Failed to load packets. Please try again.</div></td></tr>';
     }
   }
 
@@ -492,6 +494,11 @@
     const groupBtn = document.getElementById('fGroup');
     if (groupBtn) groupBtn.classList.toggle('active', groupByHash);
 
+    if (!packets.length) {
+      tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted" style="padding:24px">No packets found</td></tr>';
+      return;
+    }
+
     if (groupByHash) {
       let html = '';
       for (const p of packets) {
@@ -714,10 +721,6 @@
     }
   }
 
-  function escapeHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
   function buildDecodedTable(decoded) {
     let rows = '';
     for (const [k, v] of Object.entries(decoded)) {
@@ -936,12 +939,6 @@
 
   function kv(key, val) {
     return '<div class="byop-row"><span class="byop-key">' + key + '</span><span class="byop-val">' + val + '</span></div>';
-  }
-
-  // Debounce helper
-  function debounce(fn, ms) {
-    let t;
-    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
 
   // Load regions from config
