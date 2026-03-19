@@ -819,8 +819,8 @@
   async function loadNodes(beforeTs) {
     try {
       const url = beforeTs
-        ? `/api/nodes?limit=500&before=${encodeURIComponent(new Date(beforeTs).toISOString())}`
-        : '/api/nodes?limit=500';
+        ? `/api/nodes?limit=2000&before=${encodeURIComponent(new Date(beforeTs).toISOString())}`
+        : '/api/nodes?limit=2000';
       const resp = await fetch(url);
       const nodes = await resp.json();
       const list = Array.isArray(nodes) ? nodes : (nodes.nodes || []);
