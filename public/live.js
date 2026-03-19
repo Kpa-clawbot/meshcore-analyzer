@@ -478,6 +478,7 @@
       sessionStorage.removeItem('replay-packet');
       try {
         const pkt = JSON.parse(replayData);
+        vcrPause(); // suppress live packets
         setTimeout(() => animatePacket(pkt), 1500);
       } catch {}
     } else {
