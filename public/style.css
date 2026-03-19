@@ -45,6 +45,7 @@
     --input-bg: #1e1e34;
     --selected-bg: #1e3a5f;
     --hover-bg: rgba(255,255,255, 0.06);
+    --section-bg: #1e1e34;
   }
 }
 /* ⚠️ DARK THEME VARIABLES — KEEP IN SYNC with @media block above */
@@ -64,6 +65,7 @@
   --input-bg: #1e1e34;
   --selected-bg: #1e3a5f;
   --hover-bg: rgba(255,255,255, 0.06);
+  --section-bg: #1e1e34;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -321,7 +323,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   padding: 5px 8px; border-bottom: 1px solid var(--border);
 }
 .field-table .section-row td {
-  background: #eef2ff; font-weight: 700; font-size: 11px;
+  background: var(--section-bg, #eef2ff); font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: .5px; color: var(--accent);
 }
 
