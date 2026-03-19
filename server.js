@@ -578,6 +578,47 @@ app.get('/api/nodes/search', (req, res) => {
   res.json({ nodes });
 });
 
+// Bulk health summary for analytics — single query approach (MUST be before :pubkey routes)
+app.get('/api/nodes/bulk-health', (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const nodes = db.db.prepare(`SELECT * FROM nodes ORDER BY last_seen DESC LIMIT ?`).all(limit);
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const todayISO = todayStart.toISOString();
+
+  const results = nodes.map(node => {
+    const pk = node.public_key;
+    const keyPattern = `%${pk}%`;
+    const namePattern = node.name ? `%${node.name.replace(/[%_]/g, '')}%` : null;
+    const where = namePattern
+      ? `(decoded_json LIKE @k OR decoded_json LIKE @n)`
+      : `decoded_json LIKE @k`;
+    const p = namePattern ? { k: keyPattern, n: namePattern } : { k: keyPattern };
+
+    const observerRows = db.db.prepare(`
+      SELECT observer_id, observer_name, AVG(snr) as avgSnr, AVG(rssi) as avgRssi, COUNT(*) as packetCount
+      FROM packets WHERE ${where} AND observer_id IS NOT NULL GROUP BY observer_id ORDER BY packetCount DESC
+    `).all(p);
+
+    const totalPackets = db.db.prepare(`SELECT COUNT(*) as c FROM packets WHERE ${where}`).get(p).c;
+    const packetsToday = db.db.prepare(`SELECT COUNT(*) as c FROM packets WHERE ${where} AND timestamp > @s`).get({ ...p, s: todayISO }).c;
+    const avgSnr = db.db.prepare(`SELECT AVG(snr) as v FROM packets WHERE ${where}`).get(p).v;
+    const lastHeard = db.db.prepare(`SELECT MAX(timestamp) as v FROM packets WHERE ${where}`).get(p).v;
+
+    return {
+      public_key: pk,
+      name: node.name,
+      role: node.role,
+      lat: node.lat,
+      lon: node.lon,
+      stats: { totalPackets, packetsToday, avgSnr, lastHeard },
+      observers: observerRows
+    };
+  });
+
+  res.json(results);
+});
+
 app.get('/api/nodes/:pubkey', (req, res) => {
   const node = db.getNode(req.params.pubkey);
   if (!node) return res.status(404).json({ error: 'Not found' });
@@ -1258,47 +1299,6 @@ app.get('/api/traces/:hash', (req, res) => {
   const packets = db.db.prepare(`SELECT observer_id, timestamp, snr, rssi FROM packets WHERE hash = ? ORDER BY timestamp`).all(req.params.hash);
   const traces = packets.map(p => ({ observer: p.observer_id, time: p.timestamp, snr: p.snr, rssi: p.rssi }));
   res.json({ traces });
-});
-
-// Bulk health summary for analytics — single query approach (MUST be before :pubkey routes)
-app.get('/api/nodes/bulk-health', (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const nodes = db.db.prepare(`SELECT * FROM nodes ORDER BY last_seen DESC LIMIT ?`).all(limit);
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
-  const todayISO = todayStart.toISOString();
-
-  const results = nodes.map(node => {
-    const pk = node.public_key;
-    const keyPattern = `%${pk}%`;
-    const namePattern = node.name ? `%${node.name.replace(/[%_]/g, '')}%` : null;
-    const where = namePattern
-      ? `(decoded_json LIKE @k OR decoded_json LIKE @n)`
-      : `decoded_json LIKE @k`;
-    const p = namePattern ? { k: keyPattern, n: namePattern } : { k: keyPattern };
-
-    const observerRows = db.db.prepare(`
-      SELECT observer_id, observer_name, AVG(snr) as avgSnr, AVG(rssi) as avgRssi, COUNT(*) as packetCount
-      FROM packets WHERE ${where} AND observer_id IS NOT NULL GROUP BY observer_id ORDER BY packetCount DESC
-    `).all(p);
-
-    const totalPackets = db.db.prepare(`SELECT COUNT(*) as c FROM packets WHERE ${where}`).get(p).c;
-    const packetsToday = db.db.prepare(`SELECT COUNT(*) as c FROM packets WHERE ${where} AND timestamp > @s`).get({ ...p, s: todayISO }).c;
-    const avgSnr = db.db.prepare(`SELECT AVG(snr) as v FROM packets WHERE ${where}`).get(p).v;
-    const lastHeard = db.db.prepare(`SELECT MAX(timestamp) as v FROM packets WHERE ${where}`).get(p).v;
-
-    return {
-      public_key: pk,
-      name: node.name,
-      role: node.role,
-      lat: node.lat,
-      lon: node.lon,
-      stats: { totalPackets, packetsToday, avgSnr, lastHeard },
-      observers: observerRows
-    };
-  });
-
-  res.json(results);
 });
 
 app.get('/api/nodes/:pubkey/health', (req, res) => {
