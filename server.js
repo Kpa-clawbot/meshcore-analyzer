@@ -1250,7 +1250,7 @@ app.get('/api/observers', (req, res) => {
     const lastHour = db.db.prepare(`SELECT COUNT(*) as count FROM packets WHERE observer_id = ? AND timestamp > ?`).get(o.id, oneHourAgo);
     return { ...o, packetsLastHour: lastHour.count };
   });
-  res.json({ observers: result });
+  res.json({ observers: result, server_time: new Date().toISOString() });
 });
 
 app.get('/api/traces/:hash', (req, res) => {
