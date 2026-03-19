@@ -619,6 +619,26 @@ app.get('/api/nodes/bulk-health', (req, res) => {
   res.json(results);
 });
 
+app.get('/api/nodes/network-status', (req, res) => {
+  const now = Date.now();
+  const allNodes = db.db.prepare('SELECT public_key, name, role, last_seen FROM nodes').all();
+  let active = 0, degraded = 0, silent = 0;
+  const roleCounts = {};
+  allNodes.forEach(n => {
+    const r = n.role || 'unknown';
+    roleCounts[r] = (roleCounts[r] || 0) + 1;
+    const ls = n.last_seen ? new Date(n.last_seen).getTime() : 0;
+    const age = now - ls;
+    const isInfra = r === 'repeater' || r === 'room';
+    const degradedMs = isInfra ? 86400000 : 3600000;
+    const silentMs = isInfra ? 259200000 : 86400000;
+    if (age < degradedMs) active++;
+    else if (age < silentMs) degraded++;
+    else silent++;
+  });
+  res.json({ total: allNodes.length, active, degraded, silent, roleCounts });
+});
+
 app.get('/api/nodes/:pubkey', (req, res) => {
   const node = db.getNode(req.params.pubkey);
   if (!node) return res.status(404).json({ error: 'Not found' });

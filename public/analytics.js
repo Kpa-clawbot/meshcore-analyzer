@@ -1140,9 +1140,10 @@
   async function renderNodesTab(el) {
     el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading node analytics…</div>';
     try {
-      const [nodesResp, bulkHealth] = await Promise.all([
+      const [nodesResp, bulkHealth, netStatus] = await Promise.all([
         api('/nodes?limit=200&sortBy=lastSeen'),
-        api('/nodes/bulk-health?limit=50')
+        api('/nodes/bulk-health?limit=50'),
+        api('/nodes/network-status')
       ]);
       const nodes = nodesResp.nodes || nodesResp;
       const myNodes = JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]');
@@ -1159,24 +1160,8 @@
       const byObservers = [...enriched].sort((a, b) => (b.health.observers?.length || 0) - (a.health.observers?.length || 0));
       const byRecent = [...enriched].filter(n => n.health.stats.lastHeard).sort((a, b) => new Date(b.health.stats.lastHeard) - new Date(a.health.stats.lastHeard));
 
-      // Status counts
-      const now = Date.now();
-      let active = 0, degraded = 0, silent = 0;
-      enriched.forEach(n => {
-        const lh = n.health.stats.lastHeard;
-        const age = lh ? now - new Date(lh).getTime() : Infinity;
-        const role = (n.role || '').toLowerCase();
-        const isInfra = role === 'repeater' || role === 'room';
-        const degradedMs = isInfra ? 86400000 : 3600000;
-        const silentMs = isInfra ? 259200000 : 86400000;
-        if (age < degradedMs) active++;
-        else if (age < silentMs) degraded++;
-        else silent++;
-      });
-
-      // Role breakdown
-      const roleCounts = {};
-      nodes.forEach(n => { const r = n.role || 'unknown'; roleCounts[r] = (roleCounts[r] || 0) + 1; });
+      // Use server-computed status across ALL nodes
+      const { active, degraded, silent, total: totalNodes, roleCounts } = netStatus;
 
       function nodeLink(n) {
         return `<a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="analytics-link">${esc(n.name || n.public_key.slice(0, 12))}</a>`;
@@ -1204,7 +1189,7 @@
               <div style="font-size:11px;text-transform:uppercase;color:var(--text-muted)">🔴 Silent</div>
             </div>
             <div class="analytics-stat-card" style="flex:1;min-width:120px;text-align:center;padding:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">
-              <div style="font-size:28px;font-weight:700">${nodes.length}</div>
+              <div style="font-size:28px;font-weight:700">${totalNodes}</div>
               <div style="font-size:11px;text-transform:uppercase;color:var(--text-muted)">Total Nodes</div>
             </div>
           </div>
