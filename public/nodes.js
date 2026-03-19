@@ -333,9 +333,14 @@
       return;
     }
 
-    // Favorites always on top
+    // Claimed ("My Mesh") nodes always on top, then favorites
+    const myNodes = JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]');
+    const myKeys = new Set(myNodes.map(n => n.pubkey));
     const favs = getFavorites();
     const sorted = [...nodes].sort((a, b) => {
+      const aMy = myKeys.has(a.public_key) ? 0 : 1;
+      const bMy = myKeys.has(b.public_key) ? 0 : 1;
+      if (aMy !== bMy) return aMy - bMy;
       const aFav = favs.includes(a.public_key) ? 0 : 1;
       const bFav = favs.includes(b.public_key) ? 0 : 1;
       return aFav - bFav;
