@@ -69,7 +69,7 @@
             <button class="tab-btn" data-tab="rf">RF / Signal</button>
             <button class="tab-btn" data-tab="topology">Topology</button>
             <button class="tab-btn" data-tab="channels">Channels</button>
-            <button class="tab-btn" data-tab="hashsizes">Hash Sizes</button>
+            <button class="tab-btn" data-tab="hashsizes">Repeater Hashes</button>
             <button class="tab-btn" data-tab="subpaths">Route Patterns</button>
           </div>
         </div>
@@ -743,23 +743,78 @@
     const oneByteHops = topHops.filter(h => h.size === 1);
     if (!oneByteHops.length) { el.innerHTML = '<div class="text-muted">No 1-byte hops</div>'; return; }
     try {
-      const nodesData = await api('/nodes?limit=500');
+      const nodesData = await api('/nodes?limit=2000');
       const nodes = nodesData.nodes || [];
       const collisions = [];
       for (const hop of oneByteHops) {
         const prefix = hop.hex.toLowerCase();
         const matches = nodes.filter(n => n.public_key.toLowerCase().startsWith(prefix));
-        if (matches.length > 1) collisions.push({ hop: hop.hex, count: hop.count, matches });
+        if (matches.length > 1) {
+          // Calculate pairwise distances for classification
+          const withCoords = matches.filter(m => m.lat && m.lon && !(m.lat === 0 && m.lon === 0));
+          let maxDistKm = 0;
+          let classification = 'unknown';
+          if (withCoords.length >= 2) {
+            for (let i = 0; i < withCoords.length; i++) {
+              for (let j = i + 1; j < withCoords.length; j++) {
+                const dLat = (withCoords[i].lat - withCoords[j].lat) * 111;
+                const dLon = (withCoords[i].lon - withCoords[j].lon) * 85;
+                const d = Math.sqrt(dLat * dLat + dLon * dLon);
+                if (d > maxDistKm) maxDistKm = d;
+              }
+            }
+            if (maxDistKm < 50) classification = 'local';
+            else if (maxDistKm < 200) classification = 'regional';
+            else classification = 'distant';
+          } else if (withCoords.length < 2) {
+            classification = 'incomplete';
+          }
+          collisions.push({ hop: hop.hex, count: hop.count, matches, maxDistKm, classification, withCoords: withCoords.length });
+        }
       }
       if (!collisions.length) { el.innerHTML = '<div class="text-muted" style="padding:8px">No collisions detected</div>'; return; }
+      
+      // Sort: distant first (most interesting), then regional, local, incomplete
+      const classOrder = { distant: 0, regional: 1, local: 2, incomplete: 3, unknown: 4 };
+      collisions.sort((a, b) => classOrder[a.classification] - classOrder[b.classification] || b.count - a.count);
+
       el.innerHTML = `<table class="analytics-table">
-        <thead><tr><th>Hop</th><th>Appearances</th><th>Colliding Nodes</th></tr></thead>
-        <tbody>${collisions.map(c => `<tr>
-          <td class="mono">${c.hop}</td>
-          <td>${c.count.toLocaleString()}</td>
-          <td>${c.matches.map(m => `<a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a>`).join(', ')}</td>
-        </tr>`).join('')}</tbody>
-      </table>`;
+        <thead><tr><th>Hop</th><th>Appearances</th><th>Max Distance</th><th>Assessment</th><th>Colliding Nodes</th></tr></thead>
+        <tbody>${collisions.map(c => {
+          let badge, tooltip;
+          if (c.classification === 'local') {
+            badge = '<span class="badge" style="background:#22c55e;color:#fff" title="All nodes within 50km — likely true collision, same RF neighborhood">🏘️ Local</span>';
+            tooltip = 'Nodes close enough for direct RF — probably genuine prefix collision';
+          } else if (c.classification === 'regional') {
+            badge = '<span class="badge" style="background:#f59e0b;color:#fff" title="Nodes 50–200km apart — edge of LoRa range, could be atmospheric">⚡ Regional</span>';
+            tooltip = 'At edge of 915MHz range — could indicate atmospheric ducting or hilltop-to-hilltop links';
+          } else if (c.classification === 'distant') {
+            badge = '<span class="badge" style="background:#ef4444;color:#fff" title="Nodes >200km apart — beyond typical 915MHz range">🌐 Distant</span>';
+            tooltip = 'Beyond typical LoRa range — likely internet bridging, MQTT gateway, or separate mesh networks sharing prefix';
+          } else {
+            badge = '<span class="badge" style="background:#6b7280;color:#fff">❓ Unknown</span>';
+            tooltip = 'Not enough coordinate data to classify';
+          }
+          const distStr = c.withCoords >= 2 ? `${Math.round(c.maxDistKm)} km` : '<span class="text-muted">—</span>';
+          return `<tr>
+            <td class="mono">${c.hop}</td>
+            <td>${c.count.toLocaleString()}</td>
+            <td>${distStr}</td>
+            <td title="${tooltip}">${badge}</td>
+            <td>${c.matches.map(m => {
+              const loc = (m.lat && m.lon && !(m.lat === 0 && m.lon === 0)) 
+                ? ` <span class="text-muted" style="font-size:0.75em">(${m.lat.toFixed(2)}, ${m.lon.toFixed(2)})</span>` 
+                : ' <span class="text-muted" style="font-size:0.75em">(no coords)</span>';
+              return `<a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a>${loc}`;
+            }).join('<br>')}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+      <div class="text-muted" style="padding:8px;font-size:0.8em">
+        <strong>🏘️ Local</strong> &lt;50km: true prefix collision, same mesh area &nbsp;
+        <strong>⚡ Regional</strong> 50–200km: edge of LoRa range, possible atmospheric propagation &nbsp;
+        <strong>🌐 Distant</strong> &gt;200km: beyond 915MHz range — internet bridge, MQTT gateway, or separate networks
+      </div>`;
     } catch { el.innerHTML = '<div class="text-muted">Failed to load</div>'; }
   }
 
