@@ -1249,3 +1249,27 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .hide-col-path .col-path,
 .hide-col-rpt .col-rpt,
 .hide-col-details .col-details { display: none; }
+
+/* === Bug fixes: #17 #20 #21 #69 === */
+
+/* #17 — Hash matrix mobile overflow */
+.hash-matrix-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+@media (max-width: 640px) {
+  .hash-matrix-table td { width: 24px !important; height: 24px !important; font-size: 0.7em !important; }
+  .hash-matrix-table td .hash-cell { padding: 0; }
+}
+
+/* #20 — Observers table horizontal scroll on mobile */
+.obs-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.obs-table-scroll .obs-table { min-width: 640px; }
+@media (max-width: 640px) {
+  .spark-bar { min-width: 60px; width: auto; }
+}
+
+/* #21 — Chat message bubble max-width */
+.ch-msg-bubble { max-width: 720px; }
+
+/* #69 — Touch-friendly resize handle */
+@media (pointer: coarse) {
+  .panel-resize-handle { width: 12px !important; }
+}

@@ -312,12 +312,23 @@
       { label: 'Good', snr: [0, 6], rssi: [-100, -80], color: '#f59e0b15' },
       { label: 'Weak', snr: [-12, 0], rssi: [-130, -100], color: '#ef444410' },
     ];
+    // Define patterns for color-blind accessibility
+    svg += `<defs>`;
+    svg += `<pattern id="pat-excellent" patternUnits="userSpaceOnUse" width="8" height="8"><line x1="0" y1="8" x2="8" y2="0" stroke="#22c55e" stroke-width="0.5" opacity="0.4"/></pattern>`;
+    svg += `<pattern id="pat-good" patternUnits="userSpaceOnUse" width="6" height="6"><circle cx="3" cy="3" r="1" fill="#f59e0b" opacity="0.4"/></pattern>`;
+    svg += `<pattern id="pat-weak" patternUnits="userSpaceOnUse" width="8" height="8"><line x1="0" y1="0" x2="8" y2="8" stroke="#ef4444" stroke-width="0.5" opacity="0.4"/><line x1="0" y1="8" x2="8" y2="0" stroke="#ef4444" stroke-width="0.5" opacity="0.4"/></pattern>`;
+    svg += `</defs>`;
+    const zonePatterns = { 'Excellent': 'pat-excellent', 'Good': 'pat-good', 'Weak': 'pat-weak' };
+    const zoneDash = { 'Excellent': '4,2', 'Good': '6,3', 'Weak': '2,2' };
+    const zoneBorder = { 'Excellent': '#22c55e', 'Good': '#f59e0b', 'Weak': '#ef4444' };
     zones.forEach(z => {
       const x1 = pad + (z.snr[0] - snrMin) / (snrMax - snrMin) * (w - pad * 2);
       const x2 = pad + (z.snr[1] - snrMin) / (snrMax - snrMin) * (w - pad * 2);
       const y1 = h - pad - (z.rssi[1] - rssiMin) / (rssiMax - rssiMin) * (h - pad * 2);
       const y2 = h - pad - (z.rssi[0] - rssiMin) / (rssiMax - rssiMin) * (h - pad * 2);
       svg += `<rect x="${x1}" y="${y1}" width="${x2-x1}" height="${y2-y1}" fill="${z.color}"/>`;
+      svg += `<rect x="${x1}" y="${y1}" width="${x2-x1}" height="${y2-y1}" fill="url(#${zonePatterns[z.label]})"/>`;
+      svg += `<rect x="${x1}" y="${y1}" width="${x2-x1}" height="${y2-y1}" fill="none" stroke="${zoneBorder[z.label]}" stroke-width="1" stroke-dasharray="${zoneDash[z.label]}" opacity="0.6"/>`;
       svg += `<text x="${x1+4}" y="${y1+12}" font-size="9" fill="var(--text-muted)" opacity="0.7">${z.label}</text>`;
     });
     // Dots (sample if too many)
@@ -785,7 +796,7 @@
     const cellSize = 36;
     const headerSize = 24;
 
-    let html = `<div style="display:flex;gap:16px;flex-wrap:wrap"><div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:0.7em;font-family:monospace">`;
+    let html = `<div style="display:flex;gap:16px;flex-wrap:wrap"><div class="hash-matrix-scroll"><table class="hash-matrix-table" style="border-collapse:collapse;font-size:0.7em;font-family:monospace">`;
     html += `<tr><td style="width:${headerSize}px"></td>`;
     for (const n of nibbles) {
       html += `<td style="width:${cellSize}px;text-align:center;padding:2px 0;font-weight:bold;color:var(--text-muted)">${n}</td>`;
