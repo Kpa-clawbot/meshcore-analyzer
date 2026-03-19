@@ -86,6 +86,8 @@
     VCR.playhead = -1;
     VCR.speed = 1;
     VCR.missedCount = 0;
+    VCR.scrubEnd = null;
+    VCR.dragPct = null;
     vcrSetMode('LIVE');
     const prompt = document.getElementById('vcrPrompt');
     if (prompt) prompt.classList.add('hidden');
@@ -161,8 +163,9 @@
     stopReplay();
     function tick() {
       if (VCR.mode !== 'REPLAY') return;
-      if (VCR.playhead >= VCR.buffer.length) {
-        // Caught up — pause instead of auto-resuming live
+      const endIdx = VCR.scrubEnd != null ? VCR.scrubEnd : VCR.buffer.length;
+      if (VCR.playhead >= endIdx) {
+        VCR.scrubEnd = null;
         vcrSetMode('PAUSED');
         return;
       }
@@ -613,6 +616,8 @@
             if (dist < minDist) { minDist = dist; closest = i; }
           });
           VCR.playhead = closest;
+          // Only replay ~50 packets from scrub point, not entire buffer to end
+          VCR.scrubEnd = Math.min(closest + 50, VCR.buffer.length);
           startReplay();
         })
         .catch(() => {});
