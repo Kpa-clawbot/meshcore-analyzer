@@ -16,6 +16,7 @@
   let sortBy = 'lastSeen';
   let lastHeard = '';
   let wsHandler = null;
+  let detailMap = null;
 
   const ROLE_COLORS = { repeater: '#3b82f6', room: '#6b7280', companion: '#22c55e', sensor: '#f59e0b' };
   const TABS = [
@@ -35,13 +36,14 @@
       // Full-screen single node view
       app.innerHTML = `<div class="node-fullscreen">
         <div class="node-full-header">
-          <button class="ch-back-btn node-back-btn" onclick="location.hash='#/nodes'" aria-label="Back to nodes">←</button>
+          <button class="detail-back-btn node-back-btn" id="nodeBackBtn" aria-label="Back to nodes">←</button>
           <span class="node-full-title">Loading…</span>
         </div>
         <div class="node-full-body" id="nodeFullBody">
           <div class="text-center text-muted" style="padding:40px">Loading…</div>
         </div>
       </div>`;
+      document.getElementById('nodeBackBtn').addEventListener('click', () => { location.hash = '#/nodes'; });
       loadFullNode(directNode);
       // Escape to go back to nodes list
       document.addEventListener('keydown', function nodesEsc(e) {
@@ -98,7 +100,7 @@
       const statusLabel = statusAge < 3600000 ? '🟢 Active' : statusAge < 86400000 ? '🟡 Degraded' : '🔴 Silent';
 
       body.innerHTML = `
-        ${hasLoc ? `<div id="nodeFullMap" style="height:200px;border-radius:8px;overflow:hidden;margin-bottom:16px"></div>` : ''}
+        ${hasLoc ? `<div id="nodeFullMap" class="node-detail-map" style="border-radius:8px;overflow:hidden;margin-bottom:16px"></div>` : ''}
         <div class="node-full-card">
           <div class="node-detail-name" style="font-size:20px">${escapeHtml(n.name || '(unnamed)')}</div>
           <div style="margin:6px 0 12px"><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span> ${statusLabel}</div>
@@ -156,10 +158,11 @@
       // Map
       if (hasLoc) {
         try {
-          const map = L.map('nodeFullMap', { zoomControl: true, attributionControl: false }).setView([n.lat, n.lon], 13);
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
-          L.marker([n.lat, n.lon]).addTo(map).bindPopup(n.name || n.public_key.slice(0, 12));
-          setTimeout(() => map.invalidateSize(), 100);
+          if (detailMap) { detailMap.remove(); detailMap = null; }
+          detailMap = L.map('nodeFullMap', { zoomControl: true, attributionControl: false }).setView([n.lat, n.lon], 13);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(detailMap);
+          L.marker([n.lat, n.lon]).addTo(detailMap).bindPopup(n.name || n.public_key.slice(0, 12));
+          setTimeout(() => detailMap.invalidateSize(), 100);
         } catch {}
       }
 
@@ -181,6 +184,7 @@
   function destroy() {
     if (wsHandler) offWS(wsHandler);
     wsHandler = null;
+    if (detailMap) { detailMap.remove(); detailMap = null; }
     nodes = [];
     selectedKey = null;
   }
@@ -239,12 +243,12 @@
       </div>
       <table class="data-table" id="nodesTable">
         <thead><tr>
-          <th class="sortable" data-sort="name">Name</th>
+          <th class="sortable" data-sort="name" aria-sort="${sortBy === 'name' ? 'ascending' : 'none'}">Name</th>
           <th>Public Key</th>
           <th>Role</th>
           <th>Regions</th>
-          <th class="sortable" data-sort="lastSeen">Last Seen</th>
-          <th class="sortable" data-sort="packetCount">Adverts</th>
+          <th class="sortable" data-sort="lastSeen" aria-sort="${sortBy === 'lastSeen' ? 'descending' : 'none'}">Last Seen</th>
+          <th class="sortable" data-sort="packetCount" aria-sort="${sortBy === 'packetCount' ? 'descending' : 'none'}">Adverts</th>
         </tr></thead>
         <tbody id="nodesBody"></tbody>
       </table>`;
@@ -353,7 +357,7 @@
 
     panel.innerHTML = `
       <div class="node-detail">
-        ${hasLoc ? `<div class="node-map-container" id="nodeMap" style="height:180px;border-radius:8px;overflow:hidden;"></div>` : ''}
+        ${hasLoc ? `<div class="node-map-container node-detail-map" id="nodeMap" style="border-radius:8px;overflow:hidden;"></div>` : ''}
         <div class="node-detail-name">${n.name || '(unnamed)'}</div>
         <div class="node-detail-role"><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span></div>
 
@@ -402,10 +406,11 @@
     // Init map
     if (hasLoc) {
       try {
-        const map = L.map('nodeMap', { zoomControl: false, attributionControl: false }).setView([n.lat, n.lon], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
-        L.marker([n.lat, n.lon]).addTo(map).bindPopup(n.name || n.public_key.slice(0, 12));
-        setTimeout(() => map.invalidateSize(), 100);
+        if (detailMap) { detailMap.remove(); detailMap = null; }
+        detailMap = L.map('nodeMap', { zoomControl: false, attributionControl: false }).setView([n.lat, n.lon], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(detailMap);
+        L.marker([n.lat, n.lon]).addTo(detailMap).bindPopup(n.name || n.public_key.slice(0, 12));
+        setTimeout(() => detailMap.invalidateSize(), 100);
       } catch {}
     }
 

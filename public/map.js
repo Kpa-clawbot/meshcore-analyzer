@@ -11,6 +11,11 @@
   let filters = { repeater: true, companion: true, room: true, sensor: true, lastHeard: '30d', mqttOnly: false, neighbors: false, clusters: false };
   let wsHandler = null;
   let heatLayer = null;
+  let userHasMoved = false;
+  let controlsCollapsed = false;
+
+  // Safe escape — falls back to identity if app.js hasn't loaded yet
+  const safeEsc = (typeof esc === 'function') ? esc : function (s) { return s; };
 
   // Role → marker style (WCAG AA compliant: all ≥4.5:1 on both light/dark backgrounds)
   const ROLE_STYLE = {
@@ -27,6 +32,7 @@
     container.innerHTML = `
       <div id="map-wrap" style="position:relative;width:100%;height:100%;">
         <div id="leaflet-map" style="width:100%;height:100%;"></div>
+        <button class="map-controls-toggle" id="mapControlsToggle" aria-label="Toggle map controls" aria-expanded="true">⚙️</button>
         <div class="map-controls" id="mapControls" role="region" aria-label="Map controls">
           <h3>🗺️ Map Controls</h3>
           <fieldset class="mc-section">
@@ -35,13 +41,13 @@
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Display</legend>
-            <label><input type="checkbox" id="mcClusters"> Show clusters</label>
-            <label><input type="checkbox" id="mcHeatmap"> Heat map</label>
+            <label for="mcClusters"><input type="checkbox" id="mcClusters"> Show clusters</label>
+            <label for="mcHeatmap"><input type="checkbox" id="mcHeatmap"> Heat map</label>
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Filters</legend>
-            <label><input type="checkbox" id="mcMqtt"> MQTT Connected Only</label>
-            <label><input type="checkbox" id="mcNeighbors"> Show direct neighbors</label>
+            <label for="mcMqtt"><input type="checkbox" id="mcMqtt"> MQTT Connected Only</label>
+            <label for="mcNeighbors"><input type="checkbox" id="mcNeighbors"> Show direct neighbors</label>
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Last Heard</legend>
@@ -80,6 +86,7 @@
     map.on('moveend', () => {
       const c = map.getCenter();
       localStorage.setItem('map-view', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
+      userHasMoved = true;
     });
 
     markerLayer = L.layerGroup().addTo(map);
@@ -87,6 +94,21 @@
 
     // Fix map size on SPA load
     setTimeout(() => map.invalidateSize(), 100);
+
+    // Controls toggle
+    const toggleBtn = document.getElementById('mapControlsToggle');
+    const controlsPanel = document.getElementById('mapControls');
+    // Default collapsed on mobile
+    if (window.innerWidth <= 640) {
+      controlsCollapsed = true;
+      controlsPanel.classList.add('collapsed');
+      toggleBtn.setAttribute('aria-expanded', 'false');
+    }
+    toggleBtn.addEventListener('click', () => {
+      controlsCollapsed = !controlsCollapsed;
+      controlsPanel.classList.toggle('collapsed', controlsCollapsed);
+      toggleBtn.setAttribute('aria-expanded', String(!controlsCollapsed));
+    });
 
     // Bind controls
     document.getElementById('mcClusters').addEventListener('change', e => { filters.clusters = e.target.checked; renderMarkers(); });
@@ -158,9 +180,9 @@
       marker.bindTooltip(`${i + 1}. ${p.name}`, { permanent: true, direction: 'top', className: 'route-tooltip' });
       
       const popupHtml = `<div style="font-size:12px;min-width:160px">
-        <div style="font-weight:700;margin-bottom:4px">${label}: ${esc(p.name)}</div>
+        <div style="font-weight:700;margin-bottom:4px">${label}: ${safeEsc(p.name)}</div>
         <div style="color:#9ca3af;font-size:11px;margin-bottom:4px">${p.role || 'unknown'}</div>
-        <div style="font-family:monospace;font-size:10px;color:#6b7280;margin-bottom:6px;word-break:break-all">${esc(p.pubkey || '')}</div>
+        <div style="font-family:monospace;font-size:10px;color:#6b7280;margin-bottom:6px;word-break:break-all">${safeEsc(p.pubkey || '')}</div>
         <div style="font-size:11px;color:#9ca3af">${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}</div>
         ${p.pubkey ? `<div style="margin-top:6px"><a href="#/nodes/${p.pubkey}" style="color:var(--accent);font-size:11px">View Node →</a></div>` : ''}
       </div>`;
@@ -187,7 +209,7 @@
       buildJumpButtons();
 
       renderMarkers();
-      if (!savedView) fitBounds();
+      if (!userHasMoved) fitBounds();
     } catch (e) {
       console.error('Map load error:', e);
     }
@@ -199,8 +221,10 @@
     el.innerHTML = '';
     for (const role of ['repeater', 'companion', 'room', 'sensor']) {
       const count = counts[role + 's'] || 0;
+      const cbId = 'mcRole_' + role;
       const lbl = document.createElement('label');
-      lbl.innerHTML = `<input type="checkbox" data-role="${role}" ${filters[role] ? 'checked' : ''}> <span style="color:${ROLE_COLORS[role]};font-weight:600;" aria-hidden="true">●</span> ${ROLE_LABELS[role]} <span style="color:var(--text-muted)">(${count})</span>`;
+      lbl.setAttribute('for', cbId);
+      lbl.innerHTML = `<input type="checkbox" id="${cbId}" data-role="${role}" ${filters[role] ? 'checked' : ''}> <span style="color:${ROLE_COLORS[role]};font-weight:600;" aria-hidden="true">●</span> ${ROLE_LABELS[role]} <span style="color:var(--text-muted)">(${count})</span>`;
       lbl.querySelector('input').addEventListener('change', e => {
         filters[e.target.dataset.role] = e.target.checked;
         renderMarkers();
@@ -235,11 +259,23 @@
   }
 
   function jumpToRegion(iata) {
-    // Find nodes observed in this region — use all nodes with location and fit bounds
-    // For now, just find the centroid of nodes that have location
-    const nodesWithLoc = nodes.filter(n => n.lat && n.lon);
-    if (nodesWithLoc.length === 0) return;
-    const bounds = L.latLngBounds(nodesWithLoc.map(n => [n.lat, n.lon]));
+    // Find observers in this region, then find nodes seen by those observers
+    const regionObserverIds = new Set(observers.filter(o => o.iata === iata).map(o => o.id || o.observer_id));
+    // Filter nodes that have location; prefer nodes associated with region observers
+    let regionNodes = nodes.filter(n => n.lat && n.lon && n.observer_id && regionObserverIds.has(n.observer_id));
+    // Fallback: if observers don't link to nodes, use observers' own locations
+    if (regionNodes.length === 0) {
+      const obsWithLoc = observers.filter(o => o.iata === iata && o.lat && o.lon);
+      if (obsWithLoc.length > 0) {
+        const bounds = L.latLngBounds(obsWithLoc.map(o => [o.lat, o.lon]));
+        map.fitBounds(bounds.pad(0.5), { padding: [40, 40], maxZoom: 12 });
+        return;
+      }
+      // Final fallback: fit all nodes
+      regionNodes = nodes.filter(n => n.lat && n.lon);
+    }
+    if (regionNodes.length === 0) return;
+    const bounds = L.latLngBounds(regionNodes.map(n => [n.lat, n.lon]));
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
   }
 
@@ -275,16 +311,20 @@
     const roleBadge = `<span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${ROLE_COLORS[node.role] || '#4b5563'};color:#fff;">${(node.role || 'unknown').toUpperCase()}</span>`;
 
     return `
-      <div style="font-family:var(--font);min-width:180px;">
-        <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${node.name || 'Unknown'}</div>
+      <div class="map-popup" style="font-family:var(--font);min-width:180px;">
+        <h3 style="font-weight:700;font-size:14px;margin:0 0 4px;">${safeEsc(node.name || 'Unknown')}</h3>
         ${roleBadge}
-        <table style="margin-top:8px;font-size:12px;border-collapse:collapse;width:100%;">
-          <tr><td style="color:var(--text-muted);padding:2px 8px 2px 0;">Key</td><td style="font-family:var(--mono);font-size:11px;">${key}</td></tr>
-          <tr><td style="color:var(--text-muted);padding:2px 8px 2px 0;">Location</td><td>${loc}</td></tr>
-          <tr><td style="color:var(--text-muted);padding:2px 8px 2px 0;">Last Advert</td><td>${lastAdvert}</td></tr>
-          <tr><td style="color:var(--text-muted);padding:2px 8px 2px 0;">Adverts</td><td>${node.advert_count || 0}</td></tr>
-        </table>
-        <div style="margin-top:8px;"><a href="#/nodes/${node.public_key}" style="color:var(--accent);font-size:12px;">View Node →</a></div>
+        <dl style="margin-top:8px;font-size:12px;">
+          <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Key</dt>
+          <dd style="font-family:var(--mono);font-size:11px;margin-left:88px;padding:2px 0;">${safeEsc(key)}</dd>
+          <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Location</dt>
+          <dd style="margin-left:88px;padding:2px 0;">${loc}</dd>
+          <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Last Advert</dt>
+          <dd style="margin-left:88px;padding:2px 0;">${lastAdvert}</dd>
+          <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Adverts</dt>
+          <dd style="margin-left:88px;padding:2px 0;">${node.advert_count || 0}</dd>
+        </dl>
+        <div style="margin-top:8px;clear:both;"><a href="#/nodes/${node.public_key}" style="color:var(--accent);font-size:12px;">View Node →</a></div>
       </div>`;
   }
 

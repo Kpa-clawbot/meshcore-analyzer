@@ -1274,3 +1274,45 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   .panel-resize-handle { width: 12px !important; }
 }
 /* #21 — max-width applied via .ch-msg-bubble rule above */
+
+/* === Bug fixes: #16 collapsible controls, #53 detail map height === */
+.map-controls-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1001;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #333);
+  background: var(--bg-card, #1e1e1e);
+  color: var(--text, #fff);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.map-controls.collapsed {
+  display: none;
+}
+.node-detail-map {
+  height: 280px;
+  min-height: 200px;
+}
+@media (max-width: 640px) {
+  .node-detail-map {
+    height: 200px;
+    min-height: 160px;
+  }
+}
+.detail-back-btn {
+  background: none;
+  border: 1px solid var(--border, #333);
+  color: var(--text, #fff);
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+}
