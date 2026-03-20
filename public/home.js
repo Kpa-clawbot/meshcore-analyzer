@@ -247,7 +247,7 @@
 
     const cards = await Promise.all(myNodes.map(async (mn) => {
       try {
-        const h = await api('/nodes/' + encodeURIComponent(mn.pubkey) + '/health', { ttl: 30000 });
+        const h = await api('/nodes/' + encodeURIComponent(mn.pubkey) + '/health', { ttl: 240000 });
         const node = h.node || {};
         const stats = h.stats || {};
         const obs = h.observers || [];
@@ -369,7 +369,7 @@
   // ==================== STATS ====================
   async function loadStats() {
     try {
-      const s = await api('/stats', { ttl: 5000 });
+      const s = await api('/stats', { ttl: 10000 });
       const el = document.getElementById('homeStats');
       if (!el) return;
       el.innerHTML = `
@@ -391,7 +391,7 @@
     if (journey) journey.classList.remove('visible');
 
     try {
-      const h = await api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: 30000 });
+      const h = await api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: 240000 });
       const node = h.node || {};
       const stats = h.stats || {};
       const packets = h.recentPackets || [];

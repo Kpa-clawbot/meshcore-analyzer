@@ -101,10 +101,10 @@
     try {
       _analyticsData = {};
       const [hashData, rfData, topoData, chanData] = await Promise.all([
-        api('/analytics/hash-sizes', { ttl: 60000 }),
-        api('/analytics/rf', { ttl: 60000 }),
-        api('/analytics/topology', { ttl: 60000 }),
-        api('/analytics/channels', { ttl: 60000 }),
+        api('/analytics/hash-sizes', { ttl: 300000 }),
+        api('/analytics/rf', { ttl: 300000 }),
+        api('/analytics/topology', { ttl: 300000 }),
+        api('/analytics/channels', { ttl: 300000 }),
       ]);
       _analyticsData = { hashData, rfData, topoData, chanData };
       renderTab('overview');
@@ -747,7 +747,7 @@
       </div>
     `;
     let allNodes = [];
-    try { const nd = await api('/nodes?limit=2000', { ttl: 10000 }); allNodes = nd.nodes || []; } catch {}
+    try { const nd = await api('/nodes?limit=2000', { ttl: 90000 }); allNodes = nd.nodes || []; } catch {}
     renderHashMatrix(data.topHops, allNodes);
     renderCollisions(data.topHops, allNodes);
   }
@@ -938,10 +938,10 @@
     el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Analyzing route patterns…</div>';
     try {
       const [d2, d3, d4, d5] = await Promise.all([
-        api('/analytics/subpaths?minLen=2&maxLen=2&limit=50', { ttl: 60000 }),
-        api('/analytics/subpaths?minLen=3&maxLen=3&limit=30', { ttl: 60000 }),
-        api('/analytics/subpaths?minLen=4&maxLen=4&limit=20', { ttl: 60000 }),
-        api('/analytics/subpaths?minLen=5&maxLen=8&limit=15', { ttl: 60000 })
+        api('/analytics/subpaths?minLen=2&maxLen=2&limit=50', { ttl: 300000 }),
+        api('/analytics/subpaths?minLen=3&maxLen=3&limit=30', { ttl: 300000 }),
+        api('/analytics/subpaths?minLen=4&maxLen=4&limit=20', { ttl: 300000 }),
+        api('/analytics/subpaths?minLen=5&maxLen=8&limit=15', { ttl: 300000 })
       ]);
 
       function renderTable(data, title) {
@@ -1032,7 +1032,7 @@
     panel.classList.remove('collapsed');
     panel.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading…</div>';
     try {
-      const data = await api('/analytics/subpath-detail?hops=' + encodeURIComponent(hopsStr), { ttl: 60000 });
+      const data = await api('/analytics/subpath-detail?hops=' + encodeURIComponent(hopsStr), { ttl: 300000 });
       renderSubpathDetail(panel, data);
     } catch (e) {
       panel.innerHTML = `<div class="text-muted">Error: ${e.message}</div>`;
@@ -1141,9 +1141,9 @@
     el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading node analytics…</div>';
     try {
       const [nodesResp, bulkHealth, netStatus] = await Promise.all([
-        api('/nodes?limit=200&sortBy=lastSeen', { ttl: 10000 }),
-        api('/nodes/bulk-health?limit=50', { ttl: 60000 }),
-        api('/nodes/network-status', { ttl: 60000 })
+        api('/nodes?limit=200&sortBy=lastSeen', { ttl: 90000 }),
+        api('/nodes/bulk-health?limit=50', { ttl: 300000 }),
+        api('/nodes/network-status', { ttl: 300000 })
       ]);
       const nodes = nodesResp.nodes || nodesResp;
       const myNodes = JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]');

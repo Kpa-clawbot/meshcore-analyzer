@@ -250,7 +250,7 @@
       buildRoleChecks(data.counts || {});
 
       // Load observers for jump buttons
-      const obsData = await api('/observers', { ttl: 30000 });
+      const obsData = await api('/observers', { ttl: 240000 });
       observers = obsData.observers || [];
       buildJumpButtons();
 

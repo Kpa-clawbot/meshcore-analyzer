@@ -356,7 +356,7 @@ window.addEventListener('DOMContentLoaded', () => {
     favDropdown.innerHTML = '<div class="fav-dd-loading">Loading...</div>';
     const items = await Promise.all(favs.map(async (pk) => {
       try {
-        const h = await api('/nodes/' + pk + '/health', { ttl: 30000 });
+        const h = await api('/nodes/' + pk + '/health', { ttl: 240000 });
         const age = h.stats.lastHeard ? Date.now() - new Date(h.stats.lastHeard).getTime() : null;
         const status = age === null ? '🔴' : age < 3600000 ? '🟢' : age < 86400000 ? '🟡' : '🔴';
         return '<a href="#/nodes/' + pk + '" class="fav-dd-item" data-key="' + pk + '">'
@@ -460,7 +460,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // --- Nav Stats ---
   async function updateNavStats() {
     try {
-      const stats = await api('/stats', { ttl: 5000 });
+      const stats = await api('/stats', { ttl: 10000 });
       const el = document.getElementById('navStats');
       if (el) {
         el.innerHTML = `<span class="stat-val">${stats.totalPackets}</span> pkts · <span class="stat-val">${stats.totalNodes}</span> nodes · <span class="stat-val">${stats.totalObservers}</span> obs`;

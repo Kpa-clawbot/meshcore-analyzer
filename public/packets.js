@@ -207,7 +207,7 @@
 
   async function loadObservers() {
     try {
-      const data = await api('/observers', { ttl: 30000 });
+      const data = await api('/observers', { ttl: 240000 });
       observers = data.observers || [];
     } catch {}
   }

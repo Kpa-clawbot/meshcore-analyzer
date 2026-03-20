@@ -110,7 +110,7 @@
     }
 
     try {
-      const detail = await api('/nodes/' + encodeURIComponent(node.public_key), { ttl: 15000 });
+      const detail = await api('/nodes/' + encodeURIComponent(node.public_key), { ttl: 240000 });
       const n = detail.node;
       const adverts = detail.recentAdverts || [];
       const role = n.is_repeater ? '📡 Repeater' : n.is_room ? '🏠 Room' : n.is_sensor ? '🌡 Sensor' : '📻 Companion';
