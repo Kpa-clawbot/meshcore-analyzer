@@ -352,7 +352,7 @@
       { key: 'details', label: 'Details' },
     ];
     const isMobile = window.innerWidth <= 640;
-    const defaultHidden = isMobile ? ['region', 'observer', 'path', 'rpt', 'size'] : ['region'];
+    const defaultHidden = isMobile ? ['region', 'hash', 'observer', 'path', 'rpt', 'size'] : ['region'];
     let visibleCols;
     try {
       visibleCols = JSON.parse(localStorage.getItem('packets-visible-cols'));
