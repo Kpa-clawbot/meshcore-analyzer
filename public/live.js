@@ -980,7 +980,7 @@
           addNodeMarker(n);
         }
       });
-      document.getElementById('liveNodeCount').textContent = Object.keys(nodeMarkers).length;
+      const _el2 = document.getElementById('liveNodeCount'); if (_el2) _el2.textContent = Object.keys(nodeMarkers).length;
     } catch (e) { console.error('Failed to load nodes:', e); }
   }
 
@@ -1066,7 +1066,7 @@
   function animatePacket(pkt) {
     packetCount++;
     pktTimestamps.push(Date.now());
-    document.getElementById('livePktCount').textContent = packetCount;
+    const _el = document.getElementById('livePktCount'); if (_el) _el.textContent = packetCount;
 
     const decoded = pkt.decoded || {};
     const header = decoded.header || {};
@@ -1086,7 +1086,7 @@
         const n = { public_key: key, name: payload.name || key.slice(0,8), role: payload.role || 'unknown', lat: payload.lat, lon: payload.lon };
         nodeData[key] = n;
         addNodeMarker(n);
-        document.getElementById('liveNodeCount').textContent = Object.keys(nodeMarkers).length;
+        const _el2 = document.getElementById('liveNodeCount'); if (_el2) _el2.textContent = Object.keys(nodeMarkers).length;
       }
     }
 
