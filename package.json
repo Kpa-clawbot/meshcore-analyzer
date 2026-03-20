@@ -1,6 +1,6 @@
 {
   "name": "meshcore-analyzer",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Community-run alternative to the closed-source `analyzer.letsmesh.net`. MQTT packet collection + open-source web analyzer for the Bay Area MeshCore mesh.",
   "main": "index.js",
   "scripts": {
