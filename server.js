@@ -55,16 +55,37 @@ const TTL = {
 
 // --- TTL Cache ---
 class TTLCache {
-  constructor() { this.store = new Map(); this.hits = 0; this.misses = 0; }
+  constructor() { this.store = new Map(); this.hits = 0; this.misses = 0; this.staleHits = 0; this.recomputes = 0; this._inflight = new Map(); }
   get(key) {
     const entry = this.store.get(key);
     if (!entry) { this.misses++; return undefined; }
-    if (Date.now() > entry.expires) { this.store.delete(key); this.misses++; return undefined; }
+    if (Date.now() > entry.expires) {
+      // Stale-while-revalidate: return stale data if within grace period (2× TTL)
+      if (Date.now() < entry.expires + entry.ttl) {
+        this.staleHits++;
+        return entry.value;
+      }
+      this.store.delete(key); this.misses++; return undefined;
+    }
     this.hits++;
     return entry.value;
   }
+  // Check if entry is stale (expired but within grace). Caller should trigger async recompute.
+  isStale(key) {
+    const entry = this.store.get(key);
+    if (!entry) return false;
+    return Date.now() > entry.expires && Date.now() < entry.expires + entry.ttl;
+  }
+  // Recompute guard: ensures only one recompute per key at a time
+  recompute(key, fn) {
+    if (this._inflight.has(key)) return;
+    this._inflight.set(key, true);
+    this.recomputes++;
+    try { fn(); } catch (e) { console.error(`[cache] recompute error for ${key}:`, e.message); }
+    this._inflight.delete(key);
+  }
   set(key, value, ttlMs) {
-    this.store.set(key, { value, expires: Date.now() + ttlMs });
+    this.store.set(key, { value, expires: Date.now() + ttlMs, ttl: ttlMs });
   }
   invalidate(prefix) {
     for (const key of this.store.keys()) {
@@ -170,6 +191,71 @@ app.get('/api/perf', (req, res) => {
 });
 
 app.post('/api/perf/reset', (req, res) => { perfStats.reset(); res.json({ ok: true }); });
+
+// --- Event Loop Lag Monitoring ---
+let evtLoopLag = 0, evtLoopMax = 0, evtLoopSamples = [];
+const EL_INTERVAL = 1000;
+let _elLast = process.hrtime.bigint();
+setInterval(() => {
+  const now = process.hrtime.bigint();
+  const delta = Number(now - _elLast) / 1e6;  // ms
+  const lag = Math.max(0, delta - EL_INTERVAL);
+  evtLoopLag = lag;
+  if (lag > evtLoopMax) evtLoopMax = lag;
+  evtLoopSamples.push(lag);
+  if (evtLoopSamples.length > 60) evtLoopSamples.shift();  // last 60s
+  _elLast = now;
+}, EL_INTERVAL).unref();
+
+// --- Health / Telemetry Endpoint ---
+app.get('/api/health', (req, res) => {
+  const mem = process.memoryUsage();
+  const uptime = process.uptime();
+  const sorted = [...evtLoopSamples].sort((a, b) => a - b);
+  const wsClients = wss ? wss.clients.size : 0;
+  const pktStoreSize = pktStore ? pktStore.all().length : 0;
+  const pktStoreMB = pktStore ? Math.round(pktStore.all().length * 430 / 1024 / 1024 * 10) / 10 : 0;
+
+  res.json({
+    status: 'ok',
+    uptime: Math.round(uptime),
+    uptimeHuman: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+    memory: {
+      rss: Math.round(mem.rss / 1024 / 1024),
+      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
+      external: Math.round(mem.external / 1024 / 1024),
+    },
+    eventLoop: {
+      currentLagMs: Math.round(evtLoopLag * 10) / 10,
+      maxLagMs: Math.round(evtLoopMax * 10) / 10,
+      p50Ms: Math.round((sorted[Math.floor(sorted.length * 0.5)] || 0) * 10) / 10,
+      p95Ms: Math.round((sorted[Math.floor(sorted.length * 0.95)] || 0) * 10) / 10,
+      p99Ms: Math.round((sorted[Math.floor(sorted.length * 0.99)] || 0) * 10) / 10,
+    },
+    cache: {
+      entries: cache.size,
+      hits: cache.hits,
+      misses: cache.misses,
+      staleHits: cache.staleHits,
+      recomputes: cache.recomputes,
+      hitRate: cache.hits + cache.misses > 0 ? Math.round(cache.hits / (cache.hits + cache.misses) * 1000) / 10 : 0,
+    },
+    websocket: {
+      clients: wsClients,
+    },
+    packetStore: {
+      packets: pktStoreSize,
+      estimatedMB: pktStoreMB,
+    },
+    perf: {
+      totalRequests: perfStats.requests,
+      avgMs: perfStats.requests > 0 ? Math.round(perfStats.totalMs / perfStats.requests * 10) / 10 : 0,
+      slowQueries: perfStats.slowQueries.length,
+      recentSlow: perfStats.slowQueries.slice(-5),
+    },
+  });
+});
 
 // --- WebSocket ---
 const wss = new WebSocketServer({ server });
