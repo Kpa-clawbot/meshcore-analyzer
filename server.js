@@ -75,12 +75,10 @@ class TTLCache {
     if (this._debounceTimer) return;
     this._debounceTimer = setTimeout(() => {
       this._debounceTimer = null;
-      this.invalidate('analytics:');
-      this.invalidate('channels');
-      this.invalidate('node:');
-      this.invalidate('health:');
-      this.invalidate('observers');
-      this.invalidate('bulk-health');
+      // Only invalidate truly time-sensitive caches
+      this.invalidate('channels');   // chat messages need freshness
+      this.invalidate('observers');   // observer packet counts
+      // node:, health:, bulk-health, analytics: all have long TTLs — let them expire naturally
     }, TTL.invalidationDebounce);
   }
   clear() { this.store.clear(); }
@@ -325,6 +323,10 @@ try {
           const p = decoded.payload;
           const role = p.flags ? (p.flags.repeater ? 'repeater' : p.flags.room ? 'room' : p.flags.sensor ? 'sensor' : 'companion') : 'companion';
           db.upsertNode({ public_key: p.pubKey, name: p.name || null, role, lat: p.lat, lon: p.lon, last_seen: now });
+          // Invalidate this node's caches on advert
+          cache.invalidate('node:' + p.pubKey);
+          cache.invalidate('health:' + p.pubKey);
+          cache.invalidate('bulk-health');
         }
 
         if (observerId) {
