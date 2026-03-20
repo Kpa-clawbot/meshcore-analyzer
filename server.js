@@ -185,7 +185,7 @@ app.get('/api/perf', (req, res) => {
     avgMs: perfStats.requests ? Math.round(perfStats.totalMs / perfStats.requests * 10) / 10 : 0,
     endpoints: Object.fromEntries(sorted),
     slowQueries: perfStats.slowQueries.slice(-20),
-    cache: { size: cache.size, hits: cache.hits, misses: cache.misses, hitRate: cache.hits + cache.misses > 0 ? Math.round(cache.hits / (cache.hits + cache.misses) * 1000) / 10 : 0 },
+    cache: { size: cache.size, hits: cache.hits, misses: cache.misses, staleHits: cache.staleHits, recomputes: cache.recomputes, hitRate: cache.hits + cache.misses > 0 ? Math.round(cache.hits / (cache.hits + cache.misses) * 1000) / 10 : 0 },
     packetStore: pktStore.getStats(),
   });
 });

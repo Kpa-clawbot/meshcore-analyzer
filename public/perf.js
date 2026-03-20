@@ -18,15 +18,32 @@
         Promise.resolve(window.apiPerf ? window.apiPerf() : null)
       ]);
 
+      // Also fetch health telemetry
+      const health = await fetch('/api/health').then(r => r.json()).catch(() => null);
+
       let html = '';
 
       // Server overview
       html += `<div style="display:flex;gap:16px;flex-wrap:wrap;margin:16px 0;">
         <div class="perf-card"><div class="perf-num">${server.totalRequests}</div><div class="perf-label">Total Requests</div></div>
         <div class="perf-card"><div class="perf-num">${server.avgMs}ms</div><div class="perf-label">Avg Response</div></div>
-        <div class="perf-card"><div class="perf-num">${Math.round(server.uptime / 60)}m</div><div class="perf-label">Uptime</div></div>
+        <div class="perf-card"><div class="perf-num">${health ? health.uptimeHuman : Math.round(server.uptime / 60) + 'm'}</div><div class="perf-label">Uptime</div></div>
         <div class="perf-card"><div class="perf-num">${server.slowQueries.length}</div><div class="perf-label">Slow (&gt;100ms)</div></div>
       </div>`;
+
+      // System health (memory, event loop, WS)
+      if (health) {
+        const m = health.memory, el = health.eventLoop;
+        const elColor = el.p95Ms > 500 ? '#ef4444' : el.p95Ms > 100 ? '#f59e0b' : '#22c55e';
+        const memColor = m.heapUsed > m.heapTotal * 0.85 ? '#ef4444' : m.heapUsed > m.heapTotal * 0.7 ? '#f59e0b' : '#22c55e';
+        html += `<h3>System Health</h3><div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;">
+          <div class="perf-card"><div class="perf-num" style="color:${memColor}">${m.heapUsed}MB</div><div class="perf-label">Heap Used / ${m.heapTotal}MB</div></div>
+          <div class="perf-card"><div class="perf-num">${m.rss}MB</div><div class="perf-label">RSS</div></div>
+          <div class="perf-card"><div class="perf-num" style="color:${elColor}">${el.p95Ms}ms</div><div class="perf-label">Event Loop p95</div></div>
+          <div class="perf-card"><div class="perf-num">${el.maxLagMs}ms</div><div class="perf-label">EL Max Lag</div></div>
+          <div class="perf-card"><div class="perf-num">${el.currentLagMs}ms</div><div class="perf-label">EL Current</div></div>
+          <div class="perf-card"><div class="perf-num">${health.websocket.clients}</div><div class="perf-label">WS Clients</div></div>
+        </div>`;
 
       // Cache stats
       if (server.cache) {
@@ -37,6 +54,8 @@
           <div class="perf-card"><div class="perf-num">${c.hits}</div><div class="perf-label">Server Hits</div></div>
           <div class="perf-card"><div class="perf-num">${c.misses}</div><div class="perf-label">Server Misses</div></div>
           <div class="perf-card"><div class="perf-num" style="color:${c.hitRate > 50 ? '#22c55e' : c.hitRate > 20 ? '#f59e0b' : '#ef4444'}">${c.hitRate}%</div><div class="perf-label">Server Hit Rate</div></div>
+          <div class="perf-card"><div class="perf-num">${c.staleHits || 0}</div><div class="perf-label">Stale Hits (SWR)</div></div>
+          <div class="perf-card"><div class="perf-num">${c.recomputes || 0}</div><div class="perf-label">Recomputes</div></div>
           <div class="perf-card"><div class="perf-num">${clientCache}</div><div class="perf-label">Client Entries</div></div>
         </div>`;
         if (client) {
