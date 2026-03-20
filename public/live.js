@@ -908,8 +908,8 @@
     const topNav = document.querySelector('.top-nav');
     if (topNav) { topNav.style.position = 'fixed'; topNav.style.width = '100%'; topNav.style.zIndex = '1100'; }
     _navCleanup = { timeout: null, fn: null, pinned: false };
-    // Add pin button to nav
-    if (topNav) {
+    // Add pin button to nav (guard against duplicate)
+    if (topNav && !document.getElementById('navPinBtn')) {
       const pinBtn = document.createElement('button');
       pinBtn.id = 'navPinBtn';
       pinBtn.className = 'nav-pin-btn';
@@ -1466,6 +1466,8 @@
     if (appEl) appEl.style.height = '';
     const topNav = document.querySelector('.top-nav');
     if (topNav) { topNav.classList.remove('nav-autohide'); topNav.style.position = ''; topNav.style.width = ''; topNav.style.zIndex = ''; }
+    const existingPin = document.getElementById('navPinBtn');
+    if (existingPin) existingPin.remove();
     if (_navCleanup) {
       clearTimeout(_navCleanup.timeout);
       const livePage = document.querySelector('.live-page');

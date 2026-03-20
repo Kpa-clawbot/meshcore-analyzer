@@ -113,7 +113,7 @@
             <td>${o.iata ? `<span class="badge-region">${o.iata}</span>` : '—'}</td>
             <td>${timeAgo(o.last_seen)}</td>
             <td>${(o.packet_count || 0).toLocaleString()}</td>
-            <td class="col-spark">${sparkBar(o.packetsLastHour || 0, maxPktsHr)}</td>
+            <td class="col-spark" style="max-width:none;overflow:visible;min-width:80px">${sparkBar(o.packetsLastHour || 0, maxPktsHr)}</td>
             <td>${uptimeStr(o.first_seen)}</td>
           </tr>`;
         }).join('')}</tbody>

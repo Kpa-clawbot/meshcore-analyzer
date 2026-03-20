@@ -598,10 +598,11 @@
         try {
           const d = JSON.parse(p.decoded_json || '{}');
           const pathHops = JSON.parse(p.path_json || '[]');
-          // Check if any node key in decoded data or path matches
-          return (d.pubkey && allKeys.has(d.pubkey)) ||
-                 (d.to && allKeys.has(d.to)) ||
-                 (d.from && allKeys.has(d.from)) ||
+          return (d.pubKey && allKeys.has(d.pubKey)) ||
+                 (d.srcPubKey && allKeys.has(d.srcPubKey)) ||
+                 (d.destPubKey && allKeys.has(d.destPubKey)) ||
+                 (d.srcHash && allKeys.has(d.srcHash)) ||
+                 (d.destHash && allKeys.has(d.destHash)) ||
                  pathHops.some(h => allKeys.has(h));
         } catch { return false; }
       });

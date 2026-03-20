@@ -36,8 +36,7 @@
     "SJC": "San Jose, US",
     "SFO": "San Francisco, US",
     "OAK": "Oakland, US",
-    "MRY": "Monterey, US",
-    "LAR": "Los Angeles, US"
+    "MRY": "Monterey, US"
   },
   "cacheTTL": {
     "stats": 10,

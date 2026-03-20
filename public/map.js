@@ -105,10 +105,21 @@
       try { const v = JSON.parse(savedView); initCenter = [v.lat, v.lng]; initZoom = v.zoom; } catch {}
     }
     map = L.map('leaflet-map', { zoomControl: true }).setView(initCenter, initZoom);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap',
+
+    const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    const LIGHT_TILES = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+      (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const tileLayer = L.tileLayer(isDark ? DARK_TILES : LIGHT_TILES, {
+      attribution: '© OpenStreetMap © CartoDB',
       maxZoom: 19,
     }).addTo(map);
+    const _mapThemeObs = new MutationObserver(function () {
+      const dark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+        (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      tileLayer.setUrl(dark ? DARK_TILES : LIGHT_TILES);
+    });
+    _mapThemeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     // Save position on move
     map.on('moveend', () => {
