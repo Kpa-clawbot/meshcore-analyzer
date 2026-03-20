@@ -14,6 +14,21 @@ function payloadTypeColor(n) { return PAYLOAD_COLORS[n] || 'unknown'; }
 const _apiPerf = { calls: 0, totalMs: 0, log: [], cacheHits: 0 };
 const _apiCache = new Map();
 const _inflight = new Map();
+// Client-side TTLs (ms) — loaded from server config, with defaults
+const CLIENT_TTL = {
+  stats: 10000, nodeDetail: 240000, nodeHealth: 240000, nodeList: 90000,
+  bulkHealth: 300000, networkStatus: 300000, observers: 120000,
+  channels: 15000, channelMessages: 10000, analyticsRF: 300000,
+  analyticsTopology: 300000, analyticsChannels: 300000, analyticsHashSizes: 300000,
+  analyticsSubpaths: 300000, analyticsSubpathDetail: 300000,
+  nodeAnalytics: 60000, nodeSearch: 10000
+};
+// Fetch server cache config and use as client TTLs (server values are in seconds)
+fetch('/api/config/cache').then(r => r.json()).then(cfg => {
+  for (const [k, v] of Object.entries(cfg)) {
+    if (k in CLIENT_TTL && typeof v === 'number') CLIENT_TTL[k] = v * 1000;
+  }
+}).catch(() => {});
 async function api(path, { ttl = 0, bust = false } = {}) {
   const t0 = performance.now();
   if (!bust && ttl > 0) {
@@ -356,7 +371,7 @@ window.addEventListener('DOMContentLoaded', () => {
     favDropdown.innerHTML = '<div class="fav-dd-loading">Loading...</div>';
     const items = await Promise.all(favs.map(async (pk) => {
       try {
-        const h = await api('/nodes/' + pk + '/health', { ttl: 240000 });
+        const h = await api('/nodes/' + pk + '/health', { ttl: CLIENT_TTL.nodeHealth });
         const age = h.stats.lastHeard ? Date.now() - new Date(h.stats.lastHeard).getTime() : null;
         const status = age === null ? '🔴' : age < 3600000 ? '🟢' : age < 86400000 ? '🟡' : '🔴';
         return '<a href="#/nodes/' + pk + '" class="fav-dd-item" data-key="' + pk + '">'
@@ -460,7 +475,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // --- Nav Stats ---
   async function updateNavStats() {
     try {
-      const stats = await api('/stats', { ttl: 10000 });
+      const stats = await api('/stats', { ttl: CLIENT_TTL.stats });
       const el = document.getElementById('navStats');
       if (el) {
         el.innerHTML = `<span class="stat-val">${stats.totalPackets}</span> pkts · <span class="stat-val">${stats.totalNodes}</span> nodes · <span class="stat-val">${stats.totalObservers}</span> obs`;

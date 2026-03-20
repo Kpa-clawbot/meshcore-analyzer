@@ -85,8 +85,8 @@
     const body = document.getElementById('nodeFullBody');
     try {
       const [nodeData, healthData] = await Promise.all([
-        api('/nodes/' + encodeURIComponent(pubkey), { ttl: 240000 }),
-        api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: 240000 }).catch(() => null)
+        api('/nodes/' + encodeURIComponent(pubkey), { ttl: CLIENT_TTL.nodeDetail }),
+        api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: CLIENT_TTL.nodeDetail }).catch(() => null)
       ]);
       const n = nodeData.node;
       const adverts = nodeData.recentAdverts || [];
@@ -228,7 +228,7 @@
       if (activeTab !== 'all') params.set('role', activeTab);
       if (search) params.set('search', search);
       if (lastHeard) params.set('lastHeard', lastHeard);
-      const data = await api('/nodes?' + params, { ttl: 90000 });
+      const data = await api('/nodes?' + params, { ttl: CLIENT_TTL.nodeList });
       nodes = data.nodes || [];
       counts = data.counts || {};
 
@@ -238,7 +238,7 @@
       const missing = myNodes.filter(mn => !existingKeys.has(mn.pubkey));
       if (missing.length) {
         const fetched = await Promise.allSettled(
-          missing.map(mn => api('/nodes/' + encodeURIComponent(mn.pubkey), { ttl: 240000 }))
+          missing.map(mn => api('/nodes/' + encodeURIComponent(mn.pubkey), { ttl: CLIENT_TTL.nodeDetail }))
         );
         fetched.forEach(r => {
           if (r.status === 'fulfilled' && r.value && r.value.public_key) nodes.push(r.value);
@@ -401,8 +401,8 @@
 
     try {
       const [data, healthData] = await Promise.all([
-        api('/nodes/' + encodeURIComponent(pubkey), { ttl: 240000 }),
-        api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: 240000 }).catch(() => null)
+        api('/nodes/' + encodeURIComponent(pubkey), { ttl: CLIENT_TTL.nodeDetail }),
+        api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: CLIENT_TTL.nodeDetail }).catch(() => null)
       ]);
       data.healthData = healthData;
       renderDetail(panel, data);

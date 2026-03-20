@@ -28,6 +28,29 @@ function computeContentHash(rawHex) {
 const db = require('./db');
 const channelKeys = require("./config.json").channelKeys || {};
 
+// --- Cache TTL config (seconds → ms) ---
+const _ttlCfg = config.cacheTTL || {};
+const TTL = {
+  stats:                   (_ttlCfg.stats || 10) * 1000,
+  nodeDetail:              (_ttlCfg.nodeDetail || 300) * 1000,
+  nodeHealth:              (_ttlCfg.nodeHealth || 300) * 1000,
+  nodeList:                (_ttlCfg.nodeList || 90) * 1000,
+  bulkHealth:              (_ttlCfg.bulkHealth || 600) * 1000,
+  networkStatus:           (_ttlCfg.networkStatus || 600) * 1000,
+  observers:               (_ttlCfg.observers || 300) * 1000,
+  channels:                (_ttlCfg.channels || 15) * 1000,
+  channelMessages:         (_ttlCfg.channelMessages || 10) * 1000,
+  analyticsRF:             (_ttlCfg.analyticsRF || 1800) * 1000,
+  analyticsTopology:       (_ttlCfg.analyticsTopology || 1800) * 1000,
+  analyticsChannels:       (_ttlCfg.analyticsChannels || 1800) * 1000,
+  analyticsHashSizes:      (_ttlCfg.analyticsHashSizes || 3600) * 1000,
+  analyticsSubpaths:       (_ttlCfg.analyticsSubpaths || 3600) * 1000,
+  analyticsSubpathDetail:  (_ttlCfg.analyticsSubpathDetail || 3600) * 1000,
+  nodeAnalytics:           (_ttlCfg.nodeAnalytics || 60) * 1000,
+  nodeSearch:              (_ttlCfg.nodeSearch || 10) * 1000,
+  invalidationDebounce:    (_ttlCfg.invalidationDebounce || 30) * 1000,
+};
+
 // --- TTL Cache ---
 class TTLCache {
   constructor() { this.store = new Map(); this.hits = 0; this.misses = 0; }
@@ -46,9 +69,8 @@ class TTLCache {
       if (key.startsWith(prefix)) this.store.delete(key);
     }
   }
-  // Debounced invalidation — wait for burst of packets to settle
   debouncedInvalidateAll() {
-    if (this._debounceTimer) return; // already scheduled
+    if (this._debounceTimer) return;
     this._debounceTimer = setTimeout(() => {
       this._debounceTimer = null;
       this.invalidate('analytics:');
@@ -57,7 +79,7 @@ class TTLCache {
       this.invalidate('health:');
       this.invalidate('observers');
       this.invalidate('bulk-health');
-    }, 30000); // batch invalidations over 30s window
+    }, TTL.invalidationDebounce);
   }
   clear() { this.store.clear(); }
   get size() { return this.store.size; }
@@ -107,6 +129,11 @@ app.use((req, res, next) => {
     origEnd.apply(res, args);
   };
   next();
+});
+
+// Expose cache TTL config to frontend
+app.get('/api/config/cache', (req, res) => {
+  res.json(config.cacheTTL || {});
 });
 
 app.get('/api/perf', (req, res) => {
@@ -700,7 +727,7 @@ app.get('/api/nodes/bulk-health', (req, res) => {
   todayStart.setUTCHours(0, 0, 0, 0);
   const todayISO = todayStart.toISOString();
 
-  if (nodes.length === 0) { cache.set(_ck, [], 600000); return res.json([]); }
+  if (nodes.length === 0) { cache.set(_ck, [], TTL.bulkHealth); return res.json([]); }
 
   // Build OR conditions for all nodes to fetch matching packets in ONE query
   const likeConditions = [];
@@ -770,7 +797,7 @@ app.get('/api/nodes/bulk-health', (req, res) => {
     });
   }
 
-  cache.set(_ck, results, 600000);
+  cache.set(_ck, results, TTL.bulkHealth);
   res.json(results);
 });
 
@@ -802,7 +829,7 @@ app.get('/api/nodes/:pubkey', (req, res) => {
   const recentAdverts = node.recentPackets || [];
   delete node.recentPackets;
   const _nResult = { node, recentAdverts };
-  cache.set(_ck, _nResult, 300000);
+  cache.set(_ck, _nResult, TTL.nodeDetail);
   res.json(_nResult);
 });
 
@@ -880,7 +907,7 @@ app.get('/api/analytics/rf', (req, res) => {
     avgPacketSize: packetSizes.length ? Math.round(packetSizes.reduce((a, b) => a + b, 0) / packetSizes.length) : 0,
     packetsPerHour, payloadTypes, snrByType: snrByTypeArr, signalOverTime, scatterData, timeSpanHours
   };
-  cache.set('analytics:rf', _rfResult, 1800000);
+  cache.set('analytics:rf', _rfResult, TTL.analyticsRF);
   res.json(_rfResult);
 });
 
@@ -1046,7 +1073,7 @@ app.get('/api/analytics/topology', (req, res) => {
     multiObsNodes,
     bestPathList
   };
-  cache.set('analytics:topology', _topoResult, 1800000);
+  cache.set('analytics:topology', _topoResult, TTL.analyticsTopology);
   res.json(_topoResult);
 });
 
@@ -1109,7 +1136,7 @@ app.get('/api/analytics/channels', (req, res) => {
     channelTimeline,
     msgLengths
   };
-  cache.set('analytics:channels', _chanResult, 1800000);
+  cache.set('analytics:channels', _chanResult, TTL.analyticsChannels);
   res.json(_chanResult);
 });
 
@@ -1201,7 +1228,7 @@ app.get('/api/analytics/hash-sizes', (req, res) => {
     topHops,
     multiByteNodes
   };
-  cache.set('analytics:hash-sizes', _hsResult, 3600000);
+  cache.set('analytics:hash-sizes', _hsResult, TTL.analyticsHashSizes);
   res.json(_hsResult);
 });
 
@@ -1412,7 +1439,7 @@ app.get('/api/channels', (req, res) => {
   }
 
   const _chResult = { channels: Object.values(channelMap) };
-  cache.set('channels', _chResult, 30000);
+  cache.set('channels', _chResult, TTL.channels);
   res.json(_chResult);
 });
 
@@ -1479,7 +1506,7 @@ app.get('/api/channels/:hash/messages', (req, res) => {
   const end = total - Number(offset);
   const messages = allMessages.slice(Math.max(0, start), Math.max(0, end));
   const _msgResult = { messages, total };
-  cache.set(_ck, _msgResult, 15000);
+  cache.set(_ck, _msgResult, TTL.channelMessages);
   res.json(_msgResult);
 });
 
@@ -1492,7 +1519,7 @@ app.get('/api/observers', (req, res) => {
     return { ...o, packetsLastHour: lastHour.count };
   });
   const _oResult = { observers: result, server_time: new Date().toISOString() };
-  cache.set('observers', _oResult, 300000);
+  cache.set('observers', _oResult, TTL.observers);
   res.json(_oResult);
 });
 
@@ -1507,7 +1534,7 @@ app.get('/api/nodes/:pubkey/health', (req, res) => {
   const _c = cache.get(_ck); if (_c) return res.json(_c);
   const health = db.getNodeHealth(req.params.pubkey);
   if (!health) return res.status(404).json({ error: 'Not found' });
-  cache.set(_ck, health, 300000);
+  cache.set(_ck, health, TTL.nodeHealth);
   res.json(health);
 });
 
@@ -1574,7 +1601,7 @@ app.get('/api/analytics/subpaths', (req, res) => {
     .slice(0, limit);
 
   const _spResult = { subpaths: ranked, totalPaths };
-  cache.set(_ck, _spResult, 3600000);
+  cache.set(_ck, _spResult, TTL.analyticsSubpaths);
   res.json(_spResult);
 });
 
@@ -1656,7 +1683,7 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
     parentPaths: topParents,
     observers: topObservers
   };
-  cache.set(_sdck, _sdResult, 3600000);
+  cache.set(_sdck, _sdResult, TTL.analyticsSubpathDetail);
   res.json(_sdResult);
 });
 

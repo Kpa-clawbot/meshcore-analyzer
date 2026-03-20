@@ -245,12 +245,12 @@
 
   async function loadNodes() {
     try {
-      const data = await api(`/nodes?limit=10000&lastHeard=${filters.lastHeard}`, { ttl: 10000 });
+      const data = await api(`/nodes?limit=10000&lastHeard=${filters.lastHeard}`, { ttl: CLIENT_TTL.nodeList });
       nodes = data.nodes || [];
       buildRoleChecks(data.counts || {});
 
       // Load observers for jump buttons
-      const obsData = await api('/observers', { ttl: 240000 });
+      const obsData = await api('/observers', { ttl: CLIENT_TTL.observers });
       observers = obsData.observers || [];
       buildJumpButtons();
 

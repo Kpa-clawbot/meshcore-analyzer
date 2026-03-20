@@ -22,5 +22,26 @@
     "OAK": "Oakland, US",
     "MRY": "Monterey, US",
     "LAR": "Los Angeles, US"
+  },
+  "cacheTTL": {
+    "stats": 10,
+    "nodeDetail": 300,
+    "nodeHealth": 300,
+    "nodeList": 90,
+    "bulkHealth": 600,
+    "networkStatus": 600,
+    "observers": 300,
+    "channels": 15,
+    "channelMessages": 10,
+    "analyticsRF": 1800,
+    "analyticsTopology": 1800,
+    "analyticsChannels": 1800,
+    "analyticsHashSizes": 3600,
+    "analyticsSubpaths": 3600,
+    "analyticsSubpathDetail": 3600,
+    "nodeAnalytics": 60,
+    "nodeSearch": 10,
+    "invalidationDebounce": 30,
+    "_comment": "All values in seconds. Server uses these directly. Client fetches via /api/config/cache."
   }
 }
