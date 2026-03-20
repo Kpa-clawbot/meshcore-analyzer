@@ -1911,6 +1911,31 @@ server.listen(process.env.PORT || config.port, () => {
       }
     } catch (e) { console.error('[pre-warm] subpaths:', e.message); }
     console.log(`[pre-warm] subpaths: ${Date.now() - t0}ms`);
+
+    // Pre-warm other heavy analytics endpoints via self-request
+    const port = process.env.PORT || config.port;
+    const warmEndpoints = [
+      '/api/analytics/rf',
+      '/api/analytics/topology',
+      '/api/analytics/channels',
+      '/api/analytics/hash-sizes',
+      '/api/nodes/bulk-health?limit=50',
+    ];
+    let warmed = 0;
+    const tw = Date.now();
+    const warmNext = () => {
+      if (warmed >= warmEndpoints.length) {
+        console.log(`[pre-warm] analytics: ${warmEndpoints.length} endpoints in ${Date.now() - tw}ms`);
+        return;
+      }
+      const ep = warmEndpoints[warmed++];
+      http.get(`http://127.0.0.1:${port}${ep}`, (res) => {
+        res.resume();
+        res.on('end', warmNext);
+      }).on('error', warmNext);
+    };
+    // Stagger: warm analytics after subpaths are done (sequential to avoid blocking)
+    warmNext();
   }, 1000);
 });
 
