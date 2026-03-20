@@ -337,7 +337,8 @@ try {
     // Invalidate caches on new data
     cache.debouncedInvalidateAll();
 
-        const broadcastData = { id: packetId, raw: msg.raw, decoded, snr: msg.SNR, rssi: msg.RSSI, hash: msg.hash, observer: observerId };
+        const fullPacket = pktStore.getById(packetId);
+        const broadcastData = { id: packetId, raw: msg.raw, decoded, snr: msg.SNR, rssi: msg.RSSI, hash: msg.hash, observer: observerId, packet: fullPacket };
         broadcast({ type: 'packet', data: broadcastData });
 
         if (decoded.header.payloadTypeName === 'GRP_TXT') {

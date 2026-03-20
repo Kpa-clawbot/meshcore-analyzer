@@ -182,9 +182,42 @@
       } catch {}
     }
     wsHandler = debouncedOnWS(function (msgs) {
-      if (msgs.some(function (m) { return m.type === 'packet'; })) {
+      const newPkts = msgs
+        .filter(m => m.type === 'packet' && m.data?.packet)
+        .map(m => m.data.packet);
+      if (!newPkts.length) return;
+
+      if (groupByHash) {
+        // In grouped mode, new packets affect group counts — must re-fetch
         loadPackets();
+        return;
       }
+
+      // Check if new packets pass current filters
+      const filtered = newPkts.filter(p => {
+        if (filters.type !== undefined && filters.type !== '' && p.payload_type !== Number(filters.type)) return false;
+        if (filters.observer && p.observer_id !== filters.observer) return false;
+        if (filters.hash && p.hash !== filters.hash) return false;
+        if (filters.region) {
+          const obs = observers.find(o => o.id === p.observer_id);
+          if (!obs || obs.iata !== filters.region) return false;
+        }
+        if (filters.node && !(p.decoded_json || '').includes(filters.node)) return false;
+        return true;
+      });
+      if (!filtered.length) return;
+
+      // Resolve any new hops, then prepend and re-render
+      const newHops = new Set();
+      for (const p of filtered) {
+        try { JSON.parse(p.path_json || '[]').forEach(h => { if (!(h in hopNameCache)) newHops.add(h); }); } catch {}
+      }
+      (newHops.size ? resolveHops([...newHops]) : Promise.resolve()).then(() => {
+        // Prepend new packets, cap at 200 to avoid unbounded growth
+        packets = filtered.concat(packets).slice(0, 200);
+        totalCount += filtered.length;
+        renderTableRows();
+      });
     });
   }
 
