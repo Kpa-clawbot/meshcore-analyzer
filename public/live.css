@@ -438,9 +438,9 @@
 
 @supports (padding-bottom: env(safe-area-inset-bottom)) {
   .vcr-bar { padding-bottom: calc(8px + env(safe-area-inset-bottom, 34px)); }
-  .live-feed { bottom: calc(58px + env(safe-area-inset-bottom, 34px)); }
-  .feed-show-btn { bottom: calc(68px + env(safe-area-inset-bottom, 34px)) !important; }
-  .live-legend { bottom: calc(58px + env(safe-area-inset-bottom, 34px)); }
+  .live-feed { bottom: calc(78px + env(safe-area-inset-bottom, 34px)); }
+  .feed-show-btn { bottom: calc(88px + env(safe-area-inset-bottom, 34px)) !important; }
+  .live-legend { bottom: calc(78px + env(safe-area-inset-bottom, 34px)); }
 }
 .vcr-bar > .vcr-controls {
   display: flex; align-items: center; gap: 4px; flex-shrink: 0;
