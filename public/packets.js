@@ -802,6 +802,7 @@
         <dt>Path</dt><dd>${pathHops.length ? renderPath(pathHops) : '—'}</dd>
       </dl>
       <div class="detail-actions">
+        <button class="copy-link-btn" data-packet-id="${pkt.id}" title="Copy link to this packet">🔗 Copy Link</button>
         ${pathHops.length ? `<button class="detail-map-link" id="viewRouteBtn">🗺️ View route on map</button>` : ''}
         <button class="replay-live-btn" title="Replay this packet on the live map">▶ Replay</button>
       </div>
@@ -811,6 +812,20 @@
 
       ${hasRawHex ? buildFieldTable(pkt, decoded, pathHops, ranges) : buildDecodedTable(decoded)}
     `;
+
+    // Wire up copy link button
+    const copyLinkBtn = panel.querySelector('.copy-link-btn');
+    if (copyLinkBtn) {
+      copyLinkBtn.addEventListener('click', () => {
+        const url = `${location.origin}/#/packets?id=${copyLinkBtn.dataset.packetId}`;
+        navigator.clipboard.writeText(url).then(() => {
+          copyLinkBtn.textContent = '✅ Copied!';
+          setTimeout(() => { copyLinkBtn.textContent = '🔗 Copy Link'; }, 1500);
+        }).catch(() => {
+          prompt('Copy this link:', url);
+        });
+      });
+    }
 
     // Wire up replay button
     const replayBtn = panel.querySelector('.replay-live-btn');
