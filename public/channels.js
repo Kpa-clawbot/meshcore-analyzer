@@ -521,7 +521,7 @@
         <div class="ch-msg-content">
           <div class="ch-msg-sender ch-sender-link ch-tappable" style="color:${senderColor}" tabindex="0" role="button" data-node="${safeId}">${escapeHtml(sender)}</div>
           <div class="ch-msg-bubble">${displayText}</div>
-          <div class="ch-msg-meta">${meta.join(' · ')}${msg.packetId ? ` · <a href="#/packets/id/${msg.packetId}" class="ch-analyze-link">View packet →</a>` : ''}</div>
+          <div class="ch-msg-meta">${meta.join(' · ')}${msg.packetHash ? ` · <a href="#/packets/${msg.packetHash}" class="ch-analyze-link">View packet →</a>` : ''}</div>
         </div>
       </div>`;
     }).join('');

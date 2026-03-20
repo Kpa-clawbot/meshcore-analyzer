@@ -165,7 +165,7 @@
               return `<div class="node-activity-item">
                 <span class="node-activity-time">${timeAgo(p.timestamp)}</span>
                 <span>${typeLabel}${detail}${obsBadge}${obs ? ' via ' + escapeHtml(obs) : ''}${snr}${rssi}</span>
-                <a href="#/packets/id/${p.id}" class="ch-analyze-link" style="margin-left:8px;font-size:0.8em">Analyze →</a>
+                <a href="#/packets/${p.hash}" class="ch-analyze-link" style="margin-left:8px;font-size:0.8em">Analyze →</a>
               </div>`;
             }).join('') : '<div class="text-muted">No recent packets</div>'}
           </div>
@@ -484,7 +484,7 @@
                   ${a.observation_count > 1 ? ' <span class="badge badge-obs">👁 ' + a.observation_count + '</span>' : ''}
                   ${obs ? ' via ' + escapeHtml(obs) : ''}
                   ${a.snr != null ? ` · SNR ${a.snr}dB` : ''}${a.rssi != null ? ` · RSSI ${a.rssi}dBm` : ''}
-                  <br><a href="#/packets/id/${a.id}" class="ch-analyze-link">Analyze →</a>
+                  <br><a href="#/packets/${a.hash}" class="ch-analyze-link">Analyze →</a>
                 </div>
               </div>`;
             }).join('') : '<div class="text-muted" style="padding:8px">No recent packets</div>'}
