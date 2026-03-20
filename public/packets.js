@@ -712,6 +712,7 @@
 
   async function selectPacket(id) {
     selectedId = id;
+    history.replaceState(null, '', `#/packet/${id}`);
     renderTableRows();
     const isMobileNow = window.innerWidth <= 640;
     let panel;
