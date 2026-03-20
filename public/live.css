@@ -630,6 +630,7 @@
   /* Mobile VCR: two-row stacked layout */
   .vcr-bar {
     padding: 4px 8px;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom, 20px));
     flex-wrap: wrap;
     gap: 4px;
     overflow: visible;
