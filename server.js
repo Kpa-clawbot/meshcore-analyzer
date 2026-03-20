@@ -1526,10 +1526,13 @@ app.get('/api/nodes/:pubkey/analytics', (req, res) => {
 });
 
 // Pre-compute all subpath data in a single pass (shared across all subpath queries)
+let _subpathsComputing = null;
 function computeAllSubpaths() {
   const _c = cache.get('analytics:subpaths:master');
   if (_c) return _c;
+  if (_subpathsComputing) return _subpathsComputing; // deduplicate concurrent calls
 
+  const t0 = Date.now();
   const packets = pktStore.filter(p => p.path_json && p.path_json !== '[]');
   const allNodes = db.db.prepare('SELECT public_key, name, lat, lon FROM nodes WHERE name IS NOT NULL').all();
 
@@ -1568,6 +1571,8 @@ function computeAllSubpaths() {
 
   const master = { subpathsByLen, totalPaths };
   cache.set('analytics:subpaths:master', master, TTL.analyticsSubpaths);
+  _subpathsComputing = master; // keep ref for concurrent callers
+  setTimeout(() => { _subpathsComputing = null; }, 100); // release after brief window
   return master;
 }
 
@@ -1716,7 +1721,35 @@ server.listen(process.env.PORT || config.port, () => {
   // Pre-warm expensive caches on startup
   setTimeout(() => {
     const t0 = Date.now();
-    try { computeAllSubpaths(); } catch (e) { console.error('[pre-warm] subpaths:', e.message); }
+    try {
+      computeAllSubpaths();
+      // Pre-warm the 4 specific subpath queries the frontend makes
+      const warmUrls = [
+        { minLen: 2, maxLen: 2, limit: 50 },
+        { minLen: 3, maxLen: 3, limit: 30 },
+        { minLen: 4, maxLen: 4, limit: 20 },
+        { minLen: 5, maxLen: 8, limit: 15 },
+      ];
+      for (const q of warmUrls) {
+        const ck = `analytics:subpaths:${q.minLen}:${q.maxLen}:${q.limit}`;
+        if (!cache.get(ck)) {
+          const { subpathsByLen, totalPaths } = computeAllSubpaths();
+          const merged = {};
+          for (let len = q.minLen; len <= q.maxLen; len++) {
+            const bucket = subpathsByLen[len] || {};
+            for (const [path, data] of Object.entries(bucket)) {
+              if (!merged[path]) merged[path] = { count: 0, raw: data.raw };
+              merged[path].count += data.count;
+            }
+          }
+          const ranked = Object.entries(merged)
+            .map(([path, data]) => ({ path, rawHops: data.raw.split(','), count: data.count, hops: path.split(' → ').length, pct: totalPaths > 0 ? Math.round(data.count / totalPaths * 1000) / 10 : 0 }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, q.limit);
+          cache.set(ck, { subpaths: ranked, totalPaths }, TTL.analyticsSubpaths);
+        }
+      }
+    } catch (e) { console.error('[pre-warm] subpaths:', e.message); }
     console.log(`[pre-warm] subpaths: ${Date.now() - t0}ms`);
   }, 1000);
 });
