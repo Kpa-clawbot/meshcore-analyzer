@@ -880,7 +880,7 @@ app.get('/api/analytics/rf', (req, res) => {
     avgPacketSize: packetSizes.length ? Math.round(packetSizes.reduce((a, b) => a + b, 0) / packetSizes.length) : 0,
     packetsPerHour, payloadTypes, snrByType: snrByTypeArr, signalOverTime, scatterData, timeSpanHours
   };
-  cache.set('analytics:rf', _rfResult, 60000);
+  cache.set('analytics:rf', _rfResult, 300000);
   res.json(_rfResult);
 });
 
@@ -1046,7 +1046,7 @@ app.get('/api/analytics/topology', (req, res) => {
     multiObsNodes,
     bestPathList
   };
-  cache.set('analytics:topology', _topoResult, 60000);
+  cache.set('analytics:topology', _topoResult, 300000);
   res.json(_topoResult);
 });
 
@@ -1109,7 +1109,7 @@ app.get('/api/analytics/channels', (req, res) => {
     channelTimeline,
     msgLengths
   };
-  cache.set('analytics:channels', _chanResult, 60000);
+  cache.set('analytics:channels', _chanResult, 300000);
   res.json(_chanResult);
 });
 
@@ -1201,7 +1201,7 @@ app.get('/api/analytics/hash-sizes', (req, res) => {
     topHops,
     multiByteNodes
   };
-  cache.set('analytics:hash-sizes', _hsResult, 60000);
+  cache.set('analytics:hash-sizes', _hsResult, 300000);
   res.json(_hsResult);
 });
 
@@ -1574,12 +1574,14 @@ app.get('/api/analytics/subpaths', (req, res) => {
     .slice(0, limit);
 
   const _spResult = { subpaths: ranked, totalPaths };
-  cache.set(_ck, _spResult, 60000);
+  cache.set(_ck, _spResult, 600000);
   res.json(_spResult);
 });
 
 // Subpath detail — stats for a specific subpath (by raw hop prefixes)
 app.get('/api/analytics/subpath-detail', (req, res) => {
+  const _sdck = 'analytics:subpath-detail:' + (req.query.hops || '');
+  const _sdc = cache.get(_sdck); if (_sdc) return res.json(_sdc);
   const rawHops = (req.query.hops || '').split(',').filter(Boolean);
   if (rawHops.length < 2) return res.json({ error: 'Need at least 2 hops' });
 
@@ -1639,7 +1641,7 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
     .slice(0, 10)
     .map(([name, count]) => ({ name, count }));
 
-  res.json({
+    const _sdResult = {
     hops: rawHops,
     nodes,
     totalMatches: matching.length,
@@ -1653,7 +1655,9 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
     hourDistribution: hourBuckets,
     parentPaths: topParents,
     observers: topObservers
-  });
+  };
+  cache.set(_sdck, _sdResult, 600000);
+  res.json(_sdResult);
 });
 
 // Static files + SPA fallback
