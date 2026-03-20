@@ -226,6 +226,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   max-width: 0; /* forces td to respect table width instead of expanding to content */
 }
 .data-table td.col-details { white-space: normal; word-break: break-word; }
+.data-table td:has(.spark-bar) { max-width: none; overflow: visible; }
 .data-table tbody tr:nth-child(even) { background: var(--row-stripe); }
 .data-table tbody tr:hover { background: var(--row-hover); cursor: pointer; }
 .data-table tbody tr.selected { background: var(--selected-bg); }
