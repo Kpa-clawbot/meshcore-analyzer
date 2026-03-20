@@ -4,14 +4,12 @@
 
 Collects MeshCore packets via MQTT, decodes them, and presents a full web UI with live packet feed, node map, channel chat, packet tracing, per-node analytics, and more.
 
-![Live VCR playback — watch packets flow across the Bay Area mesh](docs/screenshots/MeshVCR.gif)
-
 ## ✨ Features
 
 ### 📡 Live Trace Map
 Real-time animated map with packet route visualization, VCR-style playback controls, and a retro LCD clock. Replay the last 24 hours of mesh activity, scrub through the timeline, or watch packets flow live at up to 4× speed.
 
-<img src="docs/screenshots/Live-view-iOS.png" alt="Live view on iOS" width="300">
+![Live VCR playback — watch packets flow across the Bay Area mesh](docs/screenshots/MeshVCR.gif)
 
 ### 📦 Packet Feed
 Filterable real-time packet stream with byte-level breakdown, Excel-like resizable columns, and a detail pane. Toggle "My Nodes" to focus on your mesh.
@@ -37,6 +35,11 @@ Per-node deep dive with 6 interactive charts: activity timeline, packet type bre
 Decoded group messages with sender names, @mentions, timestamps — like reading a Discord channel for your mesh.
 
 ![Channels](docs/screenshots/channels1.png)
+
+### 📱 Mobile Ready
+Full experience on your phone — proper touch controls, iOS safe area support, and a compact VCR bar that doesn't fight your thumb.
+
+<img src="docs/screenshots/Live-view-iOS.png" alt="Live view on iOS" width="300">
 
 ### And More
 
