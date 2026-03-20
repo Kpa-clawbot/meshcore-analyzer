@@ -13,6 +13,9 @@ class PacketStore {
     this.estPacketBytes = config.estimatedPacketBytes || 450;
     this.maxPackets = Math.floor(this.maxBytes / this.estPacketBytes);
 
+    // SQLite-only mode: skip RAM loading, all reads go to DB
+    this.sqliteOnly = process.env.NO_MEMORY_STORE === '1';
+
     // Core storage: array sorted by timestamp DESC (newest first)
     this.packets = [];
     // Indexes
@@ -27,6 +30,11 @@ class PacketStore {
 
   /** Load all packets from SQLite into memory */
   load() {
+    if (this.sqliteOnly) {
+      console.log('[PacketStore] SQLite-only mode (NO_MEMORY_STORE=1) — all reads go to database');
+      this.loaded = true;
+      return this;
+    }
     const t0 = Date.now();
     const rows = this.db.prepare(
       'SELECT * FROM packets ORDER BY timestamp DESC'
@@ -112,9 +120,12 @@ class PacketStore {
     return id;
   }
 
-  /** Query packets with filters — all from memory */
+  /** Query packets with filters — all from memory (or SQLite in fallback mode) */
   query({ limit = 50, offset = 0, type, route, region, observer, hash, since, until, node, order = 'DESC' } = {}) {
     this.stats.queries++;
+
+    if (this.sqliteOnly) return this._querySQLite({ limit, offset, type, route, region, observer, hash, since, until, node, order });
+
     let results = this.packets;
 
     // Use indexes for single-key filters when possible
@@ -183,6 +194,8 @@ class PacketStore {
   queryGrouped({ limit = 50, offset = 0, type, route, region, observer, hash, since, until, node } = {}) {
     this.stats.queries++;
 
+    if (this.sqliteOnly) return this._queryGroupedSQLite({ limit, offset, type, route, region, observer, hash, since, until, node });
+
     // Get filtered results first
     const { packets: filtered, total: filteredTotal } = this.query({
       limit: 999999, offset: 0, type, route, region, observer, hash, since, until, node
@@ -231,37 +244,49 @@ class PacketStore {
 
   /** Get timestamps for sparkline */
   getTimestamps(since) {
+    if (this.sqliteOnly) {
+      return this.db.prepare('SELECT timestamp FROM packets WHERE timestamp > ? ORDER BY timestamp ASC').all(since).map(r => r.timestamp);
+    }
     const results = [];
     for (const p of this.packets) {
-      if (p.timestamp <= since) break; // sorted DESC, so we can stop early
+      if (p.timestamp <= since) break;
       results.push(p.timestamp);
     }
-    return results.reverse(); // return ASC
+    return results.reverse();
   }
 
   /** Get a single packet by ID */
   getById(id) {
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets WHERE id = ?').get(id) || null;
     return this.byId.get(id) || null;
   }
 
   /** Get all siblings of a packet (same hash) */
   getSiblings(hash) {
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets WHERE hash = ? ORDER BY timestamp DESC').all(hash);
     return this.byHash.get(hash) || [];
   }
 
   /** Get all packets (raw array reference — do not mutate) */
-  all() { return this.packets; }
+  all() {
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets ORDER BY timestamp DESC').all();
+    return this.packets;
+  }
 
   /** Get all packets matching a filter function */
-  filter(fn) { return this.packets.filter(fn); }
+  filter(fn) {
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets ORDER BY timestamp DESC').all().filter(fn);
+    return this.packets.filter(fn);
+  }
 
   /** Memory stats */
   getStats() {
     return {
       ...this.stats,
-      inMemory: this.packets.length,
+      inMemory: this.sqliteOnly ? 0 : this.packets.length,
+      sqliteOnly: this.sqliteOnly,
       maxPackets: this.maxPackets,
-      estimatedMB: Math.round(this.packets.length * this.estPacketBytes / 1024 / 1024),
+      estimatedMB: this.sqliteOnly ? 0 : Math.round(this.packets.length * this.estPacketBytes / 1024 / 1024),
       maxMB: Math.round(this.maxBytes / 1024 / 1024),
       indexes: {
         byHash: this.byHash.size,
@@ -269,6 +294,48 @@ class PacketStore {
         byNode: this.byNode.size,
       }
     };
+  }
+
+  /** SQLite fallback: query with filters */
+  _querySQLite({ limit, offset, type, route, region, observer, hash, since, until, node, order }) {
+    const where = []; const params = [];
+    if (type !== undefined) { where.push('payload_type = ?'); params.push(Number(type)); }
+    if (route !== undefined) { where.push('route_type = ?'); params.push(Number(route)); }
+    if (observer) { where.push('observer_id = ?'); params.push(observer); }
+    if (hash) { where.push('hash = ?'); params.push(hash); }
+    if (since) { where.push('timestamp > ?'); params.push(since); }
+    if (until) { where.push('timestamp < ?'); params.push(until); }
+    if (region) { where.push('observer_id IN (SELECT id FROM observers WHERE iata = ?)'); params.push(region); }
+    if (node) { where.push('decoded_json LIKE ?'); params.push(`%${node}%`); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const total = this.db.prepare(`SELECT COUNT(*) as c FROM packets ${w}`).get(...params).c;
+    const packets = this.db.prepare(`SELECT * FROM packets ${w} ORDER BY timestamp ${order === 'ASC' ? 'ASC' : 'DESC'} LIMIT ? OFFSET ?`).all(...params, limit, offset);
+    return { packets, total };
+  }
+
+  /** SQLite fallback: grouped query */
+  _queryGroupedSQLite({ limit, offset, type, route, region, observer, hash, since, until, node }) {
+    const where = []; const params = [];
+    if (type !== undefined) { where.push('payload_type = ?'); params.push(Number(type)); }
+    if (route !== undefined) { where.push('route_type = ?'); params.push(Number(route)); }
+    if (observer) { where.push('observer_id = ?'); params.push(observer); }
+    if (hash) { where.push('hash = ?'); params.push(hash); }
+    if (since) { where.push('timestamp > ?'); params.push(since); }
+    if (until) { where.push('timestamp < ?'); params.push(until); }
+    if (region) { where.push('observer_id IN (SELECT id FROM observers WHERE iata = ?)'); params.push(region); }
+    if (node) { where.push('decoded_json LIKE ?'); params.push(`%${node}%`); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    const sql = `SELECT hash, COUNT(*) as count, COUNT(DISTINCT observer_id) as observer_count,
+      MAX(timestamp) as latest, MIN(observer_id) as observer_id, MIN(observer_name) as observer_name,
+      MIN(path_json) as path_json, MIN(payload_type) as payload_type, MIN(raw_hex) as raw_hex,
+      MIN(decoded_json) as decoded_json
+      FROM packets ${w} GROUP BY hash ORDER BY latest DESC LIMIT ? OFFSET ?`;
+    const packets = this.db.prepare(sql).all(...params, limit, offset);
+
+    const countSql = `SELECT COUNT(DISTINCT hash) as c FROM packets ${w}`;
+    const total = this.db.prepare(countSql).get(...params).c;
+    return { packets, total };
   }
 }
 
