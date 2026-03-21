@@ -742,7 +742,7 @@
     return '';
   }
 
-  async function selectPacket(id, hash) {
+  async function selectPacket(id, hash, prefetchedData) {
     selectedId = id;
     if (hash) {
       history.replaceState(null, '', `#/packets/${hash}`);
@@ -779,8 +779,7 @@
     }
 
     try {
-      const endpoint = hash ? `/packets/${hash}` : `/packets/${id}`;
-      const data = await api(endpoint);
+      const data = prefetchedData || await api(hash ? `/packets/${hash}` : `/packets/${id}`);
       // Resolve path hops for detail view
       const pkt = data.packet;
       try {
@@ -1209,12 +1208,15 @@
       renderTableRows();
       return;
     }
-    // Load children (observations) for this hash
+    // Single fetch — gets packet + observations + path + breakdown
     try {
-      const data = await api(`/packets?hash=${hash}&limit=1&expand=observations`);
-      const pkt = (data.packets || [])[0];
+      const data = await api(`/packets/${hash}`);
+      const pkt = data.packet;
+      if (!pkt) return;
       const group = packets.find(p => p.hash === hash);
-      if (group && pkt) group._children = (pkt.observations || []).map(o => ({...pkt, ...o, _isObservation: true}));
+      if (group && data.observations) {
+        group._children = data.observations.map(o => ({...pkt, ...o, _isObservation: true}));
+      }
       // Resolve any new hops from children
       const childHops = new Set();
       for (const c of (group?._children || [])) {
@@ -1224,13 +1226,15 @@
       if (newHops.length) await resolveHops(newHops);
       expandedHashes.add(hash);
       renderTableRows();
+      // Also open detail panel — no extra fetch needed
+      selectPacket(pkt.id, hash, data);
     } catch {}
   }
   async function pktSelectHash(hash) {
-    // When grouped, find first packet with this hash
+    // When grouped, select packet — reuse cached detail endpoint
     try {
-      const data = await api(`/packets?hash=${hash}&limit=1`);
-      if (data.packets?.[0]) selectPacket(data.packets[0].id, hash);
+      const data = await api(`/packets/${hash}`);
+      if (data?.packet) selectPacket(data.packet.id, hash, data);
     } catch {}
   }
 
