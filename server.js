@@ -2397,4 +2397,42 @@ server.listen(listenPort, () => {
   }, 1000);
 });
 
+// --- Graceful Shutdown ---
+let _shuttingDown = false;
+function shutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  console.log(`\n[shutdown] received ${signal}, closing gracefully…`);
+
+  // Terminate WebSocket clients first — open WS connections would prevent
+  // server.close() from ever completing its callback otherwise.
+  if (wss) {
+    for (const client of wss.clients) {
+      try { client.terminate(); } catch {}
+    }
+    wss.close();
+    console.log('[shutdown] WebSocket server closed');
+  }
+
+  // Force-drain all keep-alive HTTP connections so server.close() fires promptly.
+  // closeAllConnections() is available since Node 18.2 (we're on Node 22).
+  server.closeAllConnections();
+  server.close(() => console.log('[shutdown] HTTP server closed'));
+
+  // Checkpoint WAL and close SQLite synchronously — performed unconditionally,
+  // not gated on server.close(), so the DB is always cleanly flushed.
+  try {
+    db.db.pragma('wal_checkpoint(TRUNCATE)');
+    db.db.close();
+    console.log('[shutdown] database closed');
+  } catch (e) {
+    console.error('[shutdown] database close error:', e.message);
+  }
+
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
+
 module.exports = { app, server, wss };
