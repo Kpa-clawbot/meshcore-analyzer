@@ -452,7 +452,7 @@
 
   async function selectChannel(hash) {
     selectedHash = hash;
-    history.replaceState(null, '', `#/channels/${hash}`);
+    history.replaceState(null, '', `#/channels/${encodeURIComponent(hash)}`);
     renderChannelList();
     const ch = channels.find(c => c.hash === hash);
     const name = ch?.name || `Channel ${hash}`;
@@ -466,7 +466,7 @@
     msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';
 
     try {
-      const data = await api(`/channels/${hash}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages });
+      const data = await api(`/channels/${encodeURIComponent(hash)}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages });
       messages = data.messages || [];
       renderMessages();
       scrollToBottom();
@@ -481,7 +481,7 @@
     if (!msgEl) return;
     const wasAtBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 60;
     try {
-      const data = await api(`/channels/${selectedHash}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages });
+      const data = await api(`/channels/${encodeURIComponent(selectedHash)}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages });
       const newMsgs = data.messages || [];
       // #92: Use message ID/hash for change detection instead of count + timestamp
       var _getLastId = function (arr) { var m = arr.length ? arr[arr.length - 1] : null; return m ? (m.id || m.packetId || m.timestamp || '') : ''; };

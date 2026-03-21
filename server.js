@@ -1822,7 +1822,7 @@ app.get('/api/channels', (req, res) => {
     
     if (!channelMap[key]) {
       channelMap[key] = {
-        hash: String(ch),
+        hash: key,
         name: isCollision ? `Unknown (hash 0x${Number(ch).toString(16).toUpperCase()})` : (knownName || `Channel 0x${Number(ch).toString(16).toUpperCase()}`),
         encrypted: isCollision || !knownName,
         lastMessage: null, lastSender: null, messageCount: 0, lastActivity: pkt.timestamp,
