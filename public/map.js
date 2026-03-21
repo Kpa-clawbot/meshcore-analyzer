@@ -377,39 +377,41 @@
   var _renderingMarkers = false;
   var _lastDeconflictZoom = null;
 
-  function deconflictLabels(labelMarkers, mapRef) {
+  function deconflictLabels(markers, mapRef) {
     const placed = [];
-    const LABEL_W = 38;
-    const LABEL_H = 24;
-    const PAD = 6;
+    const PAD = 4;
 
-    const overlaps = function(b) {
-      return placed.some(function(p) {
-        return b.x < p.x + p.w + PAD && b.x + b.w + PAD > p.x &&
-               b.y < p.y + p.h + PAD && b.y + b.h + PAD > p.y;
-      });
+    var overlaps = function(b) {
+      for (var k = 0; k < placed.length; k++) {
+        var p = placed[k];
+        if (b.x < p.x + p.w + PAD && b.x + b.w + PAD > p.x &&
+            b.y < p.y + p.h + PAD && b.y + b.h + PAD > p.y) return true;
+      }
+      return false;
     };
 
-    // Generate spiral offsets — 5 rings, 8 directions each, up to 120px out
+    // Spiral offsets — 6 rings, 8 directions, up to ~132px
     var offsets = [];
     for (var ring = 1; ring <= 6; ring++) {
-      var dist = ring * 28;
+      var dist = ring * 22;
       for (var angle = 0; angle < 360; angle += 45) {
         var rad = angle * Math.PI / 180;
         offsets.push([Math.round(Math.cos(rad) * dist), Math.round(Math.sin(rad) * dist)]);
       }
     }
 
-    for (var i = 0; i < labelMarkers.length; i++) {
-      var m = labelMarkers[i];
+    for (var i = 0; i < markers.length; i++) {
+      var m = markers[i];
+      var w = m.isLabel ? 38 : 20;
+      var h = m.isLabel ? 24 : 20;
       var pt = mapRef.latLngToLayerPoint(m.latLng);
       var bestPt = pt;
-      var box = { x: pt.x - LABEL_W / 2, y: pt.y - LABEL_H / 2, w: LABEL_W, h: LABEL_H };
+      var box = { x: pt.x - w / 2, y: pt.y - h / 2, w: w, h: h };
 
       if (overlaps(box)) {
         for (var j = 0; j < offsets.length; j++) {
           var tryPt = L.point(pt.x + offsets[j][0], pt.y + offsets[j][1]);
-          var tryBox = { x: tryPt.x - LABEL_W / 2, y: tryPt.y - LABEL_H / 2, w: LABEL_W, h: LABEL_H };
+          var tryBox = { x: tryPt.x - w / 2, y: tryPt.y - h / 2, w: w, h: h };
           if (!overlaps(tryBox)) {
             bestPt = tryPt;
             box = tryBox;
@@ -439,43 +441,13 @@
       return true;
     });
 
-    const labelMarkers = [];
+    const allMarkers = [];
 
     for (const node of filtered) {
       const useLabel = node.role === 'repeater' && filters.hashLabels;
       const icon = useLabel ? makeRepeaterLabelIcon(node) : makeMarkerIcon(node.role || 'companion');
       const latLng = L.latLng(node.lat, node.lon);
-
-      if (useLabel) {
-        labelMarkers.push({ latLng, node, icon });
-      } else {
-        const marker = L.marker(latLng, {
-          icon,
-          alt: `${node.name || 'Unknown'} (${node.role || 'node'})`,
-        });
-        marker.bindPopup(buildPopup(node), { maxWidth: 280 });
-        markerLayer.addLayer(marker);
-      }
-    }
-
-    if (labelMarkers.length > 0) {
-      deconflictLabels(labelMarkers, map);
-      for (const m of labelMarkers) {
-        const pos = m.adjustedLatLng || m.latLng;
-        const marker = L.marker(pos, {
-          icon: m.icon,
-          alt: `${m.node.name || 'Unknown'} (${m.node.role || 'node'})`,
-        });
-        marker.bindPopup(buildPopup(m.node), { maxWidth: 280 });
-        markerLayer.addLayer(marker);
-
-        if (m.offset > 15) {
-          const line = L.polyline([m.latLng, pos], {
-            color: '#999', weight: 1, dashArray: '3,3', opacity: 0.6
-          });
-          markerLayer.addLayer(line);
-        }
-      }
+      allMarkers.push({ latLng, node, icon, isLabel: useLabel, popupFn: function() { return buildPopup(node); }, alt: (node.name || 'Unknown') + ' (' + (node.role || 'node') + ')' });
     }
 
     // Add observer markers
@@ -483,12 +455,27 @@
       for (const obs of observers) {
         if (!obs.lat || !obs.lon) continue;
         const icon = makeMarkerIcon('observer');
-        const marker = L.marker([obs.lat, obs.lon], {
-          icon,
-          alt: `${obs.name || obs.id} (observer)`,
+        const latLng = L.latLng(obs.lat, obs.lon);
+        allMarkers.push({ latLng, node: obs, icon, isLabel: false, popupFn: function() { return buildObserverPopup(obs); }, alt: (obs.name || obs.id || 'Unknown') + ' (observer)' });
+      }
+    }
+
+    // Deconflict ALL markers
+    if (allMarkers.length > 0) {
+      deconflictLabels(allMarkers, map);
+    }
+
+    for (const m of allMarkers) {
+      const pos = m.adjustedLatLng || m.latLng;
+      const marker = L.marker(pos, { icon: m.icon, alt: m.alt });
+      marker.bindPopup(m.popupFn(), { maxWidth: 280 });
+      markerLayer.addLayer(marker);
+
+      if (m.offset > 15 && m.isLabel) {
+        const line = L.polyline([m.latLng, pos], {
+          color: '#999', weight: 1, dashArray: '3,3', opacity: 0.6
         });
-        marker.bindPopup(buildObserverPopup(obs), { maxWidth: 280 });
-        markerLayer.addLayer(marker);
+        markerLayer.addLayer(line);
       }
     }
   }
