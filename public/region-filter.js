@@ -87,11 +87,11 @@
 
   /** Build summary label for dropdown trigger */
   function dropdownLabel(codes) {
-    if (!_selected) return 'All';
+    if (!_selected) return 'All Regions';
     var sel = Array.from(_selected);
-    if (sel.length === 0) return 'All';
+    if (sel.length === 0) return 'All Regions';
     if (sel.length <= 2) return sel.map(function (c) { return _regions[c] || c; }).join(', ');
-    return sel.length + ' selected';
+    return sel.length + ' Regions';
   }
 
   /** Render pill bar mode (≤4 regions) */
@@ -121,7 +121,6 @@
   function renderDropdown(container, codes) {
     var allSelected = !_selected;
     var html = '<div class="region-dropdown-wrap" role="group" aria-label="Region filter">';
-    html += '<span class="region-filter-label">Region:</span>';
     html += '<button class="region-dropdown-trigger" aria-haspopup="listbox" aria-expanded="false">' +
       dropdownLabel(codes) + ' ▾</button>';
     html += '<div class="region-dropdown-menu" role="listbox" aria-label="Select regions" hidden>';
