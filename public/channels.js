@@ -380,6 +380,7 @@
 
       var channelListDirty = false;
       var messagesDirty = false;
+      var seenHashes = new Set();
 
       for (var i = 0; i < dominated.length; i++) {
         var m = dominated[i];
@@ -412,15 +413,18 @@
         var snr = m.data?.snr ?? m.data?.packet?.snr ?? payload.SNR ?? null;
         var observer = m.data?.packet?.observer_name || m.data?.observer || null;
 
-        // Update channel list entry
+        // Update channel list entry — only once per unique packet hash
+        var isFirstObservation = pktHash && !seenHashes.has(pktHash + ':' + channelName);
+        if (pktHash) seenHashes.add(pktHash + ':' + channelName);
+
         var ch = channels.find(function (c) { return c.hash === channelName; });
         if (ch) {
-          ch.messageCount = (ch.messageCount || 0) + 1;
+          if (isFirstObservation) ch.messageCount = (ch.messageCount || 0) + 1;
           ch.lastActivity = ts;
           ch.lastSender = sender;
           ch.lastMessage = truncate(displayText, 100);
           channelListDirty = true;
-        } else {
+        } else if (isFirstObservation) {
           // New channel we haven't seen
           channels.push({
             hash: channelName,
@@ -435,9 +439,8 @@
 
         // If this message is for the selected channel, append to messages
         if (selectedHash && channelName === selectedHash) {
-          // Deduplicate: check if we already have this exact message
-          var dedupeKey = sender + ':' + ts;
-          var existing = messages.find(function (msg) { return msg.sender === sender && msg.timestamp === ts; });
+          // Deduplicate by packet hash — same message seen by multiple observers
+          var existing = pktHash ? messages.find(function (msg) { return msg.packetHash === pktHash; }) : null;
           if (existing) {
             existing.repeats = (existing.repeats || 1) + 1;
             if (observer && existing.observers && existing.observers.indexOf(observer) === -1) {
