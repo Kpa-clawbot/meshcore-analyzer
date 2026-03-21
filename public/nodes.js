@@ -151,6 +151,11 @@
           </table>
         </div>` : ''}
 
+        <div class="node-full-card" id="fullPathsSection">
+          <h4>Paths Through This Node</h4>
+          <div id="fullPathsContent"><div class="text-muted" style="padding:8px"><span class="spinner"></span> Loading paths…</div></div>
+        </div>
+
         <div class="node-full-card">
           <h4>Recent Packets (${adverts.length})</h4>
           <div class="node-activity-list">
@@ -207,6 +212,44 @@
           if (svg) { svg.style.display = 'block'; svg.style.margin = '0 auto'; }
         } catch {}
       }
+
+      // Fetch paths through this node (full-screen view)
+      api('/nodes/' + encodeURIComponent(n.public_key) + '/paths', { ttl: CLIENT_TTL.nodeDetail }).then(pathData => {
+        const el = document.getElementById('fullPathsContent');
+        if (!el) return;
+        if (!pathData || !pathData.paths || !pathData.paths.length) {
+          el.innerHTML = '<div class="text-muted" style="padding:8px">No paths observed through this node</div>';
+          return;
+        }
+        document.querySelector('#fullPathsSection h4').textContent = `Paths Through This Node (${pathData.totalPaths} unique, ${pathData.totalTransmissions} transmissions)`;
+        const COLLAPSE_LIMIT = 10;
+        function renderPaths(paths) {
+          return paths.map(p => {
+            const chain = p.hops.map(h => {
+              const isThis = h.pubkey === n.public_key;
+              const name = escapeHtml(h.name || h.prefix);
+              const link = h.pubkey ? `<a href="#/nodes/${encodeURIComponent(h.pubkey)}" style="${isThis ? 'font-weight:700;color:var(--accent, #3b82f6)' : ''}">${name}</a>` : `<span>${name}</span>`;
+              return link;
+            }).join(' → ');
+            return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+              <div>${chain}</div>
+              <div style="color:var(--text-muted);margin-top:2px">${p.count}× · last ${timeAgo(p.lastSeen)} · <a href="#/packets/${p.sampleHash}" class="ch-analyze-link">Analyze →</a></div>
+            </div>`;
+          }).join('');
+        }
+        if (pathData.paths.length <= COLLAPSE_LIMIT) {
+          el.innerHTML = renderPaths(pathData.paths);
+        } else {
+          el.innerHTML = renderPaths(pathData.paths.slice(0, COLLAPSE_LIMIT)) +
+            `<button id="showAllFullPaths" class="btn-primary" style="margin-top:8px;font-size:11px;padding:4px 12px">Show all ${pathData.paths.length} paths</button>`;
+          document.getElementById('showAllFullPaths').addEventListener('click', function() {
+            el.innerHTML = renderPaths(pathData.paths);
+          });
+        }
+      }).catch(() => {
+        const el = document.getElementById('fullPathsContent');
+        if (el) el.innerHTML = '<div class="text-muted" style="padding:8px">Failed to load paths</div>';
+      });
 
     } catch (e) {
       body.innerHTML = `<div class="text-muted" style="padding:40px">Failed to load node: ${e.message}</div>`;
