@@ -1352,8 +1352,8 @@
       html += `<div class="analytics-section"><h3>🏆 Top 20 Longest Hops</h3><table class="data-table"><thead><tr><th>#</th><th>From</th><th>To</th><th>Distance (km)</th><th>Type</th><th>SNR</th><th>Packet</th></tr></thead><tbody>`;
       const top20 = data.topHops.slice(0, 20);
       top20.forEach((h, i) => {
-        const fromLink = h.fromPk ? `<a href="#/nodes/${encodeURIComponent(h.fromPk)}/analytics" class="analytics-link">${esc(h.fromName)}</a>` : esc(h.fromName || '?');
-        const toLink = h.toPk ? `<a href="#/nodes/${encodeURIComponent(h.toPk)}/analytics" class="analytics-link">${esc(h.toName)}</a>` : esc(h.toName || '?');
+        const fromLink = h.fromPk ? `<a href="#/nodes/${encodeURIComponent(h.fromPk)}" class="analytics-link">${esc(h.fromName)}</a>` : esc(h.fromName || '?');
+        const toLink = h.toPk ? `<a href="#/nodes/${encodeURIComponent(h.toPk)}" class="analytics-link">${esc(h.toName)}</a>` : esc(h.toName || '?');
         const snr = h.snr != null ? h.snr + ' dB' : '<span class="text-muted">—</span>';
         const pktLink = h.hash ? `<a href="#/packet/${encodeURIComponent(h.hash)}" class="analytics-link mono" style="font-size:0.85em">${esc(h.hash.slice(0, 12))}…</a>` : '—';
         html += `<tr><td>${i+1}</td><td>${fromLink}</td><td>${toLink}</td><td><strong>${h.dist}</strong></td><td>${esc(h.type)}</td><td>${snr}</td><td>${pktLink}</td></tr>`;

@@ -1722,7 +1722,7 @@ app.get('/api/analytics/distance', (req, res) => {
     for (let i = 0; i < chain.length - 1; i++) {
       const a = chain[i], b = chain[i + 1];
       const dist = haversine(a.lat, a.lon, b.lat, b.lon);
-      if (dist > 1000) continue; // sanity: skip > 1000km (likely bad GPS)
+      if (dist > 300) continue; // sanity: skip > 300km (LoRa record ~250km)
 
       const aRep = isRepeater(a), bRep = isRepeater(b);
       let type;
