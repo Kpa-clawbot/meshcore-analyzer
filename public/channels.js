@@ -419,9 +419,8 @@
     if (!el) return;
     if (channels.length === 0) { el.innerHTML = '<div class="ch-empty">No channels found</div>'; return; }
 
-    // Sort: decrypted first (by message count desc), then encrypted (by message count desc)
+    // Sort by message count desc
     const sorted = [...channels].sort((a, b) => {
-      if (a.encrypted !== b.encrypted) return a.encrypted ? 1 : -1;
       return (b.messageCount || 0) - (a.messageCount || 0);
     });
 
@@ -431,17 +430,15 @@
       const time = ch.lastActivity ? timeAgo(ch.lastActivity) : '';
       const preview = ch.lastSender && ch.lastMessage
         ? `${ch.lastSender}: ${truncate(ch.lastMessage, 28)}`
-        : ch.encrypted ? `🔒 ${ch.messageCount} encrypted` : `${ch.messageCount} messages`;
+        : `${ch.messageCount} messages`;
       const sel = selectedHash === ch.hash ? ' selected' : '';
-      const lockIcon = ch.encrypted ? ' 🔒' : '';
-      const encClass = ch.encrypted ? ' ch-item-encrypted' : '';
       const abbr = name.startsWith('#') ? name.slice(0, 3) : name.slice(0, 2).toUpperCase();
 
-      return `<button class="ch-item${sel}${encClass}" data-hash="${ch.hash}" type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}">
+      return `<button class="ch-item${sel}" data-hash="${ch.hash}" type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}">
         <div class="ch-badge" style="background:${color}" aria-hidden="true">${escapeHtml(abbr)}</div>
         <div class="ch-item-body">
           <div class="ch-item-top">
-            <span class="ch-item-name">${escapeHtml(name)}${lockIcon}</span>
+            <span class="ch-item-name">${escapeHtml(name)}</span>
             <span class="ch-item-time">${time}</span>
           </div>
           <div class="ch-item-preview">${escapeHtml(preview)}</div>
@@ -509,11 +506,7 @@
       const senderLetter = sender.replace(/[^\w]/g, '').charAt(0).toUpperCase() || '?';
 
       let displayText;
-      if (msg.encrypted) {
-        displayText = '<span class="mono ch-encrypted-text">🔒 encrypted</span>';
-      } else {
-        displayText = highlightMentions(msg.text || '');
-      }
+      displayText = highlightMentions(msg.text || '');
 
       const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
       const date = msg.timestamp ? new Date(msg.timestamp).toLocaleDateString() : '';

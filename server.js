@@ -1791,15 +1791,7 @@ app.get('/api/resolve-hops', (req, res) => {
   res.json({ resolved });
 });
 
-// Channel hash → name mapping from configured keys
-const channelHashNames = {};
-{
-  const crypto = require('crypto');
-  for (const [name, key] of Object.entries(channelKeys)) {
-    const hash = crypto.createHash('sha256').update(Buffer.from(key, 'hex')).digest()[0];
-    channelHashNames[hash] = name;
-  }
-}
+// channelHashNames removed — we only use decoded channel names now
 
 app.get('/api/channels', (req, res) => {
   const { region } = req.query;
@@ -1815,38 +1807,18 @@ app.get('/api/channels', (req, res) => {
     let decoded;
     try { decoded = JSON.parse(pkt.decoded_json); } catch { continue; }
 
-    // Companion bridge messages (no raw_hex)
-    if (!pkt.raw_hex) {
-      const ch = decoded.channel_idx !== undefined ? `c${decoded.channel_idx}` : null;
-      if (!ch) continue;
-      if (!channelMap[ch]) {
-        channelMap[ch] = { hash: ch, name: `Companion Ch ${decoded.channel_idx}`, encrypted: false, lastMessage: null, lastSender: null, messageCount: 0, lastActivity: pkt.timestamp };
-      }
-      continue;
-    }
+    // Only show decrypted messages — skip encrypted garbage
+    if (decoded.type !== 'CHAN') continue;
 
-    const ch = decoded.channelHash !== undefined ? decoded.channelHash : decoded.channel_idx;
-    if (ch === undefined) continue;
-    
-    const isDecrypted = decoded.type === 'CHAN' || decoded.text;
-    const decodedName = isDecrypted ? decoded.channel : null;
-    const knownName = decodedName || channelHashNames[ch];
-    // Use plain numeric hash as key — all packets with the same hash byte
-    // go in one bucket regardless of decryption status
-    const key = String(ch);
+    const channelName = decoded.channel || 'unknown';
+    const key = channelName;
     
     if (!channelMap[key]) {
       channelMap[key] = {
         hash: key,
-        name: knownName || `Channel 0x${Number(ch).toString(16).toUpperCase()}`,
-        encrypted: !knownName,
+        name: channelName,
         lastMessage: null, lastSender: null, messageCount: 0, lastActivity: pkt.timestamp,
       };
-    }
-    // Update name if we got a decrypted name (in case first packet was encrypted)
-    if (decodedName && channelMap[key].name !== decodedName) {
-      channelMap[key].name = decodedName;
-      channelMap[key].encrypted = false;
     }
     channelMap[key].messageCount++;
     if (pkt.timestamp >= channelMap[key].lastActivity) {
@@ -1876,8 +1848,9 @@ app.get('/api/channels/:hash/messages', (req, res) => {
   for (const pkt of packets) {
     let decoded;
     try { decoded = JSON.parse(pkt.decoded_json); } catch { continue; }
-    const rawCh = decoded.channelHash !== undefined ? decoded.channelHash : decoded.channel_idx;
-    const ch = rawCh !== undefined ? String(rawCh) : (decoded.channel_idx !== undefined ? `c${decoded.channel_idx}` : null);
+    // Only decrypted messages
+    if (decoded.type !== 'CHAN') continue;
+    const ch = decoded.channel || 'unknown';
     if (ch !== channelHash) continue;
 
     const sender = decoded.sender || (decoded.text ? decoded.text.split(': ')[0] : null) || pkt.observer_name || pkt.observer_id || 'Unknown';
@@ -1905,7 +1878,6 @@ app.get('/api/channels/:hash/messages', (req, res) => {
       msgMap.set(dedupeKey, {
         sender: displaySender,
         text: displayText,
-        encrypted: !decoded.text && !decoded.sender,
         timestamp: pkt.timestamp,
         sender_timestamp: decoded.sender_timestamp || null,
         packetId: pkt.id,
