@@ -472,12 +472,25 @@
     // Observation sort dropdown
     const obsSortSel = document.getElementById('fObsSort');
     obsSortSel.value = obsSortMode;
-    obsSortSel.addEventListener('change', function () {
+    obsSortSel.addEventListener('change', async function () {
       obsSortMode = this.value;
       localStorage.setItem('meshcore-obs-sort', obsSortMode);
-      // Re-sort all expanded groups
+      // For non-observer sorts, fetch children for visible groups that don't have them yet
+      if (obsSortMode !== SORT_OBSERVER && groupByHash) {
+        const toFetch = packets.filter(p => p.hash && !p._children && (p.observation_count || 0) > 1);
+        await Promise.all(toFetch.map(async (p) => {
+          try {
+            const data = await api(`/packets/${p.hash}`);
+            if (data?.packet && data.observations) {
+              p._children = data.observations.map(o => ({...data.packet, ...o, _isObservation: true}));
+              p._fetchedData = data;
+            }
+          } catch {}
+        }));
+      }
+      // Re-sort all groups with children
       for (const p of packets) {
-        if (expandedHashes.has(p.hash) && p._children) sortGroupChildren(p);
+        if (p._children) sortGroupChildren(p);
       }
       renderTableRows();
     });
