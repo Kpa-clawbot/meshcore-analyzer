@@ -3,6 +3,7 @@
 
 (function () {
   let _analyticsData = {};
+  const sf = (v, d) => (v != null ? v.toFixed(d) : '–'); // safe toFixed
   function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
 
   // --- SVG helpers ---
@@ -176,17 +177,17 @@
           <div class="stat-label">Unique Nodes</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">${rf.snr.avg.toFixed(1)} dB</div>
+          <div class="stat-value">${sf(rf.snr.avg, 1)} dB</div>
           <div class="stat-label">Avg SNR</div>
-          <div class="stat-detail">${rf.snr.min.toFixed(1)} to ${rf.snr.max.toFixed(1)}</div>
+          <div class="stat-detail">${sf(rf.snr.min, 1)} to ${sf(rf.snr.max, 1)}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">${rf.rssi.avg.toFixed(0)} dBm</div>
+          <div class="stat-value">${sf(rf.rssi.avg, 0)} dBm</div>
           <div class="stat-label">Avg RSSI</div>
           <div class="stat-detail">${rf.rssi.min} to ${rf.rssi.max}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">${topo.avgHops.toFixed(1)}</div>
+          <div class="stat-value">${sf(topo.avgHops, 1)}</div>
           <div class="stat-label">Avg Hops</div>
           <div class="stat-detail">max ${topo.maxHops}</div>
         </div>
@@ -254,11 +255,11 @@
           <p class="text-muted">Signal-to-Noise Ratio (higher = cleaner signal)</p>
           ${snrHist.svg}
           <div class="rf-stats">
-            <span>Min: <strong>${rf.snr.min.toFixed(1)} dB</strong></span>
-            <span>Mean: <strong>${rf.snr.avg.toFixed(1)} dB</strong></span>
-            <span>Median: <strong>${rf.snr.median.toFixed(1)} dB</strong></span>
-            <span>Max: <strong>${rf.snr.max.toFixed(1)} dB</strong></span>
-            <span>σ: <strong>${rf.snr.stddev.toFixed(1)} dB</strong></span>
+            <span>Min: <strong>${sf(rf.snr.min, 1)} dB</strong></span>
+            <span>Mean: <strong>${sf(rf.snr.avg, 1)} dB</strong></span>
+            <span>Median: <strong>${sf(rf.snr.median, 1)} dB</strong></span>
+            <span>Max: <strong>${sf(rf.snr.max, 1)} dB</strong></span>
+            <span>σ: <strong>${sf(rf.snr.stddev, 1)} dB</strong></span>
           </div>
         </div>
         <div class="analytics-card flex-1">
@@ -267,10 +268,10 @@
           ${rssiHist.svg}
           <div class="rf-stats">
             <span>Min: <strong>${rf.rssi.min} dBm</strong></span>
-            <span>Mean: <strong>${rf.rssi.avg.toFixed(0)} dBm</strong></span>
+            <span>Mean: <strong>${sf(rf.rssi.avg, 0)} dBm</strong></span>
             <span>Median: <strong>${rf.rssi.median} dBm</strong></span>
             <span>Max: <strong>${rf.rssi.max} dBm</strong></span>
-            <span>σ: <strong>${rf.rssi.stddev.toFixed(1)} dBm</strong></span>
+            <span>σ: <strong>${sf(rf.rssi.stddev, 1)} dBm</strong></span>
           </div>
         </div>
       </div>
@@ -370,9 +371,9 @@
       html += `<tr>
         <td><strong>${t.name}</strong></td>
         <td>${t.count}</td>
-        <td><strong>${t.avg.toFixed(1)} dB</strong></td>
-        <td>${t.min.toFixed(1)}</td>
-        <td>${t.max.toFixed(1)}</td>
+        <td><strong>${sf(t.avg, 1)} dB</strong></td>
+        <td>${sf(t.min, 1)}</td>
+        <td>${sf(t.max, 1)}</td>
         <td><div class="hash-bar-track" style="height:14px"><div class="hash-bar-fill" style="width:${barPct}%;background:${color};height:100%"></div></div></td>
       </tr>`;
     });
@@ -421,7 +422,7 @@
           <p class="text-muted">Number of repeater hops per packet</p>
           ${barChart(topo.hopDistribution.map(h=>h.count), topo.hopDistribution.map(h=>h.hops), ['#3b82f6'])}
           <div class="rf-stats">
-            <span>Avg: <strong>${topo.avgHops.toFixed(1)} hops</strong></span>
+            <span>Avg: <strong>${sf(topo.avgHops, 1)} hops</strong></span>
             <span>Median: <strong>${topo.medianHops}</strong></span>
             <span>Max: <strong>${topo.maxHops}</strong></span>
             <span>1-hop direct: <strong>${topo.hopDistribution[0]?.count || 0}</strong></span>
