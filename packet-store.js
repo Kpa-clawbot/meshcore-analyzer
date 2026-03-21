@@ -308,10 +308,26 @@ class PacketStore {
     // Also write to normalized tables and get the transmission ID
     const txResult = this.dbModule.insertTransmission ? this.dbModule.insertTransmission(packetData) : null;
     const transmissionId = txResult ? txResult.transmissionId : null;
-    // Use transmissionId to fetch from packets_v (which is based on transmissions+observations)
-    const lookupId = transmissionId || id;
-    const row = this.dbModule.getPacket(lookupId);
-    if (row && !this.sqliteOnly) {
+    const observationId = txResult ? txResult.observationId : id;
+
+    // Build row directly from packetData — avoids view ID mismatch issues
+    const row = {
+      id: observationId,
+      raw_hex: packetData.raw_hex,
+      hash: packetData.hash,
+      timestamp: packetData.timestamp,
+      route_type: packetData.route_type,
+      payload_type: packetData.payload_type,
+      payload_version: packetData.payload_version,
+      decoded_json: packetData.decoded_json,
+      observer_id: packetData.observer_id,
+      observer_name: packetData.observer_name,
+      snr: packetData.snr,
+      rssi: packetData.rssi,
+      path_json: packetData.path_json,
+      direction: packetData.direction,
+    };
+    if (!this.sqliteOnly) {
       // Update or create transmission in memory
       let tx = this.byHash.get(row.hash);
       if (!tx) {
