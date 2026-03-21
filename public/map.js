@@ -198,14 +198,42 @@
       if (routeHopsJson) {
         sessionStorage.removeItem('map-route-hops');
         try {
-          const hopKeys = JSON.parse(routeHopsJson);
-          drawPacketRoute(hopKeys);
+          const parsed = JSON.parse(routeHopsJson);
+          // Support new format {origin, hops} and legacy plain array
+          if (Array.isArray(parsed)) {
+            drawPacketRoute(parsed, null);
+          } else {
+            drawPacketRoute(parsed.hops || [], parsed.origin || null);
+          }
         } catch {}
       }
     });
   }
 
-  function drawPacketRoute(hopKeys) {
+  function drawPacketRoute(hopKeys, origin) {
+    // Hide default markers so only the route is visible
+    if (markerLayer) map.removeLayer(markerLayer);
+    if (clusterGroup) map.removeLayer(clusterGroup);
+    if (heatLayer) map.removeLayer(heatLayer);
+
+    routeLayer.clearLayers();
+
+    // Add close route button
+    const closeBtn = L.control({ position: 'topright' });
+    closeBtn.onAdd = function () {
+      const div = L.DomUtil.create('div', 'leaflet-bar');
+      div.innerHTML = '<a href="#" title="Close route" style="font-size:18px;font-weight:bold;text-decoration:none;display:block;width:36px;height:36px;line-height:36px;text-align:center;background:var(--bg-secondary,#1e293b);color:var(--text-primary,#e2e8f0);border-radius:4px">✕</a>';
+      L.DomEvent.on(div, 'click', function (e) {
+        L.DomEvent.preventDefault(e);
+        routeLayer.clearLayers();
+        if (markerLayer) map.addLayer(markerLayer);
+        if (clusterGroup) map.addLayer(clusterGroup);
+        map.removeControl(closeBtn);
+      });
+      return div;
+    };
+    closeBtn.addTo(map);
+
     // Resolve hop short hashes to node positions with geographic disambiguation
     const raw = hopKeys.map(hop => {
       const hopLower = hop.toLowerCase();
@@ -242,13 +270,27 @@
     }
 
     const positions = raw.filter(h => h && h.resolved);
+
+    // Resolve and prepend origin node
+    if (origin) {
+      let originPos = null;
+      if (origin.lat != null && origin.lon != null) {
+        originPos = { lat: origin.lat, lon: origin.lon, name: origin.name || 'Sender', pubkey: origin.pubkey, isOrigin: true };
+      } else if (origin.pubkey) {
+        const pk = origin.pubkey.toLowerCase();
+        const match = nodes.find(n => n.public_key.toLowerCase() === pk || n.public_key.toLowerCase().startsWith(pk));
+        if (match && match.lat != null && match.lon != null) {
+          originPos = { lat: match.lat, lon: match.lon, name: origin.name || match.name || 'Sender', pubkey: match.public_key, role: match.role, isOrigin: true };
+        }
+      }
+      if (originPos) positions.unshift(originPos);
+    }
+
     if (positions.length < 1) return;
 
-    // Even a single node is worth showing (zoom to it)
     const coords = positions.map(p => [p.lat, p.lon]);
 
     if (positions.length >= 2) {
-      // Draw route polyline
       L.polyline(coords, {
         color: '#f59e0b', weight: 3, opacity: 0.8, dashArray: '8 4'
       }).addTo(routeLayer);
@@ -256,15 +298,26 @@
 
     // Add numbered markers at each hop
     positions.forEach((p, i) => {
-      const color = i === 0 ? '#22c55e' : i === positions.length - 1 ? '#ef4444' : '#f59e0b';
-      const label = i === 0 ? 'Origin' : i === positions.length - 1 ? 'Destination' : `Hop ${i}`;
+      const isOrigin = i === 0 && p.isOrigin;
+      const isLast = i === positions.length - 1 && positions.length > 1;
+      const color = isOrigin ? '#06b6d4' : isLast ? '#ef4444' : i === 0 ? '#22c55e' : '#f59e0b';
+      const radius = isOrigin ? 14 : 10;
+      const label = isOrigin ? 'Sender' : isLast ? 'Last Hop' : `Hop ${isOrigin ? i : i}`;
+
+      if (isOrigin) {
+        // Double-ring origin marker
+        L.circleMarker([p.lat, p.lon], {
+          radius: radius + 4, fillColor: 'transparent', fillOpacity: 0, color: '#06b6d4', weight: 2, opacity: 0.6
+        }).addTo(routeLayer);
+      }
+
       const marker = L.circleMarker([p.lat, p.lon], {
-        radius: 10, fillColor: color,
+        radius: radius, fillColor: color,
         fillOpacity: 0.9, color: '#fff', weight: 2
       }).addTo(routeLayer);
-      
+
       marker.bindTooltip(`${i + 1}. ${p.name}`, { permanent: true, direction: 'top', className: 'route-tooltip' });
-      
+
       const popupHtml = `<div style="font-size:12px;min-width:160px">
         <div style="font-weight:700;margin-bottom:4px">${label}: ${safeEsc(p.name)}</div>
         <div style="color:#9ca3af;font-size:11px;margin-bottom:4px">${p.role || 'unknown'}</div>
