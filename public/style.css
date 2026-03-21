@@ -188,15 +188,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; align-items: center;
 }
 .filter-bar input, .filter-bar select {
-  padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px;
-  font-size: 12px; background: var(--input-bg); color: var(--text); font-family: var(--font);
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; background: var(--input-bg); color: var(--text); font-family: var(--font);
+  height: 34px; box-sizing: border-box;
 }
 .filter-bar input { width: 120px; }
 .filter-bar select { min-width: 90px; }
 .filter-bar .btn {
   padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--input-bg); cursor: pointer; font-size: 13px; transition: all .15s;
-  font-family: var(--font); color: var(--text);
+  font-family: var(--font); color: var(--text); height: 34px; box-sizing: border-box;
 }
 .filter-bar .btn:hover { background: var(--row-hover); }
 .filter-bar .btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -1465,22 +1466,23 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   font-size: 12px; font-weight: 600; color: var(--text-muted); align-self: center;
   margin-right: 2px; user-select: none;
 }
-.region-dropdown-wrap { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; }
+.region-dropdown-wrap { position: relative; display: inline-flex; align-items: center; }
 .region-dropdown-trigger {
   display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 6px;
-  font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid var(--border);
-  background: none; color: var(--text); transition: all 0.15s;
+  font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border);
+  background: var(--input-bg); color: var(--text); transition: all 0.15s;
+  height: 34px; box-sizing: border-box; white-space: nowrap;
 }
 .region-dropdown-trigger:hover { border-color: var(--accent); color: var(--accent); }
 .region-dropdown-menu {
   position: absolute; top: 100%; left: 0; z-index: 90;
-  min-width: 170px; max-height: 260px; overflow-y: auto;
+  min-width: 220px; max-height: 260px; overflow-y: auto;
   background: var(--card-bg, #fff); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 4px 0;
 }
 .region-dropdown-item {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
-  font-size: 12px; cursor: pointer; color: var(--text);
+  font-size: 13px; cursor: pointer; color: var(--text); white-space: nowrap;
 }
 .region-dropdown-item:hover { background: var(--row-hover, #f5f5f5); }
 .chan-tag { background: var(--accent, #3b82f6); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: 600; }
