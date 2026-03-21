@@ -1467,9 +1467,9 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 }
 .region-dropdown-wrap { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; }
 .region-dropdown-trigger {
-  display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 16px;
-  font-size: 12px; font-weight: 500; cursor: pointer; border: 1.5px solid var(--border);
-  background: transparent; color: var(--text); transition: all 0.15s;
+  display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 6px;
+  font-size: 14px; font-weight: 500; cursor: pointer; border: 1px solid var(--border);
+  background: none; color: var(--text); transition: all 0.15s;
 }
 .region-dropdown-trigger:hover { border-color: var(--accent); color: var(--accent); }
 .region-dropdown-menu {
