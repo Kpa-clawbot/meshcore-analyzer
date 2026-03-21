@@ -1484,5 +1484,8 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
   font-size: 13px; cursor: pointer; color: var(--text); white-space: nowrap;
 }
+.region-dropdown-item input[type="checkbox"] {
+  width: 14px; height: 14px; margin: 0; flex-shrink: 0;
+}
 .region-dropdown-item:hover { background: var(--row-hover, #f5f5f5); }
 .chan-tag { background: var(--accent, #3b82f6); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: 600; }
