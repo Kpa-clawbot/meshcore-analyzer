@@ -280,6 +280,7 @@
               // Update expanded children if this group is expanded
               if (expandedHashes.has(h) && existing._children) {
                 existing._children.unshift(p);
+                sortGroupChildren(existing);
               }
             } else {
               // New group
@@ -366,6 +367,7 @@
             try {
               const childData = await api(`/packets?hash=${hash}&limit=20`);
               group._children = childData.packets || [];
+              sortGroupChildren(group);
             } catch {}
           } else {
             // Group no longer in results — remove from expanded
