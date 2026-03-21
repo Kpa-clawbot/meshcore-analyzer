@@ -1421,14 +1421,16 @@ app.get('/api/analytics/channels', (req, res) => {
       const hash = d.channelHash || d.channel_hash || '?';
       const name = d.channelName || (d.type === 'CHAN' ? (d.channel || `ch${hash}`) : `ch${hash}`);
       const encrypted = !d.text && !d.sender;
+      // Use channel name as key when available to distinguish channels with same hash (#108)
+      const chKey = (d.type === 'CHAN' && d.channel) ? `${hash}_${d.channel}` : String(hash);
 
-      if (!channels[hash]) channels[hash] = { hash, name, messages: 0, senders: new Set(), lastActivity: p.timestamp, encrypted };
-      channels[hash].messages++;
-      channels[hash].lastActivity = p.timestamp;
-      if (!encrypted) channels[hash].encrypted = false;
+      if (!channels[chKey]) channels[chKey] = { hash, name, messages: 0, senders: new Set(), lastActivity: p.timestamp, encrypted };
+      channels[chKey].messages++;
+      channels[chKey].lastActivity = p.timestamp;
+      if (!encrypted) channels[chKey].encrypted = false;
 
       if (d.sender) {
-        channels[hash].senders.add(d.sender);
+        channels[chKey].senders.add(d.sender);
         senderCounts[d.sender] = (senderCounts[d.sender] || 0) + 1;
       }
       if (d.text) msgLengths.push(d.text.length);
@@ -1729,14 +1731,17 @@ app.get('/api/channels', (req, res) => {
     const ch = decoded.channelHash !== undefined ? decoded.channelHash : decoded.channel_idx;
     if (ch === undefined) continue;
     
-    const knownName = channelHashNames[ch];
     const isDecrypted = decoded.type === 'CHAN' || decoded.text;
-    const isCollision = !!(knownName && !isDecrypted && decoded.encryptedData);
-    const key = isCollision ? `unk_${ch}` : String(ch);
+    // Use the actual decrypted channel name as key to distinguish channels
+    // that share the same hash prefix but have different keys (#108)
+    const decodedName = isDecrypted ? decoded.channel : null;
+    const knownName = decodedName || channelHashNames[ch];
+    const isCollision = !!(channelHashNames[ch] && !isDecrypted && decoded.encryptedData);
+    const key = isCollision ? `unk_${ch}` : (decodedName ? `ch_${decodedName}` : String(ch));
     
     if (!channelMap[key]) {
       channelMap[key] = {
-        hash: key,
+        hash: String(ch),
         name: isCollision ? `Unknown (hash 0x${Number(ch).toString(16).toUpperCase()})` : (knownName || `Channel 0x${Number(ch).toString(16).toUpperCase()}`),
         encrypted: isCollision || !knownName,
         lastMessage: null, lastSender: null, messageCount: 0, lastActivity: pkt.timestamp,
@@ -1772,9 +1777,10 @@ app.get('/api/channels/:hash/messages', (req, res) => {
     try { decoded = JSON.parse(pkt.decoded_json); } catch { continue; }
     const rawCh = decoded.channelHash !== undefined ? decoded.channelHash : decoded.channel_idx;
     const isDecrypted = decoded.type === 'CHAN' || decoded.text;
+    const decodedName = isDecrypted ? decoded.channel : null;
     const knownName = channelHashNames[rawCh];
     const isCollision = !!(knownName && !isDecrypted && decoded.encryptedData);
-    const ch = isCollision ? `unk_${rawCh}` : (rawCh !== undefined ? String(rawCh) : (decoded.channel_idx !== undefined ? `c${decoded.channel_idx}` : null));
+    const ch = isCollision ? `unk_${rawCh}` : (decodedName ? `ch_${decodedName}` : (rawCh !== undefined ? String(rawCh) : (decoded.channel_idx !== undefined ? `c${decoded.channel_idx}` : null)));
     if (ch !== channelHash) continue;
 
     const sender = decoded.sender || (decoded.text ? decoded.text.split(': ')[0] : null) || pkt.observer_name || pkt.observer_id || 'Unknown';
