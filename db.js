@@ -108,6 +108,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_observations_observer_id ON observations(observer_id);
   CREATE INDEX IF NOT EXISTS idx_observations_timestamp ON observations(timestamp);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup ON observations(hash, observer_id, path_json);
+
+  CREATE VIEW IF NOT EXISTS packets_v AS
+    SELECT o.id, t.raw_hex, o.timestamp, o.observer_id, o.observer_name,
+           o.direction, o.snr, o.rssi, o.score, t.hash, t.route_type,
+           t.payload_type, t.payload_version, o.path_json, t.decoded_json,
+           t.created_at
+    FROM observations o
+    JOIN transmissions t ON t.id = o.transmission_id;
 `);
 
 // --- Migrations for existing DBs ---
@@ -182,18 +190,18 @@ const stmts = {
       uptime_secs = COALESCE(@uptime_secs, uptime_secs),
       noise_floor = COALESCE(@noise_floor, noise_floor)
   `),
-  getPacket: db.prepare(`SELECT * FROM packets WHERE id = ?`),
+  getPacket: db.prepare(`SELECT * FROM packets_v WHERE id = ?`),
   getPathsForPacket: db.prepare(`SELECT * FROM paths WHERE packet_id = ? ORDER BY hop_index`),
   getNode: db.prepare(`SELECT * FROM nodes WHERE public_key = ?`),
   getRecentPacketsForNode: db.prepare(`
-    SELECT * FROM packets WHERE decoded_json LIKE ? OR decoded_json LIKE ? OR decoded_json LIKE ? OR decoded_json LIKE ?
+    SELECT * FROM packets_v WHERE decoded_json LIKE ? OR decoded_json LIKE ? OR decoded_json LIKE ? OR decoded_json LIKE ?
     ORDER BY timestamp DESC LIMIT 20
   `),
   getObservers: db.prepare(`SELECT * FROM observers ORDER BY last_seen DESC`),
-  countPackets: db.prepare(`SELECT COUNT(*) as count FROM packets`),
+  countPackets: db.prepare(`SELECT COUNT(*) as count FROM observations`),
   countNodes: db.prepare(`SELECT COUNT(*) as count FROM nodes`),
   countObservers: db.prepare(`SELECT COUNT(*) as count FROM observers`),
-  countRecentPackets: db.prepare(`SELECT COUNT(*) as count FROM packets WHERE timestamp > ?`),
+  countRecentPackets: db.prepare(`SELECT COUNT(*) as count FROM observations WHERE timestamp > ?`),
   getTransmissionByHash: db.prepare(`SELECT id, first_seen FROM transmissions WHERE hash = ?`),
   insertTransmission: db.prepare(`
     INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, payload_version, decoded_json)
@@ -337,8 +345,8 @@ function getPackets({ limit = 50, offset = 0, type, route, hash, since } = {}) {
   if (hash) { where.push('hash = @hash'); params.hash = hash; }
   if (since) { where.push('timestamp > @since'); params.since = since; }
   const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
-  const rows = db.prepare(`SELECT * FROM packets ${clause} ORDER BY timestamp DESC LIMIT @limit OFFSET @offset`).all({ ...params, limit, offset });
-  const total = db.prepare(`SELECT COUNT(*) as count FROM packets ${clause}`).get(params).count;
+  const rows = db.prepare(`SELECT * FROM packets_v ${clause} ORDER BY timestamp DESC LIMIT @limit OFFSET @offset`).all({ ...params, limit, offset });
+  const total = db.prepare(`SELECT COUNT(*) as count FROM packets_v ${clause}`).get(params).count;
   return { rows, total };
 }
 
@@ -391,9 +399,9 @@ function getStats() {
     totalTransmissions = db.prepare('SELECT COUNT(*) as count FROM transmissions').get().count;
   } catch {}
   return {
-    totalPackets: stmts.countPackets.get().count,
+    totalPackets: totalTransmissions || stmts.countPackets.get().count,
     totalTransmissions,
-    totalObservations: stmts.countPackets.get().count, // legacy packets = observations
+    totalObservations: stmts.countPackets.get().count,
     totalNodes: stmts.countNodes.get().count,
     totalObservers: stmts.countObservers.get().count,
     packetsLastHour: stmts.countRecentPackets.get(oneHourAgo).count,
@@ -407,7 +415,7 @@ function seed() {
 
   upsertObserver({ id: 'obs-seed-001', name: 'Seed Observer', iata: 'UNK', last_seen: now, first_seen: now });
 
-  const pktId = insertPacket({
+  insertTransmission({
     raw_hex: rawHex,
     timestamp: now,
     observer_id: 'obs-seed-001',
@@ -423,8 +431,6 @@ function seed() {
     path_json: JSON.stringify(['A1B2', 'C3D4']),
     decoded_json: JSON.stringify({ type: 'ADVERT', name: 'Test Repeater', role: 'repeater', lat: 0, lon: 0 }),
   });
-
-  insertPath(pktId, ['A1B2', 'C3D4']);
 
   upsertNode({
     public_key: 'seed-test-pubkey',
@@ -475,7 +481,7 @@ function getNodeHealth(pubkey) {
   const observers = db.prepare(`
     SELECT observer_id, observer_name,
       AVG(snr) as avgSnr, AVG(rssi) as avgRssi, COUNT(*) as packetCount
-    FROM packets
+    FROM packets_v
     WHERE ${whereClause} AND observer_id IS NOT NULL
     GROUP BY observer_id
     ORDER BY packetCount DESC
@@ -483,20 +489,20 @@ function getNodeHealth(pubkey) {
 
   // Stats
   const packetsToday = db.prepare(`
-    SELECT COUNT(*) as count FROM packets WHERE ${whereClause} AND timestamp > @since
+    SELECT COUNT(*) as count FROM packets_v WHERE ${whereClause} AND timestamp > @since
   `).get({ ...params, since: todayISO }).count;
 
   const avgStats = db.prepare(`
-    SELECT AVG(snr) as avgSnr FROM packets WHERE ${whereClause}
+    SELECT AVG(snr) as avgSnr FROM packets_v WHERE ${whereClause}
   `).get(params);
 
   const lastHeard = db.prepare(`
-    SELECT MAX(timestamp) as lastHeard FROM packets WHERE ${whereClause}
+    SELECT MAX(timestamp) as lastHeard FROM packets_v WHERE ${whereClause}
   `).get(params).lastHeard;
 
   // Avg hops from path_json
   const pathRows = db.prepare(`
-    SELECT path_json FROM packets WHERE ${whereClause} AND path_json IS NOT NULL
+    SELECT path_json FROM packets_v WHERE ${whereClause} AND path_json IS NOT NULL
   `).all(params);
 
   let totalHops = 0, hopCount = 0;
@@ -509,12 +515,12 @@ function getNodeHealth(pubkey) {
   const avgHops = hopCount > 0 ? Math.round(totalHops / hopCount) : 0;
 
   const totalPackets = db.prepare(`
-    SELECT COUNT(*) as count FROM packets WHERE ${whereClause}
+    SELECT COUNT(*) as count FROM packets_v WHERE ${whereClause}
   `).get(params).count;
 
   // Recent 10 packets
   const recentPackets = db.prepare(`
-    SELECT * FROM packets WHERE ${whereClause} ORDER BY timestamp DESC LIMIT 10
+    SELECT * FROM packets_v WHERE ${whereClause} ORDER BY timestamp DESC LIMIT 10
   `).all(params);
 
   return {
@@ -545,31 +551,31 @@ function getNodeAnalytics(pubkey, days) {
   // Activity timeline
   const activityTimeline = db.prepare(`
     SELECT strftime('%Y-%m-%dT%H:00:00Z', timestamp) as bucket, COUNT(*) as count
-    FROM packets WHERE ${timeWhere} GROUP BY bucket ORDER BY bucket
+    FROM packets_v WHERE ${timeWhere} GROUP BY bucket ORDER BY bucket
   `).all(params);
 
   // SNR trend
   const snrTrend = db.prepare(`
     SELECT timestamp, snr, rssi, observer_id, observer_name
-    FROM packets WHERE ${timeWhere} AND snr IS NOT NULL ORDER BY timestamp
+    FROM packets_v WHERE ${timeWhere} AND snr IS NOT NULL ORDER BY timestamp
   `).all(params);
 
   // Packet type breakdown
   const packetTypeBreakdown = db.prepare(`
-    SELECT payload_type, COUNT(*) as count FROM packets WHERE ${timeWhere} GROUP BY payload_type
+    SELECT payload_type, COUNT(*) as count FROM packets_v WHERE ${timeWhere} GROUP BY payload_type
   `).all(params);
 
   // Observer coverage
   const observerCoverage = db.prepare(`
     SELECT observer_id, observer_name, COUNT(*) as packetCount,
       AVG(snr) as avgSnr, AVG(rssi) as avgRssi, MIN(timestamp) as firstSeen, MAX(timestamp) as lastSeen
-    FROM packets WHERE ${timeWhere} AND observer_id IS NOT NULL
+    FROM packets_v WHERE ${timeWhere} AND observer_id IS NOT NULL
     GROUP BY observer_id ORDER BY packetCount DESC
   `).all(params);
 
   // Hop distribution
   const pathRows = db.prepare(`
-    SELECT path_json FROM packets WHERE ${timeWhere} AND path_json IS NOT NULL
+    SELECT path_json FROM packets_v WHERE ${timeWhere} AND path_json IS NOT NULL
   `).all(params);
 
   const hopCounts = {};
@@ -591,7 +597,7 @@ function getNodeAnalytics(pubkey, days) {
 
   // Peer interactions from decoded_json
   const decodedRows = db.prepare(`
-    SELECT decoded_json, timestamp FROM packets WHERE ${timeWhere} AND decoded_json IS NOT NULL
+    SELECT decoded_json, timestamp FROM packets_v WHERE ${timeWhere} AND decoded_json IS NOT NULL
   `).all(params);
 
   const peerMap = {};
@@ -617,11 +623,11 @@ function getNodeAnalytics(pubkey, days) {
   const uptimeHeatmap = db.prepare(`
     SELECT CAST(strftime('%w', timestamp) AS INTEGER) as dayOfWeek,
       CAST(strftime('%H', timestamp) AS INTEGER) as hour, COUNT(*) as count
-    FROM packets WHERE ${timeWhere} GROUP BY dayOfWeek, hour
+    FROM packets_v WHERE ${timeWhere} GROUP BY dayOfWeek, hour
   `).all(params);
 
   // Computed stats
-  const totalPackets = db.prepare(`SELECT COUNT(*) as count FROM packets WHERE ${timeWhere}`).get(params).count;
+  const totalPackets = db.prepare(`SELECT COUNT(*) as count FROM packets_v WHERE ${timeWhere}`).get(params).count;
   const uniqueObservers = observerCoverage.length;
   const uniquePeers = peerInteractions.length;
   const avgPacketsPerDay = days > 0 ? Math.round(totalPackets / days * 10) / 10 : totalPackets;
@@ -633,7 +639,7 @@ function getNodeAnalytics(pubkey, days) {
 
   // Longest silence
   const timestamps = db.prepare(`
-    SELECT timestamp FROM packets WHERE ${timeWhere} ORDER BY timestamp
+    SELECT timestamp FROM packets_v WHERE ${timeWhere} ORDER BY timestamp
   `).all(params).map(r => new Date(r.timestamp).getTime());
 
   let longestSilenceMs = 0, longestSilenceStart = null;
@@ -673,4 +679,4 @@ function getNodeAnalytics(pubkey, days) {
   };
 }
 
-module.exports = { db, insertPacket, insertTransmission, insertPath, upsertNode, upsertObserver, updateObserverStatus, getPackets, getPacket, getTransmission, getNodes, getNode, getObservers, getStats, seed, searchNodes, getNodeHealth, getNodeAnalytics };
+module.exports = { db, insertTransmission, insertPath, upsertNode, upsertObserver, updateObserverStatus, getPackets, getPacket, getTransmission, getNodes, getNode, getObservers, getStats, seed, searchNodes, getNodeHealth, getNodeAnalytics };

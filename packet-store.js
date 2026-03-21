@@ -167,7 +167,7 @@ class PacketStore {
   /** Fallback: load from legacy packets table */
   _loadLegacy() {
     const rows = this.db.prepare(
-      'SELECT * FROM packets ORDER BY timestamp DESC'
+      'SELECT * FROM packets_v ORDER BY timestamp DESC'
     ).all();
 
     for (const row of rows) {
@@ -557,7 +557,7 @@ class PacketStore {
   /** Get timestamps for sparkline */
   getTimestamps(since) {
     if (this.sqliteOnly) {
-      return this.db.prepare('SELECT timestamp FROM packets WHERE timestamp > ? ORDER BY timestamp ASC').all(since).map(r => r.timestamp);
+      return this.db.prepare('SELECT timestamp FROM packets_v WHERE timestamp > ? ORDER BY timestamp ASC').all(since).map(r => r.timestamp);
     }
     const results = [];
     for (const p of this.packets) {
@@ -569,7 +569,7 @@ class PacketStore {
 
   /** Get a single packet by ID — checks observation IDs first (backward compat) */
   getById(id) {
-    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets WHERE id = ?').get(id) || null;
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets_v WHERE id = ?').get(id) || null;
     return this.byId.get(id) || null;
   }
 
@@ -582,20 +582,20 @@ class PacketStore {
   /** Get all siblings of a packet (same hash) — returns observations array */
   getSiblings(hash) {
     const h = hash.toLowerCase();
-    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets WHERE hash = ? ORDER BY timestamp DESC').all(h);
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets_v WHERE hash = ? ORDER BY timestamp DESC').all(h);
     const tx = this.byHash.get(h);
     return tx ? tx.observations : [];
   }
 
   /** Get all transmissions (backward compat — returns packets array) */
   all() {
-    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets ORDER BY timestamp DESC').all();
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets_v ORDER BY timestamp DESC').all();
     return this.packets;
   }
 
   /** Get all transmissions matching a filter function */
   filter(fn) {
-    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets ORDER BY timestamp DESC').all().filter(fn);
+    if (this.sqliteOnly) return this.db.prepare('SELECT * FROM packets_v ORDER BY timestamp DESC').all().filter(fn);
     return this.packets.filter(fn);
   }
 
@@ -629,8 +629,8 @@ class PacketStore {
     if (region) { where.push('observer_id IN (SELECT id FROM observers WHERE iata = ?)'); params.push(region); }
     if (node) { try { const nr = this.db.prepare('SELECT public_key FROM nodes WHERE public_key = ? OR name = ? LIMIT 1').get(node, node); const pk = nr ? nr.public_key : node; where.push('(decoded_json LIKE ? OR id IN (SELECT packet_id FROM paths WHERE node_hash = ?))'); params.push('%' + pk + '%', pk.substring(0, 8)); } catch(e) { where.push('decoded_json LIKE ?'); params.push('%' + node + '%'); } }
     const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const total = this.db.prepare(`SELECT COUNT(*) as c FROM packets ${w}`).get(...params).c;
-    const packets = this.db.prepare(`SELECT * FROM packets ${w} ORDER BY timestamp ${order === 'ASC' ? 'ASC' : 'DESC'} LIMIT ? OFFSET ?`).all(...params, limit, offset);
+    const total = this.db.prepare(`SELECT COUNT(*) as c FROM packets_v ${w}`).get(...params).c;
+    const packets = this.db.prepare(`SELECT * FROM packets_v ${w} ORDER BY timestamp ${order === 'ASC' ? 'ASC' : 'DESC'} LIMIT ? OFFSET ?`).all(...params, limit, offset);
     return { packets, total };
   }
 
@@ -651,10 +651,10 @@ class PacketStore {
       MAX(timestamp) as latest, MIN(observer_id) as observer_id, MIN(observer_name) as observer_name,
       MIN(path_json) as path_json, MIN(payload_type) as payload_type, MIN(raw_hex) as raw_hex,
       MIN(decoded_json) as decoded_json
-      FROM packets ${w} GROUP BY hash ORDER BY latest DESC LIMIT ? OFFSET ?`;
+      FROM packets_v ${w} GROUP BY hash ORDER BY latest DESC LIMIT ? OFFSET ?`;
     const packets = this.db.prepare(sql).all(...params, limit, offset);
 
-    const countSql = `SELECT COUNT(DISTINCT hash) as c FROM packets ${w}`;
+    const countSql = `SELECT COUNT(DISTINCT hash) as c FROM packets_v ${w}`;
     const total = this.db.prepare(countSql).get(...params).c;
     return { packets, total };
   }

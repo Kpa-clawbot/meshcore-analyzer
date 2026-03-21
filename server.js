@@ -2030,7 +2030,7 @@ app.get('/api/resolve-hops', (req, res) => {
     } else {
       // Fall back to averaging nearby nodes from adverts this observer received
       const obsNodes = db.db.prepare(`
-        SELECT n.lat, n.lon FROM packets p
+        SELECT n.lat, n.lon FROM packets_v p
         JOIN nodes n ON n.public_key = json_extract(p.decoded_json, '$.pubKey')
         WHERE (p.observer_id = ? OR p.observer_name = ?)
           AND p.payload_type = 4
