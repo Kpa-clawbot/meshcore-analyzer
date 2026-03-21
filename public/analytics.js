@@ -90,7 +90,8 @@
       if (!btn) return;
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      renderTab(btn.dataset.tab);
+      _currentTab = btn.dataset.tab;
+      renderTab(_currentTab);
     });
 
     RegionFilter.init(document.getElementById('analyticsRegionFilter'));
@@ -113,6 +114,8 @@
     loadAnalytics();
   }
 
+  let _currentTab = 'overview';
+
   async function loadAnalytics() {
     try {
       _analyticsData = {};
@@ -125,7 +128,7 @@
         api('/analytics/channels' + sep, { ttl: CLIENT_TTL.analyticsRF }),
       ]);
       _analyticsData = { hashData, rfData, topoData, chanData };
-      renderTab('overview');
+      renderTab(_currentTab);
     } catch (e) {
       document.getElementById('analyticsContent').innerHTML =
         `<div class="text-muted" role="alert" aria-live="polite" style="padding:40px">Failed to load: ${e.message}</div>`;
