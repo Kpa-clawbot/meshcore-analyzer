@@ -1734,7 +1734,7 @@ app.get('/api/analytics/distance', (req, res) => {
       allHops.push(hop);
       catDists[type].push(dist);
       pathDist += dist;
-      pathHops.push({ fromName: a.name, toName: b.name, dist: hop.dist });
+      pathHops.push({ fromName: a.name, fromPk: a.public_key, toName: b.name, toPk: b.public_key, dist: hop.dist });
 
       if (hourBucket) {
         if (!distByHour[hourBucket]) distByHour[hourBucket] = [];
