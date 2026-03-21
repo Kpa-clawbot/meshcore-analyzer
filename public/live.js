@@ -692,14 +692,27 @@
     initResizeHandler();
     startRateCounter();
 
-    // Check for single packet replay from packets page
+    // Check for packet replay from packets page (single or array of observations)
     const replayData = sessionStorage.getItem('replay-packet');
     if (replayData) {
       sessionStorage.removeItem('replay-packet');
       try {
-        const pkt = JSON.parse(replayData);
+        const parsed = JSON.parse(replayData);
+        const packets = Array.isArray(parsed) ? parsed : [parsed];
         vcrPause(); // suppress live packets
-        setTimeout(() => animatePacket(pkt), 1500);
+        if (packets.length > 1 && packets[0].hash) {
+          // Multiple observations — use realistic propagation (animate all paths at once)
+          setTimeout(() => {
+            if (typeof animateRealisticPropagation === 'function') {
+              animateRealisticPropagation(packets);
+            } else {
+              // Fallback: stagger animations
+              packets.forEach((p, i) => setTimeout(() => animatePacket(p), i * 400));
+            }
+          }, 1500);
+        } else {
+          setTimeout(() => animatePacket(packets[0]), 1500);
+        }
       } catch {}
     } else {
       replayRecent();

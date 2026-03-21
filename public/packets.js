@@ -891,13 +891,31 @@
     const replayBtn = panel.querySelector('.replay-live-btn');
     if (replayBtn) {
       replayBtn.addEventListener('click', () => {
-        const livePkt = {
-          id: pkt.id, hash: pkt.hash,
-          _ts: new Date(pkt.timestamp).getTime(),
-          decoded: { header: { payloadTypeName: typeName }, payload: decoded, path: { hops: pathHops } },
-          snr: pkt.snr, rssi: pkt.rssi, observer: obsName(pkt.observer_id)
-        };
-        sessionStorage.setItem('replay-packet', JSON.stringify(livePkt));
+        // Build replay packets for ALL observations of this transmission
+        const obs = data.observations || [];
+        const replayPackets = [];
+        if (obs.length > 1) {
+          for (const o of obs) {
+            let oPath;
+            try { oPath = JSON.parse(o.path_json || '[]'); } catch { oPath = pathHops; }
+            let oDec;
+            try { oDec = JSON.parse(o.decoded_json || '{}'); } catch { oDec = decoded; }
+            replayPackets.push({
+              id: o.id, hash: pkt.hash,
+              _ts: new Date(o.timestamp).getTime(),
+              decoded: { header: { payloadTypeName: typeName }, payload: oDec, path: { hops: oPath } },
+              snr: o.snr, rssi: o.rssi, observer: obsName(o.observer_id)
+            });
+          }
+        } else {
+          replayPackets.push({
+            id: pkt.id, hash: pkt.hash,
+            _ts: new Date(pkt.timestamp).getTime(),
+            decoded: { header: { payloadTypeName: typeName }, payload: decoded, path: { hops: pathHops } },
+            snr: pkt.snr, rssi: pkt.rssi, observer: obsName(pkt.observer_id)
+          });
+        }
+        sessionStorage.setItem('replay-packet', JSON.stringify(replayPackets));
         window.location.hash = '#/live';
       });
     }
