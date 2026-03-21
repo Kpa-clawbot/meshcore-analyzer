@@ -1031,6 +1031,10 @@
       rows += fieldRow(off, 'Channel Hash', decoded.channelHash, '');
       rows += fieldRow(off + 1, 'MAC (2B)', decoded.mac || '', '');
       rows += fieldRow(off + 3, 'Encrypted Data', truncate(decoded.encryptedData || '', 30), '');
+    } else if (decoded.type === 'CHAN') {
+      rows += fieldRow(off, 'Channel', decoded.channel || `0x${(decoded.channelHash || 0).toString(16)}`, '');
+      rows += fieldRow(off + 1, 'Sender', decoded.sender || '—', '');
+      if (decoded.sender_timestamp) rows += fieldRow(off + 2, 'Sender Time', decoded.sender_timestamp, '');
     } else if (decoded.type === 'ACK') {
       rows += fieldRow(off, 'Dest Hash (6B)', decoded.destHash || '', '');
       rows += fieldRow(off + 6, 'Src Hash (6B)', decoded.srcHash || '', '');

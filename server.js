@@ -1815,20 +1815,24 @@ app.get('/api/channels', (req, res) => {
     if (ch === undefined) continue;
     
     const isDecrypted = decoded.type === 'CHAN' || decoded.text;
-    // Use the actual decrypted channel name as key to distinguish channels
-    // that share the same hash prefix but have different keys (#108)
     const decodedName = isDecrypted ? decoded.channel : null;
     const knownName = decodedName || channelHashNames[ch];
-    const isCollision = !!(channelHashNames[ch] && !isDecrypted && decoded.encryptedData);
-    const key = isCollision ? `unk_${ch}` : (decodedName ? `ch_${decodedName}` : String(ch));
+    // Use plain numeric hash as key — all packets with the same hash byte
+    // go in one bucket regardless of decryption status
+    const key = String(ch);
     
     if (!channelMap[key]) {
       channelMap[key] = {
         hash: key,
-        name: isCollision ? `Unknown (hash 0x${Number(ch).toString(16).toUpperCase()})` : (knownName || `Channel 0x${Number(ch).toString(16).toUpperCase()}`),
-        encrypted: isCollision || !knownName,
+        name: knownName || `Channel 0x${Number(ch).toString(16).toUpperCase()}`,
+        encrypted: !knownName,
         lastMessage: null, lastSender: null, messageCount: 0, lastActivity: pkt.timestamp,
       };
+    }
+    // Update name if we got a decrypted name (in case first packet was encrypted)
+    if (decodedName && channelMap[key].name !== decodedName) {
+      channelMap[key].name = decodedName;
+      channelMap[key].encrypted = false;
     }
     channelMap[key].messageCount++;
     if (pkt.timestamp >= channelMap[key].lastActivity) {
@@ -1859,11 +1863,7 @@ app.get('/api/channels/:hash/messages', (req, res) => {
     let decoded;
     try { decoded = JSON.parse(pkt.decoded_json); } catch { continue; }
     const rawCh = decoded.channelHash !== undefined ? decoded.channelHash : decoded.channel_idx;
-    const isDecrypted = decoded.type === 'CHAN' || decoded.text;
-    const decodedName = isDecrypted ? decoded.channel : null;
-    const knownName = channelHashNames[rawCh];
-    const isCollision = !!(knownName && !isDecrypted && decoded.encryptedData);
-    const ch = isCollision ? `unk_${rawCh}` : (decodedName ? `ch_${decodedName}` : (rawCh !== undefined ? String(rawCh) : (decoded.channel_idx !== undefined ? `c${decoded.channel_idx}` : null)));
+    const ch = rawCh !== undefined ? String(rawCh) : (decoded.channel_idx !== undefined ? `c${decoded.channel_idx}` : null);
     if (ch !== channelHash) continue;
 
     const sender = decoded.sender || (decoded.text ? decoded.text.split(': ')[0] : null) || pkt.observer_name || pkt.observer_id || 'Unknown';
