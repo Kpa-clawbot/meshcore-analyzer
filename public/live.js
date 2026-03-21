@@ -1204,22 +1204,15 @@
     return favs.has(pubkey) || mine.has(pubkey);
   }
   function applyFavoritesFilter() {
+    // All markers always visible — favorites filter only affects packet animations
     Object.keys(nodeMarkers).forEach(key => {
       const marker = nodeMarkers[key];
       if (!marker) return;
-      const visible = !showOnlyFavorites || isNodeFavorited(key);
-      if (visible) {
-        if (!nodesLayer.hasLayer(marker)) { marker.addTo(nodesLayer); if (marker._glowMarker) marker._glowMarker.addTo(nodesLayer); }
-      } else {
-        if (nodesLayer.hasLayer(marker)) { nodesLayer.removeLayer(marker); if (marker._glowMarker) nodesLayer.removeLayer(marker._glowMarker); }
-      }
+      if (!nodesLayer.hasLayer(marker)) { marker.addTo(nodesLayer); if (marker._glowMarker) marker._glowMarker.addTo(nodesLayer); }
     });
     const _el2 = document.getElementById('liveNodeCount');
     if (_el2) {
-      const count = showOnlyFavorites
-        ? Object.keys(nodeMarkers).filter(k => isNodeFavorited(k)).length
-        : Object.keys(nodeMarkers).length;
-      _el2.textContent = count;
+      _el2.textContent = Object.keys(nodeMarkers).length;
     }
   }
 
@@ -1250,10 +1243,6 @@
     marker._baseColor = color;
     marker._baseSize = size;
     nodeMarkers[n.public_key] = marker;
-    if (showOnlyFavorites && !isNodeFavorited(n.public_key)) {
-      nodesLayer.removeLayer(marker);
-      nodesLayer.removeLayer(glow);
-    }
     return marker;
   }
 
