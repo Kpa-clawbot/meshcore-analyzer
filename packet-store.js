@@ -212,6 +212,9 @@ class PacketStore {
     if (pkt.timestamp < tx.first_seen) {
       tx.first_seen = pkt.timestamp;
       tx.timestamp = pkt.timestamp;
+      tx.observer_id = pkt.observer_id;
+      tx.observer_name = pkt.observer_name;
+      tx.path_json = pkt.path_json;
     }
 
     const obs = {
@@ -359,10 +362,13 @@ class PacketStore {
         this.byTxId.set(tx.id, tx);
         this._indexByNode(tx);
       } else {
-        // Update first_seen if earlier
+        // Update first_seen if earlier — also update observer + path to match
         if (row.timestamp < tx.first_seen) {
           tx.first_seen = row.timestamp;
           tx.timestamp = row.timestamp;
+          tx.observer_id = row.observer_id;
+          tx.observer_name = row.observer_name;
+          tx.path_json = row.path_json;
         }
       }
 
