@@ -1216,6 +1216,21 @@
       const group = packets.find(p => p.hash === hash);
       if (group && data.observations) {
         group._children = data.observations.map(o => ({...pkt, ...o, _isObservation: true}));
+        // Sort: group by observer, earliest-observer first, then by time within each observer
+        const earliest = {};
+        for (const c of group._children) {
+          const obs = c.observer || '';
+          const t = c.rx_at || c.created_at || '';
+          if (!earliest[obs] || t < earliest[obs]) earliest[obs] = t;
+        }
+        group._children.sort((a, b) => {
+          const oA = a.observer || '', oB = b.observer || '';
+          const eA = earliest[oA] || '', eB = earliest[oB] || '';
+          if (eA !== eB) return eA < eB ? -1 : 1;
+          if (oA !== oB) return oA < oB ? -1 : 1;
+          const tA = a.rx_at || a.created_at || '', tB = b.rx_at || b.created_at || '';
+          return tA < tB ? -1 : tA > tB ? 1 : 0;
+        });
       }
       // Resolve any new hops from children
       const childHops = new Set();
