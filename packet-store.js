@@ -308,7 +308,9 @@ class PacketStore {
     // Also write to normalized tables and get the transmission ID
     const txResult = this.dbModule.insertTransmission ? this.dbModule.insertTransmission(packetData) : null;
     const transmissionId = txResult ? txResult.transmissionId : null;
-    const row = this.dbModule.getPacket(id);
+    // Use transmissionId to fetch from packets_v (which is based on transmissions+observations)
+    const lookupId = transmissionId || id;
+    const row = this.dbModule.getPacket(lookupId);
     if (row && !this.sqliteOnly) {
       // Update or create transmission in memory
       let tx = this.byHash.get(row.hash);
