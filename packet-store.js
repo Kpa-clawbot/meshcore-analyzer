@@ -214,6 +214,10 @@ class PacketStore {
       decoded_json: pkt.decoded_json,
       route_type: pkt.route_type,
     };
+    // Dedup: skip if same observer + same path already recorded for this transmission
+    const isDupe = tx.observations.some(o => o.observer_id === obs.observer_id && o.path_json === obs.path_json);
+    if (isDupe) return tx;
+
     tx.observations.push(obs);
     tx.observation_count++;
 

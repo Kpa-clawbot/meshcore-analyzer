@@ -106,6 +106,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_observations_transmission_id ON observations(transmission_id);
   CREATE INDEX IF NOT EXISTS idx_observations_observer_id ON observations(observer_id);
   CREATE INDEX IF NOT EXISTS idx_observations_timestamp ON observations(timestamp);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup ON observations(hash, observer_id, path_json);
 `);
 
 // --- Migrations for existing DBs ---
@@ -186,7 +187,7 @@ const stmts = {
   `),
   updateTransmissionFirstSeen: db.prepare(`UPDATE transmissions SET first_seen = @first_seen WHERE id = @id`),
   insertObservation: db.prepare(`
-    INSERT INTO observations (transmission_id, hash, observer_id, observer_name, direction, snr, rssi, score, path_json, timestamp)
+    INSERT OR IGNORE INTO observations (transmission_id, hash, observer_id, observer_name, direction, snr, rssi, score, path_json, timestamp)
     VALUES (@transmission_id, @hash, @observer_id, @observer_name, @direction, @snr, @rssi, @score, @path_json, @timestamp)
   `),
 };
