@@ -213,9 +213,10 @@
         if (filters.type !== undefined && filters.type !== '' && p.payload_type !== Number(filters.type)) return false;
         if (filters.observer && p.observer_id !== filters.observer) return false;
         if (filters.hash && p.hash !== filters.hash) return false;
-        if (filters.region) {
+        if (RegionFilter.getRegionParam()) {
+          const selectedRegions = RegionFilter.getRegionParam().split(',');
           const obs = observers.find(o => o.id === p.observer_id);
-          if (!obs || obs.iata !== filters.region) return false;
+          if (!obs || !selectedRegions.includes(obs.iata)) return false;
         }
         if (filters.node && !(p.decoded_json || '').includes(filters.node)) return false;
         return true;
@@ -311,7 +312,8 @@
       const params = new URLSearchParams();
       params.set('limit', '100');
       if (filters.type !== undefined && filters.type !== '') params.set('type', filters.type);
-      if (filters.region) params.set('region', filters.region);
+      const regionParam = RegionFilter.getRegionParam();
+      if (regionParam) params.set('region', regionParam);
       if (filters.observer) params.set('observer', filters.observer);
       if (filters.hash) params.set('hash', filters.hash);
       if (filters.node) params.set('node', filters.node);
@@ -379,7 +381,7 @@
           <div class="node-filter-dropdown hidden" id="fNodeDropdown" role="listbox"></div>
         </div>
         <select id="fObserver" aria-label="Filter by observer"><option value="">All Observers</option></select>
-        <select id="fRegion" aria-label="Filter by region"><option value="">All Regions</option></select>
+        <div id="packetsRegionFilter" class="region-filter-container" style="display:inline-block;vertical-align:middle"></div>
         <select id="fType" aria-label="Filter by packet type"><option value="">All Types</option></select>
         <button class="btn ${groupByHash ? 'active' : ''}" id="fGroup">Group by Hash</button>
         <button class="btn" id="fMyNodes" title="Show only packets from claimed/favorited nodes">★ My Nodes</button>
@@ -397,11 +399,9 @@
       </table>
     `;
 
-    // Populate filter dropdowns
-    const regionSel = document.getElementById('fRegion');
-    for (const [code, name] of Object.entries(regionMap || {})) {
-      regionSel.innerHTML += `<option value="${code}" ${filters.region === code ? 'selected' : ''}>${code}</option>`;
-    }
+    // Init shared RegionFilter component
+    RegionFilter.init(document.getElementById('packetsRegionFilter'));
+    RegionFilter.onChange(function() { loadPackets(); });
 
     const obsSel = document.getElementById('fObserver');
     for (const o of observers) {
@@ -424,7 +424,6 @@
     document.getElementById('fHash').value = filters.hash || '';
     document.getElementById('fHash').addEventListener('input', debounce((e) => { filters.hash = e.target.value || undefined; loadPackets(); }, 300));
     document.getElementById('fObserver').addEventListener('change', (e) => { filters.observer = e.target.value || undefined; loadPackets(); });
-    document.getElementById('fRegion').addEventListener('change', (e) => { filters.region = e.target.value || undefined; loadPackets(); });
     document.getElementById('fType').addEventListener('change', (e) => { filters.type = e.target.value !== '' ? e.target.value : undefined; loadPackets(); });
     document.getElementById('fGroup').addEventListener('click', () => { groupByHash = !groupByHash; loadPackets(); });
     document.getElementById('fMyNodes').addEventListener('click', function () {
