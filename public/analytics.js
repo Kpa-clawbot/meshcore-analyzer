@@ -604,7 +604,7 @@
           <tbody>
             ${ch.channels.map(c => `<tr class="clickable-row" data-action="navigate" data-value="#/channels?ch=${c.hash}" tabindex="0" role="row">
               <td><strong>${esc(c.name || 'Unknown')}</strong></td>
-              <td class="mono">${c.hash}</td>
+              <td class="mono">${typeof c.hash === 'number' ? '0x' + c.hash.toString(16).toUpperCase().padStart(2, '0') : c.hash}</td>
               <td>${c.messages}</td>
               <td>${c.senders}</td>
               <td>${timeAgo(c.lastActivity)}</td>
