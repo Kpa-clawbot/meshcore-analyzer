@@ -107,7 +107,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_observations_transmission_id ON observations(transmission_id);
   CREATE INDEX IF NOT EXISTS idx_observations_observer_id ON observations(observer_id);
   CREATE INDEX IF NOT EXISTS idx_observations_timestamp ON observations(timestamp);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup ON observations(hash, observer_id, path_json);
+  DROP INDEX IF EXISTS idx_observations_dedup;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_observations_dedup ON observations(hash, observer_id, COALESCE(path_json, ''));
+
+  -- Clean up legacy duplicates (same hash+observer+path, keep lowest id)
+  DELETE FROM observations WHERE id NOT IN (
+    SELECT MIN(id) FROM observations GROUP BY hash, observer_id, COALESCE(path_json, '')
+  );
 
   CREATE VIEW IF NOT EXISTS packets_v AS
     SELECT o.id, t.raw_hex, o.timestamp, o.observer_id, o.observer_name,

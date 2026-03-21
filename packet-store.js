@@ -126,6 +126,10 @@ class PacketStore {
           route_type: row.route_type,
         };
 
+        // Dedup: skip if same observer + same path already loaded
+        const isDupeLoad = tx.observations.some(o => o.observer_id === obs.observer_id && (o.path_json || '') === (obs.path_json || ''));
+        if (isDupeLoad) continue;
+
         tx.observations.push(obs);
         tx.observation_count++;
 
@@ -227,7 +231,7 @@ class PacketStore {
       route_type: pkt.route_type,
     };
     // Dedup: skip if same observer + same path already recorded for this transmission
-    const isDupe = tx.observations.some(o => o.observer_id === obs.observer_id && o.path_json === obs.path_json);
+    const isDupe = tx.observations.some(o => o.observer_id === obs.observer_id && (o.path_json || '') === (obs.path_json || ''));
     if (isDupe) return tx;
 
     tx.observations.push(obs);
