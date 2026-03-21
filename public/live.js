@@ -1098,12 +1098,48 @@
           '</div>';
       }
 
+      html += `<div id="liveNodePaths" style="margin-top:8px;"><div style="font-size:11px;color:var(--text-muted);padding:4px 0;"><span class="spinner" style="font-size:10px"></span> Loading paths…</div></div>`;
+
       html += `<div style="margin-top:12px;display:flex;gap:8px;">
         <a href="#/nodes/${encodeURIComponent(n.public_key)}" style="font-size:12px;color:var(--accent);">Full Detail →</a>
         <a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" style="font-size:12px;color:var(--accent);">📊 Analytics</a>
       </div></div>`;
 
       content.innerHTML = html;
+
+      // Fetch paths asynchronously
+      api('/nodes/' + encodeURIComponent(n.public_key) + '/paths', { ttl: 300 }).then(pathData => {
+        const pathEl = document.getElementById('liveNodePaths');
+        if (!pathEl) return;
+        if (!pathData || !pathData.paths || !pathData.paths.length) {
+          pathEl.innerHTML = '';
+          return;
+        }
+        const COLLAPSE = 5;
+        function renderPathList(paths) {
+          return paths.map(p => {
+            const chain = p.hops.map(h => {
+              const isThis = h.pubkey === n.public_key || (h.prefix && n.public_key.toLowerCase().startsWith(h.prefix.toLowerCase()));
+              const name = escapeHtml(h.name || h.prefix);
+              if (isThis) return `<strong style="color:var(--accent)">${name}</strong>`;
+              return h.pubkey ? `<a href="#/nodes/${h.pubkey}" style="color:var(--text-primary);text-decoration:none">${name}</a>` : name;
+            }).join(' → ');
+            return `<div style="padding:3px 0;font-size:11px;line-height:1.4">${chain} <span style="color:var(--text-muted)">(${p.count}×)</span></div>`;
+          }).join('');
+        }
+        pathEl.innerHTML = `<h4 style="font-size:12px;margin:8px 0 4px;color:var(--text-muted);">Paths Through (${pathData.totalPaths})</h4>` +
+          `<div id="livePathsList" style="max-height:200px;overflow-y:auto;">` +
+          renderPathList(pathData.paths.slice(0, COLLAPSE)) +
+          (pathData.paths.length > COLLAPSE ? `<button id="showMorePaths" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;padding:4px 0;">Show all ${pathData.paths.length} paths</button>` : '') +
+          '</div>';
+        const moreBtn = document.getElementById('showMorePaths');
+        if (moreBtn) moreBtn.addEventListener('click', () => {
+          document.getElementById('livePathsList').innerHTML = renderPathList(pathData.paths);
+        });
+      }).catch(() => {
+        const pathEl = document.getElementById('liveNodePaths');
+        if (pathEl) pathEl.innerHTML = '';
+      });
     } catch (e) {
       content.innerHTML = `<div style="padding:20px;color:var(--text-muted);">Error: ${e.message}</div>`;
     }
