@@ -12,6 +12,7 @@
   let soundEnabled = false;
   let showGhostHops = localStorage.getItem('live-ghost-hops') !== 'false';
   let realisticPropagation = localStorage.getItem('live-realistic-propagation') === 'true';
+  let showOnlyFavorites = localStorage.getItem('live-favorites-only') === 'true';
   const propagationBuffer = new Map(); // hash -> {timer, packets[]}
   let _onResize = null;
   let _navCleanup = null;
@@ -630,6 +631,8 @@
             <span id="ghostDesc" class="sr-only">Show interpolated ghost markers for unknown hops</span>
             <label><input type="checkbox" id="liveRealisticToggle" aria-describedby="realisticDesc"> Realistic</label>
             <span id="realisticDesc" class="sr-only">Buffer packets by hash and animate all paths simultaneously</span>
+            <label><input type="checkbox" id="liveFavoritesToggle" aria-describedby="favDesc"> ⭐ Favorites</label>
+            <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
           </div>
         </div>
         <div class="live-overlay live-feed" id="liveFeed">
@@ -773,6 +776,14 @@
     realisticToggle.addEventListener('change', (e) => {
       realisticPropagation = e.target.checked;
       localStorage.setItem('live-realistic-propagation', realisticPropagation);
+    });
+
+    const favoritesToggle = document.getElementById('liveFavoritesToggle');
+    favoritesToggle.checked = showOnlyFavorites;
+    favoritesToggle.addEventListener('change', (e) => {
+      showOnlyFavorites = e.target.checked;
+      localStorage.setItem('live-favorites-only', showOnlyFavorites);
+      applyFavoritesFilter();
     });
 
     // Feed show/hide
@@ -1181,6 +1192,37 @@
     if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
   }
 
+  function getLiveFavorites() {
+    try { return new Set(JSON.parse(localStorage.getItem('meshcore-favorites') || '[]')); } catch { return new Set(); }
+  }
+  function getLiveMyNodes() {
+    try { return new Set(JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]')); } catch { return new Set(); }
+  }
+  function isNodeFavorited(pubkey) {
+    const favs = getLiveFavorites();
+    const mine = getLiveMyNodes();
+    return favs.has(pubkey) || mine.has(pubkey);
+  }
+  function applyFavoritesFilter() {
+    Object.keys(nodeMarkers).forEach(key => {
+      const marker = nodeMarkers[key];
+      if (!marker) return;
+      const visible = !showOnlyFavorites || isNodeFavorited(key);
+      if (visible) {
+        if (!nodesLayer.hasLayer(marker)) { marker.addTo(nodesLayer); if (marker._glowMarker) marker._glowMarker.addTo(nodesLayer); }
+      } else {
+        if (nodesLayer.hasLayer(marker)) { nodesLayer.removeLayer(marker); if (marker._glowMarker) nodesLayer.removeLayer(marker._glowMarker); }
+      }
+    });
+    const _el2 = document.getElementById('liveNodeCount');
+    if (_el2) {
+      const count = showOnlyFavorites
+        ? Object.keys(nodeMarkers).filter(k => isNodeFavorited(k)).length
+        : Object.keys(nodeMarkers).length;
+      _el2.textContent = count;
+    }
+  }
+
   function addNodeMarker(n) {
     if (nodeMarkers[n.public_key]) return nodeMarkers[n.public_key];
     const color = ROLE_COLORS[n.role] || ROLE_COLORS.unknown;
@@ -1208,6 +1250,10 @@
     marker._baseColor = color;
     marker._baseSize = size;
     nodeMarkers[n.public_key] = marker;
+    if (showOnlyFavorites && !isNodeFavorited(n.public_key)) {
+      nodesLayer.removeLayer(marker);
+      nodesLayer.removeLayer(glow);
+    }
     return marker;
   }
 
@@ -1268,6 +1314,13 @@
 
     playSound(typeName);
     addFeedItem(icon, typeName, payload, hops, color, pkt);
+
+    // Favorites filter: skip animation if no involved nodes are favorited
+    if (showOnlyFavorites) {
+      const involvedKeys = hops.map(h => h.id || h.public_key).filter(Boolean);
+      if (payload.pubKey) involvedKeys.push(payload.pubKey);
+      if (!involvedKeys.some(k => isNodeFavorited(k))) return;
+    }
 
     // If ADVERT, ensure node appears on map
     if (typeName === 'ADVERT' && payload.pubKey) {
