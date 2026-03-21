@@ -929,7 +929,7 @@
     rows += sectionRow('Payload — ' + payloadTypeName(pkt.payload_type));
 
     if (decoded.type === 'ADVERT') {
-      rows += fieldRow(off, 'Advertised Hash Size', hashSizeVal + ' byte' + (hashSizeVal !== 1 ? 's' : ''), 'From path byte 0x' + (buf.slice(2, 4) || '??') + ' — bits 7-6 = ' + (hashSizeVal - 1));
+      rows += fieldRow(1, 'Advertised Hash Size', hashSizeVal + ' byte' + (hashSizeVal !== 1 ? 's' : ''), 'From path byte 0x' + (buf.slice(2, 4) || '??') + ' — bits 7-6 = ' + (hashSizeVal - 1));
       rows += fieldRow(off, 'Public Key (32B)', truncate(decoded.pubKey || '', 24), '');
       rows += fieldRow(off + 32, 'Timestamp (4B)', decoded.timestampISO || '', 'Unix: ' + (decoded.timestamp || ''));
       rows += fieldRow(off + 36, 'Signature (64B)', truncate(decoded.signature || '', 24), '');
