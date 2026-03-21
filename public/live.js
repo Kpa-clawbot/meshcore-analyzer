@@ -1192,28 +1192,72 @@
     if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
   }
 
-  function getLiveFavorites() {
-    try { return new Set(JSON.parse(localStorage.getItem('meshcore-favorites') || '[]')); } catch { return new Set(); }
+  function getFavoritePubkeys() {
+    let favs = [];
+    try { favs = favs.concat(JSON.parse(localStorage.getItem('meshcore-favorites') || '[]')); } catch {}
+    try { favs = favs.concat(JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]').map(n => n.pubkey)); } catch {}
+    return favs.filter(Boolean);
   }
-  function getLiveMyNodes() {
-    try { return new Set(JSON.parse(localStorage.getItem('meshcore-my-nodes') || '[]')); } catch { return new Set(); }
-  }
-  function isNodeFavorited(pubkey) {
-    const favs = getLiveFavorites();
-    const mine = getLiveMyNodes();
-    return favs.has(pubkey) || mine.has(pubkey);
-  }
-  function applyFavoritesFilter() {
-    // All markers always visible — favorites filter only affects packet animations
-    Object.keys(nodeMarkers).forEach(key => {
-      const marker = nodeMarkers[key];
-      if (!marker) return;
-      if (!nodesLayer.hasLayer(marker)) { marker.addTo(nodesLayer); if (marker._glowMarker) marker._glowMarker.addTo(nodesLayer); }
-    });
-    const _el2 = document.getElementById('liveNodeCount');
-    if (_el2) {
-      _el2.textContent = Object.keys(nodeMarkers).length;
+
+  function packetInvolvesFavorite(pkt) {
+    const favs = getFavoritePubkeys();
+    if (favs.length === 0) return false;
+    const decoded = pkt.decoded || {};
+    const payload = decoded.payload || {};
+    const hops = decoded.path?.hops || [];
+
+    // Full pubkeys: sender
+    if (payload.pubKey && favs.some(f => f === payload.pubKey)) return true;
+
+    // Observer: may be name or pubkey
+    const obs = pkt.observer_name || pkt.observer || '';
+    if (obs) {
+      if (favs.some(f => f === obs)) return true;
+      for (const nd of Object.values(nodeData)) {
+        if ((nd.name === obs || nd.public_key === obs) && favs.some(f => f === nd.public_key)) return true;
+      }
     }
+
+    // Hops are truncated hex prefixes — match by prefix in either direction
+    for (const hop of hops) {
+      const h = (hop.id || hop.public_key || hop).toString().toLowerCase();
+      if (favs.some(f => f.toLowerCase().startsWith(h) || h.startsWith(f.toLowerCase()))) return true;
+    }
+
+    return false;
+  }
+
+  function isNodeFavorited(pubkey) {
+    return getFavoritePubkeys().some(f => f === pubkey);
+  }
+
+  function rebuildFeedList() {
+    const feed = document.getElementById('liveFeed');
+    if (!feed) return;
+    // Remove all feed items but keep the hide button and resize handle
+    feed.querySelectorAll('.live-feed-item').forEach(el => el.remove());
+    // Re-add from VCR buffer (most recent first, up to 25)
+    const entries = VCR.buffer.slice(-100).reverse();
+    let count = 0;
+    for (const entry of entries) {
+      if (count >= 25) break;
+      const pkt = entry.pkt;
+      if (showOnlyFavorites && !packetInvolvesFavorite(pkt)) continue;
+      const decoded = pkt.decoded || {};
+      const header = decoded.header || {};
+      const payload = decoded.payload || {};
+      const typeName = header.payloadTypeName || 'UNKNOWN';
+      const icon = PAYLOAD_ICONS[typeName] || '📦';
+      const hops = decoded.path?.hops || [];
+      const color = TYPE_COLORS[typeName] || '#6b7280';
+      addFeedItemDOM(icon, typeName, payload, hops, color, pkt, feed);
+      count++;
+    }
+  }
+
+  function applyFavoritesFilter() {
+    // Node markers always stay visible — only rebuild the feed list
+    rebuildFeedList();
   }
 
   function addNodeMarker(n) {
@@ -1304,12 +1348,8 @@
     playSound(typeName);
     addFeedItem(icon, typeName, payload, hops, color, pkt);
 
-    // Favorites filter: skip animation if no involved nodes are favorited
-    if (showOnlyFavorites) {
-      const involvedKeys = hops.map(h => h.id || h.public_key).filter(Boolean);
-      if (payload.pubKey) involvedKeys.push(payload.pubKey);
-      if (!involvedKeys.some(k => isNodeFavorited(k))) return;
-    }
+    // Favorites filter: skip animation if packet doesn't involve a favorited node
+    if (showOnlyFavorites && !packetInvolvesFavorite(pkt)) return;
 
     // If ADVERT, ensure node appears on map
     if (typeName === 'ADVERT' && payload.pubKey) {
@@ -1341,6 +1381,9 @@
     packetCount += packets.length;
     pktTimestamps.push(Date.now());
     const _el = document.getElementById('livePktCount'); if (_el) _el.textContent = packetCount;
+
+    // Favorites filter: skip if none of the packets involve a favorite
+    if (showOnlyFavorites && !packets.some(p => packetInvolvesFavorite(p))) return;
 
     playSound(typeName);
 
@@ -1697,9 +1740,33 @@
     if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
   }
 
+  function addFeedItemDOM(icon, typeName, payload, hops, color, pkt, feed) {
+    const text = payload.text || payload.name || '';
+    const preview = text ? ' ' + (text.length > 35 ? text.slice(0, 35) + '…' : text) : '';
+    const hopStr = hops.length ? `<span class="feed-hops">${hops.length}⇢</span>` : '';
+    const obsBadge = pkt.observation_count > 1 ? `<span class="badge badge-obs" style="font-size:10px;margin-left:4px">👁 ${pkt.observation_count}</span>` : '';
+    const item = document.createElement('div');
+    item.className = 'live-feed-item';
+    item.setAttribute('tabindex', '0');
+    item.setAttribute('role', 'button');
+    item.style.cursor = 'pointer';
+    item.innerHTML = `
+      <span class="feed-icon" style="color:${color}">${icon}</span>
+      <span class="feed-type" style="color:${color}">${typeName}</span>
+      ${hopStr}${obsBadge}
+      <span class="feed-text">${escapeHtml(preview)}</span>
+      <span class="feed-time">${new Date(pkt._ts || Date.now()).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}</span>
+    `;
+    item.addEventListener('click', () => showFeedCard(item, pkt, color));
+    feed.appendChild(item);
+  }
+
   function addFeedItem(icon, typeName, payload, hops, color, pkt) {
     const feed = document.getElementById('liveFeed');
     if (!feed) return;
+
+    // Favorites filter: skip feed item if packet doesn't involve a favorite
+    if (showOnlyFavorites && !packetInvolvesFavorite(pkt)) return;
 
     const text = payload.text || payload.name || '';
     const preview = text ? ' ' + (text.length > 35 ? text.slice(0, 35) + '…' : text) : '';
