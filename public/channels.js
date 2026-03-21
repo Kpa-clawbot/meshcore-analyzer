@@ -377,12 +377,8 @@
         return m.type === 'message' || (m.type === 'packet' && m.data?.decoded?.header?.payloadTypeName === 'GRP_TXT');
       });
       if (dominated) {
-        invalidateApiCache('/channels');
-        loadChannels(true);
-        if (selectedHash) {
-          invalidateApiCache('/channels/' + encodeURIComponent(selectedHash) + '/messages');
-          refreshMessages();
-        }
+        loadChannels(true, true);
+        if (selectedHash) refreshMessages(true);
       }
     });
   }
@@ -401,11 +397,11 @@
     if (panel) panel.remove();
   }
 
-  async function loadChannels(silent) {
+  async function loadChannels(silent, bust) {
     try {
       const rp = RegionFilter.getRegionParam();
       const qs = rp ? '?region=' + encodeURIComponent(rp) : '';
-      const data = await api('/channels' + qs, { ttl: CLIENT_TTL.channels });
+      const data = await api('/channels' + qs, { ttl: CLIENT_TTL.channels, bust: !!bust });
       channels = (data.channels || []).sort((a, b) => (b.lastActivity || '').localeCompare(a.lastActivity || ''));
       renderChannelList();
     } catch (e) {
@@ -474,13 +470,13 @@
     }
   }
 
-  async function refreshMessages() {
+  async function refreshMessages(bust) {
     if (!selectedHash) return;
     const msgEl = document.getElementById('chMessages');
     if (!msgEl) return;
     const wasAtBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 60;
     try {
-      const data = await api(`/channels/${encodeURIComponent(selectedHash)}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages });
+      const data = await api(`/channels/${encodeURIComponent(selectedHash)}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages, bust: !!bust });
       const newMsgs = data.messages || [];
       // #92: Use message ID/hash for change detection instead of count + timestamp
       var _getLastId = function (arr) { var m = arr.length ? arr[arr.length - 1] : null; return m ? (m.id || m.packetId || m.timestamp || '') : ''; };

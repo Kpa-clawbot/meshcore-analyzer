@@ -215,7 +215,6 @@ function connectWS() {
           api._invalidateTimer = null;
           invalidateApiCache('/stats');
           invalidateApiCache('/nodes');
-          invalidateApiCache('/channels');
         }, 5000);
       }
       wsListeners.forEach(fn => fn(msg));
