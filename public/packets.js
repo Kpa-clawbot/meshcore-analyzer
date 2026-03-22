@@ -1100,6 +1100,13 @@
     let pathHops;
     try { pathHops = JSON.parse(pkt.path_json || '[]'); } catch { pathHops = []; }
 
+    // Re-resolve hops with observer context for regional filtering
+    if (pathHops.length && pkt.observer_id) {
+      await ensureHopResolver();
+      const resolved = HopResolver.resolve(pathHops, null, null, null, null, pkt.observer_id);
+      Object.assign(hopNameCache, resolved || {});
+    }
+
     // Parse hash size from path byte
     const rawPathByte = pkt.raw_hex ? parseInt(pkt.raw_hex.slice(2, 4), 16) : NaN;
     const hashSize = isNaN(rawPathByte) ? null : ((rawPathByte >> 6) + 1);
