@@ -1316,9 +1316,9 @@
     // Apply matrix tint if active
     if (matrixMode) {
       marker._matrixPrevColor = color;
-      marker._baseColor = '#005f15';
-      marker.setStyle({ fillColor: '#005f15', color: '#005f15', fillOpacity: 0.4, opacity: 0.4 });
-      glow.setStyle({ fillColor: '#005f15', fillOpacity: 0.1 });
+      marker._baseColor = '#008a22';
+      marker.setStyle({ fillColor: '#008a22', color: '#008a22', fillOpacity: 0.5, opacity: 0.5 });
+      glow.setStyle({ fillColor: '#008a22', fillOpacity: 0.15 });
     }
 
     return marker;
@@ -1712,9 +1712,9 @@
       }
       for (const [key, marker] of Object.entries(nodeMarkers)) {
         marker._matrixPrevColor = marker._baseColor;
-        marker._baseColor = '#005f15';
-        marker.setStyle({ fillColor: '#005f15', color: '#005f15', fillOpacity: 0.4, opacity: 0.4 });
-        if (marker._glowMarker) marker._glowMarker.setStyle({ fillColor: '#005f15', fillOpacity: 0.1 });
+        marker._baseColor = '#008a22';
+        marker.setStyle({ fillColor: '#008a22', color: '#008a22', fillOpacity: 0.5, opacity: 0.5 });
+        if (marker._glowMarker) marker._glowMarker.setStyle({ fillColor: '#008a22', fillOpacity: 0.15 });
       }
     } else {
       container.classList.remove('matrix-theme');

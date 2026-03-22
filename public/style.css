@@ -1537,7 +1537,7 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 
 /* === Matrix Theme === */
 .matrix-theme .leaflet-tile-pane {
-  filter: brightness(1.25) contrast(1.2) sepia(0.6) hue-rotate(70deg) saturate(2);
+  filter: brightness(1.1) contrast(1.2) sepia(0.6) hue-rotate(70deg) saturate(2);
 }
 .matrix-theme.leaflet-container::before {
   content: ''; position: absolute; inset: 0; z-index: 401;
