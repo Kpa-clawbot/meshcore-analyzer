@@ -1396,10 +1396,12 @@
     playSound(typeName);
     addFeedItem(icon, typeName, payload, hops, color, pkt);
     addRainDrop(pkt);
-    // Spawn extra rain columns for multiple observations
+    // Spawn extra rain columns for multiple observations with varied hop counts
     const obsCount = pkt.observation_count || (pkt.packet && pkt.packet.observation_count) || 1;
+    const baseHops = (pkt.decoded?.path?.hops || []).length || 1;
     for (let i = 1; i < obsCount; i++) {
-      setTimeout(() => addRainDrop(pkt), i * 150); // stagger slightly
+      const variedHops = Math.max(1, baseHops + Math.floor(Math.random() * 3) - 1); // ±1 hop
+      setTimeout(() => addRainDrop(pkt, variedHops), i * 150);
     }
 
     // Favorites filter: skip animation if packet doesn't involve a favorited node
@@ -1802,13 +1804,13 @@
     rainDrops = [];
   }
 
-  function addRainDrop(pkt) {
+  function addRainDrop(pkt, hopOverride) {
     if (!rainCanvas || !matrixRain) return;
     const rawHex = pkt.raw || pkt.raw_hex || (pkt.packet && pkt.packet.raw_hex) || '';
     if (!rawHex) return;
     const decoded = pkt.decoded || {};
     const hops = decoded.path?.hops || [];
-    const hopCount = Math.max(1, hops.length);
+    const hopCount = hopOverride || Math.max(1, hops.length);
     const bytes = [];
     for (let i = 0; i < rawHex.length; i += 2) {
       bytes.push(rawHex.slice(i, i + 2).toUpperCase());
