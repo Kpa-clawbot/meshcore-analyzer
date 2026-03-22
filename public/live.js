@@ -1685,13 +1685,12 @@
 
       if (step >= steps) {
         clearInterval(interval);
-        animLayer.removeLayer(dot);
+        if (animLayer) animLayer.removeLayer(dot);
 
         recentPaths.push({ line, glowLine: contrail, time: Date.now() });
         while (recentPaths.length > 5) {
           const old = recentPaths.shift();
-          pathsLayer.removeLayer(old.line);
-          pathsLayer.removeLayer(old.glowLine);
+          if (pathsLayer) { pathsLayer.removeLayer(old.line); pathsLayer.removeLayer(old.glowLine); }
         }
 
         setTimeout(() => {
@@ -1700,8 +1699,7 @@
             fadeOp -= 0.1;
             if (fadeOp <= 0) {
               clearInterval(fi);
-              pathsLayer.removeLayer(line);
-              pathsLayer.removeLayer(contrail);
+              if (pathsLayer) { pathsLayer.removeLayer(line); pathsLayer.removeLayer(contrail); }
               recentPaths = recentPaths.filter(p => p.line !== line);
             } else {
               line.setStyle({ opacity: fadeOp });
