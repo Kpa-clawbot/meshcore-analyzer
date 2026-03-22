@@ -855,9 +855,20 @@
       let html = '';
       for (const p of displayPackets) {
         const isExpanded = expandedHashes.has(p.hash);
-        const groupRegion = p.observer_id ? (observers.find(o => o.id === p.observer_id)?.iata || '') : '';
+        // When observer filter is active, use first matching child's data for header
+        let headerObserverId = p.observer_id;
+        let headerPathJson = p.path_json;
+        if (filters.observer && p._children?.length) {
+          const obsIds = new Set(filters.observer.split(','));
+          const match = p._children.find(c => obsIds.has(String(c.observer_id)));
+          if (match) {
+            headerObserverId = match.observer_id;
+            headerPathJson = match.path_json;
+          }
+        }
+        const groupRegion = headerObserverId ? (observers.find(o => o.id === headerObserverId)?.iata || '') : '';
         let groupPath = [];
-        try { groupPath = JSON.parse(p.path_json || '[]'); } catch {}
+        try { groupPath = JSON.parse(headerPathJson || '[]'); } catch {}
         const groupPathStr = renderPath(groupPath);
         const groupTypeName = payloadTypeName(p.payload_type);
         const groupTypeClass = payloadTypeColor(p.payload_type);
@@ -870,7 +881,7 @@
           <td class="mono col-hash">${truncate(p.hash || '—', 8)}</td>
           <td class="col-size">${groupSize ? groupSize + 'B' : '—'}</td>
           <td class="col-type">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>` : '—'}</td>
-          <td class="col-observer">${isSingle ? truncate(obsName(p.observer_id), 16) : truncate(obsName(p.observer_id), 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
+          <td class="col-observer">${isSingle ? truncate(obsName(headerObserverId), 16) : truncate(obsName(headerObserverId), 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
           <td class="col-rpt">${p.observation_count > 1 ? '<span class="badge badge-obs" title="Seen ' + p.observation_count + ' times">👁 ' + p.observation_count + '</span>' : (isSingle ? '' : p.count)}</td>
           <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(p.decoded_json || '{}'); } catch { return {}; } })())}</td>
