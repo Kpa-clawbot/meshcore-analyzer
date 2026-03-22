@@ -8,8 +8,6 @@
   let activeAnims = 0;
   let nodeActivity = {};
   let recentPaths = [];
-  let audioCtx = null;
-  let soundEnabled = false;
   let showGhostHops = localStorage.getItem('live-ghost-hops') !== 'false';
   let realisticPropagation = localStorage.getItem('live-realistic-propagation') === 'true';
   let showOnlyFavorites = localStorage.getItem('live-favorites-only') === 'true';
@@ -47,21 +45,6 @@
     ADVERT: '📡', GRP_TXT: '💬', TXT_MSG: '✉️', ACK: '✓',
     REQUEST: '❓', RESPONSE: '📨', TRACE: '🔍', PATH: '🛤️'
   };
-
-  function playSound(typeName) {
-    if (!soundEnabled || !audioCtx) return;
-    try {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain); gain.connect(audioCtx.destination);
-      const freqs = { ADVERT: 880, GRP_TXT: 523, TXT_MSG: 659, ACK: 330, REQUEST: 740, TRACE: 987 };
-      osc.frequency.value = freqs[typeName] || 440;
-      osc.type = typeName === 'GRP_TXT' ? 'sine' : typeName === 'ADVERT' ? 'triangle' : 'square';
-      gain.gain.setValueAtTime(0.03, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
-      osc.start(audioCtx.currentTime); osc.stop(audioCtx.currentTime + 0.15);
-    } catch {}
-  }
 
   function initResizeHandler() {
     let resizeTimer = null;
@@ -627,7 +610,6 @@
             <div class="live-stat-pill anim-pill"><span id="liveAnimCount">0</span> active</div>
             <div class="live-stat-pill rate-pill"><span id="livePktRate">0</span>/min</div>
           </div>
-          <button class="live-sound-btn" id="liveSoundBtn" title="Toggle sound">🔇</button>
           <div class="live-toggles">
             <label><input type="checkbox" id="liveHeatToggle" checked aria-describedby="heatDesc"> Heat</label>
             <span id="heatDesc" class="sr-only">Overlay a density heat map on the mesh nodes</span>
@@ -766,13 +748,6 @@
     }
 
     map.on('zoomend', rescaleMarkers);
-
-    // Sound toggle
-    document.getElementById('liveSoundBtn').addEventListener('click', () => {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      soundEnabled = !soundEnabled;
-      document.getElementById('liveSoundBtn').textContent = soundEnabled ? '🔊' : '🔇';
-    });
 
     // Heat map toggle
     document.getElementById('liveHeatToggle').addEventListener('change', (e) => {
@@ -1446,7 +1421,6 @@
     const hops = decoded.path?.hops || [];
     const color = TYPE_COLORS[typeName] || '#6b7280';
 
-    playSound(typeName);
     if (window.MeshAudio) MeshAudio.sonifyPacket(pkt);
     addFeedItem(icon, typeName, payload, hops, color, pkt);
     addRainDrop(pkt);
@@ -1495,7 +1469,7 @@
     // Favorites filter: skip if none of the packets involve a favorite
     if (showOnlyFavorites && !packets.some(p => packetInvolvesFavorite(p))) return;
 
-    playSound(typeName);
+    if (window.MeshAudio) MeshAudio.sonifyPacket(first);
     // Rain drop per observation in the group
     packets.forEach((p, i) => setTimeout(() => addRainDrop(p), i * 150));
 
