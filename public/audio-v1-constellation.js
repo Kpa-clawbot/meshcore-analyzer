@@ -98,14 +98,14 @@
 
         envGain.gain.setValueAtTime(0, noteStart);
         envGain.gain.linearRampToValueAtTime(voiceVol, noteStart + a);
-        envGain.gain.linearRampToValueAtTime(voiceVol * s, noteStart + a + d);
-        envGain.gain.setValueAtTime(voiceVol * s, noteEnd);
-        envGain.gain.linearRampToValueAtTime(0.001, noteEnd + r);
+        envGain.gain.exponentialRampToValueAtTime(Math.max(voiceVol * s, 0.0001), noteStart + a + d);
+        envGain.gain.setValueAtTime(Math.max(voiceVol * s, 0.0001), noteEnd);
+        envGain.gain.exponentialRampToValueAtTime(0.0001, noteEnd + r);
 
         osc.connect(envGain);
         envGain.connect(filter);
         osc.start(noteStart);
-        osc.stop(noteEnd + r + 0.01);
+        osc.stop(noteEnd + r + 0.05);
         osc.onended = () => { osc.disconnect(); envGain.disconnect(); };
       }
 
