@@ -86,11 +86,13 @@
   // === Core: Sonify a single packet ===
 
   function sonifyPacket(pkt) {
+    console.log('[audio] sonifyPacket called, enabled:', audioEnabled, 'ctx:', audioCtx?.state, 'voices:', activeVoices);
     if (!audioEnabled || !audioCtx) return;
-    if (activeVoices >= MAX_VOICES) return; // voice stealing: just drop
+    if (activeVoices >= MAX_VOICES) return;
 
     const rawHex = pkt.raw || pkt.raw_hex || (pkt.packet && pkt.packet.raw_hex) || '';
-    if (!rawHex || rawHex.length < 6) return; // need at least 3 bytes
+    console.log('[audio] rawHex len:', rawHex.length, 'first20:', rawHex.slice(0, 20));
+    if (!rawHex || rawHex.length < 6) return;
 
     // Parse raw hex to byte array
     const allBytes = [];
