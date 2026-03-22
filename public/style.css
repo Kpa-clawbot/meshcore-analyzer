@@ -201,7 +201,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .filter-group { display: flex; gap: 6px; align-items: center; }
 .filter-group + .filter-group { border-left: 1px solid var(--border); padding-left: 12px; margin-left: 6px; }
-.sort-help { cursor: help; font-size: 14px; color: var(--text-muted, #888); }
+.sort-help { cursor: help; font-size: 14px; color: var(--text-muted, #888); position: relative; }
+.sort-help:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: 130%; left: 50%; transform: translateX(-50%);
+  background: var(--card-bg, #222); color: var(--text, #eee); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; font-size: 12px; line-height: 1.5;
+  white-space: pre-line; width: 260px; z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,.3); pointer-events: none;
+}
 .filter-bar .btn:hover { background: var(--row-hover); }
 .filter-bar .btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
