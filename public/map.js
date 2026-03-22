@@ -7,6 +7,7 @@
   let markerLayer = null;
   let clusterGroup = null;
   let nodes = [];
+  let targetNodeKey = null;
   let observers = [];
   let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clusters: false, hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false' };
   let wsHandler = null;
@@ -140,7 +141,7 @@
     map = L.map('leaflet-map', { zoomControl: true }).setView(initCenter, initZoom);
 
     // If navigated with ?node=PUBKEY, highlight that node after markers load
-    const targetNodeKey = urlParams.get('node') || null;
+    targetNodeKey = urlParams.get('node') || null;
 
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
       (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
