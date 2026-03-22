@@ -449,7 +449,7 @@
             <option value="chrono-asc">Sort: Time ↑ (earliest)</option>
             <option value="chrono-desc">Sort: Time ↓ (latest)</option>
           </select>
-          <span class="sort-help" title="Sort controls how observations within a packet group are ordered, and which observation's data (observer, path) appears in the header row.&#10;&#10;Observer — Groups by observer station, earliest first.&#10;Path ↑ — Shortest paths first.&#10;Path ↓ — Longest paths first.&#10;Time ↑ — Earliest observation first.&#10;Time ↓ — Most recent first.">ⓘ</span>
+          <span class="sort-help" id="sortHelpIcon">ⓘ</span>
         </div>
         <div class="filter-group">
           <div class="col-toggle-wrap">
@@ -503,6 +503,8 @@
     // Observation sort dropdown
     const obsSortSel = document.getElementById('fObsSort');
     obsSortSel.value = obsSortMode;
+    const sortHelpEl = document.getElementById('sortHelpIcon');
+    if (sortHelpEl) sortHelpEl.title = "Sort controls how observations are ordered within packet groups and which observation appears in the header row.\n\nObserver — Groups by observer station, earliest first.\nPath \u2191 — Shortest paths first.\nPath \u2193 — Longest paths first.\nTime \u2191 — Earliest observation first.\nTime \u2193 — Most recent first.";
     obsSortSel.addEventListener('change', async function () {
       obsSortMode = this.value;
       localStorage.setItem('meshcore-obs-sort', obsSortMode);
