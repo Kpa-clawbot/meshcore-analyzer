@@ -674,6 +674,13 @@
     document.addEventListener('click', () => colMenu.classList.remove('open'));
     applyColVisibility();
 
+    document.getElementById('hexHashToggle').addEventListener('click', function () {
+      showHexHashes = !showHexHashes;
+      localStorage.setItem('meshcore-hex-hashes', showHexHashes);
+      this.classList.toggle('active', showHexHashes);
+      renderTable();
+    });
+
     // Node name filter with autocomplete
     const fNode = document.getElementById('fNode');
     const fNodeDrop = document.getElementById('fNodeDropdown');
