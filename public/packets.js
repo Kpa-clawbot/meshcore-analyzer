@@ -345,7 +345,12 @@
   async function loadPackets() {
     try {
       const params = new URLSearchParams();
-      params.set('limit', '10000');
+      const windowMin = Number(document.getElementById('fTimeWindow')?.value || 15);
+      if (windowMin > 0) {
+        const since = new Date(Date.now() - windowMin * 60000).toISOString();
+        params.set('since', since);
+      }
+      params.set('limit', '50000');
       const regionParam = RegionFilter.getRegionParam();
       if (regionParam) params.set('region', regionParam);
       if (filters.hash) params.set('hash', filters.hash);
@@ -450,6 +455,19 @@
         <div class="filter-group">
           <button class="btn ${groupByHash ? 'active' : ''}" id="fGroup" title="Collapse duplicate observations of the same packet into expandable groups">Group by Hash</button>
           <button class="btn" id="fMyNodes" title="Show only packets from your favorited/claimed nodes">★ My Nodes</button>
+        </div>
+        <div class="filter-group">
+          <label>Window:</label>
+          <select id="fTimeWindow" class="filter-select">
+            <option value="15">15 min</option>
+            <option value="30">30 min</option>
+            <option value="60">1 hour</option>
+            <option value="180">3 hours</option>
+            <option value="360">6 hours</option>
+            <option value="720">12 hours</option>
+            <option value="1440">24 hours</option>
+            <option value="0">All</option>
+          </select>
         </div>
         <div class="filter-group">
           <select id="fObsSort" aria-label="Observation sort order" title="Controls how observations are ordered within packet groups and which observation appears in the header row. Observer: Groups by observer station, earliest first. Path: Orders by hop count. Time: Orders by observation timestamp.">
@@ -581,6 +599,16 @@
     // Filter event listeners
     document.getElementById('fHash').value = filters.hash || '';
     document.getElementById('fHash').addEventListener('input', debounce((e) => { filters.hash = e.target.value || undefined; loadPackets(); }, 300));
+
+    // Time window dropdown — restore from localStorage and bind change
+    const fTimeWindow = document.getElementById('fTimeWindow');
+    const savedWindow = localStorage.getItem('meshcore-time-window');
+    if (savedWindow !== null) fTimeWindow.value = savedWindow;
+    fTimeWindow.addEventListener('change', () => {
+      localStorage.setItem('meshcore-time-window', fTimeWindow.value);
+      loadPackets();
+    });
+
     document.getElementById('fGroup').addEventListener('click', () => { groupByHash = !groupByHash; loadPackets(); });
     document.getElementById('fMyNodes').addEventListener('click', function () {
       filters.myNodes = !filters.myNodes;
