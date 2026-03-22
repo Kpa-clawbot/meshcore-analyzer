@@ -645,6 +645,7 @@
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
           </div>
           <div class="audio-controls hidden" id="audioControls">
+            <label class="audio-slider-label">Voice <select id="audioVoiceSelect" class="audio-voice-select"></select></label>
             <label class="audio-slider-label">BPM <input type="range" id="audioBpmSlider" min="40" max="300" value="120" class="audio-slider"><span id="audioBpmVal">120</span></label>
             <label class="audio-slider-label">Vol <input type="range" id="audioVolSlider" min="0" max="100" value="30" class="audio-slider"><span id="audioVolVal">30</span></label>
           </div>
@@ -847,6 +848,17 @@
       bpmVal.textContent = MeshAudio.getBPM();
       volSlider.value = Math.round(MeshAudio.getVolume() * 100);
       volVal.textContent = Math.round(MeshAudio.getVolume() * 100);
+
+      // Populate voice selector
+      const voiceSelect = document.getElementById('audioVoiceSelect');
+      const voices = MeshAudio.getVoiceNames();
+      voices.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v;
+        voiceSelect.appendChild(opt);
+      });
+      voiceSelect.value = MeshAudio.getVoiceName() || voices[0] || '';
+      voiceSelect.addEventListener('change', (e) => MeshAudio.setVoice(e.target.value));
     }
 
     audioToggle.addEventListener('change', (e) => {

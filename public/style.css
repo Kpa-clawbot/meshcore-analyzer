@@ -1624,3 +1624,19 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .matrix-theme .audio-controls label,
 .matrix-theme .audio-controls span { color: #00ff41 !important; }
 .matrix-theme .audio-slider { accent-color: #00ff41; }
+
+/* Audio voice selector */
+.audio-voice-select {
+  background: var(--bg-secondary, #1f2937);
+  color: var(--text-primary, #e5e7eb);
+  border: 1px solid var(--border, #374151);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.matrix-theme .audio-voice-select {
+  background: #001a00 !important;
+  color: #00ff41 !important;
+  border-color: #00ff4130 !important;
+}
