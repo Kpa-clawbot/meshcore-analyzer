@@ -346,11 +346,33 @@
       if (filters.observer) params.set('observer', filters.observer);
       if (filters.hash) params.set('hash', filters.hash);
       if (filters.node) params.set('node', filters.node);
-      if (groupByHash) params.set('groupByHash', 'true');
+      params.set('groupByHash', 'true'); // always fetch grouped
 
       const data = await api('/packets?' + params.toString());
       packets = data.packets || [];
       totalCount = data.total || packets.length;
+
+      // When ungrouped, fetch observations for all multi-obs packets and flatten
+      if (!groupByHash) {
+        const multiObs = packets.filter(p => (p.observation_count || p.count || 1) > 1);
+        await Promise.all(multiObs.map(async (p) => {
+          try {
+            const d = await api(`/packets/${p.hash}`);
+            if (d?.observations) p._children = d.observations.map(o => ({...d.packet, ...o, _isObservation: true}));
+          } catch {}
+        }));
+        // Flatten: replace grouped packets with individual observations
+        const flat = [];
+        for (const p of packets) {
+          if (p._children && p._children.length > 1) {
+            for (const c of p._children) flat.push(c);
+          } else {
+            flat.push(p);
+          }
+        }
+        packets = flat;
+        totalCount = flat.length;
+      }
 
       // Pre-resolve all path hops to node names
       const allHops = new Set();
@@ -780,7 +802,7 @@
       const pathStr = renderPath(pathHops);
       const detail = getDetailPreview(decoded);
 
-      return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select" data-value="${p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
+      return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select-hash" data-value="${p.hash || p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
         <td></td><td class="col-region">${region ? `<span class="badge-region">${region}</span>` : '—'}</td>
         <td class="col-time">${timeAgo(p.timestamp)}</td>
         <td class="mono col-hash">${truncate(p.hash || String(p.id), 8)}</td>
