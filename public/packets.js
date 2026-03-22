@@ -1103,8 +1103,9 @@
     // Re-resolve hops with observer + sender location for regional filtering & disambiguation
     if (pathHops.length) {
       await ensureHopResolver();
-      const senderLat = decoded.lat || decoded.latitude || null;
-      const senderLon = decoded.lon || decoded.longitude || null;
+      const senderLat = (decoded.lat != null && decoded.lat !== 0) ? decoded.lat : (decoded.latitude || null);
+      const senderLon = (decoded.lon != null && decoded.lon !== 0) ? decoded.lon : (decoded.longitude || null);
+      console.log('[renderDetail] re-resolve:', { senderLat, senderLon, observer: pkt.observer_id?.slice(0,12), decodedKeys: Object.keys(decoded) });
       const resolved = HopResolver.resolve(pathHops, senderLat, senderLon, null, null, pkt.observer_id);
       Object.assign(hopNameCache, resolved || {});
     }
