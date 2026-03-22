@@ -1484,7 +1484,6 @@
     if (showOnlyFavorites && !packets.some(p => packetInvolvesFavorite(p))) return;
 
     playSound(typeName);
-    if (window.MeshAudio) MeshAudio.sonifyPacket(first);
     // Rain drop per observation in the group
     packets.forEach((p, i) => setTimeout(() => addRainDrop(p), i * 150));
 

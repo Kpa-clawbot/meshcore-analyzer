@@ -73,10 +73,7 @@
   // === Core: Initialize audio context ===
 
   function initAudio() {
-    if (audioCtx) {
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      return;
-    }
+    if (audioCtx) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = audioCtx.createGain();
     masterGain.gain.value = 0.3;
@@ -86,13 +83,11 @@
   // === Core: Sonify a single packet ===
 
   function sonifyPacket(pkt) {
-    console.log('[audio] sonifyPacket called, enabled:', audioEnabled, 'ctx:', audioCtx?.state, 'voices:', activeVoices);
     if (!audioEnabled || !audioCtx) return;
-    if (activeVoices >= MAX_VOICES) return;
+    if (activeVoices >= MAX_VOICES) return; // voice stealing: just drop
 
     const rawHex = pkt.raw || pkt.raw_hex || (pkt.packet && pkt.packet.raw_hex) || '';
-    console.log('[audio] rawHex len:', rawHex.length, 'first20:', rawHex.slice(0, 20));
-    if (!rawHex || rawHex.length < 6) return;
+    if (!rawHex || rawHex.length < 6) return; // need at least 3 bytes
 
     // Parse raw hex to byte array
     const allBytes = [];
