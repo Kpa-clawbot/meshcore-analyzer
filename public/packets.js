@@ -1336,22 +1336,8 @@
       const pathByte = parseInt(buf.slice(2, 4), 16);
       const hashSize = (pathByte >> 6) + 1;
       for (let i = 0; i < pathHops.length; i++) {
-        const hopEntry = hopNameCache[pathHops[i]];
-        const hopName = hopEntry ? (typeof hopEntry === 'string' ? hopEntry : hopEntry.name) : null;
-        const hopPubkey = hopEntry?.pubkey || pathHops[i];
-        const conflicts = hopEntry?.conflicts || [];
-        const distInfo = conflicts.length === 1 && conflicts[0].distKm != null
-          ? ` (${Math.round(conflicts[0].distKm)}km)`
-          : conflicts.length > 1 && conflicts.find(c => c.distKm != null)
-            ? ` (${Math.round(conflicts.find(c => c.distKm != null).distKm)}km)`
-            : '';
-        const conflictInfo = conflicts.length > 1
-          ? ` <span class="hop-warn" title="${conflicts.length} candidates: ${conflicts.map(c => c.name + (c.distKm != null ? ' (' + Math.round(c.distKm) + 'km)' : '') + (c.regional ? '' : ' (global)')).join(', ')}">⚠${conflicts.length}</span>`
-          : '';
-        const nameHtml = hopName
-          ? `<a href="#/nodes/${encodeURIComponent(hopPubkey)}" class="hop-link hop-named" data-hop-link="true">${escapeHtml(hopName)}</a>${distInfo}${conflictInfo}`
-          : '';
-        const label = hopName ? `Hop ${i} — ${nameHtml}` : `Hop ${i}`;
+        const hopHtml = HopDisplay.renderHop(pathHops[i], hopNameCache[pathHops[i]]);
+        const label = `Hop ${i} — ${hopHtml}`;
         rows += fieldRow(off + i * hashSize, label, pathHops[i], '');
       }
       off += hashSize * pathHops.length;
