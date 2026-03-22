@@ -14,6 +14,8 @@
   let realisticPropagation = localStorage.getItem('live-realistic-propagation') === 'true';
   let showOnlyFavorites = localStorage.getItem('live-favorites-only') === 'true';
   let matrixMode = localStorage.getItem('live-matrix-mode') === 'true';
+  let matrixRain = localStorage.getItem('live-matrix-rain') === 'true';
+  let rainCanvas = null, rainCtx = null, rainDrops = [], rainRAF = null;
   const propagationBuffer = new Map(); // hash -> {timer, packets[]}
   let _onResize = null;
   let _navCleanup = null;
@@ -634,6 +636,8 @@
             <span id="realisticDesc" class="sr-only">Buffer packets by hash and animate all paths simultaneously</span>
             <label><input type="checkbox" id="liveMatrixToggle" aria-describedby="matrixDesc"> Matrix</label>
             <span id="matrixDesc" class="sr-only">Animate packet hex bytes flowing along paths like the Matrix</span>
+            <label><input type="checkbox" id="liveMatrixRainToggle" aria-describedby="rainDesc"> Rain</label>
+            <span id="rainDesc" class="sr-only">Matrix rain overlay — packets fall as hex columns</span>
             <label><input type="checkbox" id="liveFavoritesToggle" aria-describedby="favDesc"> ⭐ Favorites</label>
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
           </div>
@@ -810,6 +814,15 @@
       const ht = document.getElementById('liveHeatToggle');
       if (ht) { ht.checked = false; ht.disabled = true; }
     }
+
+    const rainToggle = document.getElementById('liveMatrixRainToggle');
+    rainToggle.checked = matrixRain;
+    rainToggle.addEventListener('change', (e) => {
+      matrixRain = e.target.checked;
+      localStorage.setItem('live-matrix-rain', matrixRain);
+      if (matrixRain) startMatrixRain(); else stopMatrixRain();
+    });
+    if (matrixRain) startMatrixRain();
 
     // Feed show/hide
     const feedEl = document.getElementById('liveFeed');
@@ -1381,6 +1394,7 @@
 
     playSound(typeName);
     addFeedItem(icon, typeName, payload, hops, color, pkt);
+    addRainDrop(pkt);
 
     // Favorites filter: skip animation if packet doesn't involve a favorited node
     if (showOnlyFavorites && !packetInvolvesFavorite(pkt)) return;
@@ -1420,6 +1434,7 @@
     if (showOnlyFavorites && !packets.some(p => packetInvolvesFavorite(p))) return;
 
     playSound(typeName);
+    addRainDrop(first);
 
     // Ensure ADVERT nodes appear
     for (const pkt of packets) {
@@ -1686,6 +1701,130 @@
     setTimeout(() => marker.setStyle({ fillColor: baseColor, fillOpacity: 0.85, radius: baseSize, color: '#fff', weight: marker._baseSize > 6 ? 1.5 : 0.5 }), 700);
 
     nodeActivity[key] = (nodeActivity[key] || 0) + 1;
+  }
+
+  // === Matrix Rain System ===
+  function startMatrixRain() {
+    const container = document.getElementById('liveMap');
+    if (!container || rainCanvas) return;
+    rainCanvas = document.createElement('canvas');
+    rainCanvas.id = 'matrixRainCanvas';
+    rainCanvas.style.cssText = 'position:absolute;inset:0;z-index:9998;pointer-events:none;';
+    rainCanvas.width = container.clientWidth;
+    rainCanvas.height = container.clientHeight;
+    container.appendChild(rainCanvas);
+    rainCtx = rainCanvas.getContext('2d');
+    rainDrops = [];
+
+    // Resize handler
+    rainCanvas._resizeHandler = () => {
+      if (rainCanvas) {
+        rainCanvas.width = container.clientWidth;
+        rainCanvas.height = container.clientHeight;
+      }
+    };
+    window.addEventListener('resize', rainCanvas._resizeHandler);
+
+    function renderRain(now) {
+      if (!rainCanvas || !rainCtx) return;
+      const W = rainCanvas.width, H = rainCanvas.height;
+      rainCtx.clearRect(0, 0, W, H);
+
+      for (let i = rainDrops.length - 1; i >= 0; i--) {
+        const drop = rainDrops[i];
+        const elapsed = now - drop.startTime;
+        const progress = Math.min(1, elapsed / drop.duration);
+
+        // Head position
+        const headY = progress * drop.maxY;
+        // Trail length in pixels — proportional to hops
+        const trailPx = Math.min(H * 0.4, drop.hops * 30);
+
+        const CHAR_H = 18;
+        const numChars = Math.min(drop.bytes.length, Math.floor(trailPx / CHAR_H));
+
+        for (let c = 0; c < numChars; c++) {
+          const charY = headY - c * CHAR_H;
+          if (charY < -CHAR_H || charY > H) continue;
+
+          // Fade: head is bright, tail fades
+          const fadeFactor = 1 - (c / numChars);
+          // Also fade entire drop near end of life
+          const lifeFade = progress > 0.7 ? 1 - (progress - 0.7) / 0.3 : 1;
+          const alpha = Math.max(0, fadeFactor * lifeFade);
+
+          if (c === 0) {
+            // Leading char: bright white with green glow
+            rainCtx.font = 'bold 16px "Courier New", monospace';
+            rainCtx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            rainCtx.shadowColor = '#00ff41';
+            rainCtx.shadowBlur = 12;
+          } else {
+            // Trail chars: green, dimmer
+            rainCtx.font = '14px "Courier New", monospace';
+            rainCtx.fillStyle = `rgba(0, 255, 65, ${alpha * 0.8})`;
+            rainCtx.shadowColor = '#00ff41';
+            rainCtx.shadowBlur = 4;
+          }
+
+          rainCtx.fillText(drop.bytes[c % drop.bytes.length], drop.x, charY);
+        }
+
+        // Remove finished drops
+        if (progress >= 1) {
+          rainDrops.splice(i, 1);
+        }
+      }
+
+      rainCtx.shadowBlur = 0; // reset
+      rainRAF = requestAnimationFrame(renderRain);
+    }
+    rainRAF = requestAnimationFrame(renderRain);
+  }
+
+  function stopMatrixRain() {
+    if (rainRAF) { cancelAnimationFrame(rainRAF); rainRAF = null; }
+    if (rainCanvas) {
+      window.removeEventListener('resize', rainCanvas._resizeHandler);
+      rainCanvas.remove();
+      rainCanvas = null;
+      rainCtx = null;
+    }
+    rainDrops = [];
+  }
+
+  function addRainDrop(pkt) {
+    if (!rainCanvas || !matrixRain) return;
+    const decoded = pkt.decoded || {};
+    const hops = decoded.path?.hops || [];
+    const hopCount = Math.max(1, hops.length);
+    const rawHex = pkt.raw || '';
+    const bytes = [];
+    for (let i = 0; i < rawHex.length; i += 2) {
+      bytes.push(rawHex.slice(i, i + 2).toUpperCase());
+    }
+    if (bytes.length === 0) {
+      for (let i = 0; i < 12; i++) bytes.push(((Math.random() * 256) | 0).toString(16).padStart(2, '0').toUpperCase());
+    }
+
+    const W = rainCanvas.width;
+    const H = rainCanvas.height;
+    // Fall distance proportional to hops: 8+ hops = full height
+    const maxY = H * Math.min(1, hopCount / 8);
+    // Duration: 5s for full height, proportional for shorter
+    const duration = 5000 * (maxY / H);
+
+    // Random x position, avoid edges
+    const x = 20 + Math.random() * (W - 40);
+
+    rainDrops.push({
+      x,
+      maxY,
+      duration,
+      bytes,
+      hops: hopCount,
+      startTime: performance.now()
+    });
   }
 
   function applyMatrixTheme(on) {
@@ -2047,6 +2186,7 @@
       _navCleanup = null;
     }
     nodesLayer = pathsLayer = animLayer = heatLayer = null;
+    stopMatrixRain();
     nodeMarkers = {}; nodeData = {};
     recentPaths = [];
     packetCount = 0; activeAnims = 0;
