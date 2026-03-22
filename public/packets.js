@@ -13,6 +13,8 @@
   let selectedId = null;
   let groupByHash = true;
   let filters = {};
+  { const o = localStorage.getItem('meshcore-observer-filter'); if (o) filters.observer = o;
+    const t = localStorage.getItem('meshcore-type-filter'); if (t) filters.type = t; }
   let wsHandler = null;
   let observers = [];
   let regionMap = {};
@@ -21,6 +23,7 @@
   let totalCount = 0;
   let expandedHashes = new Set();
   let hopNameCache = {};
+  let showHexHashes = localStorage.getItem('meshcore-hex-hashes') === 'true';
   let filtersBuilt = false;
   const PANEL_WIDTH_KEY = 'meshcore-panel-width';
 
@@ -116,6 +119,9 @@
   }
 
   function renderHop(h) {
+    if (showHexHashes) {
+      return `<span class="hop">${escapeHtml(h)}</span>`;
+    }
     const entry = hopNameCache[h];
     const name = entry ? (typeof entry === 'string' ? entry : entry.name) : null;
     const pubkey = entry?.pubkey || h;
@@ -242,8 +248,8 @@
 
       // Check if new packets pass current filters
       const filtered = newPkts.filter(p => {
-        if (filters.type !== undefined && filters.type !== '' && p.payload_type !== Number(filters.type)) return false;
-        if (filters.observer && p.observer_id !== filters.observer) return false;
+        if (filters.type) { const types = filters.type.split(',').map(Number); if (!types.includes(p.payload_type)) return false; }
+        if (filters.observer) { const obsSet = new Set(filters.observer.split(',')); if (!obsSet.has(p.observer_id)) return false; }
         if (filters.hash && p.hash !== filters.hash) return false;
         if (RegionFilter.getRegionParam()) {
           const selectedRegions = RegionFilter.getRegionParam().split(',');
@@ -462,6 +468,7 @@
             <button class="col-toggle-btn" id="colToggleBtn" title="Show/hide table columns">Columns ▾</button>
             <div class="col-toggle-menu" id="colToggleMenu"></div>
           </div>
+          <button class="btn btn-icon${showHexHashes ? ' active' : ''}" id="hexHashToggle" title="Show hex hashes in path column">Hex</button>
         </div>
       </div>
       <table class="data-table" id="pktTable">
@@ -512,6 +519,7 @@
         if (e.target.checked) selectedObservers.add(id); else selectedObservers.delete(id);
       }
       filters.observer = selectedObservers.size > 0 ? [...selectedObservers].join(',') : undefined;
+      if (filters.observer) localStorage.setItem('meshcore-observer-filter', filters.observer); else localStorage.removeItem('meshcore-observer-filter');
       buildObserverMenu();
       updateObsTrigger();
       loadPackets();
@@ -553,6 +561,7 @@
         if (e.target.checked) selectedTypes.add(id); else selectedTypes.delete(id);
       }
       filters.type = selectedTypes.size > 0 ? [...selectedTypes].join(',') : undefined;
+      if (filters.type) localStorage.setItem('meshcore-type-filter', filters.type); else localStorage.removeItem('meshcore-type-filter');
       buildTypeMenu();
       updateTypeTrigger();
       loadPackets();

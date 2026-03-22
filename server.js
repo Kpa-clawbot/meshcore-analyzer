@@ -921,7 +921,8 @@ app.get('/api/packets', (req, res) => {
     }
     let results = [...allPackets.values()].sort((a, b) => order === 'DESC' ? b.timestamp.localeCompare(a.timestamp) : a.timestamp.localeCompare(b.timestamp));
     // Apply additional filters
-    if (type !== undefined) results = results.filter(p => String(p.payload_type) === String(type));
+    if (type !== undefined) { const types = String(type).split(','); results = results.filter(p => types.includes(String(p.payload_type))); }
+    if (observer) { const obsIds = observer.split(','); results = results.filter(p => obsIds.includes(p.observer_id)); }
     if (region) results = results.filter(p => (p.observer_id || '').includes(region) || (p.decoded_json || '').includes(region));
     if (since) results = results.filter(p => p.timestamp >= since);
     if (until) results = results.filter(p => p.timestamp <= until);
