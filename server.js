@@ -10,6 +10,7 @@ const fs = require('fs');
 const config = require('./config.json');
 const decoder = require('./decoder');
 const PAYLOAD_TYPES = decoder.PAYLOAD_TYPES;
+const { nodeNearRegion } = require('./iata-coords');
 
 // Health thresholds — configurable with sensible defaults
 const _ht = config.healthThresholds || {};
@@ -2025,15 +2026,28 @@ app.get('/api/resolve-hops', (req, res) => {
   const packetIata = observerId ? observerIataMap[observerId] : null;
   const regionalObserverIds = packetIata ? observersByIata[packetIata] : null;
 
-  // Helper: check if a node has been seen by any observer in the given region
-  const nodeSeenInRegion = (pubkey) => {
-    if (!regionalObserverIds) return false;
-    const nodeObservers = pktStore._advertByObserver.get(pubkey);
-    if (!nodeObservers) return false;
-    for (const obsId of nodeObservers) {
-      if (regionalObserverIds.has(obsId)) return true;
+  // Helper: check if a node is near the packet's region using layered filtering
+  // Layer 1: Node has lat/lon → geographic distance to IATA center (bridge-proof)
+  // Layer 2: Node has no lat/lon → observer-based (was ADVERT seen by regional observer)
+  // Returns: { near: boolean, method: 'geo'|'observer'|'none', distKm?: number }
+  const nodeInRegion = (candidate) => {
+    // Layer 1: Geographic check (ground truth, bridge-proof)
+    if (packetIata && candidate.lat && candidate.lon && !(candidate.lat === 0 && candidate.lon === 0)) {
+      const geoCheck = nodeNearRegion(candidate.lat, candidate.lon, packetIata);
+      if (geoCheck) return { near: geoCheck.near, method: 'geo', distKm: geoCheck.distKm };
     }
-    return false;
+    // Layer 2: Observer-based check (fallback for nodes without GPS)
+    if (regionalObserverIds) {
+      const nodeObservers = pktStore._advertByObserver.get(candidate.public_key);
+      if (nodeObservers) {
+        for (const obsId of nodeObservers) {
+          if (regionalObserverIds.has(obsId)) return { near: true, method: 'observer' };
+        }
+      }
+      return { near: false, method: 'observer' };
+    }
+    // No region info available
+    return { near: false, method: 'none' };
   };
 
   // Build observer geographic position
@@ -2072,25 +2086,34 @@ app.get('/api/resolve-hops', (req, res) => {
       resolved[hop] = { name: null, candidates: [], conflicts: [] };
     } else if (allCandidates.length === 1) {
       const c = allCandidates[0];
-      resolved[hop] = { name: c.name, pubkey: c.public_key, candidates: [{ name: c.name, pubkey: c.public_key, lat: c.lat, lon: c.lon }], conflicts: [] };
+      const regionCheck = nodeInRegion(c);
+      resolved[hop] = { name: c.name, pubkey: c.public_key,
+        candidates: [{ name: c.name, pubkey: c.public_key, lat: c.lat, lon: c.lon, regional: regionCheck.near, filterMethod: regionCheck.method, distKm: regionCheck.distKm }],
+        conflicts: [] };
     } else {
-      // Multiple candidates — apply regional filtering
-      const regional = allCandidates.filter(c => nodeSeenInRegion(c.public_key));
-      const candidates = regional.length > 0 ? regional : allCandidates;
-      const globalFallback = regional.length === 0 && allCandidates.length > 0;
+      // Multiple candidates — apply layered regional filtering
+      const checked = allCandidates.map(c => {
+        const r = nodeInRegion(c);
+        return { ...c, regional: r.near, filterMethod: r.method, distKm: r.distKm };
+      });
+      const regional = checked.filter(c => c.regional);
+      const candidates = regional.length > 0 ? regional : checked;
+      const globalFallback = regional.length === 0 && checked.length > 0;
 
       const conflicts = candidates.map(c => ({
         name: c.name, pubkey: c.public_key, lat: c.lat, lon: c.lon,
-        regional: nodeSeenInRegion(c.public_key)
+        regional: c.regional, filterMethod: c.filterMethod, distKm: c.distKm
       }));
 
       if (candidates.length === 1) {
         resolved[hop] = { name: candidates[0].name, pubkey: candidates[0].public_key,
-          candidates: conflicts, conflicts, globalFallback };
+          candidates: conflicts, conflicts, globalFallback,
+          filterMethod: candidates[0].filterMethod };
       } else {
         resolved[hop] = { name: candidates[0].name, pubkey: candidates[0].public_key,
           ambiguous: true, candidates: conflicts, conflicts, globalFallback,
-          hopBytes: hopByteLen, totalGlobal: allCandidates.length, totalRegional: regional.length };
+          hopBytes: hopByteLen, totalGlobal: allCandidates.length, totalRegional: regional.length,
+          filterMethods: [...new Set(candidates.map(c => c.filterMethod))] };
       }
     }
   }
