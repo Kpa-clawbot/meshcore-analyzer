@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const config = require('./config.json');
 const decoder = require('./decoder');
+const PAYLOAD_TYPES = decoder.PAYLOAD_TYPES;
 
 // Health thresholds — configurable with sensible defaults
 const _ht = config.healthThresholds || {};
@@ -2846,6 +2847,35 @@ app.get('/api/analytics/subpath-detail', (req, res) => {
   };
   cache.set(_sdck, _sdResult, TTL.analyticsSubpathDetail);
   res.json(_sdResult);
+});
+
+// Audio Lab: representative packets bucketed by type
+app.get('/api/audio-lab/buckets', (req, res) => {
+  const buckets = {};
+  const byType = {};
+  for (const tx of pktStore.packets) {
+    if (!tx.raw_hex) continue;
+    let typeName = 'UNKNOWN';
+    try { const d = JSON.parse(tx.decoded_json || '{}'); typeName = d.type || (PAYLOAD_TYPES[tx.payload_type] || 'UNKNOWN'); } catch {}
+    if (!byType[typeName]) byType[typeName] = [];
+    byType[typeName].push(tx);
+  }
+  for (const [type, pkts] of Object.entries(byType)) {
+    const sorted = pkts.sort((a, b) => (a.raw_hex || '').length - (b.raw_hex || '').length);
+    const count = Math.min(8, sorted.length);
+    const picked = [];
+    for (let i = 0; i < count; i++) {
+      const idx = Math.floor((i / count) * sorted.length);
+      const tx = sorted[idx];
+      picked.push({
+        hash: tx.hash, raw_hex: tx.raw_hex, decoded_json: tx.decoded_json,
+        observation_count: tx.observation_count || 1, payload_type: tx.payload_type,
+        path_json: tx.path_json, observer_id: tx.observer_id, timestamp: tx.timestamp,
+      });
+    }
+    buckets[type] = picked;
+  }
+  res.json({ buckets });
 });
 
 // Static files + SPA fallback
