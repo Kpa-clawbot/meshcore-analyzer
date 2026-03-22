@@ -1758,7 +1758,7 @@
 
     const matrixGreen = '#00ff41';
     const TRAIL_LEN = Math.min(6, bytes.length); // visible chars at once — fewer for more spacing
-    const TOTAL_STEPS = 45; // slower animation
+    const TOTAL_STEPS = 35; // animation steps per hop
     const charMarkers = [];
     let step = 0;
 
@@ -1832,7 +1832,7 @@
 
         if (onComplete) onComplete();
       }
-    }, 50);
+    }, 40);
   }
 
   function drawAnimatedLine(from, to, color, onComplete, overrideOpacity, rawHex) {
