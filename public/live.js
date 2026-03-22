@@ -1683,15 +1683,24 @@
     const container = document.getElementById('liveMap');
     if (!container) return;
     if (on) {
+      // Force dark mode, save previous theme to restore later
+      const currentTheme = document.documentElement.getAttribute('data-theme');
+      if (currentTheme !== 'dark') {
+        container.dataset.matrixPrevTheme = currentTheme || 'light';
+        document.documentElement.setAttribute('data-theme', 'dark');
+        const dt = document.getElementById('darkModeToggle');
+        if (dt) { dt.textContent = '🌙'; dt.disabled = true; }
+      } else {
+        const dt = document.getElementById('darkModeToggle');
+        if (dt) dt.disabled = true;
+      }
       container.classList.add('matrix-theme');
-      // Add scanline overlay if not present
       if (!document.getElementById('matrixScanlines')) {
         const scanlines = document.createElement('div');
         scanlines.id = 'matrixScanlines';
         scanlines.className = 'matrix-scanlines';
         container.appendChild(scanlines);
       }
-      // Re-tint existing node markers green
       for (const [key, marker] of Object.entries(nodeMarkers)) {
         marker._matrixPrevColor = marker._baseColor;
         marker._baseColor = '#005f15';
@@ -1702,11 +1711,22 @@
       container.classList.remove('matrix-theme');
       const scanlines = document.getElementById('matrixScanlines');
       if (scanlines) scanlines.remove();
-      // Restore node marker colors
+      // Restore previous theme
+      const prevTheme = container.dataset.matrixPrevTheme;
+      if (prevTheme) {
+        document.documentElement.setAttribute('data-theme', prevTheme);
+        localStorage.setItem('meshcore-theme', prevTheme);
+        const dt = document.getElementById('darkModeToggle');
+        if (dt) { dt.textContent = prevTheme === 'dark' ? '🌙' : '☀️'; dt.disabled = false; }
+        delete container.dataset.matrixPrevTheme;
+      } else {
+        const dt = document.getElementById('darkModeToggle');
+        if (dt) dt.disabled = false;
+      }
       for (const [key, marker] of Object.entries(nodeMarkers)) {
         if (marker._matrixPrevColor) {
           marker._baseColor = marker._matrixPrevColor;
-          marker.setStyle({ fillColor: marker._matrixPrevColor, color: '#fff' });
+          marker.setStyle({ fillColor: marker._matrixPrevColor, color: '#fff', fillOpacity: 0.85, opacity: 1 });
           if (marker._glowMarker) marker._glowMarker.setStyle({ fillColor: marker._matrixPrevColor });
           delete marker._matrixPrevColor;
         }
