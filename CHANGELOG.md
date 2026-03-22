@@ -1,17 +1,8 @@
 # Changelog
 
-## [2.4.0] — "The Observatory" — 2026-03-22
+## [2.4.0] — 2026-03-22
 
-146 commits. The packet viewer grew up.
-
-### Highlights
-
-- **Full observation model** — every packet now shows all observers, their individual paths, signal data, and timestamps. Expand any grouped packet to see how it propagated across the mesh. Sort by observer, path length, or time. Header row updates to match.
-- **Distance analytics** — haversine-calculated hop distances, link-type breakdown (R↔R, C↔R, C↔C), histogram, top 20 longest single hops, top 10 longest multi-hop paths. View any hop or path on the live map.
-- **Realistic propagation visualization** — "Realistic" toggle on live map buffers packets and animates all observation paths simultaneously, showing how packets actually spread through the mesh.
-- **Regional filtering everywhere** — shared multi-select region filter component across all tabs. Node region assignment based on ADVERT broadcasts (local presence), not data packet routing.
-- **Channel decryption overhaul** — rainbow table of pre-computed keys, simplified key architecture, zero-API live updates via WebSocket, 1-second ticking timestamps.
-- **Polished filter toolbar** — consistent control sizing, logical grouping with separators, tooltips on everything, ascending/descending sort options.
+Big batch: observation drill-down, distance analytics, regional filters on all tabs, channel decryption fixes, performance, and a ton of bug fixes.
 
 ### Added
 - Observation-level deeplinks (`#/packets/HASH?obs=OBSERVER_ID`)
