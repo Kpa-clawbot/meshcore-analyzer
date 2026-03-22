@@ -1795,25 +1795,16 @@
 
   function addRainDrop(pkt) {
     if (!rainCanvas || !matrixRain) return;
+    const rawHex = pkt.raw || pkt.raw_hex || (pkt.packet && pkt.packet.raw_hex) || '';
+    if (!rawHex) return; // no real packet bytes — don't fake it
     const decoded = pkt.decoded || {};
     const hops = decoded.path?.hops || [];
     const hopCount = Math.max(1, hops.length);
-    const rawHex = pkt.raw || pkt.raw_hex || (pkt.packet && pkt.packet.raw_hex) || pkt.hash || '';
     const bytes = [];
     for (let i = 0; i < rawHex.length; i += 2) {
       bytes.push(rawHex.slice(i, i + 2).toUpperCase());
     }
-    // Pad with decoded payload fields if we only got a short hash
-    if (bytes.length < 8) {
-      const payload = decoded.payload || {};
-      const extra = JSON.stringify(payload).replace(/[^0-9a-f]/gi, '');
-      for (let i = 0; i < extra.length && bytes.length < 16; i += 2) {
-        bytes.push(extra.slice(i, i + 2).toUpperCase());
-      }
-    }
-    if (bytes.length === 0) {
-      for (let i = 0; i < 12; i++) bytes.push(((Math.random() * 256) | 0).toString(16).padStart(2, '0').toUpperCase());
-    }
+    if (bytes.length === 0) return;
 
     const W = rainCanvas.width;
     const H = rainCanvas.height;
