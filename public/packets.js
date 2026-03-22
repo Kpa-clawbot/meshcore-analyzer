@@ -257,7 +257,6 @@
       } catch {}
     }
     wsHandler = debouncedOnWS(function (msgs) {
-      console.log('[packets-ws] batch:', msgs.length, 'paused:', packetsPaused);
       if (packetsPaused) {
         pauseBuffer.push(...msgs);
         const btn = document.getElementById('pktPauseBtn');
@@ -282,7 +281,6 @@
         if (filters.node && !(p.decoded_json || '').includes(filters.node)) return false;
         return true;
       });
-      console.log('[packets-ws] newPkts:', newPkts.length, 'filtered:', filtered.length, 'filters:', JSON.stringify(filters));
       if (!filtered.length) return;
 
       // Resolve any new hops, then update and re-render
