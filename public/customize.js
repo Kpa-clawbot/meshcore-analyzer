@@ -548,7 +548,7 @@
   }
 
   function destroy() {
-    resetPreview();
+    // Keep preview active across pages — don't reset on navigate
     removeStyles();
   }
 
