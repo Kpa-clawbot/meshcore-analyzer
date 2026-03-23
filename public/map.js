@@ -9,7 +9,7 @@
   let nodes = [];
   let targetNodeKey = null;
   let observers = [];
-  let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clusters: false, hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false' };
+  let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clusters: false, hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false', statusFilter: localStorage.getItem('meshcore-map-status-filter') || 'all' };
   let wsHandler = null;
   let heatLayer = null;
   let userHasMoved = false;
@@ -94,6 +94,14 @@
             <label for="mcClusters"><input type="checkbox" id="mcClusters"> Show clusters</label>
             <label for="mcHeatmap"><input type="checkbox" id="mcHeatmap"> Heat map</label>
             <label for="mcHashLabels"><input type="checkbox" id="mcHashLabels"> Hash prefix labels</label>
+          </fieldset>
+          <fieldset class="mc-section">
+            <legend class="mc-label">Status</legend>
+            <div class="filter-group" id="mcStatusFilter">
+              <button class="btn ${filters.statusFilter==='all'?'active':''}" data-status="all">All</button>
+              <button class="btn ${filters.statusFilter==='active'?'active':''}" data-status="active">Active</button>
+              <button class="btn ${filters.statusFilter==='stale'?'active':''}" data-status="stale">Stale</button>
+            </div>
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Filters</legend>
@@ -200,6 +208,16 @@
       hashLabelEl.addEventListener('change', e => { filters.hashLabels = e.target.checked; localStorage.setItem('meshcore-map-hash-labels', filters.hashLabels); renderMarkers(); });
     }
     document.getElementById('mcLastHeard').addEventListener('change', e => { filters.lastHeard = e.target.value; loadNodes(); });
+
+    // Status filter buttons
+    document.querySelectorAll('#mcStatusFilter .btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filters.statusFilter = btn.dataset.status;
+        localStorage.setItem('meshcore-map-status-filter', filters.statusFilter);
+        document.querySelectorAll('#mcStatusFilter .btn').forEach(b => b.classList.toggle('active', b.dataset.status === filters.statusFilter));
+        renderMarkers();
+      });
+    });
 
     // WS for live advert updates
     wsHandler = debouncedOnWS(function (msgs) {
@@ -414,13 +432,33 @@
     const obsCount = observers.filter(o => o.lat && o.lon).length;
     const roles = ['repeater', 'companion', 'room', 'sensor', 'observer'];
     const shapeMap = { repeater: '◆', companion: '●', room: '■', sensor: '▲', observer: '★' };
+
+    // Count active/stale per role from loaded nodes
+    const roleCounts = {};
     for (const role of roles) {
-      const count = role === 'observer' ? obsCount : (counts[role + 's'] || 0);
+      roleCounts[role] = { active: 0, stale: 0 };
+    }
+    for (const n of nodes) {
+      const role = (n.role || 'companion').toLowerCase();
+      if (!roleCounts[role]) roleCounts[role] = { active: 0, stale: 0 };
+      const lastMs = n.last_seen ? new Date(n.last_seen).getTime() : 0;
+      const status = getNodeStatus(role, lastMs);
+      roleCounts[role][status]++;
+    }
+
+    for (const role of roles) {
       const cbId = 'mcRole_' + role;
       const lbl = document.createElement('label');
       lbl.setAttribute('for', cbId);
       const shape = shapeMap[role] || '●';
-      lbl.innerHTML = `<input type="checkbox" id="${cbId}" data-role="${role}" ${filters[role] ? 'checked' : ''}> <span style="color:${ROLE_COLORS[role]};font-weight:600;" aria-hidden="true">${shape}</span> ${ROLE_LABELS[role]} <span style="color:var(--text-muted)">(${count})</span>`;
+      let countStr;
+      if (role === 'observer') {
+        countStr = `(${obsCount})`;
+      } else {
+        const rc = roleCounts[role] || { active: 0, stale: 0 };
+        countStr = `(${rc.active} active, ${rc.stale} stale)`;
+      }
+      lbl.innerHTML = `<input type="checkbox" id="${cbId}" data-role="${role}" ${filters[role] ? 'checked' : ''}> <span style="color:${ROLE_COLORS[role]};font-weight:600;" aria-hidden="true">${shape}</span> ${ROLE_LABELS[role]} <span style="color:var(--text-muted)">${countStr}</span>`;
       lbl.querySelector('input').addEventListener('change', e => {
         filters[e.target.dataset.role] = e.target.checked;
         renderMarkers();
@@ -539,6 +577,13 @@
     const filtered = nodes.filter(n => {
       if (!n.lat || !n.lon) return false;
       if (!filters[n.role || 'companion']) return false;
+      // Status filter
+      if (filters.statusFilter !== 'all') {
+        const role = (n.role || 'companion').toLowerCase();
+        const lastMs = n.last_seen ? new Date(n.last_seen).getTime() : 0;
+        const status = getNodeStatus(role, lastMs);
+        if (status !== filters.statusFilter) return false;
+      }
       return true;
     });
 

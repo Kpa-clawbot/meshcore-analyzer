@@ -71,7 +71,8 @@
     if (sortState.column !== col) return '';
     return '<span class="sort-arrow">' + (sortState.direction === 'asc' ? '▲' : '▼') + '</span>';
   }
-  let lastHeard = '';
+  let lastHeard = localStorage.getItem('meshcore-nodes-last-heard') || '';
+  let statusFilter = localStorage.getItem('meshcore-nodes-status-filter') || 'all';
   let wsHandler = null;
   let detailMap = null;
 
@@ -429,10 +430,19 @@
         filtered = filtered.filter(n => (n.name || '').toLowerCase().includes(q) || (n.public_key || '').toLowerCase().includes(q));
       }
       if (lastHeard) {
-        const ms = { '1h': 3600000, '6h': 21600000, '24h': 86400000, '7d': 604800000, '30d': 2592000000 }[lastHeard];
+        const ms = { '1h': 3600000, '2h': 7200000, '6h': 21600000, '12h': 43200000, '24h': 86400000, '48h': 172800000, '3d': 259200000, '7d': 604800000, '14d': 1209600000, '30d': 2592000000 }[lastHeard];
         if (ms) filtered = filtered.filter(n => {
           const t = n.last_heard || n.last_seen;
           return t && (Date.now() - new Date(t).getTime()) < ms;
+        });
+      }
+      // Status filter (active/stale)
+      if (statusFilter === 'active' || statusFilter === 'stale') {
+        filtered = filtered.filter(n => {
+          const role = (n.role || 'companion').toLowerCase();
+          const t = n.last_heard || n.last_seen;
+          const lastMs = t ? new Date(t).getTime() : 0;
+          return getNodeStatus(role, lastMs) === statusFilter;
         });
       }
       nodes = filtered;
@@ -490,12 +500,22 @@
           ${TABS.map(t => `<button class="node-tab ${activeTab === t.key ? 'active' : ''}" data-tab="${t.key}">${t.label}</button>`).join('')}
         </div>
         <div class="nodes-filters">
+          <div class="filter-group" id="nodeStatusFilter">
+            <button class="btn ${statusFilter==='all'?'active':''}" data-status="all">All</button>
+            <button class="btn ${statusFilter==='active'?'active':''}" data-status="active">Active</button>
+            <button class="btn ${statusFilter==='stale'?'active':''}" data-status="stale">Stale</button>
+          </div>
           <select id="nodeLastHeard" aria-label="Filter by last heard time">
             <option value="">Last Heard: Any</option>
             <option value="1h" ${lastHeard==='1h'?'selected':''}>1 hour</option>
+            <option value="2h" ${lastHeard==='2h'?'selected':''}>2 hours</option>
             <option value="6h" ${lastHeard==='6h'?'selected':''}>6 hours</option>
+            <option value="12h" ${lastHeard==='12h'?'selected':''}>12 hours</option>
             <option value="24h" ${lastHeard==='24h'?'selected':''}>24 hours</option>
+            <option value="48h" ${lastHeard==='48h'?'selected':''}>48 hours</option>
+            <option value="3d" ${lastHeard==='3d'?'selected':''}>3 days</option>
             <option value="7d" ${lastHeard==='7d'?'selected':''}>7 days</option>
+            <option value="14d" ${lastHeard==='14d'?'selected':''}>14 days</option>
             <option value="30d" ${lastHeard==='30d'?'selected':''}>30 days</option>
           </select>
         </div>
@@ -519,7 +539,17 @@
     });
 
     // Filter changes
-    document.getElementById('nodeLastHeard').addEventListener('change', e => { lastHeard = e.target.value; loadNodes(); });
+    document.getElementById('nodeLastHeard').addEventListener('change', e => { lastHeard = e.target.value; localStorage.setItem('meshcore-nodes-last-heard', lastHeard); loadNodes(); });
+
+    // Status filter buttons
+    document.querySelectorAll('#nodeStatusFilter .btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        statusFilter = btn.dataset.status;
+        localStorage.setItem('meshcore-nodes-status-filter', statusFilter);
+        document.querySelectorAll('#nodeStatusFilter .btn').forEach(b => b.classList.toggle('active', b.dataset.status === statusFilter));
+        loadNodes();
+      });
+    });
 
     // Sortable column headers
     el.querySelectorAll('th.sortable').forEach(th => {

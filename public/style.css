@@ -211,6 +211,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   font-family: var(--font); color: var(--text); height: 34px; box-sizing: border-box; line-height: 1;
 }
 .filter-group { display: flex; gap: 6px; align-items: center; }
+.filter-group .btn { padding: 4px 10px; font-size: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); cursor: pointer; transition: background 0.15s, color 0.15s; }
+.filter-group .btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.filter-group .btn:hover:not(.active) { background: var(--surface-2); }
 .filter-group + .filter-group { border-left: 1px solid var(--border); padding-left: 12px; margin-left: 6px; }
 .sort-help { cursor: help; font-size: 14px; color: var(--text-muted, #888); position: relative; display: inline-block; }
 .sort-help-tip {
