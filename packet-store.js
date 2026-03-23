@@ -591,9 +591,12 @@ class PacketStore {
       observer_name: tx.observer_name,
       path_json: tx.path_json,
       payload_type: tx.payload_type,
+      route_type: tx.route_type,
       raw_hex: tx.raw_hex,
       decoded_json: tx.decoded_json,
       observation_count: tx.observation_count,
+      snr: tx.snr,
+      rssi: tx.rssi,
     })).sort((a, b) => b.latest.localeCompare(a.latest));
 
     const total = sorted.length;
@@ -696,8 +699,8 @@ class PacketStore {
 
     const sql = `SELECT hash, COUNT(*) as count, COUNT(DISTINCT observer_id) as observer_count,
       MAX(timestamp) as latest, MIN(observer_id) as observer_id, MIN(observer_name) as observer_name,
-      MIN(path_json) as path_json, MIN(payload_type) as payload_type, MIN(raw_hex) as raw_hex,
-      MIN(decoded_json) as decoded_json
+      MIN(path_json) as path_json, MIN(payload_type) as payload_type, MIN(route_type) as route_type,
+      MIN(raw_hex) as raw_hex, MIN(decoded_json) as decoded_json, MIN(snr) as snr, MIN(rssi) as rssi
       FROM packets_v ${w} GROUP BY hash ORDER BY latest DESC LIMIT ? OFFSET ?`;
     const packets = this.db.prepare(sql).all(...params, limit, offset);
 
