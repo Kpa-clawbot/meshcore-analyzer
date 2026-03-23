@@ -84,6 +84,60 @@
     { key: 'sensor', label: 'Sensors' },
   ];
 
+  /* === Shared helper functions for node detail rendering === */
+
+  function getStatusInfo(n) {
+    // Single source of truth for all status-related info
+    const role = (n.role || '').toLowerCase();
+    const roleColor = ROLE_COLORS[n.role] || '#6b7280';
+    // Accept pre-resolved lastHeard from health data, or fall back to last_seen
+    const lastHeardTime = n._lastHeard || n.last_seen;
+    const lastHeardMs = lastHeardTime ? new Date(lastHeardTime).getTime() : 0;
+    const status = getNodeStatus(role, lastHeardMs);
+    const statusLabel = status === 'active' ? '🟢 Active' : '⚪ Stale';
+    const statusAge = lastHeardMs ? (Date.now() - lastHeardMs) : Infinity;
+
+    let explanation = '';
+    if (status === 'active') {
+      explanation = 'Last heard ' + (lastHeardTime ? timeAgo(lastHeardTime) : 'unknown');
+    } else {
+      const ageDays = Math.floor(statusAge / 86400000);
+      const ageHours = Math.floor(statusAge / 3600000);
+      const ageStr = ageDays >= 1 ? ageDays + 'd' : ageHours + 'h';
+      const isInfra = role === 'repeater' || role === 'room';
+      const reason = isInfra
+        ? 'repeaters typically advertise every 12-24h'
+        : 'companions only advertise when user initiates, this may be normal';
+      explanation = 'Not heard for ' + ageStr + ' — ' + reason;
+    }
+
+    return { status, statusLabel, statusAge, explanation, roleColor, lastHeardMs, role };
+  }
+
+  function renderNodeBadges(n, roleColor) {
+    // Returns HTML for: role badge, hash prefix badge, hash inconsistency link, status label
+    const info = getStatusInfo(n);
+    let html = `<span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span>`;
+    if (n.hash_size) {
+      html += ` <span class="badge" style="background:var(--nav-bg);color:var(--nav-text);font-family:var(--mono)">${n.public_key.slice(0, n.hash_size * 2).toUpperCase()}</span>`;
+    }
+    if (n.hash_size_inconsistent) {
+      html += ` <a href="#/nodes/${encodeURIComponent(n.public_key)}?section=node-packets" class="badge" style="background:var(--status-yellow);color:#000;font-size:10px;cursor:pointer;text-decoration:none">⚠️ variable hash size</a>`;
+    }
+    html += ' ' + info.statusLabel;
+    return html;
+  }
+
+  function renderStatusExplanation(n) {
+    const info = getStatusInfo(n);
+    return `<div style="font-size:12px;color:var(--text-muted);margin:4px 0 6px">${info.statusLabel} — ${info.explanation}</div>`;
+  }
+
+  function renderHashInconsistencyWarning(n) {
+    if (!n.hash_size_inconsistent) return '';
+    return `<div style="font-size:11px;color:var(--text-muted);margin:-2px 0 6px;padding:6px 10px;background:var(--surface-2);border-radius:4px;border-left:3px solid var(--status-yellow)">Adverts show varying hash sizes (<strong>${(n.hash_sizes_seen||[]).join('-byte, ')}-byte</strong>). This is a <a href="https://github.com/meshcore-dev/MeshCore/commit/fcfdc5f" target="_blank" style="color:var(--accent)">known bug</a> where automatic adverts ignore the configured multibyte path setting. Fixed in <a href="https://github.com/meshcore-dev/MeshCore/releases/tag/repeater-v1.14.1" target="_blank" style="color:var(--accent)">repeater v1.14.1</a>.</div>`;
+  }
+
   let directNode = null; // set when navigating directly to #/nodes/:pubkey
 
   let regionChangeHandler = null;
@@ -150,7 +204,6 @@
       const title = document.querySelector('.node-full-title');
       if (title) title.textContent = n.name || pubkey.slice(0, 12);
 
-      const roleColor = ROLE_COLORS[n.role] || '#6b7280';
       const hasLoc = n.lat != null && n.lon != null;
 
       // Health stats
@@ -159,34 +212,19 @@
       const observers = h.observers || [];
       const recent = h.recentPackets || [];
       const lastHeard = stats.lastHeard;
-      // Thresholds based on MeshCore advert intervals:
-      // Repeaters/rooms: flood advert every 12-24h, so degraded after 24h, silent after 72h
-      // Companions/sensors: user-initiated adverts, shorter thresholds
-      const role = (n.role || '').toLowerCase();
-      const lastHeardTime = lastHeard || n.last_seen;
-      const lastHeardMs = lastHeardTime ? new Date(lastHeardTime).getTime() : 0;
-      const status = getNodeStatus(role, lastHeardMs);
-      const statusLabel = status === 'active' ? '🟢 Active' : '⚪ Stale';
-      const statusAge = lastHeardMs ? (Date.now() - lastHeardMs) : Infinity;
-      let statusExplanation = '';
-      if (status === 'active') {
-        statusExplanation = 'Last heard ' + (lastHeard ? timeAgo(lastHeard) : 'unknown');
-      } else {
-        const ageDays = Math.floor(statusAge / 86400000);
-        const ageHours = Math.floor(statusAge / 3600000);
-        const ageStr = ageDays >= 1 ? ageDays + 'd' : ageHours + 'h';
-        const isInfra = role === 'repeater' || role === 'room';
-        const reason = isInfra
-          ? 'repeaters typically advertise every 12-24h'
-          : 'companions only advertise when user initiates, this may be normal';
-        statusExplanation = 'Not heard for ' + ageStr + ' — ' + reason;
-      }
+
+      // Attach health lastHeard for shared helpers
+      n._lastHeard = lastHeard || n.last_seen;
+      const si = getStatusInfo(n);
+      const roleColor = si.roleColor;
+      const statusLabel = si.statusLabel;
+      const statusExplanation = si.explanation;
 
       body.innerHTML = `
         <div class="node-full-card" style="padding:12px 16px;margin-bottom:8px">
           <div class="node-detail-name" style="font-size:20px">${escapeHtml(n.name || '(unnamed)')}</div>
-          <div style="margin:4px 0 6px"><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span> ${n.hash_size ? `<span class="badge" style="background:var(--nav-bg);color:var(--nav-text);font-family:var(--mono)">${n.public_key.slice(0, n.hash_size * 2).toUpperCase()}</span>` : ''} ${n.hash_size_inconsistent ? `<a href="#/nodes/${encodeURIComponent(n.public_key)}?section=node-packets" class="badge" style="background:var(--status-yellow);color:#000;font-size:10px;cursor:pointer;text-decoration:none">⚠️ variable hash size</a>` : ''} ${statusLabel}</div>
-          ${n.hash_size_inconsistent ? `<div style="font-size:11px;color:var(--text-muted);margin:-2px 0 6px;padding:6px 10px;background:var(--surface-2);border-radius:4px;border-left:3px solid var(--status-yellow)">Adverts show varying hash sizes (<strong>${(n.hash_sizes_seen||[]).join('-byte, ')}-byte</strong>). This is a <a href="https://github.com/meshcore-dev/MeshCore/commit/fcfdc5f" target="_blank" style="color:var(--accent)">known bug</a> where automatic adverts ignore the configured multibyte path setting. Fixed in <a href="https://github.com/meshcore-dev/MeshCore/releases/tag/repeater-v1.14.1" target="_blank" style="color:var(--accent)">repeater v1.14.1</a>.</div>` : ''}
+          <div style="margin:4px 0 6px">${renderNodeBadges(n, roleColor)}</div>
+          ${renderHashInconsistencyWarning(n)}
           <div class="node-detail-key mono" style="font-size:11px;word-break:break-all;margin-bottom:6px">${n.public_key}</div>
           <div>
             <button class="btn-primary" id="copyUrlBtn" style="font-size:12px;padding:4px 10px">📋 Copy URL</button>
@@ -587,26 +625,24 @@
     const stats = h.stats || {};
     const observers = h.observers || [];
     const recent = h.recentPackets || [];
-    const roleColor = ROLE_COLORS[n.role] || '#6b7280';
     const hasLoc = n.lat != null && n.lon != null;
     const nodeUrl = location.origin + '#/nodes/' + encodeURIComponent(n.public_key);
 
-    // Status calculation
+    // Status calculation via shared helper
     const lastHeard = stats.lastHeard;
-    const lastHeardTime = lastHeard || n.last_seen;
-    const lastHeardMs = lastHeardTime ? new Date(lastHeardTime).getTime() : 0;
-    const role = (n.role || '').toLowerCase();
-    const status = getNodeStatus(role, lastHeardMs);
-    const statusLabel = status === 'active' ? '🟢 Active' : '⚪ Stale';
+    n._lastHeard = lastHeard || n.last_seen;
+    const si = getStatusInfo(n);
+    const roleColor = si.roleColor;
     const totalPackets = stats.totalTransmissions || stats.totalPackets || n.advert_count || 0;
 
     panel.innerHTML = `
       <div class="node-detail">
         <div class="node-detail-name">${escapeHtml(n.name || '(unnamed)')}</div>
-        <div class="node-detail-role"><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span> ${n.hash_size ? `<span class="badge" style="background:var(--nav-bg);color:var(--nav-text);font-family:var(--mono)">${n.public_key.slice(0, n.hash_size * 2).toUpperCase()}</span>` : ''} ${n.hash_size_inconsistent ? `<a href="#/nodes/${encodeURIComponent(n.public_key)}?section=node-packets" class="badge" style="background:var(--status-yellow);color:#000;font-size:10px;cursor:pointer;text-decoration:none">⚠️ variable hash size</a>` : ''} ${statusLabel}
+        <div class="node-detail-role">${renderNodeBadges(n, roleColor)}
           <a href="#/nodes/${encodeURIComponent(n.public_key)}" class="btn-primary" style="display:inline-block;text-decoration:none;font-size:11px;padding:2px 8px;margin-left:8px">🔍 Details</a>
           <a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="btn-primary" style="display:inline-block;margin-left:4px;text-decoration:none;font-size:11px;padding:2px 8px">📊 Analytics</a>
         </div>
+        ${renderStatusExplanation(n)}
 
         ${hasLoc ? `<div class="node-map-qr-wrap">
           <div class="node-map-container node-detail-map" id="nodeMap" style="border-radius:8px;overflow:hidden;"></div>
