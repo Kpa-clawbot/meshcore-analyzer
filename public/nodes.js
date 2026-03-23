@@ -95,7 +95,7 @@
         api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: CLIENT_TTL.nodeDetail }).catch(() => null)
       ]);
       const n = nodeData.node;
-      const adverts = nodeData.recentAdverts || [];
+      const adverts = (nodeData.recentAdverts || []).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       const title = document.querySelector('.node-full-title');
       if (title) title.textContent = n.name || pubkey.slice(0, 12);
 
@@ -499,7 +499,7 @@
 
   function renderDetail(panel, data) {
     const n = data.node;
-    const adverts = data.recentAdverts || [];
+    const adverts = (data.recentAdverts || []).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     const h = data.healthData || {};
     const stats = h.stats || {};
     const observers = h.observers || [];
