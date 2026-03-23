@@ -63,6 +63,10 @@
       sensor: '#d97706',
       observer: '#8b5cf6'
     },
+    typeColors: {
+      ADVERT: '#22c55e', GRP_TXT: '#3b82f6', TXT_MSG: '#f59e0b', ACK: '#6b7280',
+      REQUEST: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6'
+    },
     home: {
       heroTitle: 'MeshCore Analyzer',
       heroSubtitle: 'Find your nodes to start monitoring them.',
@@ -170,6 +174,24 @@
 
   const NODE_EMOJI = { repeater: '◆', companion: '●', room: '■', sensor: '▲', observer: '★' };
 
+  const TYPE_LABELS = {
+    ADVERT: 'ADVERT', GRP_TXT: 'GRP_TXT', TXT_MSG: 'TXT_MSG', ACK: 'ACK',
+    REQUEST: 'REQUEST', RESPONSE: 'RESPONSE', TRACE: 'TRACE', PATH: 'PATH'
+  };
+  const TYPE_HINTS = {
+    ADVERT: 'Node advertisements — map, feed, packet list',
+    GRP_TXT: 'Group/channel messages — map, feed, channels',
+    TXT_MSG: 'Direct messages — map, feed',
+    ACK: 'Acknowledgments — packet list',
+    REQUEST: 'Requests — packet list, feed',
+    RESPONSE: 'Responses — packet list',
+    TRACE: 'Traceroute — map, traces page',
+    PATH: 'Path packets — packet list'
+  };
+  const TYPE_EMOJI = {
+    ADVERT: '📡', GRP_TXT: '💬', TXT_MSG: '✉️', ACK: '✓', REQUEST: '❓', RESPONSE: '📨', TRACE: '🔍', PATH: '🛤️'
+  };
+
   // Current state
   let state = {};
 
@@ -182,6 +204,7 @@
       theme: Object.assign({}, DEFAULTS.theme, cfg.theme || {}),
       themeDark: Object.assign({}, DEFAULTS.themeDark, cfg.themeDark || {}),
       nodeColors: Object.assign({}, DEFAULTS.nodeColors, cfg.nodeColors || {}),
+      typeColors: Object.assign({}, DEFAULTS.typeColors, cfg.typeColors || {}),
       home: {
         heroTitle: (cfg.home && cfg.home.heroTitle) || DEFAULTS.home.heroTitle,
         heroSubtitle: (cfg.home && cfg.home.heroSubtitle) || DEFAULTS.home.heroSubtitle,
@@ -376,8 +399,24 @@
         (val !== def ? '<button class="cust-reset-btn" data-reset-node="' + key + '">Reset</button>' : '') +
       '</div>';
     }
+    var typeRows = '';
+    for (var tkey in TYPE_LABELS) {
+      var tval = state.typeColors[tkey];
+      var tdef = DEFAULTS.typeColors[tkey];
+      typeRows += '<div class="cust-color-row">' +
+        '<div><label>' + (TYPE_EMOJI[tkey] || '') + ' ' + TYPE_LABELS[tkey] + '</label>' +
+        '<div class="cust-hint">' + (TYPE_HINTS[tkey] || '') + '</div></div>' +
+        '<input type="color" data-type-color="' + tkey + '" value="' + tval + '">' +
+        '<span class="cust-node-dot" style="background:' + tval + '" data-tdot="' + tkey + '"></span>' +
+        '<span class="cust-hex" data-thex="' + tkey + '">' + tval + '</span>' +
+        (tval !== tdef ? '<button class="cust-reset-btn" data-reset-type="' + tkey + '">Reset</button>' : '') +
+      '</div>';
+    }
     return '<div class="cust-panel' + (activeTab === 'nodes' ? ' active' : '') + '" data-panel="nodes">' +
-      '<p class="cust-section-title">Node Role Colors</p>' + rows + '</div>';
+      '<p class="cust-section-title">Node Role Colors</p>' + rows +
+      '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">' +
+      '<p class="cust-section-title">Packet Type Colors</p>' + typeRows +
+    '</div>';
   }
 
   function renderHome() {
@@ -450,6 +489,13 @@
       if (state.nodeColors[nk] !== DEFAULTS.nodeColors[nk]) nc[nk] = state.nodeColors[nk];
     }
     if (Object.keys(nc).length) out.nodeColors = nc;
+
+    // Packet type colors
+    var tc = {};
+    for (var tck in DEFAULTS.typeColors) {
+      if (state.typeColors[tck] !== DEFAULTS.typeColors[tck]) tc[tck] = state.typeColors[tck];
+    }
+    if (Object.keys(tc).length) out.typeColors = tc;
 
     // Home
     var hm = {};
@@ -595,6 +641,27 @@
         state.nodeColors[key] = DEFAULTS.nodeColors[key];
         if (window.ROLE_COLORS) window.ROLE_COLORS[key] = DEFAULTS.nodeColors[key];
         if (window.ROLE_STYLE && window.ROLE_STYLE[key]) window.ROLE_STYLE[key].color = DEFAULTS.nodeColors[key];
+        render(container);
+      });
+    });
+
+    // Packet type color pickers
+    container.querySelectorAll('input[data-type-color]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var key = inp.dataset.typeColor;
+        state.typeColors[key] = inp.value;
+        if (window.TYPE_COLORS) window.TYPE_COLORS[key] = inp.value;
+        var dot = container.querySelector('[data-tdot="' + key + '"]');
+        if (dot) dot.style.background = inp.value;
+        var hex = container.querySelector('[data-thex="' + key + '"]');
+        if (hex) hex.textContent = inp.value;
+      });
+    });
+    container.querySelectorAll('[data-reset-type]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.dataset.resetType;
+        state.typeColors[key] = DEFAULTS.typeColors[key];
+        if (window.TYPE_COLORS) window.TYPE_COLORS[key] = DEFAULTS.typeColors[key];
         render(container);
       });
     });
@@ -785,6 +852,9 @@
               if (window.ROLE_STYLE[role]) window.ROLE_STYLE[role].color = color;
             }
           }
+        }
+        if (userTheme.typeColors && window.TYPE_COLORS) {
+          Object.assign(window.TYPE_COLORS, userTheme.typeColors);
         }
       }
     } catch {}

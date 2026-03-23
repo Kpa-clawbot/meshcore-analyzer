@@ -10,7 +10,7 @@
   let speedMult = 1;
   let highlightTimers = [];
 
-  const TYPE_COLORS = {
+  const TYPE_COLORS = window.TYPE_COLORS || {
     ADVERT: '#f59e0b', GRP_TXT: '#10b981', TXT_MSG: '#6366f1',
     TRACE: '#8b5cf6', REQ: '#ef4444', RESPONSE: '#3b82f6',
     ACK: '#6b7280', PATH: '#ec4899', ANON_REQ: '#f97316', UNKNOWN: '#6b7280'

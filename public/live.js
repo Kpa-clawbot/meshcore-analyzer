@@ -36,7 +36,7 @@
 
   // ROLE_COLORS loaded from shared roles.js (includes 'unknown')
 
-  const TYPE_COLORS = {
+  const TYPE_COLORS = window.TYPE_COLORS || {
     ADVERT: '#22c55e', GRP_TXT: '#3b82f6', TXT_MSG: '#f59e0b', ACK: '#6b7280',
     REQUEST: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6'
   };
