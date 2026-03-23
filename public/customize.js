@@ -303,6 +303,11 @@
       .cust-list-row { display: flex; gap: 6px; align-items: center; }
       .cust-list-item input { flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px;
         font-size: 12px; background: var(--input-bg); color: var(--text); min-width: 0; }
+      .cust-list-item textarea { width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px;
+        font-size: 11px; font-family: var(--mono); background: var(--input-bg); color: var(--text); resize: vertical; box-sizing: border-box; }
+      .cust-list-item textarea:focus, .cust-list-item input:focus { outline: none; border-color: var(--accent); }
+      .cust-md-hint { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
+      .cust-md-hint code { background: var(--surface-2); padding: 0 3px; border-radius: 2px; font-size: 9px; }
       .cust-list-item .cust-emoji-input { max-width: 40px; text-align: center; flex: 0 0 40px; }
       .cust-list-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2);
         color: var(--text-muted); cursor: pointer; font-size: 12px; }
@@ -460,7 +465,8 @@
           '<button class="cust-list-btn" data-move-step="' + i + '" data-dir="down" title="Move down">↓</button>' +
           '<button class="cust-list-btn danger" data-rm-step="' + i + '" title="Remove">✕</button>' +
         '</div>' +
-        '<textarea data-step-field="description" data-idx="' + i + '" placeholder="Description (supports **bold**, *italic*, `code`, [links](url), - lists)" rows="2" style="resize:vertical;font-size:11px">' + esc(s.description) + '</textarea>' +
+        '<textarea data-step-field="description" data-idx="' + i + '" placeholder="Description" rows="2">' + esc(s.description) + '</textarea>' +
+        '<div class="cust-md-hint">Markdown: <code>**bold**</code> <code>*italic*</code> <code>`code`</code> <code>[text](url)</code> <code>- list</code></div>' +
       '</div>';
     }).join('');
 
@@ -470,7 +476,8 @@
           '<input data-check-field="question" data-idx="' + i + '" value="' + escAttr(c.question) + '" placeholder="Question">' +
           '<button class="cust-list-btn danger" data-rm-check="' + i + '" title="Remove">✕</button>' +
         '</div>' +
-        '<textarea data-check-field="answer" data-idx="' + i + '" placeholder="Answer (supports markdown)" rows="2" style="resize:vertical;font-size:11px">' + esc(c.answer) + '</textarea>' +
+        '<textarea data-check-field="answer" data-idx="' + i + '" placeholder="Answer" rows="2">' + esc(c.answer) + '</textarea>' +
+        '<div class="cust-md-hint">Markdown: <code>**bold**</code> <code>*italic*</code> <code>`code`</code> <code>[text](url)</code> <code>- list</code></div>' +
       '</div>';
     }).join('');
 
