@@ -372,7 +372,7 @@
     try {
       const params = new URLSearchParams();
       const windowMin = Number(document.getElementById('fTimeWindow')?.value || 15);
-      if (windowMin > 0) {
+      if (windowMin > 0 && !filters.hash) {
         const since = new Date(Date.now() - windowMin * 60000).toISOString();
         params.set('since', since);
       }
