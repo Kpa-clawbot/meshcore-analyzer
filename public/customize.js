@@ -252,7 +252,7 @@
     if (styleEl) return;
     styleEl = document.createElement('style');
     styleEl.textContent = `
-      .cust-overlay { position: fixed; top: 52px; right: 12px; z-index: 1050; width: 480px; max-height: calc(100vh - 64px);
+      .cust-overlay { position: fixed; top: 56px; right: 12px; z-index: 1050; width: 480px; max-height: calc(100vh - 68px);
         background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
         box-shadow: 0 8px 32px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden;
         resize: both; min-width: 320px; min-height: 300px; }
@@ -836,8 +836,8 @@
       dragX = panelEl.offsetLeft; dragY = panelEl.offsetTop;
       startX = e.clientX; startY = e.clientY;
       const onMove = (ev) => {
-        panelEl.style.left = (dragX + ev.clientX - startX) + 'px';
-        panelEl.style.top = (dragY + ev.clientY - startY) + 'px';
+        panelEl.style.left = Math.max(0, dragX + ev.clientX - startX) + 'px';
+        panelEl.style.top = Math.max(56, dragY + ev.clientY - startY) + 'px';
         panelEl.style.right = 'auto';
       };
       const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
