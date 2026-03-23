@@ -602,13 +602,15 @@
       '<div class="cust-export-btns" style="margin-bottom:12px">' +
         '<button class="cust-save-user" id="custSaveServer">📡 Save to Server</button>' +
         '<button class="cust-dl-btn" id="custLoadServer">📥 Load from Server</button>' +
+        '<button class="cust-dl-btn" id="custImportFile">📂 Import File</button>' +
+        '<input type="file" id="custImportInput" accept=".json,application/json" style="display:none">' +
       '</div>' +
-      '<details style="margin-top:8px"><summary style="font-size:12px;font-weight:600;cursor:pointer;color:var(--text-muted)">Export as JSON</summary>' +
-      '<textarea class="cust-export-area" readonly id="custExportJson" style="margin-top:8px">' + esc(json) + '</textarea>' +
       '<div class="cust-export-btns">' +
         '<button class="cust-copy-btn" id="custCopy">📋 Copy</button>' +
         '<button class="cust-dl-btn" id="custDownload">💾 Download</button>' +
       '</div>' +
+      '<details style="margin-top:8px"><summary style="font-size:12px;font-weight:600;cursor:pointer;color:var(--text-muted)">Raw JSON</summary>' +
+      '<textarea class="cust-export-area" id="custExportJson" style="margin-top:8px">' + esc(json) + '</textarea>' +
       '</details>' +
     '</div>';
   }
@@ -902,6 +904,58 @@
         setTimeout(function () { loadServerBtn.textContent = '📥 Load from Server'; }, 3000);
       });
     });
+
+    // Import from file
+    var importBtn = document.getElementById('custImportFile');
+    var importInput = document.getElementById('custImportInput');
+    if (importBtn && importInput) {
+      importBtn.addEventListener('click', function () { importInput.click(); });
+      importInput.addEventListener('change', function () {
+        var file = importInput.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function () {
+          try {
+            var data = JSON.parse(reader.result);
+            // Merge imported data into state
+            if (data.branding) Object.assign(state.branding, data.branding);
+            if (data.theme) Object.assign(state.theme, data.theme);
+            if (data.themeDark) Object.assign(state.themeDark, data.themeDark);
+            if (data.nodeColors) {
+              Object.assign(state.nodeColors, data.nodeColors);
+              if (window.ROLE_COLORS) Object.assign(window.ROLE_COLORS, data.nodeColors);
+              if (window.ROLE_STYLE) {
+                for (var role in data.nodeColors) {
+                  if (window.ROLE_STYLE[role]) window.ROLE_STYLE[role].color = data.nodeColors[role];
+                }
+              }
+            }
+            if (data.typeColors) {
+              Object.assign(state.typeColors, data.typeColors);
+              if (window.TYPE_COLORS) Object.assign(window.TYPE_COLORS, data.typeColors);
+            }
+            if (data.home) {
+              if (data.home.heroTitle) state.home.heroTitle = data.home.heroTitle;
+              if (data.home.heroSubtitle) state.home.heroSubtitle = data.home.heroSubtitle;
+              if (data.home.steps) state.home.steps = deepClone(data.home.steps);
+              if (data.home.checklist) state.home.checklist = deepClone(data.home.checklist);
+              if (data.home.footerLinks) state.home.footerLinks = deepClone(data.home.footerLinks);
+            }
+            applyThemePreview();
+            autoSave();
+            window.dispatchEvent(new CustomEvent('theme-changed'));
+            render(container);
+            importBtn.textContent = '✓ Imported!';
+            setTimeout(function () { importBtn.textContent = '📂 Import File'; }, 2000);
+          } catch (e) {
+            importBtn.textContent = '✕ Invalid JSON';
+            setTimeout(function () { importBtn.textContent = '📂 Import File'; }, 3000);
+          }
+        };
+        reader.readAsText(file);
+        importInput.value = '';
+      });
+    }
   }
 
   function toggle() {
