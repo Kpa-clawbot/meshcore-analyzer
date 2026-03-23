@@ -149,25 +149,32 @@
     if (styleEl) return;
     styleEl = document.createElement('style');
     styleEl.textContent = `
-      .cust { max-width: 900px; margin: 0 auto; padding: 20px 16px; }
-      .cust h1 { margin: 0 0 4px; font-size: 24px; }
-      .cust-sub { color: var(--text-muted); margin: 0 0 20px; font-size: 14px; }
-      .cust-tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 20px; overflow-x: auto; }
-      .cust-tab { padding: 8px 16px; cursor: pointer; border: none; background: none; color: var(--text-muted);
-        font-size: 14px; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; }
+      .cust-overlay { position: fixed; top: 52px; right: 12px; z-index: 1050; width: 380px; max-height: calc(100vh - 64px);
+        background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden; }
+      .cust-overlay.hidden { display: none; }
+      .cust-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
+        border-bottom: 1px solid var(--border); cursor: move; user-select: none; flex-shrink: 0; }
+      .cust-header h2 { margin: 0; font-size: 15px; }
+      .cust-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
+      .cust-close:hover { background: var(--surface-3); color: var(--text); }
+      .cust-body { flex: 1; overflow-y: auto; padding: 0; }
+      .cust-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-x: auto; }
+      .cust-tab { padding: 8px 12px; cursor: pointer; border: none; background: none; color: var(--text-muted);
+        font-size: 12px; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
       .cust-tab:hover { color: var(--text); }
       .cust-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-      .cust-panel { display: none; }
+      .cust-panel { display: none; padding: 12px 16px; }
       .cust-panel.active { display: block; }
-      .cust-field { margin-bottom: 16px; }
-      .cust-field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
-      .cust-field input[type="text"], .cust-field textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border);
-        border-radius: 6px; font-size: 14px; background: var(--input-bg); color: var(--text); box-sizing: border-box; }
+      .cust-field { margin-bottom: 12px; }
+      .cust-field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; color: var(--text); }
+      .cust-field input[type="text"], .cust-field textarea { width: 100%; padding: 6px 8px; border: 1px solid var(--border);
+        border-radius: 6px; font-size: 13px; background: var(--input-bg); color: var(--text); box-sizing: border-box; }
       .cust-field input[type="text"]:focus, .cust-field textarea:focus { outline: none; border-color: var(--accent); }
-      .cust-color-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-      .cust-color-row > div:first-child { min-width: 220px; }
-      .cust-color-row label { font-size: 13px; font-weight: 600; margin: 0; display: block; }
-      .cust-hint { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.3; }
+      .cust-color-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      .cust-color-row > div:first-child { min-width: 160px; flex: 1; }
+      .cust-color-row label { font-size: 12px; font-weight: 600; margin: 0; display: block; }
+      .cust-hint { font-size: 10px; color: var(--text-muted); margin-top: 1px; line-height: 1.2; }
       .cust-color-row input[type="color"] { width: 40px; height: 32px; border: 1px solid var(--border);
         border-radius: 6px; cursor: pointer; padding: 2px; background: var(--input-bg); }
       .cust-color-row .cust-hex { font-family: var(--mono); font-size: 12px; color: var(--text-muted); min-width: 70px; }
@@ -206,10 +213,10 @@
       .cust-instructions code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; font-family: var(--mono); font-size: 12px; }
       .cust-section-title { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
       @media (max-width: 600px) {
-        .cust { padding: 12px 8px; }
+        .cust-overlay { left: 8px; right: 8px; width: auto; top: 56px; }
         .cust-tabs { gap: 0; }
-        .cust-tab { padding: 8px 10px; font-size: 12px; }
-        .cust-color-row label { min-width: 100px; }
+        .cust-tab { padding: 6px 8px; font-size: 11px; }
+        .cust-color-row > div:first-child { min-width: 120px; }
         .cust-list-item { flex-wrap: wrap; }
       }
     `;
@@ -377,17 +384,18 @@
     '</div>';
   }
 
+  let panelEl = null;
+
   function render(container) {
-    container.innerHTML = '<div class="cust">' +
-      '<h1>🎨 Customize</h1>' +
-      '<p class="cust-sub">Configure branding, colors, and home page content. Changes preview live — export when ready.</p>' +
+    container.innerHTML =
       renderTabs() +
+      '<div class="cust-body">' +
       renderBranding() +
       renderTheme() +
       renderNodes() +
       renderHome() +
       renderExport() +
-    '</div>';
+      '</div>';
     bindEvents(container);
   }
 
@@ -561,18 +569,52 @@
     });
   }
 
-  function init(container) {
+  function toggle() {
+    if (panelEl) {
+      panelEl.classList.toggle('hidden');
+      return;
+    }
+    // First open — create the panel
     injectStyles();
     saveOriginalCSS();
     initState();
-    render(container);
+
+    panelEl = document.createElement('div');
+    panelEl.className = 'cust-overlay';
+    panelEl.innerHTML =
+      '<div class="cust-header">' +
+        '<h2>🎨 Customize</h2>' +
+        '<button class="cust-close" title="Close">✕</button>' +
+      '</div>' +
+      '<div class="cust-inner"></div>';
+    document.body.appendChild(panelEl);
+
+    panelEl.querySelector('.cust-close').addEventListener('click', () => panelEl.classList.add('hidden'));
+
+    // Drag support
+    const header = panelEl.querySelector('.cust-header');
+    let dragX = 0, dragY = 0, startX = 0, startY = 0;
+    header.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.cust-close')) return;
+      dragX = panelEl.offsetLeft; dragY = panelEl.offsetTop;
+      startX = e.clientX; startY = e.clientY;
+      const onMove = (ev) => {
+        panelEl.style.left = (dragX + ev.clientX - startX) + 'px';
+        panelEl.style.top = (dragY + ev.clientY - startY) + 'px';
+        panelEl.style.right = 'auto';
+      };
+      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    render(panelEl.querySelector('.cust-inner'));
     applyThemePreview();
   }
 
-  function destroy() {
-    // Keep preview active across pages — don't reset on navigate
-    removeStyles();
-  }
-
-  registerPage('customize', { init: init, destroy: destroy });
+  // Wire up toggle button
+  document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('customizeToggle');
+    if (btn) btn.addEventListener('click', toggle);
+  });
 })();
