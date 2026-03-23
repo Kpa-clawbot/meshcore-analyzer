@@ -56,8 +56,8 @@
         va = (a.role || '').toLowerCase(); vb = (b.role || '').toLowerCase();
         return va < vb ? -dir : va > vb ? dir : 0;
       } else if (col === 'last_seen') {
-        va = a.last_seen ? new Date(a.last_seen).getTime() : 0;
-        vb = b.last_seen ? new Date(b.last_seen).getTime() : 0;
+        va = a.last_heard ? new Date(a.last_heard).getTime() : a.last_seen ? new Date(a.last_seen).getTime() : 0;
+        vb = b.last_heard ? new Date(b.last_heard).getTime() : b.last_seen ? new Date(b.last_seen).getTime() : 0;
         return (va - vb) * dir;
       } else if (col === 'advert_count') {
         va = a.advert_count || 0; vb = b.advert_count || 0;
@@ -90,8 +90,8 @@
     // Single source of truth for all status-related info
     const role = (n.role || '').toLowerCase();
     const roleColor = ROLE_COLORS[n.role] || '#6b7280';
-    // Accept pre-resolved lastHeard from health data, or fall back to last_seen
-    const lastHeardTime = n._lastHeard || n.last_seen;
+    // Prefer last_heard (from in-memory packets) > _lastHeard (health API) > last_seen (DB)
+    const lastHeardTime = n._lastHeard || n.last_heard || n.last_seen;
     const lastHeardMs = lastHeardTime ? new Date(lastHeardTime).getTime() : 0;
     const status = getNodeStatus(role, lastHeardMs);
     const statusLabel = status === 'active' ? '🟢 Active' : '⚪ Stale';
@@ -430,7 +430,10 @@
       }
       if (lastHeard) {
         const ms = { '1h': 3600000, '6h': 21600000, '24h': 86400000, '7d': 604800000, '30d': 2592000000 }[lastHeard];
-        if (ms) filtered = filtered.filter(n => n.last_seen && (Date.now() - new Date(n.last_seen).getTime()) < ms);
+        if (ms) filtered = filtered.filter(n => {
+          const t = n.last_heard || n.last_seen;
+          return t && (Date.now() - new Date(t).getTime()) < ms;
+        });
       }
       nodes = filtered;
 
@@ -586,7 +589,7 @@
         <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh">★</span> ' : ''}<strong>${n.name || '(unnamed)'}</strong></td>
         <td class="mono">${truncate(n.public_key, 16)}</td>
         <td><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span></td>
-        <td class="${lastSeenClass}">${timeAgo(n.last_seen)}</td>
+        <td class="${lastSeenClass}">${timeAgo(n.last_heard || n.last_seen)}</td>
         <td>${n.advert_count || 0}</td>
       </tr>`;
     }).join('');

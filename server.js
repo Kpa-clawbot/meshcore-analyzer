@@ -1301,6 +1301,15 @@ app.get('/api/nodes', (req, res) => {
     const allSizes = _hashSizeAllMap.get(node.public_key);
     node.hash_size_inconsistent = _isHashSizeFlipFlop(node.public_key);
     if (allSizes && allSizes.size > 1) node.hash_sizes_seen = [...allSizes].sort();
+    // Compute lastHeard from in-memory packets (more accurate than DB last_seen)
+    const nodePkts = pktStore.byNode.get(node.public_key);
+    if (nodePkts && nodePkts.length > 0) {
+      let latest = null;
+      for (const p of nodePkts) {
+        if (!latest || p.timestamp > latest) latest = p.timestamp;
+      }
+      if (latest) node.last_heard = latest;
+    }
   }
 
   res.json({ nodes, total, counts });
