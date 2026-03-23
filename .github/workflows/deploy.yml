@@ -30,7 +30,7 @@ jobs:
         run: |
           set -e
           docker build -t meshcore-analyzer .
-          docker stop meshcore-analyzer 2>/dev/null && docker rm meshcore-analyzer 2>/dev/null || true
+          docker rm -f meshcore-analyzer 2>/dev/null || true
           docker run -d \
             --name meshcore-analyzer \
             --restart unless-stopped \
