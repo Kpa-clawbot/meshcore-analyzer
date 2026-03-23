@@ -43,9 +43,11 @@ const crypto = require('crypto');
 const PacketStore = require('./packet-store');
 
 // --- Precomputed hash_size map (updated on new packets, not per-request) ---
-const _hashSizeMap = new Map();
+const _hashSizeMap = new Map();      // pubkey → latest hash_size (number)
+const _hashSizeAllMap = new Map();   // pubkey → Set of all hash_sizes seen
 function _rebuildHashSizeMap() {
   _hashSizeMap.clear();
+  _hashSizeAllMap.clear();
   // Pass 1: from ADVERT packets (most authoritative — path byte bits 7-6)
   // packets array is sorted newest-first, so first-match = newest ADVERT
   for (const p of pktStore.packets) {
@@ -53,9 +55,12 @@ function _rebuildHashSizeMap() {
       try {
         const d = JSON.parse(p.decoded_json || '{}');
         const pk = d.pubKey || d.public_key;
-        if (pk && !_hashSizeMap.has(pk)) {
+        if (pk) {
           const pathByte = parseInt(p.raw_hex.slice(2, 4), 16);
-          _hashSizeMap.set(pk, ((pathByte >> 6) & 0x3) + 1);
+          const hs = ((pathByte >> 6) & 0x3) + 1;
+          if (!_hashSizeMap.has(pk)) _hashSizeMap.set(pk, hs);
+          if (!_hashSizeAllMap.has(pk)) _hashSizeAllMap.set(pk, new Set());
+          _hashSizeAllMap.get(pk).add(hs);
         }
       } catch {}
     }
@@ -89,7 +94,10 @@ function _updateHashSizeForPacket(p) {
       const pk = d.pubKey || d.public_key;
       if (pk) {
         const pathByte = parseInt(p.raw_hex.slice(2, 4), 16);
-        _hashSizeMap.set(pk, ((pathByte >> 6) & 0x3) + 1);
+        const hs = ((pathByte >> 6) & 0x3) + 1;
+        _hashSizeMap.set(pk, hs);
+        if (!_hashSizeAllMap.has(pk)) _hashSizeAllMap.set(pk, new Set());
+        _hashSizeAllMap.get(pk).add(hs);
       }
     } catch {}
   } else if (p.path_json && p.decoded_json) {
@@ -1238,6 +1246,9 @@ app.get('/api/nodes', (req, res) => {
   // Use precomputed hash_size map (rebuilt at startup, updated on new packets)
   for (const node of nodes) {
     node.hash_size = _hashSizeMap.get(node.public_key) || null;
+    const allSizes = _hashSizeAllMap.get(node.public_key);
+    node.hash_size_inconsistent = allSizes ? allSizes.size > 1 : false;
+    if (allSizes && allSizes.size > 1) node.hash_sizes_seen = [...allSizes].sort();
   }
 
   res.json({ nodes, total, counts });
@@ -1378,6 +1389,9 @@ app.get('/api/nodes/:pubkey', (req, res) => {
   const node = db.db.prepare('SELECT * FROM nodes WHERE public_key = ?').get(pubkey);
   if (!node) return res.status(404).json({ error: 'Not found' });
   node.hash_size = _hashSizeMap.get(pubkey) || null;
+  const allSizes = _hashSizeAllMap.get(pubkey);
+  node.hash_size_inconsistent = allSizes ? allSizes.size > 1 : false;
+  if (allSizes && allSizes.size > 1) node.hash_sizes_seen = [...allSizes].sort();
   const recentAdverts = (pktStore.byNode.get(pubkey) || []).slice(-20).reverse();
   const _nResult = { node, recentAdverts };
   cache.set(_ck, _nResult, TTL.nodeDetail);
