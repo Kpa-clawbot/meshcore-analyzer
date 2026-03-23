@@ -333,12 +333,11 @@
               if (h) hashIndex.set(h, newGroup);
             }
           }
-          // Re-sort by latest DESC, cap size
+          // Re-sort by latest DESC
           packets.sort((a, b) => (b.latest || '').localeCompare(a.latest || ''));
-          packets = packets.slice(0, 200);
         } else {
           // Flat mode: prepend
-          packets = filtered.concat(packets).slice(0, 200);
+          packets = filtered.concat(packets);
         }
         totalCount += filtered.length;
         renderTableRows();
