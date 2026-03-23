@@ -561,6 +561,9 @@
       inp.addEventListener('input', function () {
         var key = inp.dataset.node;
         state.nodeColors[key] = inp.value;
+        // Sync to global role colors used by map/packets/etc
+        if (window.ROLE_COLORS) window.ROLE_COLORS[key] = inp.value;
+        if (window.ROLE_STYLE && window.ROLE_STYLE[key]) window.ROLE_STYLE[key].color = inp.value;
         var dot = container.querySelector('[data-dot="' + key + '"]');
         if (dot) dot.style.background = inp.value;
         var hex = container.querySelector('[data-nhex="' + key + '"]');
@@ -573,6 +576,8 @@
       btn.addEventListener('click', function () {
         var key = btn.dataset.resetNode;
         state.nodeColors[key] = DEFAULTS.nodeColors[key];
+        if (window.ROLE_COLORS) window.ROLE_COLORS[key] = DEFAULTS.nodeColors[key];
+        if (window.ROLE_STYLE && window.ROLE_STYLE[key]) window.ROLE_STYLE[key].color = DEFAULTS.nodeColors[key];
         render(container);
       });
     });
@@ -756,8 +761,13 @@
             if (THEME_CSS_MAP[key]) document.documentElement.style.setProperty(THEME_CSS_MAP[key], val);
           }
         }
-        if (userTheme.nodeColors && window.ROLE_COLORS) {
-          Object.assign(window.ROLE_COLORS, userTheme.nodeColors);
+        if (userTheme.nodeColors) {
+          if (window.ROLE_COLORS) Object.assign(window.ROLE_COLORS, userTheme.nodeColors);
+          if (window.ROLE_STYLE) {
+            for (const [role, color] of Object.entries(userTheme.nodeColors)) {
+              if (window.ROLE_STYLE[role]) window.ROLE_STYLE[role].color = color;
+            }
+          }
         }
       }
     } catch {}
