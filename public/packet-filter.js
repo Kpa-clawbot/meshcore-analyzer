@@ -251,7 +251,7 @@
           var eq;
           // Resolve type aliases (e.g., "Channel Msg" → "GRP_TXT")
           var resolvedTarget = target;
-          if (node.field === 'type' && typeof target === 'string') {
+          if (ast.field === 'type' && typeof target === 'string') {
             var alias = TYPE_ALIASES[String(target).toLowerCase()];
             if (alias) resolvedTarget = alias;
           }
