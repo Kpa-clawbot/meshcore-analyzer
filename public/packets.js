@@ -293,31 +293,7 @@
       for (const p of filtered) {
         try { JSON.parse(p.path_json || '[]').forEach(h => { if (!(h in hopNameCache)) newHops.add(h); }); } catch {}
       }
-      (newHops.size ? resolveHops([...newHops]) : Promise.resolve()).then(async () => {
-        // Per-observer resolve for ambiguous hops in this batch
-        const batchByObs = {};
-        for (const p of filtered) {
-          if (!p.observer_id) continue;
-          try {
-            const path = JSON.parse(p.path_json || '[]');
-            const ambig = path.filter(h => hopNameCache[h]?.ambiguous && !hopNameCache[h + ':' + p.observer_id]);
-            if (ambig.length) {
-              if (!batchByObs[p.observer_id]) batchByObs[p.observer_id] = new Set();
-              ambig.forEach(h => batchByObs[p.observer_id].add(h));
-            }
-          } catch {}
-        }
-        await Promise.all(Object.entries(batchByObs).map(async ([obsId, hopsSet]) => {
-          try {
-            const result = await api(`/resolve-hops?hops=${[...hopsSet].join(',')}&observer=${obsId}`);
-            if (result?.resolved) {
-              for (const [k, v] of Object.entries(result.resolved)) {
-                hopNameCache[k + ':' + obsId] = v;
-              }
-            }
-          } catch {}
-        }));
-
+      (newHops.size ? resolveHops([...newHops]) : Promise.resolve()).then(() => {
         if (groupByHash) {
           // Update existing groups or create new ones
           for (const p of filtered) {
