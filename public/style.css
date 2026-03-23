@@ -3,6 +3,8 @@
 :root {
   --nav-bg: #0f0f23;
   --nav-bg2: #1a1a2e;
+  --nav-text: #ffffff;
+  --nav-text-muted: #cbd5e1;
   --accent: #4a9eff;
   --status-green: #22c55e;
   --status-yellow: #eab308;
@@ -96,12 +98,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 /* === Nav === */
 .top-nav {
   display: flex; align-items: center; justify-content: space-between;
-  background: linear-gradient(135deg, var(--nav-bg) 0%, var(--nav-bg2) 100%); color: var(--text); padding: 0 20px; height: 52px;
+  background: linear-gradient(135deg, var(--nav-bg) 0%, var(--nav-bg2) 100%); color: var(--nav-text); padding: 0 20px; height: 52px;
   position: sticky; top: 0; z-index: 1100;
   box-shadow: 0 2px 8px rgba(0,0,0,.3);
 }
 .nav-left { display: flex; align-items: center; gap: 24px; }
-.nav-brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--text); font-weight: 700; font-size: 16px; }
+.nav-brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--nav-text); font-weight: 700; font-size: 16px; }
 .brand-icon { font-size: 20px; }
 .live-dot {
   width: 8px; height: 8px; border-radius: 50%; background: #555;
@@ -116,12 +118,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-link {
-  color: var(--text-muted); text-decoration: none; padding: 14px 12px; font-size: 14px;
+  color: var(--nav-text-muted); text-decoration: none; padding: 14px 12px; font-size: 14px;
   border-bottom: 2px solid transparent; transition: all .15s;
   background: none; border-top: none; border-left: none; border-right: none;
   cursor: pointer; font-family: var(--font);
 }
-.nav-link:hover { color: var(--text); }
+.nav-link:hover { color: var(--nav-text); }
 .nav-link.active { 
   color: #fff; 
   border-bottom-color: transparent;
@@ -145,17 +147,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .nav-right { display: flex; align-items: center; gap: 8px; }
 .nav-btn {
-  background: none; border: 1px solid #444; color: var(--text-muted); padding: 6px 12px;
+  background: none; border: 1px solid #444; color: var(--nav-text-muted); padding: 6px 12px;
   border-radius: 6px; cursor: pointer; font-size: 14px; transition: all .15s;
   min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
 }
-.nav-btn:hover { background: #333; color: var(--text); }
+.nav-btn:hover { background: #333; color: var(--nav-text); }
 /* === Nav Stats === */
 .nav-stats {
   display: flex; gap: 12px; align-items: center; font-size: 12px; color: #94a3b8;
   font-family: var(--mono); margin-right: 4px;
 }
-.nav-stats .stat-val { color: #e2e8f0; font-weight: 600; transition: color 0.3s ease; }
+.nav-stats .stat-val { color: var(--nav-text); font-weight: 600; transition: color 0.3s ease; }
 .nav-stats .stat-val.updated { color: var(--accent); }
 
 /* === Layout === */

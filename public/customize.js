@@ -15,18 +15,18 @@
       faviconUrl: ''
     },
     theme: {
-      accent: '#4a9eff', navBg: '#0f0f23', background: '#f4f5f7', text: '#1a1a2e',
+      accent: '#4a9eff', navBg: '#0f0f23', navText: '#ffffff', background: '#f4f5f7', text: '#1a1a2e',
       statusGreen: '#22c55e', statusYellow: '#eab308', statusRed: '#ef4444',
-      accentHover: '#6db3ff', navBg2: '#1a1a2e', textMuted: '#5b6370', border: '#e2e5ea',
+      accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', textMuted: '#5b6370', border: '#e2e5ea',
       surface1: '#ffffff', surface2: '#ffffff', cardBg: '#ffffff', contentBg: '#f4f5f7',
       detailBg: '#ffffff', inputBg: '#ffffff', rowStripe: '#f9fafb', rowHover: '#eef2ff', selectedBg: '#dbeafe',
       font: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       mono: '"SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace',
     },
     themeDark: {
-      accent: '#4a9eff', navBg: '#0f0f23', background: '#0f0f23', text: '#e2e8f0',
+      accent: '#4a9eff', navBg: '#0f0f23', navText: '#ffffff', background: '#0f0f23', text: '#e2e8f0',
       statusGreen: '#22c55e', statusYellow: '#eab308', statusRed: '#ef4444',
-      accentHover: '#6db3ff', navBg2: '#1a1a2e', textMuted: '#a8b8cc', border: '#334155',
+      accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', textMuted: '#a8b8cc', border: '#334155',
       surface1: '#1a1a2e', surface2: '#232340', cardBg: '#1a1a2e', contentBg: '#0f0f23',
       detailBg: '#232340', inputBg: '#1e1e34', rowStripe: '#1e1e34', rowHover: '#2d2d50', selectedBg: '#1e3a5f',
       font: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -71,6 +71,7 @@
     // Basic
     accent: '--accent',
     navBg: '--nav-bg',
+    navText: '--nav-text',
     background: '--surface-0',
     text: '--text',
     statusGreen: '--status-green',
@@ -79,6 +80,7 @@
     // Advanced (derived from basic by default)
     accentHover: '--accent-hover',
     navBg2: '--nav-bg2',
+    navTextMuted: '--nav-text-muted',
     textMuted: '--text-muted',
     border: '--border',
     surface1: '--surface-1',
@@ -94,13 +96,14 @@
     mono: '--mono',
   };
 
-  const BASIC_KEYS = ['accent', 'navBg', 'background', 'text', 'statusGreen', 'statusYellow', 'statusRed'];
-  const ADVANCED_KEYS = ['accentHover', 'navBg2', 'textMuted', 'border', 'surface1', 'surface2', 'cardBg', 'contentBg', 'detailBg', 'inputBg', 'rowStripe', 'rowHover', 'selectedBg'];
+  const BASIC_KEYS = ['accent', 'navBg', 'navText', 'background', 'text', 'statusGreen', 'statusYellow', 'statusRed'];
+  const ADVANCED_KEYS = ['accentHover', 'navBg2', 'navTextMuted', 'textMuted', 'border', 'surface1', 'surface2', 'cardBg', 'contentBg', 'detailBg', 'inputBg', 'rowStripe', 'rowHover', 'selectedBg'];
   const FONT_KEYS = ['font', 'mono'];
 
   const THEME_LABELS = {
     accent: 'Brand Color',
     navBg: 'Navigation',
+    navText: 'Nav Text',
     background: 'Background',
     text: 'Text',
     statusGreen: 'Healthy',
@@ -108,6 +111,7 @@
     statusRed: 'Error',
     accentHover: 'Accent Hover',
     navBg2: 'Nav Gradient End',
+    navTextMuted: 'Nav Muted Text',
     textMuted: 'Muted Text',
     border: 'Borders',
     surface1: 'Cards',
@@ -126,6 +130,7 @@
   const THEME_HINTS = {
     accent: 'Buttons, links, active tabs, badges, charts — your primary brand color',
     navBg: 'Top navigation bar',
+    navText: 'Nav bar text, links, brand name, buttons',
     background: 'Main page background',
     text: 'Primary text — muted text auto-derives',
     statusGreen: 'Healthy/online indicators',
@@ -133,6 +138,7 @@
     statusRed: 'Error/offline indicators',
     accentHover: 'Hover state for accent elements',
     navBg2: 'Darker end of nav gradient',
+    navTextMuted: 'Inactive nav links, nav buttons',
     textMuted: 'Labels, timestamps, secondary text',
     border: 'Dividers, table borders, card borders',
     surface1: 'Card and panel backgrounds',
