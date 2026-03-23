@@ -199,11 +199,15 @@
       .cust-export-area { width: 100%; min-height: 300px; font-family: var(--mono); font-size: 12px;
         background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 12px;
         color: var(--text); resize: vertical; box-sizing: border-box; }
-      .cust-export-btns { display: flex; gap: 8px; margin-top: 12px; }
-      .cust-export-btns button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
+      .cust-export-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+      .cust-export-btns button { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; }
       .cust-copy-btn { background: var(--accent); color: #fff; }
       .cust-copy-btn:hover { opacity: 0.9; }
       .cust-dl-btn { background: var(--surface-2); color: var(--text); border: 1px solid var(--border) !important; }
+      .cust-save-user { background: #22c55e; color: #fff; }
+      .cust-save-user:hover { background: #16a34a; }
+      .cust-reset-user { background: var(--surface-2); color: #ef4444; border: 1px solid #ef4444 !important; }
+      .cust-reset-user:hover { background: #ef4444; color: #fff; }
       .cust-dl-btn:hover { background: var(--surface-3); }
       .cust-reset-preview { margin-top: 12px; padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px;
         background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 13px; }
@@ -369,8 +373,17 @@
 
   function renderExport() {
     var json = JSON.stringify(buildExport(), null, 2);
+    var hasUserTheme = !!localStorage.getItem('meshcore-user-theme');
     return '<div class="cust-panel' + (activeTab === 'export' ? ' active' : '') + '" data-panel="export">' +
-      '<p class="cust-section-title">Export Configuration</p>' +
+      '<p class="cust-section-title">My Preferences</p>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Save these colors just for you — stored in your browser, works on any instance.</p>' +
+      '<div class="cust-export-btns" style="margin-bottom:16px">' +
+        '<button class="cust-save-user" id="custSaveUser">💾 Save as my theme</button>' +
+        (hasUserTheme ? '<button class="cust-reset-user" id="custResetUser">🗑️ Reset my theme</button>' : '') +
+      '</div>' +
+      '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">' +
+      '<p class="cust-section-title">Admin Export</p>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Export as config.json for server deployment — applies to all users of this instance.</p>' +
       '<textarea class="cust-export-area" readonly id="custExportJson">' + esc(json) + '</textarea>' +
       '<div class="cust-export-btns">' +
         '<button class="cust-copy-btn" id="custCopy">📋 Copy to Clipboard</button>' +
@@ -567,6 +580,25 @@
       a.click();
       URL.revokeObjectURL(a.href);
     });
+
+    // Save user theme to localStorage
+    var saveUserBtn = document.getElementById('custSaveUser');
+    if (saveUserBtn) saveUserBtn.addEventListener('click', function () {
+      var exportData = buildExport();
+      localStorage.setItem('meshcore-user-theme', JSON.stringify(exportData));
+      saveUserBtn.textContent = '✓ Saved!';
+      setTimeout(function () { saveUserBtn.textContent = '💾 Save as my theme'; }, 2000);
+    });
+
+    // Reset user theme
+    var resetUserBtn = document.getElementById('custResetUser');
+    if (resetUserBtn) resetUserBtn.addEventListener('click', function () {
+      localStorage.removeItem('meshcore-user-theme');
+      resetPreview();
+      initState();
+      render(container);
+      applyThemePreview();
+    });
   }
 
   function toggle() {
@@ -616,5 +648,21 @@
   document.addEventListener('DOMContentLoaded', () => {
     const btn = document.getElementById('customizeToggle');
     if (btn) btn.addEventListener('click', toggle);
+
+    // Auto-apply saved user theme from localStorage
+    try {
+      const saved = localStorage.getItem('meshcore-user-theme');
+      if (saved) {
+        const userTheme = JSON.parse(saved);
+        if (userTheme.theme) {
+          for (const [key, val] of Object.entries(userTheme.theme)) {
+            if (THEME_CSS_MAP[key]) document.documentElement.style.setProperty(THEME_CSS_MAP[key], val);
+          }
+        }
+        if (userTheme.nodeColors && window.ROLE_COLORS) {
+          Object.assign(window.ROLE_COLORS, userTheme.nodeColors);
+        }
+      }
+    } catch {}
   });
 })();
