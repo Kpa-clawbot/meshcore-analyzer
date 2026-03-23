@@ -127,7 +127,7 @@
     </div>`;
 
     RegionFilter.init(document.getElementById('nodesRegionFilter'));
-    regionChangeHandler = RegionFilter.onChange(function () { loadNodes(); });
+    regionChangeHandler = RegionFilter.onChange(function () { _allNodes = null; loadNodes(); });
 
     document.getElementById('nodeSearch').addEventListener('input', debounce(e => {
       search = e.target.value;
@@ -369,17 +369,32 @@
     selectedKey = null;
   }
 
+  let _allNodes = null; // cached full node list
+
   async function loadNodes() {
     try {
-      const params = new URLSearchParams({ limit: '200' });
-      if (activeTab !== 'all') params.set('role', activeTab);
-      if (search) params.set('search', search);
-      if (lastHeard) params.set('lastHeard', lastHeard);
-      const rp = RegionFilter.getRegionParam();
-      if (rp) params.set('region', rp);
-      const data = await api('/nodes?' + params, { ttl: CLIENT_TTL.nodeList });
-      nodes = data.nodes || [];
-      counts = data.counts || {};
+      // Fetch all nodes once, filter client-side
+      if (!_allNodes) {
+        const params = new URLSearchParams({ limit: '5000' });
+        const rp = RegionFilter.getRegionParam();
+        if (rp) params.set('region', rp);
+        const data = await api('/nodes?' + params, { ttl: CLIENT_TTL.nodeList });
+        _allNodes = data.nodes || [];
+        counts = data.counts || {};
+      }
+
+      // Client-side filtering
+      let filtered = _allNodes;
+      if (activeTab !== 'all') filtered = filtered.filter(n => (n.role || '').toLowerCase() === activeTab);
+      if (search) {
+        const q = search.toLowerCase();
+        filtered = filtered.filter(n => (n.name || '').toLowerCase().includes(q) || (n.public_key || '').toLowerCase().includes(q));
+      }
+      if (lastHeard) {
+        const ms = { '1h': 3600000, '6h': 21600000, '24h': 86400000, '7d': 604800000, '30d': 2592000000 }[lastHeard];
+        if (ms) filtered = filtered.filter(n => n.last_seen && (Date.now() - new Date(n.last_seen).getTime()) < ms);
+      }
+      nodes = filtered;
 
       // Defensive filter: hide nodes with obviously corrupted data
       nodes = nodes.filter(n => {
