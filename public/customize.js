@@ -945,5 +945,28 @@
   document.addEventListener('DOMContentLoaded', () => {
     const btn = document.getElementById('customizeToggle');
     if (btn) btn.addEventListener('click', toggle);
+
+    // Restore branding from localStorage (needs DOM elements to exist)
+    try {
+      const saved = localStorage.getItem('meshcore-user-theme');
+      if (saved) {
+        const userTheme = JSON.parse(saved);
+        if (userTheme.branding) {
+          if (userTheme.branding.siteName) {
+            const brandEl = document.querySelector('.brand-text');
+            if (brandEl) brandEl.textContent = userTheme.branding.siteName;
+            document.title = userTheme.branding.siteName;
+          }
+          if (userTheme.branding.logoUrl) {
+            const iconEl = document.querySelector('.brand-icon');
+            if (iconEl) iconEl.innerHTML = '<img src="' + userTheme.branding.logoUrl + '" style="height:24px" onerror="this.style.display=\'none\'">';
+          }
+          if (userTheme.branding.faviconUrl) {
+            const link = document.querySelector('link[rel="icon"]');
+            if (link) link.href = userTheme.branding.faviconUrl;
+          }
+        }
+      }
+    } catch {}
   });
 })();
