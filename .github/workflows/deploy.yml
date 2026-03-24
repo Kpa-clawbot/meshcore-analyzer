@@ -18,6 +18,8 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@v4
         with:
@@ -26,10 +28,23 @@ jobs:
       - name: Install dependencies
         run: npm ci --production=false
 
-      - name: Unit tests
-        run: npm run test:unit
+      - name: Detect changes
+        id: changes
+        run: |
+          BACKEND=$(git diff --name-only HEAD~1 | grep -cE '^(server|db|decoder|packet-store|server-helpers|iata-coords)\.js$' || true)
+          FRONTEND=$(git diff --name-only HEAD~1 | grep -cE '^public/' || true)
+          TESTS=$(git diff --name-only HEAD~1 | grep -cE '^test-|^tools/' || true)
+          CI=$(git diff --name-only HEAD~1 | grep -cE '\.github/|package\.json|test-all\.sh|scripts/' || true)
+          # If CI/test infra changed, run everything
+          if [ "$CI" -gt 0 ]; then BACKEND=1; FRONTEND=1; fi
+          # If test files changed, run everything
+          if [ "$TESTS" -gt 0 ]; then BACKEND=1; FRONTEND=1; fi
+          echo "backend=$([[ $BACKEND -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "frontend=$([[ $FRONTEND -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "Changes: backend=$BACKEND frontend=$FRONTEND tests=$TESTS ci=$CI"
 
-      - name: Integration tests + backend coverage
+      - name: Backend tests + coverage
+        if: steps.changes.outputs.backend == 'true'
         run: |
           npx c8 --reporter=text-summary --reporter=text sh test-all.sh 2>&1 | tee test-output.txt
           
@@ -38,67 +53,57 @@ jobs:
           BE_COVERAGE=$(grep 'Statements' test-output.txt | tail -1 | grep -oP '[\d.]+(?=%)')
           
           mkdir -p .badges
-          echo "{\"schemaVersion\":1,\"label\":\"backend tests\",\"message\":\"${TOTAL_PASS} passed\",\"color\":\"brightgreen\"}" > .badges/backend-tests.json
           BE_COLOR="red"
           [ "$(echo "$BE_COVERAGE > 60" | bc -l 2>/dev/null)" = "1" ] && BE_COLOR="yellow"
           [ "$(echo "$BE_COVERAGE > 80" | bc -l 2>/dev/null)" = "1" ] && BE_COLOR="brightgreen"
+          echo "{\"schemaVersion\":1,\"label\":\"backend tests\",\"message\":\"${TOTAL_PASS} passed\",\"color\":\"brightgreen\"}" > .badges/backend-tests.json
           echo "{\"schemaVersion\":1,\"label\":\"backend coverage\",\"message\":\"${BE_COVERAGE}%\",\"color\":\"${BE_COLOR}\"}" > .badges/backend-coverage.json
           
-          echo "## Backend Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "**${TOTAL_PASS} tests passed, ${TOTAL_FAIL} failed** | Coverage: ${BE_COVERAGE}%" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -E 'passed|failed|Results|Statements|Branches|Functions|Lines' test-output.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "## Backend: ${TOTAL_PASS} tests, ${BE_COVERAGE}% coverage" >> $GITHUB_STEP_SUMMARY
+
+      - name: Backend tests (quick — no coverage)
+        if: steps.changes.outputs.backend == 'false'
+        run: npm run test:unit
 
       - name: Install Playwright browser
+        if: steps.changes.outputs.frontend == 'true'
         run: npx playwright install chromium --with-deps 2>/dev/null || true
 
       - name: Frontend coverage (instrumented Playwright)
+        if: steps.changes.outputs.frontend == 'true'
         run: |
-          # Instrument frontend JS with Istanbul
           sh scripts/instrument-frontend.sh
-          
-          # Start server with instrumented frontend
           COVERAGE=1 PORT=13581 node server.js &
           SERVER_PID=$!
           sleep 5
           
-          # Run E2E tests
           BASE_URL=http://localhost:13581 node test-e2e-playwright.js 2>&1 | tee e2e-output.txt
           E2E_PASS=$(grep -oP '[0-9]+(?=/)' e2e-output.txt | tail -1)
           
-          # Collect frontend coverage from browser
           BASE_URL=http://localhost:13581 node scripts/collect-frontend-coverage.js 2>&1 | tee fe-coverage-output.txt
-          
-          # Kill server
           kill $SERVER_PID 2>/dev/null || true
           
-          # Generate frontend coverage report
+          mkdir -p .badges
           if [ -f .nyc_output/frontend-coverage.json ]; then
-            echo "Frontend coverage JSON found, generating report..."
             npx nyc report --reporter=text-summary --reporter=text 2>&1 | tee fe-report.txt
             FE_COVERAGE=$(grep 'Statements' fe-report.txt | head -1 | grep -oP '[\d.]+(?=%)' || echo "0")
             FE_COVERAGE=${FE_COVERAGE:-0}
-            
-            if [ "$FE_COVERAGE" != "0" ] && [ $(echo "$FE_COVERAGE > 50" | bc -l 2>/dev/null || echo 0) -eq 1 ]; then
-              FE_COLOR="yellow"
-            elif [ "$FE_COVERAGE" != "0" ] && [ $(echo "$FE_COVERAGE > 80" | bc -l 2>/dev/null || echo 0) -eq 1 ]; then
-              FE_COLOR="brightgreen"
-            else
-              FE_COLOR="red"
-            fi
+            FE_COLOR="red"
+            [ "$(echo "$FE_COVERAGE > 50" | bc -l 2>/dev/null)" = "1" ] && FE_COLOR="yellow"
+            [ "$(echo "$FE_COVERAGE > 80" | bc -l 2>/dev/null)" = "1" ] && FE_COLOR="brightgreen"
             echo "{\"schemaVersion\":1,\"label\":\"frontend coverage\",\"message\":\"${FE_COVERAGE}%\",\"color\":\"${FE_COLOR}\"}" > .badges/frontend-coverage.json
-            
-            echo "## Frontend Coverage: ${FE_COVERAGE}%" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat fe-report.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "WARNING: No frontend coverage JSON found"
-            echo "{\"schemaVersion\":1,\"label\":\"frontend coverage\",\"message\":\"N/A\",\"color\":\"gray\"}" > .badges/frontend-coverage.json
+            echo "## Frontend: ${FE_COVERAGE}% coverage" >> $GITHUB_STEP_SUMMARY
           fi
-          
           echo "{\"schemaVersion\":1,\"label\":\"frontend tests\",\"message\":\"${E2E_PASS:-0} E2E passed\",\"color\":\"brightgreen\"}" > .badges/frontend-tests.json
+
+      - name: Frontend E2E only (no coverage)
+        if: steps.changes.outputs.frontend == 'false'
+        run: |
+          PORT=13581 node server.js &
+          SERVER_PID=$!
+          sleep 5
+          BASE_URL=http://localhost:13581 node test-e2e-playwright.js || true
+          kill $SERVER_PID 2>/dev/null || true
 
       - name: Publish badges
         if: always()
@@ -108,7 +113,7 @@ jobs:
           git config user.email "actions@github.com"
           git remote set-url origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
           git add .badges/ -f
-          git diff --cached --quiet || (git commit -m "ci: update test badges [skip ci]" && git push) || echo "Badge push failed — badges will be stale"
+          git diff --cached --quiet || (git commit -m "ci: update test badges [skip ci]" && git push) || echo "Badge push failed"
 
   deploy:
     needs: test
