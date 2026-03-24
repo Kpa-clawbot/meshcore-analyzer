@@ -225,6 +225,60 @@ If the same logic exists in two places, it MUST be extracted into a shared funct
 - **No O(n²) in hot paths.** The packets page has 30K+ rows. A nested loop over all packets × all nodes = 20 billion operations. Use Maps/Sets for lookups.
 - **Cache expensive computations.** If you compute the same thing on every render, cache it and invalidate on data change.
 
+## XP (Extreme Programming) Practices
+
+### Test-First Development
+Write the test BEFORE the code. Not after. Not "I'll add tests later." The test defines the expected behavior, then you write the minimum code to make it pass.
+
+**Flow:** Red (write failing test) → Green (make it pass) → Refactor (clean up).
+
+This prevents shipping bugs like `.toFixed on a string` — if the test existed first with string inputs, the bug could never have been introduced. Every bug fix starts by writing a test that reproduces the bug, THEN fixing it.
+
+### YAGNI — You Aren't Gonna Need It
+Don't build for hypothetical future requirements. Build the simplest thing that solves the current problem. The 5 separate disambiguation implementations happened because each page rolled its own "just in case" version instead of importing the one that already existed.
+
+If you're writing code that handles a case nobody asked for: stop. Delete it. Add it when there's a real need.
+
+### Refactor Mercilessly
+When you touch a file and see duplication, dead code, unclear names, or structural mess — clean it up in the same commit. Don't leave it for "later." Later never comes. Tech debt compounds.
+
+**The Boy Scout Rule:** Leave every file cleaner than you found it.
+
+### Simple Design
+The simplest solution that works is the correct one. Complexity is a bug. Before building something, ask:
+1. Does this already exist somewhere in the codebase?
+2. Can I solve this with an existing function + a parameter?
+3. Am I over-engineering for a case that doesn't exist yet?
+
+If the answer to any of these is yes, simplify.
+
+### Pair Programming (Human + AI Model)
+For this project, pair programming means: **subagent writes the code → parent agent reviews and tests locally → THEN pushes to master.** The subagent is the "driver," the parent is the "navigator."
+
+**What this means in practice:**
+- Subagent output is NEVER pushed directly without review
+- Parent agent runs the tests, checks the diff, verifies the behavior
+- If the subagent's work is wrong, parent fixes it before pushing — not after
+- "The subagent said it works" is not verification. Running the tests is.
+
+### Continuous Integration as a Gate
+CI must pass before code is considered shipped. But CI is the LAST line of defense, not the first. The process is:
+1. Test locally (unit + E2E)
+2. Review the diff
+3. Push
+4. CI confirms
+
+If CI catches something you missed locally, that's a process failure — figure out why your local testing didn't catch it and fix the gap.
+
+### 10-Minute Build
+Everything must be testable locally in under 10 minutes. If local tests are broken, flaky, or crashing — that's a P0 blocker. Fix the test infrastructure before shipping features. Broken tests = no tests = shipping blind.
+
+### Collective Code Ownership
+No file is "someone else's problem." Every file follows the same patterns, uses the same shared modules, meets the same quality bar. `live.js` doesn't get to be a special snowflake with its own reimplementation of everything. If it drifts from the shared patterns, bring it back in line.
+
+### Small Releases
+One logical change per commit. Each commit is deployable. Each commit has its tests. Don't bundle "fix A + feature B + cleanup C" into one push — if B breaks, you can't revert without losing A and C.
+
 ## Common Pitfalls
 
 | Pitfall | Times it happened | Prevention |
