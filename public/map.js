@@ -734,9 +734,13 @@
       var savedOpacity = parseFloat(localStorage.getItem('meshcore-heatmap-opacity'));
       if (isNaN(savedOpacity)) savedOpacity = 0.25;
       heatLayer = L.heatLayer(points, {
-        radius: 25, blur: 15, maxZoom: 14, minOpacity: savedOpacity,
+        radius: 25, blur: 15, maxZoom: 14, minOpacity: 0.05,
         gradient: { 0.2: '#0d47a1', 0.4: '#1565c0', 0.6: '#42a5f5', 0.8: '#ffca28', 1.0: '#ff5722' }
       }).addTo(map);
+      // Set overall layer opacity (affects all gradient colors, not just minimum)
+      heatLayer.getContainer && heatLayer.getContainer() ?
+        (heatLayer.getContainer().style.opacity = savedOpacity) :
+        setTimeout(function() { if (heatLayer._canvas) heatLayer._canvas.style.opacity = savedOpacity; }, 100);
       window._meshcoreHeatLayer = heatLayer;
     }
   }

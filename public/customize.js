@@ -1021,9 +1021,11 @@
         if (label) label.textContent = pct + '%';
         var opacity = pct / 100;
         localStorage.setItem('meshcore-heatmap-opacity', opacity);
-        // Live-update the heatmap if visible
-        if (window._meshcoreHeatLayer && window._meshcoreHeatLayer.setOptions) {
-          window._meshcoreHeatLayer.setOptions({ minOpacity: opacity });
+        // Live-update the heatmap if visible — set canvas opacity for whole layer
+        if (window._meshcoreHeatLayer) {
+          var canvas = window._meshcoreHeatLayer._canvas ||
+            (window._meshcoreHeatLayer.getContainer && window._meshcoreHeatLayer.getContainer());
+          if (canvas) canvas.style.opacity = opacity;
         }
       });
     }
