@@ -370,9 +370,10 @@ async function main() {
   // 5e. Channels
   console.log('── Channels ──');
   const chResp = (await get('/api/channels')).data;
-  assert(Array.isArray(chResp.channels), 'channels response is array');
-  if (chResp.channels.length > 0) {
-    const someCh = chResp.channels[0];
+  const chList = chResp.channels || [];
+  assert(Array.isArray(chList), 'channels response is array');
+  if (chList.length > 0) {
+    const someCh = chList[0];
     assert(someCh.messageCount > 0, `channel has messages (${someCh.messageCount})`);
     const msgResp = (await get(`/api/channels/${someCh.hash}/messages`)).data;
     assert(msgResp.messages.length > 0, 'channel has message list');

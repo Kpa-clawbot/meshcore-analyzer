@@ -4,7 +4,9 @@
   "description": "Community-run alternative to the closed-source `analyzer.letsmesh.net`. MQTT packet collection + open-source web analyzer for the Bay Area MeshCore mesh.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npx c8 --reporter=text --reporter=text-summary sh test-all.sh",
+    "test:unit": "node test-packet-filter.js && node test-aging.js && node test-regional-filter.js",
+    "test:coverage": "npx c8 --reporter=text --reporter=html sh test-all.sh"
   },
   "keywords": [],
   "author": "",

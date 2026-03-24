@@ -141,11 +141,15 @@ node tools/e2e-test.js            # 44 tests — E2E: spins up temp server, inje
 node tools/frontend-test.js       # 66 tests — frontend smoke: HTML, JS refs, API shapes
 ```
 
-**ALL existing tests must pass before pushing.** Run at minimum:
+**ALL existing tests must pass before pushing.** Run:
 ```bash
-node test-packet-filter.js && node test-aging.js && node test-regional-filter.js && node tools/e2e-test.js && node tools/frontend-test.js
+npm test                    # all tests + coverage summary
+npm run test:unit           # fast: unit tests only (no server needed)
+npm run test:coverage       # all tests + HTML coverage report in coverage/
 ```
 If any test fails, fix it before pushing. No exceptions. No "known failures."
+
+**Coverage baseline:** 37% statements, 42% branches, 54% functions. Coverage should only go up.
 
 **Every new feature must add tests.** If you add logic, add tests. If you fix a bug, add a regression test. Test count should only go up, never down.
 
