@@ -80,24 +80,24 @@ function decodePath(pathByte, buf, offset) {
 
 // --- Payload decoders ---
 
-/** REQ / RESPONSE / TXT_MSG: dest(6) + src(6) + MAC(4) + encrypted */
+/** REQ / RESPONSE / TXT_MSG: dest(1) + src(1) + MAC(2) + encrypted (PAYLOAD_VER_1, per Mesh.cpp) */
 function decodeEncryptedPayload(buf) {
-  if (buf.length < 16) return { error: 'too short', raw: buf.toString('hex') };
+  if (buf.length < 4) return { error: 'too short', raw: buf.toString('hex') };
   return {
-    destHash: buf.subarray(0, 6).toString('hex'),
-    srcHash: buf.subarray(6, 12).toString('hex'),
-    mac: buf.subarray(12, 16).toString('hex'),
-    encryptedData: buf.subarray(16).toString('hex'),
+    destHash: buf.subarray(0, 1).toString('hex'),
+    srcHash: buf.subarray(1, 2).toString('hex'),
+    mac: buf.subarray(2, 4).toString('hex'),
+    encryptedData: buf.subarray(4).toString('hex'),
   };
 }
 
-/** ACK: dest(6) + src(6) + extra(6) */
+/** ACK: dest(1) + src(1) + ack_hash(4) (per Mesh.cpp) */
 function decodeAck(buf) {
-  if (buf.length < 18) return { error: 'too short', raw: buf.toString('hex') };
+  if (buf.length < 6) return { error: 'too short', raw: buf.toString('hex') };
   return {
-    destHash: buf.subarray(0, 6).toString('hex'),
-    srcHash: buf.subarray(6, 12).toString('hex'),
-    extraHash: buf.subarray(12, 18).toString('hex'),
+    destHash: buf.subarray(0, 1).toString('hex'),
+    srcHash: buf.subarray(1, 2).toString('hex'),
+    extraHash: buf.subarray(2, 6).toString('hex'),
   };
 }
 
@@ -174,23 +174,23 @@ function decodeGrpTxt(buf, channelKeys) {
 
 /** ANON_REQ: dest(6) + ephemeral_pubkey(32) + MAC(4) + encrypted */
 function decodeAnonReq(buf) {
-  if (buf.length < 42) return { error: 'too short', raw: buf.toString('hex') };
+  if (buf.length < 35) return { error: 'too short', raw: buf.toString('hex') };
   return {
-    destHash: buf.subarray(0, 6).toString('hex'),
-    ephemeralPubKey: buf.subarray(6, 38).toString('hex'),
-    mac: buf.subarray(38, 42).toString('hex'),
-    encryptedData: buf.subarray(42).toString('hex'),
+    destHash: buf.subarray(0, 1).toString('hex'),
+    ephemeralPubKey: buf.subarray(1, 33).toString('hex'),
+    mac: buf.subarray(33, 35).toString('hex'),
+    encryptedData: buf.subarray(35).toString('hex'),
   };
 }
 
 /** PATH: dest(6) + src(6) + MAC(4) + path_data */
 function decodePath_payload(buf) {
-  if (buf.length < 16) return { error: 'too short', raw: buf.toString('hex') };
+  if (buf.length < 4) return { error: 'too short', raw: buf.toString('hex') };
   return {
-    destHash: buf.subarray(0, 6).toString('hex'),
-    srcHash: buf.subarray(6, 12).toString('hex'),
-    mac: buf.subarray(12, 16).toString('hex'),
-    pathData: buf.subarray(16).toString('hex'),
+    destHash: buf.subarray(0, 1).toString('hex'),
+    srcHash: buf.subarray(1, 2).toString('hex'),
+    mac: buf.subarray(2, 4).toString('hex'),
+    pathData: buf.subarray(4).toString('hex'),
   };
 }
 
