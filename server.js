@@ -2912,6 +2912,7 @@ app.get('/{*splat}', (req, res) => {
 
 // --- Start ---
 const listenPort = process.env.PORT || config.port;
+if (require.main === module) {
 server.listen(listenPort, () => {
   const protocol = isHttps ? 'https' : 'http';
   console.log(`MeshCore Analyzer running on ${protocol}://localhost:${listenPort}`);
@@ -2959,6 +2960,7 @@ server.listen(listenPort, () => {
     warmNext();
   }, 5000); // 5s delay — let initial client page load complete first
 });
+} // end if (require.main === module)
 
 // --- Graceful Shutdown ---
 let _shuttingDown = false;
@@ -2998,4 +3000,4 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
 
-module.exports = { app, server, wss };
+module.exports = { app, server, wss, pktStore, db, cache };
