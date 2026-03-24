@@ -86,11 +86,19 @@ async function collectCoverage() {
   // Click first header again for reverse sort
   if (headers.length > 0) try { await headers[0].click(); await page.waitForTimeout(300); } catch {}
 
+  // Click sort headers by data-sort attribute
+  try { await page.click('th[data-sort="name"]'); await page.waitForTimeout(300); } catch {}
+  try { await page.click('th[data-sort="last_seen"]'); await page.waitForTimeout(300); } catch {}
+
   // Click role tabs using data-tab attribute
   const roleTabs = await page.$$('.node-tab[data-tab]');
   for (const tab of roleTabs) {
     try { await tab.click(); await page.waitForTimeout(600); } catch {}
   }
+
+  // Click role tabs by data-role attribute
+  try { await page.click('[data-role="repeater"]'); await page.waitForTimeout(500); } catch {}
+  try { await page.click('[data-role="all"]'); await page.waitForTimeout(300); } catch {}
 
   // Status filter buttons
   const statusBtns = await page.$$('#nodeStatusFilter .btn, [data-status]');
@@ -98,11 +106,19 @@ async function collectCoverage() {
     try { await btn.click(); await page.waitForTimeout(400); } catch {}
   }
 
+  // Click status filters by data-status attribute
+  try { await page.click('[data-status="active"]'); await page.waitForTimeout(300); } catch {}
+  try { await page.click('[data-status="all"]'); await page.waitForTimeout(300); } catch {}
+
   // Use search box
   await safeFill('#nodeSearch', 'test');
   await page.waitForTimeout(500);
   await safeFill('#nodeSearch', '');
   await page.waitForTimeout(300);
+
+  // Search by placeholder
+  try { await page.fill('input[placeholder*="Search"]', 'test'); await page.waitForTimeout(500); } catch {}
+  try { await page.fill('input[placeholder*="Search"]', ''); await page.waitForTimeout(300); } catch {};
 
   // Use dropdowns (Last Heard, etc.)
   const selects = await page.$$('select');
@@ -162,6 +178,17 @@ async function collectCoverage() {
     }
   }
 
+  // Direct filter interactions
+  try { await page.fill('#packetFilterInput', 'type == ADVERT'); await page.waitForTimeout(500); } catch {}
+  try { await page.fill('#packetFilterInput', ''); await page.waitForTimeout(300); } catch {}
+  // Change time window via select
+  try { await page.selectOption('#fTimeWindow', '60'); await page.waitForTimeout(500); } catch {}
+  // Click a packet row
+  try {
+    const pktRows2 = await page.$$('table tbody tr');
+    if (pktRows2.length) { await pktRows2[0].click(); await page.waitForTimeout(1000); }
+  } catch {}
+
   // Click Group by Hash button
   await safeClick('#fGroup');
   await page.waitForTimeout(800);
@@ -211,6 +238,13 @@ async function collectCoverage() {
     } catch {}
   }
 
+  // Toggle role filters by data-role
+  try { await page.click('input[data-role="companion"]'); await page.waitForTimeout(300); } catch {}
+  try { await page.click('input[data-role="companion"]'); await page.waitForTimeout(300); } catch {}
+  // Status filter on map
+  try { await page.click('[data-status="active"]'); await page.waitForTimeout(300); } catch {}
+  try { await page.click('[data-status="all"]'); await page.waitForTimeout(300); } catch {}
+
   // Toggle dark mode while on map
   await safeClick('#darkModeToggle');
   await page.waitForTimeout(800);
@@ -229,6 +263,11 @@ async function collectCoverage() {
       await page.click(`#analyticsTabs [data-tab="${tabName}"]`, { timeout: 2000 });
       await page.waitForTimeout(1200); // give renderTab time
     } catch {}
+  }
+
+  // Click analytics tabs by data-tab directly (broader selector)
+  for (const tab of ['rf', 'topology', 'channels', 'hashsizes', 'collisions', 'subpaths', 'nodes', 'distance']) {
+    try { await page.click(`[data-tab="${tab}"]`); await page.waitForTimeout(800); } catch {}
   }
 
   // Also test deep-link tabs
@@ -256,6 +295,12 @@ async function collectCoverage() {
     try { await presets[i].click(); await page.waitForTimeout(400); } catch {}
   }
 
+  // Click presets by broader selector
+  try {
+    const presets2 = await page.$$('.cust-preset, [data-preset]');
+    if (presets2.length) { await presets2[0].click(); await page.waitForTimeout(500); }
+  } catch {}
+
   // Change a color input
   const colorInputs = await page.$$('input[type="color"]');
   for (let i = 0; i < Math.min(colorInputs.length, 3); i++) {
@@ -275,6 +320,13 @@ async function collectCoverage() {
 
   // Close customizer
   await safeClick('#customizeToggle');
+
+  // Re-open customizer and use broader selectors
+  try { await page.click('#customizeToggle'); await page.waitForTimeout(500); } catch {}
+  for (const tab of ['branding', 'theme', 'nodes', 'home', 'export']) {
+    try { await page.click(`[data-tab="${tab}"]`); await page.waitForTimeout(300); } catch {}
+  }
+  try { await page.click('.cust-close'); await page.waitForTimeout(300); } catch {}
 
   // ── CHANNELS PAGE ──
   console.log('  [coverage] Channels page...');
@@ -333,6 +385,12 @@ async function collectCoverage() {
   // ── DARK MODE TOGGLE ──
   await safeClick('#darkModeToggle');
   await page.waitForTimeout(500);
+
+  // Toggle via emoji button selector
+  try {
+    const themeBtn = await page.$('button:has-text("☀️"), button:has-text("🌙")');
+    if (themeBtn) { await themeBtn.click(); await page.waitForTimeout(500); }
+  } catch {}
 
   // ── KEYBOARD SHORTCUT (Ctrl+K for search) ──
   try {
