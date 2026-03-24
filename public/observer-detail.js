@@ -308,7 +308,7 @@
           <td>${timeAgo(p.timestamp)}</td>
           <td>${typeName}</td>
           <td class="mono" style="font-size:0.85em">${(p.hash || '').substring(0, 10)}</td>
-          <td>${p.snr != null ? p.snr.toFixed(1) : '—'}</td>
+          <td>${p.snr != null ? Number(p.snr).toFixed(1) : '—'}</td>
           <td>${p.rssi != null ? p.rssi : '—'}</td>
           <td>${hops.length}</td>
         </tr>`;

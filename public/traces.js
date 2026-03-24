@@ -280,8 +280,8 @@
           <div class="tl-marker" style="left:${pct}%" title="${time.toISOString()}"></div>
         </div>
         <div class="tl-delta mono">${delta}</div>
-        <div class="tl-snr ${snrClass}">${t.snr != null ? t.snr.toFixed(1) + ' dB' : '—'}</div>
-        <div class="tl-rssi">${t.rssi != null ? t.rssi.toFixed(0) + ' dBm' : '—'}</div>
+        <div class="tl-snr ${snrClass}">${t.snr != null ? Number(t.snr).toFixed(1) + ' dB' : '—'}</div>
+        <div class="tl-rssi">${t.rssi != null ? Number(t.rssi).toFixed(0) + ' dBm' : '—'}</div>
       </div>`;
     });
 

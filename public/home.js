@@ -287,7 +287,7 @@
               <div class="mnc-lbl">Observers</div>
             </div>
             <div class="mnc-metric">
-              <div class="mnc-val" style="color:${snrColor}">${snrVal != null ? snrVal.toFixed(1) + ' dB' : '—'}</div>
+              <div class="mnc-val" style="color:${snrColor}">${snrVal != null ? Number(snrVal).toFixed(1) + ' dB' : '—'}</div>
               <div class="mnc-lbl">SNR${snrLabel ? ' · ' + snrLabel : ''}</div>
             </div>
             <div class="mnc-metric">
@@ -425,7 +425,7 @@
             <div class="health-metric"><div class="val">${stats.packetsToday ?? '—'}</div><div class="lbl">Packets Today</div></div>
             <div class="health-metric"><div class="val">${observers.length}</div><div class="lbl">Observers</div></div>
             <div class="health-metric"><div class="val">${stats.lastHeard ? timeAgo(stats.lastHeard) : '—'}</div><div class="lbl">Last seen</div></div>
-            <div class="health-metric"><div class="val">${snrVal != null ? snrVal.toFixed(1) + ' dB' : '—'}</div><div class="lbl">Avg SNR${snrLabel ? ' · ' + snrLabel : ''}</div></div>
+            <div class="health-metric"><div class="val">${snrVal != null ? Number(snrVal).toFixed(1) + ' dB' : '—'}</div><div class="lbl">Avg SNR${snrLabel ? ' · ' + snrLabel : ''}</div></div>
             <div class="health-metric"><div class="val">${stats.avgHops != null ? stats.avgHops.toFixed(1) : '—'}</div><div class="lbl">Avg Hops</div></div>
           </div>
           ${observers.length ? `<div class="health-observers"><strong>Heard by:</strong> ${observers.map(o => escapeHtml(o.observer_name || o.observer_id)).join(', ')}</div>` : ''}
@@ -444,7 +444,7 @@
                 <span class="badge" style="background:var(--type-${payloadTypeColor(p.payload_type)})">${escapeHtml(payloadTypeName(p.payload_type))}</span>
                 <span>via ${escapeHtml(obsId)}</span>
                 <span class="time">${timeAgo(p.timestamp || p.created_at)}</span>
-                <span class="snr">${p.snr != null ? p.snr.toFixed(1) + ' dB' : ''}</span>
+                <span class="snr">${p.snr != null ? Number(p.snr).toFixed(1) + ' dB' : ''}</span>
               </div>`;
             }).join('') : '<p style="color:var(--text-muted);font-size:.85rem">No recent packets found for this node.</p>'}
           </div>
