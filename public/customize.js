@@ -728,10 +728,21 @@
         (tval !== tdef ? '<button class="cust-reset-btn" data-reset-type="' + tkey + '">Reset</button>' : '') +
       '</div>';
     }
+    var heatOpacity = parseFloat(localStorage.getItem('meshcore-heatmap-opacity'));
+    if (isNaN(heatOpacity)) heatOpacity = 0.25;
+    var heatPct = Math.round(heatOpacity * 100);
     return '<div class="cust-panel' + (activeTab === 'nodes' ? ' active' : '') + '" data-panel="nodes">' +
       '<p class="cust-section-title">Node Role Colors</p>' + rows +
       '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">' +
       '<p class="cust-section-title">Packet Type Colors</p>' + typeRows +
+      '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">' +
+      '<p class="cust-section-title">Heatmap</p>' +
+      '<div class="cust-color-row">' +
+        '<div><label>🔥 Opacity</label>' +
+        '<div class="cust-hint">Controls how opaque the heatmap overlay appears on the live map (0–100%)</div></div>' +
+        '<input type="range" id="custHeatOpacity" min="0" max="100" value="' + heatPct + '" style="width:120px;cursor:pointer">' +
+        '<span id="custHeatOpacityVal" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);min-width:36px">' + heatPct + '%</span>' +
+      '</div>' +
     '</div>';
   }
 
@@ -1000,6 +1011,22 @@
         render(container);
       });
     });
+
+    // Heatmap opacity slider
+    var heatSlider = container.querySelector('#custHeatOpacity');
+    if (heatSlider) {
+      heatSlider.addEventListener('input', function () {
+        var pct = parseInt(heatSlider.value);
+        var label = container.querySelector('#custHeatOpacityVal');
+        if (label) label.textContent = pct + '%';
+        var opacity = pct / 100;
+        localStorage.setItem('meshcore-heatmap-opacity', opacity);
+        // Live-update the heatmap if visible
+        if (window._meshcoreHeatLayer && window._meshcoreHeatLayer.setOptions) {
+          window._meshcoreHeatLayer.setOptions({ minOpacity: opacity });
+        }
+      });
+    }
 
     // Steps
     container.querySelectorAll('[data-step-field]').forEach(function (inp) {
