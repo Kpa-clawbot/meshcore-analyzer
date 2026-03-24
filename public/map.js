@@ -198,7 +198,9 @@
 
     // Bind controls
     document.getElementById('mcClusters').addEventListener('change', e => { filters.clusters = e.target.checked; renderMarkers(); });
-    document.getElementById('mcHeatmap').addEventListener('change', e => { toggleHeatmap(e.target.checked); });
+    const heatEl = document.getElementById('mcHeatmap');
+    if (localStorage.getItem('meshcore-map-heatmap') === 'true') { heatEl.checked = true; }
+    heatEl.addEventListener('change', e => { localStorage.setItem('meshcore-map-heatmap', e.target.checked); toggleHeatmap(e.target.checked); });
     document.getElementById('mcNeighbors').addEventListener('change', e => { filters.neighbors = e.target.checked; renderMarkers(); });
 
     // Hash Labels toggle
@@ -397,6 +399,11 @@
       buildJumpButtons();
 
       renderMarkers();
+
+      // Restore heatmap if previously enabled
+      if (localStorage.getItem('meshcore-map-heatmap') === 'true') {
+        toggleHeatmap(true);
+      }
 
       // If navigated with ?node=PUBKEY, center on and highlight that node
       if (targetNodeKey) {
@@ -715,7 +722,7 @@
   }
 
   function toggleHeatmap(on) {
-    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; window._meshcoreHeatLayer = null; }
     if (!on || !map) return;
     const points = nodes
       .filter(n => n.lat != null && n.lon != null)
@@ -724,10 +731,13 @@
         return [n.lat, n.lon, weight];
       });
     if (points.length && typeof L.heatLayer === 'function') {
+      var savedOpacity = parseFloat(localStorage.getItem('meshcore-heatmap-opacity'));
+      if (isNaN(savedOpacity)) savedOpacity = 0.25;
       heatLayer = L.heatLayer(points, {
-        radius: 25, blur: 15, maxZoom: 14, minOpacity: 0.25,
+        radius: 25, blur: 15, maxZoom: 14, minOpacity: savedOpacity,
         gradient: { 0.2: '#0d47a1', 0.4: '#1565c0', 0.6: '#42a5f5', 0.8: '#ffca28', 1.0: '#ff5722' }
       }).addTo(map);
+      window._meshcoreHeatLayer = heatLayer;
     }
   }
 
