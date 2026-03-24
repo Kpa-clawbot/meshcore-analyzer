@@ -15,6 +15,7 @@ sleep 5
 
 # 4. Run Playwright tests (exercises frontend code)
 BASE_URL=http://localhost:13581 node test-e2e-playwright.js || true
+BASE_URL=http://localhost:13581 node test-e2e-interactions.js || true
 
 # 5. Collect browser coverage
 BASE_URL=http://localhost:13581 node scripts/collect-frontend-coverage.js

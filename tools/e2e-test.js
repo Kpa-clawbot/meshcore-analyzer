@@ -378,7 +378,7 @@ async function main() {
     const msgResp = (await get(`/api/channels/${someCh.hash}/messages`)).data;
     assert(msgResp.messages.length > 0, 'channel has message list');
     assert(msgResp.messages[0].sender !== undefined, 'message has sender');
-    console.log(`  ✓ Channels: ${chResp.channels.length} channels\n`);
+    console.log(`  ✓ Channels: ${chList.length} channels\n`);
   } else {
     console.log(`  ⚠ Channels: 0 (synthetic packets don't produce decodable channel messages)\n`);
   }
