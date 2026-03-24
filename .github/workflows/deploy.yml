@@ -30,7 +30,12 @@ jobs:
         run: npm run test:unit
 
       - name: Integration tests + coverage
-        run: npx c8 --reporter=text-summary sh test-all.sh
+        run: |
+          npx c8 --reporter=text-summary --reporter=text sh test-all.sh 2>&1 | tee test-output.txt
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E 'passed|failed|Results|Statements|Branches|Functions|Lines' test-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
   deploy:
     needs: test
