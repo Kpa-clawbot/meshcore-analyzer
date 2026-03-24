@@ -2106,10 +2106,16 @@
       }
     }
     if (points.length && typeof L.heatLayer === 'function') {
+      var savedOpacity = parseFloat(localStorage.getItem('meshcore-live-heatmap-opacity'));
+      if (isNaN(savedOpacity)) savedOpacity = 0.3;
       heatLayer = L.heatLayer(points, {
-        radius: 25, blur: 15, maxZoom: 14, minOpacity: 0.3,
+        radius: 25, blur: 15, maxZoom: 14, minOpacity: 0.05,
         gradient: { 0.2: '#0d47a1', 0.4: '#1565c0', 0.6: '#42a5f5', 0.8: '#ffca28', 1.0: '#ff5722' }
       }).addTo(map);
+      // Set overall layer opacity via canvas element
+      if (heatLayer._canvas) { heatLayer._canvas.style.opacity = savedOpacity; }
+      else { setTimeout(function() { if (heatLayer && heatLayer._canvas) heatLayer._canvas.style.opacity = savedOpacity; }, 100); }
+      window._meshcoreLiveHeatLayer = heatLayer;
     }
   }
 

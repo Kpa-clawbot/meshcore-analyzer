@@ -731,17 +731,26 @@
     var heatOpacity = parseFloat(localStorage.getItem('meshcore-heatmap-opacity'));
     if (isNaN(heatOpacity)) heatOpacity = 0.25;
     var heatPct = Math.round(heatOpacity * 100);
+    var liveHeatOpacity = parseFloat(localStorage.getItem('meshcore-live-heatmap-opacity'));
+    if (isNaN(liveHeatOpacity)) liveHeatOpacity = 0.3;
+    var liveHeatPct = Math.round(liveHeatOpacity * 100);
     return '<div class="cust-panel' + (activeTab === 'nodes' ? ' active' : '') + '" data-panel="nodes">' +
       '<p class="cust-section-title">Node Role Colors</p>' + rows +
       '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">' +
       '<p class="cust-section-title">Packet Type Colors</p>' + typeRows +
       '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">' +
-      '<p class="cust-section-title">Heatmap</p>' +
+      '<p class="cust-section-title">Heatmap Opacity</p>' +
       '<div class="cust-color-row">' +
-        '<div><label>🔥 Opacity</label>' +
-        '<div class="cust-hint">Controls how opaque the heatmap overlay appears on the live map (0–100%)</div></div>' +
+        '<div><label>🗺️ Nodes Map</label>' +
+        '<div class="cust-hint">Heatmap overlay on the Nodes → Map page (0–100%)</div></div>' +
         '<input type="range" id="custHeatOpacity" min="0" max="100" value="' + heatPct + '" style="width:120px;cursor:pointer">' +
         '<span id="custHeatOpacityVal" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);min-width:36px">' + heatPct + '%</span>' +
+      '</div>' +
+      '<div class="cust-color-row">' +
+        '<div><label>📡 Live Map</label>' +
+        '<div class="cust-hint">Heatmap overlay on the Live page (0–100%)</div></div>' +
+        '<input type="range" id="custLiveHeatOpacity" min="0" max="100" value="' + liveHeatPct + '" style="width:120px;cursor:pointer">' +
+        '<span id="custLiveHeatOpacityVal" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);min-width:36px">' + liveHeatPct + '%</span>' +
       '</div>' +
     '</div>';
   }
@@ -1025,6 +1034,24 @@
         if (window._meshcoreHeatLayer) {
           var canvas = window._meshcoreHeatLayer._canvas ||
             (window._meshcoreHeatLayer.getContainer && window._meshcoreHeatLayer.getContainer());
+          if (canvas) canvas.style.opacity = opacity;
+        }
+      });
+    }
+
+    // Live heatmap opacity slider
+    var liveHeatSlider = container.querySelector('#custLiveHeatOpacity');
+    if (liveHeatSlider) {
+      liveHeatSlider.addEventListener('input', function () {
+        var pct = parseInt(liveHeatSlider.value);
+        var label = container.querySelector('#custLiveHeatOpacityVal');
+        if (label) label.textContent = pct + '%';
+        var opacity = pct / 100;
+        localStorage.setItem('meshcore-live-heatmap-opacity', opacity);
+        // Live-update the live page heatmap if visible
+        if (window._meshcoreLiveHeatLayer) {
+          var canvas = window._meshcoreLiveHeatLayer._canvas ||
+            (window._meshcoreLiveHeatLayer.getContainer && window._meshcoreLiveHeatLayer.getContainer());
           if (canvas) canvas.style.opacity = opacity;
         }
       });

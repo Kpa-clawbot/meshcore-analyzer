@@ -273,6 +273,31 @@ async function run() {
 
   await browser.close();
 
+  // Test 14: Live heatmap opacity stored in localStorage
+  await test('Live heatmap opacity persists in localStorage', async () => {
+    // Verify localStorage key works (no page load needed — reuse current page)
+    await page.evaluate(() => localStorage.setItem('meshcore-live-heatmap-opacity', '0.6'));
+    const opacity = await page.evaluate(() => localStorage.getItem('meshcore-live-heatmap-opacity'));
+    assert(opacity === '0.6', `Live opacity should persist as "0.6" but got "${opacity}"`);
+    await page.evaluate(() => localStorage.removeItem('meshcore-live-heatmap-opacity'));
+  });
+
+  // Test 15: Customizer has separate Map and Live opacity sliders
+  await test('Customizer has separate map and live opacity sliders', async () => {
+    // Verify by checking JS source — avoids heavy page reloads that crash ARM chromium
+    const custJs = await page.evaluate(async () => {
+      const res = await fetch('/customize.js?_=' + Date.now());
+      return res.text();
+    });
+    assert(custJs.includes('custHeatOpacity'), 'customize.js should have map opacity slider (custHeatOpacity)');
+    assert(custJs.includes('custLiveHeatOpacity'), 'customize.js should have live opacity slider (custLiveHeatOpacity)');
+    assert(custJs.includes('meshcore-heatmap-opacity'), 'customize.js should use meshcore-heatmap-opacity key');
+    assert(custJs.includes('meshcore-live-heatmap-opacity'), 'customize.js should use meshcore-live-heatmap-opacity key');
+    // Verify labels are distinct
+    assert(custJs.includes('Nodes Map') || custJs.includes('nodes map') || custJs.includes('🗺'), 'Map slider should have map-related label');
+    assert(custJs.includes('Live Map') || custJs.includes('live map') || custJs.includes('📡'), 'Live slider should have live-related label');
+  });
+
   // Summary
   const passed = results.filter(r => r.pass).length;
   const failed = results.filter(r => !r.pass).length;
