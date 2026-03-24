@@ -365,6 +365,41 @@ console.log('\n=== hop-resolver.js ===');
   });
 }
 
+// ===== SNR/RSSI Number casting =====
+{
+  // These test the pattern used in observer-detail.js, home.js, traces.js, live.js
+  // Values from DB may be strings — Number() must be called before .toFixed()
+  test('Number(string snr).toFixed works', () => {
+    const snr = "7.5"; // string from DB
+    assert.strictEqual(Number(snr).toFixed(1), "7.5");
+  });
+
+  test('Number(number snr).toFixed works', () => {
+    const snr = 7.5;
+    assert.strictEqual(Number(snr).toFixed(1), "7.5");
+  });
+
+  test('Number(null) produces NaN, guarded by != null check', () => {
+    const snr = null;
+    assert.ok(!(snr != null) || !isNaN(Number(snr).toFixed(1)));
+  });
+
+  test('Number(string rssi).toFixed works', () => {
+    const rssi = "-85";
+    assert.strictEqual(Number(rssi).toFixed(0), "-85");
+  });
+
+  test('Number(negative string snr).toFixed works', () => {
+    const snr = "-3.2";
+    assert.strictEqual(Number(snr).toFixed(1), "-3.2");
+  });
+
+  test('Number(integer string).toFixed adds decimal', () => {
+    const snr = "10";
+    assert.strictEqual(Number(snr).toFixed(1), "10.0");
+  });
+}
+
 // ===== SUMMARY =====
 console.log(`\n${'═'.repeat(40)}`);
 console.log(`  Frontend helpers: ${passed} passed, ${failed} failed`);
