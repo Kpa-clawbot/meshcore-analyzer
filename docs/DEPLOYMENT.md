@@ -326,62 +326,35 @@ Don't expose 1883 at all. Instead, have your observers publish to a shared publi
 
 ## Database Backups
 
-Packet data is stored in `meshcore.db` inside the `meshcore-data` Docker volume.
+Packet data is stored in `meshcore.db` inside the data volume.
 
-### Find the database file
-
-```bash
-docker volume inspect meshcore-data --format '{{ .Mountpoint }}'
-# Prints something like: /var/lib/docker/volumes/meshcore-data/_data
-```
-
-The database is at that path + `/meshcore.db`.
-
-### Manual backup
+**Using manage.sh (easiest):**
 
 ```bash
-cp $(docker volume inspect meshcore-data --format '{{ .Mountpoint }}')/meshcore.db \
-  ~/meshcore-backup-$(date +%Y%m%d).db
+./manage.sh backup                          # Saves to ./backups/meshcore-TIMESTAMP.db
+./manage.sh backup ~/my-backup.db           # Custom path
+./manage.sh restore ./backups/some-file.db  # Restore (backs up current DB first)
 ```
 
-### Automated daily backup (cron)
+**Local directory mount (recommended):**
+
+If you used `-v ./analyzer-data:/app/data` instead of a Docker volume, the database is just `./analyzer-data/meshcore.db` — back it up however you like.
+
+**Automated daily backup (cron):**
 
 ```bash
 crontab -e
-# Add this line:
-0 3 * * * cp $(docker volume inspect meshcore-data --format '\{\{ .Mountpoint \}\}')/meshcore.db /home/youruser/backups/meshcore-$(date +\%Y\%m\%d).db
-```
-
-### Easier alternative: use a local directory
-
-Instead of a Docker volume, mount a local directory. Replace `-v meshcore-data:/app/data` with:
-
-```bash
--v ./analyzer-data:/app/data
-```
-
-Now the database is just `./analyzer-data/meshcore.db` — easy to find, back up, and restore.
-
-### Restoring from backup
-
-Stop the container, replace `meshcore.db` with your backup file, start the container:
-
-```bash
-docker stop meshcore-analyzer
-cp ~/meshcore-backup-20260324.db $(docker volume inspect meshcore-data --format '{{ .Mountpoint }}')/meshcore.db
-docker start meshcore-analyzer
+# Add:
+0 3 * * * cd /path/to/meshcore-analyzer && ./manage.sh backup
 ```
 
 ## Updating
 
 ```bash
-cd meshcore-analyzer
-git pull
-docker build -t meshcore-analyzer .
-docker stop meshcore-analyzer
-docker rm meshcore-analyzer
-# Re-run the same docker run command from Quick Start step 4
+./manage.sh update
 ```
+
+Pulls latest code, rebuilds the image, restarts the container. Data is preserved.
 
 Data is preserved in the Docker volumes.
 
