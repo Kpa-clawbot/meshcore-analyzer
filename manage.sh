@@ -294,7 +294,7 @@ cmd_setup() {
     echo "   Useful commands:"
     echo "     ./manage.sh status     Check health"
     echo "     ./manage.sh logs       View logs"
-    echo "     ./manage.sh backup     Backup database"
+    echo "     ./manage.sh backup     Full backup (DB + config + theme)"
     echo "     ./manage.sh update     Update to latest version"
     echo ""
   else
@@ -431,69 +431,145 @@ cmd_update() {
 # ─── Backup ───────────────────────────────────────────────────────────────
 
 cmd_backup() {
-  DEST="${1:-./backups/meshcore-$(date +%Y%m%d-%H%M%S).db}"
-  mkdir -p "$(dirname "$DEST")"
+  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+  BACKUP_DIR="${1:-./backups/meshcore-${TIMESTAMP}}"
+  mkdir -p "$BACKUP_DIR"
 
-  # Try volume path first, fall back to docker cp
+  info "Backing up to ${BACKUP_DIR}/"
+
+  # Database
   DB_PATH=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/meshcore.db
-
   if [ -f "$DB_PATH" ]; then
-    cp "$DB_PATH" "$DEST"
+    cp "$DB_PATH" "$BACKUP_DIR/meshcore.db"
+    log "Database ($(du -h "$BACKUP_DIR/meshcore.db" | cut -f1))"
   elif docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    docker cp "${CONTAINER_NAME}:/app/data/meshcore.db" "$DEST" 2>/dev/null
+    docker cp "${CONTAINER_NAME}:/app/data/meshcore.db" "$BACKUP_DIR/meshcore.db" 2>/dev/null && \
+      log "Database (via docker cp)" || warn "Could not backup database"
   else
-    err "Can't find database. Is the container running?"
-    exit 1
+    warn "Database not found (container not running?)"
   fi
 
-  if [ -f "$DEST" ]; then
-    SIZE=$(du -h "$DEST" | cut -f1)
-    log "Backed up to ${DEST} (${SIZE})"
-  else
-    err "Backup failed."
-    exit 1
+  # Config
+  if [ -f config.json ]; then
+    cp config.json "$BACKUP_DIR/config.json"
+    log "config.json"
   fi
+
+  # Caddyfile
+  if [ -f caddy-config/Caddyfile ]; then
+    cp caddy-config/Caddyfile "$BACKUP_DIR/Caddyfile"
+    log "Caddyfile"
+  fi
+
+  # Theme
+  THEME_PATH=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/theme.json
+  if [ -f "$THEME_PATH" ]; then
+    cp "$THEME_PATH" "$BACKUP_DIR/theme.json"
+    log "theme.json"
+  elif [ -f theme.json ]; then
+    cp theme.json "$BACKUP_DIR/theme.json"
+    log "theme.json"
+  fi
+
+  # Summary
+  TOTAL=$(du -sh "$BACKUP_DIR" | cut -f1)
+  FILES=$(ls "$BACKUP_DIR" | wc -l)
+  echo ""
+  log "Backup complete: ${FILES} files, ${TOTAL} total → ${BACKUP_DIR}/"
 }
 
 # ─── Restore ──────────────────────────────────────────────────────────────
 
 cmd_restore() {
   if [ -z "$1" ]; then
-    err "Usage: ./manage.sh restore <backup-file.db>"
-    # List available backups
+    err "Usage: ./manage.sh restore <backup-dir-or-db-file>"
     if [ -d "./backups" ]; then
       echo ""
       echo "   Available backups:"
-      ls -lh ./backups/*.db 2>/dev/null | awk '{print "     " $NF " (" $5 ")"}'
+      ls -dt ./backups/meshcore-* 2>/dev/null | head -10 | while read d; do
+        if [ -d "$d" ]; then
+          echo "     $d/ ($(ls "$d" | wc -l) files)"
+        elif [ -f "$d" ]; then
+          echo "     $d ($(du -h "$d" | cut -f1))"
+        fi
+      done
     fi
     exit 1
   fi
-  if [ ! -f "$1" ]; then
-    err "File not found: $1"
+
+  # Accept either a directory (full backup) or a single .db file
+  if [ -d "$1" ]; then
+    DB_FILE="$1/meshcore.db"
+    CONFIG_FILE="$1/config.json"
+    CADDY_FILE="$1/Caddyfile"
+    THEME_FILE="$1/theme.json"
+  elif [ -f "$1" ]; then
+    DB_FILE="$1"
+    CONFIG_FILE=""
+    CADDY_FILE=""
+    THEME_FILE=""
+  else
+    err "Not found: $1"
     exit 1
   fi
 
-  warn "This will stop the analyzer, replace the database with $1, and restart."
-  if ! confirm "Continue?"; then
+  if [ ! -f "$DB_FILE" ]; then
+    err "No meshcore.db found in $1"
+    exit 1
+  fi
+
+  echo ""
+  info "Will restore from: $1"
+  [ -f "$DB_FILE" ] && echo "   • Database"
+  [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ] && echo "   • config.json"
+  [ -n "$CADDY_FILE" ] && [ -f "$CADDY_FILE" ] && echo "   • Caddyfile"
+  [ -n "$THEME_FILE" ] && [ -f "$THEME_FILE" ] && echo "   • theme.json"
+  echo ""
+
+  if ! confirm "Continue? (current state will be backed up first)"; then
     echo "   Aborted."
     exit 0
   fi
 
-  # Backup current DB first
-  info "Backing up current database first..."
-  cmd_backup "./backups/meshcore-pre-restore-$(date +%Y%m%d-%H%M%S).db"
+  # Backup current state first
+  info "Backing up current state..."
+  cmd_backup "./backups/meshcore-pre-restore-$(date +%Y%m%d-%H%M%S)"
 
   docker stop "$CONTAINER_NAME" 2>/dev/null || true
 
-  DB_PATH=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/meshcore.db
-  if [ -f "$DB_PATH" ] || [ -d "$(dirname "$DB_PATH")" ]; then
-    cp "$1" "$DB_PATH"
+  # Restore database
+  DEST_DB=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/meshcore.db
+  if [ -d "$(dirname "$DEST_DB")" ]; then
+    cp "$DB_FILE" "$DEST_DB"
   else
-    docker cp "$1" "${CONTAINER_NAME}:/app/data/meshcore.db"
+    docker cp "$DB_FILE" "${CONTAINER_NAME}:/app/data/meshcore.db"
+  fi
+  log "Database restored"
+
+  # Restore config if present
+  if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+    cp "$CONFIG_FILE" ./config.json
+    log "config.json restored"
+  fi
+
+  # Restore Caddyfile if present
+  if [ -n "$CADDY_FILE" ] && [ -f "$CADDY_FILE" ]; then
+    mkdir -p caddy-config
+    cp "$CADDY_FILE" caddy-config/Caddyfile
+    log "Caddyfile restored"
+  fi
+
+  # Restore theme if present
+  if [ -n "$THEME_FILE" ] && [ -f "$THEME_FILE" ]; then
+    DEST_THEME=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/theme.json
+    if [ -d "$(dirname "$DEST_THEME")" ]; then
+      cp "$THEME_FILE" "$DEST_THEME"
+    fi
+    log "theme.json restored"
   fi
 
   docker start "$CONTAINER_NAME"
-  log "Restored from $1 and restarted."
+  log "Restored and restarted."
 }
 
 # ─── MQTT Test ────────────────────────────────────────────────────────────
@@ -560,8 +636,8 @@ cmd_help() {
   echo ""
   echo "  ${BOLD}Maintain${NC}"
   echo "    update       Pull latest code, rebuild, restart (keeps data)"
-  echo "    backup [f]   Backup database (default: ./backups/timestamped)"
-  echo "    restore <f>  Restore database from backup (backs up current first)"
+  echo "    backup [dir] Full backup: database + config + theme (default: ./backups/timestamped/)"
+  echo "    restore <d>  Restore from backup dir or .db file (backs up current first)"
   echo "    mqtt-test    Check if MQTT data is flowing"
   echo ""
 }
