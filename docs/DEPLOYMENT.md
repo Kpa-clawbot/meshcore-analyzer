@@ -1,6 +1,6 @@
 # Deploying MeshCore Analyzer
 
-A step-by-step guide to getting MeshCore Analyzer running with automatic HTTPS on your own server. No DevOps experience required.
+A step-by-step guide to getting MeshCore Analyzer running with automatic HTTPS on your own server. Written for people who have never done this before.
 
 ## What You'll End Up With
 
@@ -10,78 +10,114 @@ A step-by-step guide to getting MeshCore Analyzer running with automatic HTTPS o
 - SQLite database for packet storage (auto-created)
 - Everything in a single Docker container
 
-## Requirements
+## What You Need Before Starting
 
-- A server (VPS, cloud VM, Raspberry Pi, etc.) with **Docker installed**
-- A **domain name** pointed at your server's IP (e.g., `analyzer.example.com`)
-- Ports **80** and **443** open to the internet (required for HTTPS)
-- At least **512 MB RAM** and **1 GB disk** (more for large meshes)
+### A server
+A computer that's always on and connected to the internet. Options:
+- **Cloud VM** (easiest) — DigitalOcean, Linode, Vultr, AWS, Azure, etc. A $5-6/month VPS works fine. Pick **Ubuntu 22.04 or 24.04** when creating it.
+- **Raspberry Pi** — Works great, just slower to build.
+- **Old PC/laptop at home** — Works if your ISP doesn't block ports 80/443 (many do).
+
+You'll need **SSH access** to your server. If you're using a cloud provider, they'll give you instructions when you create the VM.
+
+### A domain name
+A domain (like `analyzer.example.com`) pointed at your server. You can:
+- Buy one (~$10/year) from Namecheap, Cloudflare, Google Domains, etc.
+- Or use a free subdomain from [DuckDNS](https://www.duckdns.org/) or [FreeDNS](https://freedns.afraid.org/)
+
+After getting a domain, create an **A record** pointing to your server's IP address. Your domain provider's dashboard will have a "DNS" section for this.
+
+### Open ports
+Your server's firewall must allow traffic on:
+- **Port 80** — needed for automatic HTTPS certificate provisioning
+- **Port 443** — the actual HTTPS traffic
+
+If you're on a cloud provider, find "Security Groups" or "Firewall" in the dashboard and add rules to allow TCP ports 80 and 443 from anywhere (0.0.0.0/0).
+
+## Installing Docker
+
+Docker packages your app and all its dependencies into a "container" — think of it as a lightweight, isolated mini-computer running inside your server. You don't need to install Node.js, Mosquitto, or Caddy separately — Docker handles all of it.
+
+**SSH into your server** and run these commands:
+
+```bash
+# Download and run Docker's official install script
+curl -fsSL https://get.docker.com | sh
+
+# Let your user run Docker without sudo (log out and back in after this)
+sudo usermod -aG docker $USER
+```
+
+Log out and SSH back in, then verify:
+
+```bash
+docker --version
+# Should print something like: Docker version 24.x.x
+```
+
+That's it. Docker is installed.
 
 ## Quick Start (5 minutes)
 
-### Step 1: Get the code
+### Step 1: Download the code
 
 ```bash
+# Clone the repository (downloads all the source code)
 git clone https://github.com/Kpa-clawbot/meshcore-analyzer.git
+
+# Go into the folder
 cd meshcore-analyzer
 ```
 
-### Step 2: Create your config
+### Step 2: Create your config file
 
 ```bash
+# Copy the example config to create your own
 cp config.example.json config.json
 ```
 
-Edit `config.json` — the important parts:
+Open `config.json` in a text editor (`nano config.json` is the easiest):
 
 ```jsonc
 {
   "port": 3000,                          // Leave this alone
-  "apiKey": "pick-a-random-secret",      // Protects write endpoints
-
-  // Your MQTT data sources — keep "local" as-is, add remote brokers if you have them
-  "mqttSources": [
-    {
-      "name": "local",
-      "broker": "mqtt://localhost:1883",
-      "topics": ["meshcore/+/+/packets", "meshcore/#"]
-    }
-    // Add more brokers here if needed (see config.example.json for format)
-  ],
-
-  // Your mesh's public channel key(s) — needed to decode encrypted payloads
-  "channelKeys": {
-    "public": "8b3387e9c5cdea6ac9e5edbaa115cd72"
-  },
-
-  // Center the map on your area
-  "mapDefaults": {
-    "center": [37.45, -122.0],
-    "zoom": 9
-  }
-}
+  "apiKey": "pick-a-random-secret",      // Make up a secret phrase — protects write endpoints
 ```
 
-### Step 3: Create the Caddyfile for HTTPS
+The config has many options but the defaults work out of the box. You can customize later. The one thing to update now is the `apiKey` — change it from the example to any random string.
+
+Save and close the file (`Ctrl+O`, `Enter`, `Ctrl+X` in nano).
+
+### Step 3: Set up HTTPS for your domain
 
 ```bash
+# Create a folder for the Caddy config
 mkdir -p caddy-config
-cat > caddy-config/Caddyfile << 'EOF'
+```
+
+Create the Caddyfile (this tells Caddy your domain name):
+
+```bash
+nano caddy-config/Caddyfile
+```
+
+Type exactly this (replacing with your actual domain):
+
+```
 analyzer.example.com {
     reverse_proxy localhost:3000
 }
-EOF
 ```
 
-**Replace `analyzer.example.com` with your actual domain.**
+Save and close. **That's your entire HTTPS configuration.** Caddy will automatically get certificates from Let's Encrypt, handle renewals, and redirect HTTP to HTTPS.
 
-That's it. Caddy handles HTTPS certificates automatically — no certbot, no cron jobs, no renewals to worry about.
-
-### Step 4: Run it
+### Step 4: Build and run
 
 ```bash
+# Build the Docker image (takes 1-2 minutes the first time)
 docker build -t meshcore-analyzer .
 
+# Run it
 docker run -d \
   --name meshcore-analyzer \
   --restart unless-stopped \
@@ -93,6 +129,16 @@ docker run -d \
   -v caddy-data:/data/caddy \
   meshcore-analyzer
 ```
+
+**What each line does:**
+- `docker run -d` — run in the background
+- `--name meshcore-analyzer` — give it a name so you can refer to it later
+- `--restart unless-stopped` — auto-restart if it crashes or the server reboots
+- `-p 80:80 -p 443:443` — expose the web ports
+- `-v .../config.json:/app/config.json:ro` — mount your config (read-only)
+- `-v .../Caddyfile:...` — mount your domain config
+- `-v meshcore-data:/app/data` — persistent storage for the database
+- `-v caddy-data:/data/caddy` — persistent storage for HTTPS certificates
 
 ### Step 5: Verify
 
