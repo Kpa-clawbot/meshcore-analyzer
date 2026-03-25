@@ -2,6 +2,24 @@
 
 Get MeshCore Analyzer running with automatic HTTPS on your own server.
 
+## Table of Contents
+
+- [What You'll End Up With](#what-youll-end-up-with)
+- [What You Need Before Starting](#what-you-need-before-starting)
+- [Installing Docker](#installing-docker)
+- [Quick Start (5 minutes)](#quick-start-5-minutes)
+- [Connecting an Observer](#connecting-an-observer)
+- [Updating](#updating)
+- [Common Gotchas](#common-gotchas)
+  - [Port 80 must be open for HTTPS](#️-port-80-must-be-open-for-https-to-work)
+  - [MQTT port 1883 security](#️-mqtt-port-1883--do-not-expose-to-the-internet-unprotected)
+  - [Database backups](#️-database-backups)
+  - [DNS before container](#️-domain-dns-must-be-configured-before-starting-the-container)
+  - [Config is read-only](#️-config-file-is-read-only-in-docker)
+- [Customization](#customization)
+- [Troubleshooting](#troubleshooting)
+- [Architecture Overview](#architecture-overview)
+
 ## What You'll End Up With
 
 - MeshCore Analyzer running at `https://your-domain.com`
