@@ -5,7 +5,7 @@
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
   function statusGreen() { return cssVar('--status-green') || '#22c55e'; }
 
-  let map, ws, nodesLayer, pathsLayer, animLayer, heatLayer;
+  let map, ws, nodesLayer, pathsLayer, animLayer, heatLayer, geoFilterLayer;
   let nodeMarkers = {};
   let nodeData = {};
   let packetCount = 0;
@@ -658,6 +658,7 @@
             <span id="audioDesc" class="sr-only">Sonify packets — turn raw bytes into generative music</span>
             <label><input type="checkbox" id="liveFavoritesToggle" aria-describedby="favDesc"> ⭐ Favorites</label>
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
+            <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
           </div>
           <div class="audio-controls hidden" id="audioControls">
             <label class="audio-slider-label">Voice <select id="audioVoiceSelect" class="audio-voice-select"></select></label>
@@ -800,6 +801,49 @@
       localStorage.setItem('live-favorites-only', showOnlyFavorites);
       applyFavoritesFilter();
     });
+
+    // Geo filter overlay
+    (async function () {
+      try {
+        const gf = await api('/config/geo-filter', { ttl: 3600 });
+        if (!gf || !gf.polygon || gf.polygon.length < 3) return;
+        const latlngs = gf.polygon.map(function (p) { return [p[0], p[1]]; });
+        const innerPoly = L.polygon(latlngs, {
+          color: '#3b82f6', weight: 2, opacity: 0.8,
+          fillColor: '#3b82f6', fillOpacity: 0.08
+        });
+        const bufferPoly = gf.bufferKm > 0 ? (function () {
+          let cLat = 0, cLon = 0;
+          gf.polygon.forEach(function (p) { cLat += p[0]; cLon += p[1]; });
+          cLat /= gf.polygon.length; cLon /= gf.polygon.length;
+          const cosLat = Math.cos(cLat * Math.PI / 180);
+          const outer = gf.polygon.map(function (p) {
+            const dLatM = (p[0] - cLat) * 111000;
+            const dLonM = (p[1] - cLon) * 111000 * cosLat;
+            const dist = Math.sqrt(dLatM * dLatM + dLonM * dLonM);
+            if (dist === 0) return [p[0], p[1]];
+            const scale = (gf.bufferKm * 1000) / dist;
+            return [p[0] + dLatM * scale / 111000, p[1] + dLonM * scale / (111000 * cosLat)];
+          });
+          return L.polygon(outer, {
+            color: '#3b82f6', weight: 1.5, opacity: 0.4, dashArray: '6 4',
+            fillColor: '#3b82f6', fillOpacity: 0.04
+          });
+        })() : null;
+        geoFilterLayer = L.layerGroup(bufferPoly ? [bufferPoly, innerPoly] : [innerPoly]);
+        const label = document.getElementById('liveGeoFilterLabel');
+        if (label) label.style.display = '';
+        const el = document.getElementById('liveGeoFilterToggle');
+        if (el) {
+          const saved = localStorage.getItem('meshcore-map-geo-filter');
+          if (saved === 'true') { el.checked = true; geoFilterLayer.addTo(map); }
+          el.addEventListener('change', function (e) {
+            localStorage.setItem('meshcore-map-geo-filter', e.target.checked);
+            if (e.target.checked) { geoFilterLayer.addTo(map); } else { map.removeLayer(geoFilterLayer); }
+          });
+        }
+      } catch (e) { /* no geo filter configured */ }
+    })();
 
     const matrixToggle = document.getElementById('liveMatrixToggle');
     matrixToggle.checked = matrixMode;
@@ -2431,7 +2475,7 @@
       }
       _navCleanup = null;
     }
-    nodesLayer = pathsLayer = animLayer = heatLayer = null;
+    nodesLayer = pathsLayer = animLayer = heatLayer = geoFilterLayer = null;
     stopMatrixRain();
     nodeMarkers = {}; nodeData = {};
     recentPaths = [];

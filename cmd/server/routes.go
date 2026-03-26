@@ -102,6 +102,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/config/regions", s.handleConfigRegions).Methods("GET")
 	r.HandleFunc("/api/config/theme", s.handleConfigTheme).Methods("GET")
 	r.HandleFunc("/api/config/map", s.handleConfigMap).Methods("GET")
+	r.HandleFunc("/api/config/geo-filter", s.handleConfigGeoFilter).Methods("GET")
 
 	// System endpoints
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
@@ -308,6 +309,15 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 		zoom = 9
 	}
 	writeJSON(w, MapConfigResponse{Center: center, Zoom: zoom})
+}
+
+func (s *Server) handleConfigGeoFilter(w http.ResponseWriter, r *http.Request) {
+	gf := s.cfg.GeoFilter
+	if gf == nil || len(gf.Polygon) == 0 {
+		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm})
 }
 
 // --- System Handlers ---

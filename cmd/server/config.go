@@ -47,12 +47,23 @@ type Config struct {
 	Retention *RetentionConfig `json:"retention,omitempty"`
 
 	PacketStore *PacketStoreConfig `json:"packetStore,omitempty"`
+
+	GeoFilter *GeoFilterConfig `json:"geo_filter,omitempty"`
 }
 
 // PacketStoreConfig controls in-memory packet store limits.
 type PacketStoreConfig struct {
 	RetentionHours float64 `json:"retentionHours"` // max age of packets in hours (0 = unlimited)
 	MaxMemoryMB    int     `json:"maxMemoryMB"`     // hard memory ceiling in MB (0 = unlimited)
+}
+
+type GeoFilterConfig struct {
+	Polygon  [][2]float64 `json:"polygon,omitempty"`
+	BufferKm float64      `json:"bufferKm,omitempty"`
+	LatMin   *float64     `json:"latMin,omitempty"`
+	LatMax   *float64     `json:"latMax,omitempty"`
+	LonMin   *float64     `json:"lonMin,omitempty"`
+	LonMax   *float64     `json:"lonMax,omitempty"`
 }
 
 type RetentionConfig struct {
