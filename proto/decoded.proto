@@ -11,17 +11,26 @@ option go_package = "github.com/meshcore-analyzer/proto/v1";
 // Full decoded result: header + path + payload.
 message DecodedResult {
   DecodedHeader header = 1;
+  // Transport code bytes (null if not a TRANSPORT route).
+  optional DecodedTransportCodes transport_codes = 6 [json_name = "transportCodes"];
   DecodedPath path = 2;
-  // Type-specific decoded payload.
-  // NOTE: Proto3 JSON serializes oneof with a wrapper key (e.g. {"advert":{...}}).
-  // Go serialization layer must flatten this to match the spec's flat payload shape.
-  DecodedPayload payload = 3;
+  // Flat decoded payload (type-discriminated by payload.type).
+  DecodedFlatPayload payload = 3;
+  // Raw hex string of the entire packet.
+  optional string raw = 4;
+}
+
+// Transport code pair for TRANSPORT-routed packets.
+message DecodedTransportCodes {
+  repeated int32 codes = 1;
 }
 
 // Parsed packet header (first byte).
 message DecodedHeader {
   // Route type: 0=DIRECT, 1=FLOOD, 2=reserved, 3=TRANSPORT.
   int32 route_type = 1 [json_name = "routeType"];
+  // Human-readable route type name: "DIRECT", "FLOOD", "TRANSPORT".
+  optional string route_type_name = 5 [json_name = "routeTypeName"];
   // Payload type: 0=REQ .. 11=CONTROL (see Payload Type Reference).
   int32 payload_type = 2 [json_name = "payloadType"];
   // Payload format version.
@@ -40,7 +49,51 @@ message DecodedPath {
   int32 hash_count = 3 [json_name = "hashCount"];
 }
 
-// ─── Payload Oneof ─────────────────────────────────────────────────────────────
+// ─── Flat Payload (used in WS broadcast / decoded result) ──────────────────────
+// Node.js returns a flat payload object with a `type` discriminator string.
+// All type-specific fields are optional — only the relevant ones are populated.
+
+// Decoded advert flags (from AdvertDataHelpers.h).
+message AdvertFlags {
+  // Raw flags bitmask value.
+  int32 raw = 1;
+  // Advert type code.
+  int32 type = 2;
+  // Supports chat.
+  bool chat = 3;
+  // Is a repeater.
+  bool repeater = 4;
+  // Is a room server.
+  bool room = 5;
+  // Is a sensor.
+  bool sensor = 6;
+  // Includes GPS coordinates.
+  bool has_location = 7 [json_name = "hasLocation"];
+  // Includes node name.
+  bool has_name = 8 [json_name = "hasName"];
+}
+
+// Flat decoded payload — all payload type fields merged, discriminated by `type`.
+message DecodedFlatPayload {
+  // Payload type name: "ADVERT", "TXT_MSG", "GRP_TXT", etc.
+  optional string type = 1;
+  // --- ADVERT fields ---
+  optional string pub_key = 2 [json_name = "pubKey"];
+  optional int64 timestamp = 3;
+  optional string timestamp_iso = 4 [json_name = "timestampISO"];
+  optional string signature = 5;
+  optional AdvertFlags flags = 6;
+  optional double lat = 7;
+  optional double lon = 8;
+  optional string name = 9;
+  // --- TXT_MSG / GRP_TXT fields ---
+  optional string text = 10;
+  optional string sender = 11;
+  optional string channel = 12;
+  optional int64 sender_timestamp = 13 [json_name = "sender_timestamp"];
+}
+
+// ─── Payload Oneof (legacy / typed-discriminated) ──────────────────────────────────
 
 // Type-discriminated decoded payload.
 message DecodedPayload {

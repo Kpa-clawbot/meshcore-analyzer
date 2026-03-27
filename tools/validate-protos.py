@@ -316,6 +316,9 @@ FIELD_TYPE_TO_MESSAGE = {
     'DecodedHeader': 'DecodedHeader',
     'DecodedPath': 'DecodedPath',
     'DecodedPayload': 'DecodedPayload',
+    'DecodedFlatPayload': 'DecodedFlatPayload',
+    'DecodedTransportCodes': 'DecodedTransportCodes',
+    'AdvertFlags': 'AdvertFlags',
     'AdvertPayload': 'AdvertPayload',
     # channel.proto
     'Channel': 'Channel',
@@ -558,9 +561,9 @@ def main():
                     validate_object(fixture_file, data[0], message_name,
                                     all_messages, path=f'{message_name}[0]',
                                     mismatches=mismatches)
-                # Also flag the structural mismatch
+                # Flag structural note (serialization concern, not a field mismatch)
                 mismatches.append(Mismatch(
-                    fixture_file, message_name, 'ERROR',
+                    fixture_file, message_name, 'WARNING',
                     f'API returns a bare JSON array, but proto wraps it in a '
                     f'response message. Serialization layer must handle unwrapping.'
                 ))

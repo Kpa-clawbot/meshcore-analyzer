@@ -77,9 +77,12 @@ message SignalStats {
 
 // Generic label + count pair for time-series and distribution charts.
 // Used in activity timelines, observer analytics timelines, etc.
+// Node analytics uses `bucket`, observer analytics uses `label`.
 message TimeBucket {
-  // Time label (ISO timestamp, hour string, or category label).
-  string label = 1;
+  // Time label used by observer analytics (e.g. "Sat 12 AM").
+  optional string label = 1;
   // Count in this bucket.
   int32 count = 2;
+  // ISO timestamp used by node analytics (e.g. "2026-03-21T21:00:00Z").
+  optional string bucket = 3;
 }

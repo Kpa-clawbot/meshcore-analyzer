@@ -42,8 +42,8 @@ message WSPacketData {
   optional string observer_name = 8 [json_name = "observer_name"];
   // JSON-stringified hops array (redundant with decoded.path.hops).
   optional string path_json = 9 [json_name = "path_json"];
-  // Full packet object (present for MQTT/raw ingestion, may be absent for bridge messages).
-  optional Transmission packet = 10;
+  // Full packet object (Observation-shaped, includes transmission_id).
+  optional Observation packet = 10;
   // Observation count (present when packet is included).
   optional int32 observation_count = 11 [json_name = "observation_count"];
 }

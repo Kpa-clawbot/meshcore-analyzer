@@ -137,6 +137,8 @@ message ByteRange {
   string hex = 4;
   // Interpreted value (may be string, number, or absent).
   optional string value = 5;
+  // CSS color for visual highlighting.
+  string color = 6;
 }
 
 // Byte-level packet structure breakdown.

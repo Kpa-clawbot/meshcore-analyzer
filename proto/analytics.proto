@@ -42,8 +42,8 @@ message ScatterPoint {
 
 // Payload type name + count entry.
 message PayloadTypeEntry {
-  // Payload type number.
-  int32 type = 1;
+  // Payload type number (null when unknown).
+  optional int32 type = 1;
   // Human-readable type name.
   string name = 2;
   // Observation count.
@@ -250,8 +250,8 @@ message TopologyResponse {
 
 // Channel summary in analytics context.
 message ChannelAnalyticsSummary {
-  // Channel identifier.
-  string hash = 1;
+  // Channel identifier (numeric hash).
+  int32 hash = 1;
   // Channel display name.
   string name = 2;
   // Total messages.

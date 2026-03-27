@@ -101,15 +101,22 @@ message NodeSearchResponse {
 }
 
 // GET /api/nodes/bulk-health — bulk health summary for analytics dashboard.
-// NOTE: The API currently returns a bare JSON array with flat node fields.
-// Go serialization should flatten node fields to top level for backward compat.
+// NOTE: The API returns a bare JSON array with flat node fields at top level.
 message BulkHealthEntry {
-  // Node identification and location (reuses Node — DO NOT duplicate fields).
-  Node node = 1;
+  // Node public key (flat, not nested in a sub-message).
+  string public_key = 1 [json_name = "public_key"];
+  // Node display name.
+  optional string name = 2;
+  // Node role: "repeater", "room", "companion", "sensor".
+  optional string role = 3;
+  // GPS latitude (null if unknown).
+  optional double lat = 4;
+  // GPS longitude (null if unknown).
+  optional double lon = 5;
   // Aggregate packet stats.
-  NodeStats stats = 2;
+  NodeStats stats = 6;
   // Per-observer signal quality.
-  repeated NodeObserverStats observers = 3;
+  repeated NodeObserverStats observers = 7;
 }
 
 // Wrapper for the bulk-health array response.

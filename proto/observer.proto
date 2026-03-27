@@ -99,6 +99,6 @@ message ObserverAnalyticsResponse {
   repeated TimeBucket nodes_timeline = 3 [json_name = "nodesTimeline"];
   // SNR distribution in labeled ranges.
   repeated SnrDistributionEntry snr_distribution = 4 [json_name = "snrDistribution"];
-  // Last 20 enriched observations.
-  repeated Transmission recent_packets = 5 [json_name = "recentPackets"];
+  // Last 20 enriched observations (Observation-shaped, includes transmission_id).
+  repeated Observation recent_packets = 5 [json_name = "recentPackets"];
 }
