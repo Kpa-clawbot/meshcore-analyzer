@@ -346,3 +346,8 @@ Playwright E2E tests (16 tests in `test-e2e-playwright.js`) are slow in CI. Anal
 **By:** Kpa-clawbot (via Copilot)  
 **Decision:** All frontend/backend interfaces get protobuf definitions as the single source of truth. Go generates structs with JSON tags from protos. Node stays unchanged — protos are derived FROM Node's current JSON shapes. Proto definitions MUST use inheritance and composition (no repeating field definitions). Data flow: SQLite → proto struct → JSON. JSON blobs from DB deserialize against proto structs for validation.  
 **Rationale:** Eliminates the endless parity bugs between Node and Go. Compiler-enforced contract instead of agent-verified field matching. DRY — shared message types composed, not duplicated.
+
+### 2026-03-27T22:00:00Z: User directive — Proto fixture capture from prod
+**By:** Kpa-clawbot (via Copilot)  
+**Decision:** CI pipeline's proto fixture capture should run against prod (the stable reference), not staging. Staging may have broken code. Prod is the known-good baseline for contract validation.  
+**Rationale:** Ensures proto contracts are validated against production behavior, not potentially broken staging code.
