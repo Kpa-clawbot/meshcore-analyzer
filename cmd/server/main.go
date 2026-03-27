@@ -74,11 +74,18 @@ func main() {
 			stats.TotalTransmissions, stats.TotalObservations, stats.TotalNodes, stats.TotalObservers)
 	}
 
+	// In-memory packet store
+	store := NewPacketStore(database)
+	if err := store.Load(); err != nil {
+		log.Fatalf("[store] failed to load: %v", err)
+	}
+
 	// WebSocket hub
 	hub := NewHub()
 
 	// HTTP server
 	srv := NewServer(database, cfg, hub)
+	srv.store = store
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
 
@@ -101,6 +108,7 @@ func main() {
 
 	// Start SQLite poller for WebSocket broadcast
 	poller := NewPoller(database, hub, time.Duration(pollMs)*time.Millisecond)
+	poller.store = store
 	go poller.Start()
 
 	// Graceful shutdown

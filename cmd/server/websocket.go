@@ -154,6 +154,7 @@ func (c *Client) writePump() {
 type Poller struct {
 	db       *DB
 	hub      *Hub
+	store    *PacketStore // optional: if set, new transmissions are ingested into memory
 	interval time.Duration
 	stop     chan struct{}
 }
@@ -172,20 +173,35 @@ func (p *Poller) Start() {
 	for {
 		select {
 		case <-ticker.C:
-			newTxs, err := p.db.GetNewTransmissionsSince(lastID, 100)
-			if err != nil {
-				log.Printf("[poller] error: %v", err)
-				continue
-			}
-			for _, tx := range newTxs {
-				id, _ := tx["id"].(int)
-				if id > lastID {
-					lastID = id
+			if p.store != nil {
+				// Ingest into in-memory store and broadcast
+				newTxs, newMax := p.store.IngestNewFromDB(lastID, 100)
+				if newMax > lastID {
+					lastID = newMax
 				}
-				p.hub.Broadcast(map[string]interface{}{
-					"type": "packet",
-					"data": tx,
-				})
+				for _, tx := range newTxs {
+					p.hub.Broadcast(map[string]interface{}{
+						"type": "packet",
+						"data": tx,
+					})
+				}
+			} else {
+				// Fallback: direct DB query (used when store is nil, e.g. tests)
+				newTxs, err := p.db.GetNewTransmissionsSince(lastID, 100)
+				if err != nil {
+					log.Printf("[poller] error: %v", err)
+					continue
+				}
+				for _, tx := range newTxs {
+					id, _ := tx["id"].(int)
+					if id > lastID {
+						lastID = id
+					}
+					p.hub.Broadcast(map[string]interface{}{
+						"type": "packet",
+						"data": tx,
+					})
+				}
 			}
 		case <-p.stop:
 			return

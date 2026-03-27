@@ -20,6 +20,7 @@ type Server struct {
 	db        *DB
 	cfg       *Config
 	hub       *Hub
+	store     *PacketStore // in-memory packet store (nil = fallback to DB)
 	startedAt time.Time
 	perfStats *PerfStats
 }
@@ -293,7 +294,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	stats, err := s.db.GetStats()
+	var stats *Stats
+	var err error
+	if s.store != nil {
+		stats, err = s.store.GetStoreStats()
+	} else {
+		stats, err = s.db.GetStats()
+	}
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -354,9 +361,17 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("order") == "asc" {
 			order = "ASC"
 		}
-		result, err := s.db.QueryMultiNodePackets(cleaned,
-			queryInt(r, "limit", 50), queryInt(r, "offset", 0),
-			order, r.URL.Query().Get("since"), r.URL.Query().Get("until"))
+		var result *PacketResult
+		var err error
+		if s.store != nil {
+			result = s.store.QueryMultiNodePackets(cleaned,
+				queryInt(r, "limit", 50), queryInt(r, "offset", 0),
+				order, r.URL.Query().Get("since"), r.URL.Query().Get("until"))
+		} else {
+			result, err = s.db.QueryMultiNodePackets(cleaned,
+				queryInt(r, "limit", 50), queryInt(r, "offset", 0),
+				order, r.URL.Query().Get("since"), r.URL.Query().Get("until"))
+		}
 		if err != nil {
 			writeError(w, 500, err.Error())
 			return
@@ -394,7 +409,13 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.URL.Query().Get("groupByHash") == "true" {
-		result, err := s.db.QueryGroupedPackets(q)
+		var result *PacketResult
+		var err error
+		if s.store != nil {
+			result = s.store.QueryGroupedPackets(q)
+		} else {
+			result, err = s.db.QueryGroupedPackets(q)
+		}
 		if err != nil {
 			writeError(w, 500, err.Error())
 			return
@@ -403,7 +424,13 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.db.QueryPackets(q)
+	var result *PacketResult
+	var err error
+	if s.store != nil {
+		result = s.store.QueryPackets(q)
+	} else {
+		result, err = s.db.QueryPackets(q)
+	}
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
@@ -425,6 +452,10 @@ func (s *Server) handlePacketTimestamps(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, "since required")
 		return
 	}
+	if s.store != nil {
+		writeJSON(w, s.store.GetTimestamps(since))
+		return
+	}
 	ts, err := s.db.GetTimestamps(since)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -440,15 +471,32 @@ func (s *Server) handlePacketDetail(w http.ResponseWriter, r *http.Request) {
 	var packet map[string]interface{}
 	var err error
 
-	if hashPattern.MatchString(strings.ToLower(param)) {
-		packet, err = s.db.GetPacketByHash(param)
-	}
-	if packet == nil {
-		id, parseErr := strconv.Atoi(param)
-		if parseErr == nil {
-			packet, err = s.db.GetTransmissionByID(id)
-			if packet == nil {
-				packet, err = s.db.GetPacketByID(id)
+	if s.store != nil {
+		// Use in-memory store for lookups
+		if hashPattern.MatchString(strings.ToLower(param)) {
+			packet = s.store.GetPacketByHash(param)
+		}
+		if packet == nil {
+			id, parseErr := strconv.Atoi(param)
+			if parseErr == nil {
+				packet = s.store.GetTransmissionByID(id)
+				if packet == nil {
+					packet = s.store.GetPacketByID(id)
+				}
+			}
+		}
+	} else {
+		// Fallback to DB
+		if hashPattern.MatchString(strings.ToLower(param)) {
+			packet, err = s.db.GetPacketByHash(param)
+		}
+		if packet == nil {
+			id, parseErr := strconv.Atoi(param)
+			if parseErr == nil {
+				packet, err = s.db.GetTransmissionByID(id)
+				if packet == nil {
+					packet, err = s.db.GetPacketByID(id)
+				}
 			}
 		}
 	}
@@ -459,7 +507,12 @@ func (s *Server) handlePacketDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Build observation list
 	hash, _ := packet["hash"].(string)
-	observations, _ := s.db.GetObservationsForHash(hash)
+	var observations []map[string]interface{}
+	if s.store != nil {
+		observations = s.store.GetObservationsForHash(hash)
+	} else {
+		observations, _ = s.db.GetObservationsForHash(hash)
+	}
 	observationCount := len(observations)
 	if observationCount == 0 {
 		observationCount = 1
