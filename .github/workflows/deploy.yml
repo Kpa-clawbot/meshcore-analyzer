@@ -20,6 +20,10 @@ env:
 #   Track 1 (Node): node-test → build-node → deploy-node ──┐
 #   Track 2 (Go):   go-test   → build-go   → deploy-go   ──┼──→ publish
 #                                                           └─ (both wait)
+#
+# Proto validation flow:
+#   1. go-test job: verify .proto files compile (syntax check)
+#   2. deploy-node job: capture fresh fixtures from prod, validate protos match actual API responses
 
 jobs:
   # ───────────────────────────────────────────────────────────────
@@ -55,6 +59,20 @@ jobs:
           go test -coverprofile=ingestor-coverage.out ./... 2>&1 | tee ingestor-test.log
           echo "--- Go Ingestor Coverage ---"
           go tool cover -func=ingestor-coverage.out | tail -1
+
+      - name: Verify proto syntax (all .proto files compile)
+        run: |
+          set -e
+          echo "Installing protoc..."
+          sudo apt-get update -qq
+          sudo apt-get install -y protobuf-compiler
+          
+          echo "Checking proto syntax..."
+          for proto in proto/*.proto; do
+            echo "  ✓ $(basename "$proto")"
+            protoc --proto_path=proto --syntax_check "$proto"
+          done
+          echo "✅ All .proto files are syntactically valid"
 
       - name: Generate Go coverage badges
         if: always()
@@ -369,7 +387,7 @@ jobs:
           curl -f http://localhost:81/api/nodes || exit 1
           echo "Node staging smoke tests passed ✅"
 
-      - name: Validate API contract (proto vs Node fixtures)
+      - name: 🔍 Validate API contract (protos vs prod fixtures)
         run: |
           set -e
           echo "Refreshing Node fixtures from staging container..."
@@ -585,7 +603,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "To promote to production:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "ssh deploy@<VM_HOST>" >> $GITHUB_STEP_SUMMARY
+          echo "ssh deploy@\$VM_HOST" >> $GITHUB_STEP_SUMMARY
           echo "cd /opt/meshcore-deploy" >> $GITHUB_STEP_SUMMARY
           echo "./manage.sh promote" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -9,9 +9,9 @@
 - **Resource Group:** MESHCORE-WEST-RG
 - **Region:** westus2
 - **Size:** Standard_D2as_v5 (Linux)
-- **Public IP:** <VM_HOST>
+- **Public IP:** (see VM_HOST env var)
 - **SSH User:** deploy
-- **SSH Command:** `ssh deploy@<VM_HOST>`
+- **SSH Command:** `ssh deploy@$VM_HOST`
 - **Azure CLI:** v2.84.0 (upgraded from 2.11.1 this session — stale .pyc files cleared)
 - **CI Runner:** self-hosted on this same VM ("meshcore-vm")
 - **App path:** TBD (Hudson investigating via SSH)
