@@ -207,7 +207,7 @@ jobs:
 
           # Run compose from the repo checkout (where docker-compose.yml lives)
           docker rm -f meshcore-staging 2>/dev/null || true
-docker compose --profile staging up -d staging
+          docker compose --profile staging up -d staging
 
           # Wait for Docker healthcheck — give it up to 5 minutes (big DB)
           for i in $(seq 1 300); do
