@@ -1236,25 +1236,18 @@ func (s *PacketStore) GetChannelMessages(channelHash string, limit, offset int) 
 
 // GetAnalyticsRF returns full RF analytics computed from in-memory observations.
 func (s *PacketStore) GetAnalyticsRF(region string) map[string]interface{} {
-	// Check cache first
 	s.cacheMu.Lock()
 	if cached, ok := s.rfCache[region]; ok && time.Now().Before(cached.expiresAt) {
 		s.cacheMu.Unlock()
-		log.Printf("[rf-cache] HIT region=%q ttl=%.1fs", region, time.Until(cached.expiresAt).Seconds())
 		return cached.data
 	}
 	s.cacheMu.Unlock()
 
-	// Compute fresh result
-	t0 := time.Now()
 	result := s.computeAnalyticsRF(region)
-	elapsed := time.Since(t0)
 
-	// Cache result
 	s.cacheMu.Lock()
 	s.rfCache[region] = &cachedResult{data: result, expiresAt: time.Now().Add(s.rfCacheTTL)}
 	s.cacheMu.Unlock()
-	log.Printf("[rf-cache] MISS region=%q computed in %v, cached for %v", region, elapsed, s.rfCacheTTL)
 
 	return result
 }
