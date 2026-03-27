@@ -16,9 +16,10 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Pipeline: go-test ──┐
-#                      ├──→ build ──┬──→ deploy-node
-#           node-test ─┘             └──→ deploy-go (parallel)
+# Pipeline (TWO INDEPENDENT TRACKS):
+#   Track 1 (Node): node-test → build-node → deploy-node ──┐
+#   Track 2 (Go):   go-test   → build-go   → deploy-go   ──┼──→ publish
+#                                                           └─ (both wait)
 
 jobs:
   # ───────────────────────────────────────────────────────────────
@@ -240,43 +241,15 @@ jobs:
           if-no-files-found: ignore
 
   # ───────────────────────────────────────────────────────────────
-  # 3. Build Docker Images — Node.js + Go images for staging
+  # 3. Build Node Docker Image — Track 1
   # ───────────────────────────────────────────────────────────────
-  build:
-    name: "🏗️ Build Docker Images"
-    needs: [go-test, node-test]
+  build-node:
+    name: "🏗️ Build Node Docker Image"
+    needs: [node-test]
     runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Download Go coverage badges
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: go-badges
-          path: .badges/
-
-      - name: Download Node.js test badges
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: node-badges
-          path: .badges/
-
-      - name: Publish coverage badges to repo
-        continue-on-error: true
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
-          git add .badges/ -f
-          git diff --cached --quiet || (git commit -m "ci: update test badges [skip ci]" && git push) || echo "Badge push failed"
 
       - name: Validate JavaScript syntax
         run: sh scripts/validate.sh
@@ -287,6 +260,22 @@ jobs:
           docker build -t meshcore-analyzer:latest .
           echo "Built meshcore-analyzer:latest ($(git rev-parse --short HEAD))"
 
+  # ───────────────────────────────────────────────────────────────
+  # 4. Build Go Docker Image — Track 2
+  # ───────────────────────────────────────────────────────────────
+  build-go:
+    name: "🏗️ Build Go Docker Image"
+    needs: [go-test]
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Build Go Docker image
         run: |
           echo "${GITHUB_SHA::7}" > .git-commit
@@ -296,11 +285,11 @@ jobs:
           echo "Built Go staging image"
 
   # ───────────────────────────────────────────────────────────────
-  # 4. Deploy Node Staging — start on port 81, healthcheck, smoke test
+  # 5. Deploy Node Staging — start on port 81, healthcheck, smoke test
   # ───────────────────────────────────────────────────────────────
   deploy-node:
     name: "🚀 Deploy Node Staging"
-    needs: build
+    needs: [build-node]
     runs-on: self-hosted
     steps:
       - name: Checkout code
@@ -376,11 +365,11 @@ jobs:
           echo "Node staging smoke tests passed ✅"
 
   # ───────────────────────────────────────────────────────────────
-  # 5. Deploy Go Staging — start on port 82, healthcheck, smoke test
+  # 6. Deploy Go Staging — start on port 82, healthcheck, smoke test
   # ───────────────────────────────────────────────────────────────
   deploy-go:
     name: "🚀 Deploy Go Staging"
-    needs: build
+    needs: [build-go]
     runs-on: self-hosted
     steps:
       - name: Checkout code
@@ -415,6 +404,40 @@ jobs:
             echo "Go staging /api/stats did not return engine field"
             exit 1
           fi
+
+  # ───────────────────────────────────────────────────────────────
+  # 7. Publish Badges & Summary — waits for both tracks to complete
+  # ───────────────────────────────────────────────────────────────
+  publish:
+    name: "📝 Publish Badges & Summary"
+    needs: [deploy-node, deploy-go]
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Go coverage badges
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: go-badges
+          path: .badges/
+
+      - name: Download Node.js test badges
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: node-badges
+          path: .badges/
+
+      - name: Publish coverage badges to repo
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+          git add .badges/ -f
+          git diff --cached --quiet || (git commit -m "ci: update test badges [skip ci]" && git push) || echo "Badge push failed"
 
       - name: Post deployment summary
         run: |
