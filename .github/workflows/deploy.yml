@@ -13,6 +13,9 @@ concurrency:
   group: deploy
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # Pipeline: go-test ──┐
 #                      ├──→ build ──→ deploy-node ──→ deploy-go
 #           node-test ─┘
@@ -32,6 +35,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache-dependency-path: |
+            cmd/server/go.sum
+            cmd/ingestor/go.sum
 
       - name: Build and test Go server (with coverage)
         run: |
@@ -95,6 +101,7 @@ jobs:
           name: go-badges
           path: .badges/go-*.json
           retention-days: 1
+          if-no-files-found: ignore
 
   # ───────────────────────────────────────────────────────────────
   # 2. Node.js Tests — backend unit tests + Playwright E2E, coverage
