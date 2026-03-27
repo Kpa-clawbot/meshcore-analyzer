@@ -339,3 +339,10 @@ Playwright E2E tests (16 tests in `test-e2e-playwright.js`) are slow in CI. Anal
 - Items 3, 5-6 are CI pipeline (Hicks scope)
 - No architectural changes; all incremental
 - All assertions remain identical — only wait strategies change
+
+---
+
+### 2026-03-27T20:56:00Z: Architecture decision — Protobuf API contract
+**By:** Kpa-clawbot (via Copilot)  
+**Decision:** All frontend/backend interfaces get protobuf definitions as the single source of truth. Go generates structs with JSON tags from protos. Node stays unchanged — protos are derived FROM Node's current JSON shapes. Proto definitions MUST use inheritance and composition (no repeating field definitions). Data flow: SQLite → proto struct → JSON. JSON blobs from DB deserialize against proto structs for validation.  
+**Rationale:** Eliminates the endless parity bugs between Node and Go. Compiler-enforced contract instead of agent-verified field matching. DRY — shared message types composed, not duplicated.
