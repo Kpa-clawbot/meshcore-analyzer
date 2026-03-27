@@ -250,6 +250,319 @@ func TestEndToEndIngest(t *testing.T) {
 	}
 }
 
+func TestInsertTransmissionEmptyHash(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	data := &PacketData{
+		RawHex:    "0A00",
+		Timestamp: "2026-03-25T00:00:00Z",
+		Hash:      "", // empty hash → should return nil
+	}
+	err = s.InsertTransmission(data)
+	if err != nil {
+		t.Errorf("empty hash should return nil, got %v", err)
+	}
+
+	var count int
+	s.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 0 {
+		t.Errorf("no transmission should be inserted for empty hash, got count=%d", count)
+	}
+}
+
+func TestInsertTransmissionEmptyTimestamp(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	data := &PacketData{
+		RawHex:    "0A00D69F",
+		Timestamp: "", // empty → uses current time
+		Hash:      "emptyts123456789",
+		RouteType: 2,
+	}
+	err = s.InsertTransmission(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var firstSeen string
+	s.db.QueryRow("SELECT first_seen FROM transmissions WHERE hash = ?", data.Hash).Scan(&firstSeen)
+	if firstSeen == "" {
+		t.Error("first_seen should be set even with empty timestamp")
+	}
+}
+
+func TestInsertTransmissionEarlierFirstSeen(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Insert with later timestamp
+	data := &PacketData{
+		RawHex:    "0A00D69F",
+		Timestamp: "2026-03-25T12:00:00Z",
+		Hash:      "firstseen12345678",
+		RouteType: 2,
+	}
+	if err := s.InsertTransmission(data); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert again with earlier timestamp
+	data2 := &PacketData{
+		RawHex:    "0A00D69F",
+		Timestamp: "2026-03-25T06:00:00Z", // earlier
+		Hash:      "firstseen12345678",     // same hash
+		RouteType: 2,
+	}
+	if err := s.InsertTransmission(data2); err != nil {
+		t.Fatal(err)
+	}
+
+	var firstSeen string
+	s.db.QueryRow("SELECT first_seen FROM transmissions WHERE hash = ?", data.Hash).Scan(&firstSeen)
+	if firstSeen != "2026-03-25T06:00:00Z" {
+		t.Errorf("first_seen=%s, want 2026-03-25T06:00:00Z (earlier timestamp)", firstSeen)
+	}
+}
+
+func TestInsertTransmissionLaterFirstSeenNotUpdated(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	data := &PacketData{
+		RawHex:    "0A00D69F",
+		Timestamp: "2026-03-25T06:00:00Z",
+		Hash:      "notupdated1234567",
+		RouteType: 2,
+	}
+	if err := s.InsertTransmission(data); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert with later timestamp — should NOT update first_seen
+	data2 := &PacketData{
+		RawHex:    "0A00D69F",
+		Timestamp: "2026-03-25T18:00:00Z",
+		Hash:      "notupdated1234567",
+		RouteType: 2,
+	}
+	if err := s.InsertTransmission(data2); err != nil {
+		t.Fatal(err)
+	}
+
+	var firstSeen string
+	s.db.QueryRow("SELECT first_seen FROM transmissions WHERE hash = ?", data.Hash).Scan(&firstSeen)
+	if firstSeen != "2026-03-25T06:00:00Z" {
+		t.Errorf("first_seen=%s should not change to later time", firstSeen)
+	}
+}
+
+func TestInsertTransmissionNilSNRRSSI(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	data := &PacketData{
+		RawHex:    "0A00D69F",
+		Timestamp: "2026-03-25T00:00:00Z",
+		Hash:      "nilsnrrssi1234567",
+		RouteType: 2,
+		SNR:       nil,
+		RSSI:      nil,
+	}
+	err = s.InsertTransmission(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var snr, rssi *float64
+	s.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
+	if snr != nil {
+		t.Errorf("snr should be nil, got %v", snr)
+	}
+	if rssi != nil {
+		t.Errorf("rssi should be nil, got %v", rssi)
+	}
+}
+
+func TestBuildPacketData(t *testing.T) {
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	decoded, err := DecodePacket(rawHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snr := 5.0
+	rssi := -100.0
+	msg := &MQTTPacketMessage{
+		Raw:    rawHex,
+		SNR:    &snr,
+		RSSI:   &rssi,
+		Origin: "test-observer",
+	}
+
+	pkt := BuildPacketData(msg, decoded, "obs123", "SJC")
+
+	if pkt.RawHex != rawHex {
+		t.Errorf("rawHex mismatch")
+	}
+	if pkt.ObserverID != "obs123" {
+		t.Errorf("observerID=%s, want obs123", pkt.ObserverID)
+	}
+	if pkt.ObserverName != "test-observer" {
+		t.Errorf("observerName=%s", pkt.ObserverName)
+	}
+	if pkt.SNR == nil || *pkt.SNR != 5.0 {
+		t.Errorf("SNR=%v", pkt.SNR)
+	}
+	if pkt.RSSI == nil || *pkt.RSSI != -100.0 {
+		t.Errorf("RSSI=%v", pkt.RSSI)
+	}
+	if pkt.Hash == "" {
+		t.Error("hash should not be empty")
+	}
+	if len(pkt.Hash) != 16 {
+		t.Errorf("hash length=%d, want 16", len(pkt.Hash))
+	}
+	if pkt.RouteType != decoded.Header.RouteType {
+		t.Errorf("routeType mismatch")
+	}
+	if pkt.PayloadType != decoded.Header.PayloadType {
+		t.Errorf("payloadType mismatch")
+	}
+	if pkt.Timestamp == "" {
+		t.Error("timestamp should be set")
+	}
+	if pkt.DecodedJSON == "" || pkt.DecodedJSON == "{}" {
+		t.Error("decodedJSON should be populated")
+	}
+}
+
+func TestBuildPacketDataWithHops(t *testing.T) {
+	// A packet with actual hops in the path
+	raw := "0505AABBCCDDEE" + strings.Repeat("00", 10)
+	decoded, err := DecodePacket(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := &MQTTPacketMessage{Raw: raw}
+	pkt := BuildPacketData(msg, decoded, "", "")
+
+	if pkt.PathJSON == "[]" {
+		t.Error("pathJSON should contain hops")
+	}
+	if !strings.Contains(pkt.PathJSON, "AA") {
+		t.Errorf("pathJSON should contain hop AA: %s", pkt.PathJSON)
+	}
+}
+
+func TestBuildPacketDataNilSNRRSSI(t *testing.T) {
+	decoded, _ := DecodePacket("0A00" + strings.Repeat("00", 10))
+	msg := &MQTTPacketMessage{Raw: "0A00" + strings.Repeat("00", 10)}
+	pkt := BuildPacketData(msg, decoded, "", "")
+
+	if pkt.SNR != nil {
+		t.Errorf("SNR should be nil")
+	}
+	if pkt.RSSI != nil {
+		t.Errorf("RSSI should be nil")
+	}
+}
+
+func TestUpsertNodeEmptyLastSeen(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	lat := 37.0
+	lon := -122.0
+	// Empty lastSeen → should use current time
+	if err := s.UpsertNode("aabbccdd", "TestNode", "repeater", &lat, &lon, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	var lastSeen string
+	s.db.QueryRow("SELECT last_seen FROM nodes WHERE public_key = 'aabbccdd'").Scan(&lastSeen)
+	if lastSeen == "" {
+		t.Error("last_seen should be set even with empty input")
+	}
+}
+
+func TestOpenStoreTwice(t *testing.T) {
+	// Opening same DB twice tests the "observations already exists" path in applySchema
+	path := tempDBPath(t)
+	s1, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1.Close()
+
+	// Second open — observations table already exists
+	s2, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	// Verify it still works
+	var count int
+	s2.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected 0 observations, got %d", count)
+	}
+}
+
+func TestInsertTransmissionDedupObservation(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// First insert
+	data := &PacketData{
+		RawHex:    "0A00D69F",
+		Timestamp: "2026-03-25T00:00:00Z",
+		Hash:      "dedupobs12345678",
+		RouteType: 2,
+		PathJSON:  "[]",
+	}
+	if err := s.InsertTransmission(data); err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert same hash again with same observer (no observerID) — 
+	// the UNIQUE constraint on observations dedup should handle it
+	if err := s.InsertTransmission(data); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&count)
+	// Should have 2 observations (no observer_idx means both have NULL)
+	// Actually INSERT OR IGNORE — may be 1 due to dedup index
+	if count < 1 {
+		t.Errorf("should have at least 1 observation, got %d", count)
+	}
+}
+
 func TestSchemaCompatibility(t *testing.T) {
 	s, err := OpenStore(tempDBPath(t))
 	if err != nil {

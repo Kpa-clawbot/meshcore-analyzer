@@ -437,6 +437,564 @@ func TestValidateAdvert(t *testing.T) {
 	}
 }
 
+func TestDecodeGrpTxtShort(t *testing.T) {
+	p := decodeGrpTxt([]byte{0x01, 0x02})
+	if p.Error != "too short" {
+		t.Errorf("expected 'too short' error, got %q", p.Error)
+	}
+	if p.Type != "GRP_TXT" {
+		t.Errorf("type=%s, want GRP_TXT", p.Type)
+	}
+}
+
+func TestDecodeGrpTxtValid(t *testing.T) {
+	p := decodeGrpTxt([]byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE})
+	if p.Error != "" {
+		t.Errorf("unexpected error: %s", p.Error)
+	}
+	if p.ChannelHash != 0xAA {
+		t.Errorf("channelHash=%d, want 0xAA", p.ChannelHash)
+	}
+	if p.MAC != "bbcc" {
+		t.Errorf("mac=%s, want bbcc", p.MAC)
+	}
+	if p.EncryptedData != "ddee" {
+		t.Errorf("encryptedData=%s, want ddee", p.EncryptedData)
+	}
+}
+
+func TestDecodeAnonReqShort(t *testing.T) {
+	p := decodeAnonReq(make([]byte, 10))
+	if p.Error != "too short" {
+		t.Errorf("expected 'too short' error, got %q", p.Error)
+	}
+	if p.Type != "ANON_REQ" {
+		t.Errorf("type=%s, want ANON_REQ", p.Type)
+	}
+}
+
+func TestDecodeAnonReqValid(t *testing.T) {
+	buf := make([]byte, 40)
+	buf[0] = 0xFF // destHash
+	for i := 1; i < 33; i++ {
+		buf[i] = byte(i)
+	}
+	buf[33] = 0xAA
+	buf[34] = 0xBB
+	p := decodeAnonReq(buf)
+	if p.Error != "" {
+		t.Errorf("unexpected error: %s", p.Error)
+	}
+	if p.DestHash != "ff" {
+		t.Errorf("destHash=%s, want ff", p.DestHash)
+	}
+	if p.MAC != "aabb" {
+		t.Errorf("mac=%s, want aabb", p.MAC)
+	}
+}
+
+func TestDecodePathPayloadShort(t *testing.T) {
+	p := decodePathPayload([]byte{0x01, 0x02, 0x03})
+	if p.Error != "too short" {
+		t.Errorf("expected 'too short' error, got %q", p.Error)
+	}
+	if p.Type != "PATH" {
+		t.Errorf("type=%s, want PATH", p.Type)
+	}
+}
+
+func TestDecodePathPayloadValid(t *testing.T) {
+	buf := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+	p := decodePathPayload(buf)
+	if p.Error != "" {
+		t.Errorf("unexpected error: %s", p.Error)
+	}
+	if p.DestHash != "aa" {
+		t.Errorf("destHash=%s, want aa", p.DestHash)
+	}
+	if p.SrcHash != "bb" {
+		t.Errorf("srcHash=%s, want bb", p.SrcHash)
+	}
+	if p.PathData != "eeff" {
+		t.Errorf("pathData=%s, want eeff", p.PathData)
+	}
+}
+
+func TestDecodeTraceShort(t *testing.T) {
+	p := decodeTrace(make([]byte, 5))
+	if p.Error != "too short" {
+		t.Errorf("expected 'too short' error, got %q", p.Error)
+	}
+	if p.Type != "TRACE" {
+		t.Errorf("type=%s, want TRACE", p.Type)
+	}
+}
+
+func TestDecodeTraceValid(t *testing.T) {
+	buf := make([]byte, 16)
+	buf[0] = 0x00
+	buf[1] = 0x01 // tag LE uint32 = 1
+	buf[5] = 0xAA // destHash start
+	buf[11] = 0xBB
+	p := decodeTrace(buf)
+	if p.Error != "" {
+		t.Errorf("unexpected error: %s", p.Error)
+	}
+	if p.Tag != 1 {
+		t.Errorf("tag=%d, want 1", p.Tag)
+	}
+	if p.Type != "TRACE" {
+		t.Errorf("type=%s, want TRACE", p.Type)
+	}
+}
+
+func TestDecodeAdvertShort(t *testing.T) {
+	p := decodeAdvert(make([]byte, 50))
+	if p.Error != "too short for advert" {
+		t.Errorf("expected 'too short for advert' error, got %q", p.Error)
+	}
+}
+
+func TestDecodeEncryptedPayloadShort(t *testing.T) {
+	p := decodeEncryptedPayload("REQ", []byte{0x01, 0x02})
+	if p.Error != "too short" {
+		t.Errorf("expected 'too short' error, got %q", p.Error)
+	}
+	if p.Type != "REQ" {
+		t.Errorf("type=%s, want REQ", p.Type)
+	}
+}
+
+func TestDecodeEncryptedPayloadValid(t *testing.T) {
+	buf := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+	p := decodeEncryptedPayload("RESPONSE", buf)
+	if p.Error != "" {
+		t.Errorf("unexpected error: %s", p.Error)
+	}
+	if p.DestHash != "aa" {
+		t.Errorf("destHash=%s, want aa", p.DestHash)
+	}
+	if p.SrcHash != "bb" {
+		t.Errorf("srcHash=%s, want bb", p.SrcHash)
+	}
+	if p.MAC != "ccdd" {
+		t.Errorf("mac=%s, want ccdd", p.MAC)
+	}
+	if p.EncryptedData != "eeff" {
+		t.Errorf("encryptedData=%s, want eeff", p.EncryptedData)
+	}
+}
+
+func TestDecodePayloadGRPData(t *testing.T) {
+	buf := []byte{0x01, 0x02, 0x03}
+	p := decodePayload(PayloadGRP_DATA, buf)
+	if p.Type != "UNKNOWN" {
+		t.Errorf("type=%s, want UNKNOWN", p.Type)
+	}
+	if p.RawHex != "010203" {
+		t.Errorf("rawHex=%s, want 010203", p.RawHex)
+	}
+}
+
+func TestDecodePayloadRAWCustom(t *testing.T) {
+	buf := []byte{0xFF, 0xFE}
+	p := decodePayload(PayloadRAW_CUSTOM, buf)
+	if p.Type != "UNKNOWN" {
+		t.Errorf("type=%s, want UNKNOWN", p.Type)
+	}
+}
+
+func TestDecodePayloadAllTypes(t *testing.T) {
+	// REQ
+	p := decodePayload(PayloadREQ, make([]byte, 10))
+	if p.Type != "REQ" {
+		t.Errorf("REQ: type=%s", p.Type)
+	}
+
+	// RESPONSE
+	p = decodePayload(PayloadRESPONSE, make([]byte, 10))
+	if p.Type != "RESPONSE" {
+		t.Errorf("RESPONSE: type=%s", p.Type)
+	}
+
+	// TXT_MSG
+	p = decodePayload(PayloadTXT_MSG, make([]byte, 10))
+	if p.Type != "TXT_MSG" {
+		t.Errorf("TXT_MSG: type=%s", p.Type)
+	}
+
+	// ACK
+	p = decodePayload(PayloadACK, make([]byte, 10))
+	if p.Type != "ACK" {
+		t.Errorf("ACK: type=%s", p.Type)
+	}
+
+	// GRP_TXT
+	p = decodePayload(PayloadGRP_TXT, make([]byte, 10))
+	if p.Type != "GRP_TXT" {
+		t.Errorf("GRP_TXT: type=%s", p.Type)
+	}
+
+	// ANON_REQ
+	p = decodePayload(PayloadANON_REQ, make([]byte, 40))
+	if p.Type != "ANON_REQ" {
+		t.Errorf("ANON_REQ: type=%s", p.Type)
+	}
+
+	// PATH
+	p = decodePayload(PayloadPATH, make([]byte, 10))
+	if p.Type != "PATH" {
+		t.Errorf("PATH: type=%s", p.Type)
+	}
+
+	// TRACE
+	p = decodePayload(PayloadTRACE, make([]byte, 20))
+	if p.Type != "TRACE" {
+		t.Errorf("TRACE: type=%s", p.Type)
+	}
+}
+
+func TestPayloadJSON(t *testing.T) {
+	p := &Payload{Type: "TEST", Name: "hello"}
+	j := PayloadJSON(p)
+	if j == "" || j == "{}" {
+		t.Errorf("PayloadJSON returned empty: %s", j)
+	}
+	if !strings.Contains(j, `"type":"TEST"`) {
+		t.Errorf("PayloadJSON missing type: %s", j)
+	}
+	if !strings.Contains(j, `"name":"hello"`) {
+		t.Errorf("PayloadJSON missing name: %s", j)
+	}
+}
+
+func TestPayloadJSONNil(t *testing.T) {
+	// nil should not panic
+	j := PayloadJSON(nil)
+	if j != "null" && j != "{}" {
+		// json.Marshal(nil) returns "null"
+		t.Logf("PayloadJSON(nil) = %s", j)
+	}
+}
+
+func TestValidateAdvertNaNLat(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	nanVal := math.NaN()
+	ok, reason := ValidateAdvert(&Payload{PubKey: goodPk, Lat: &nanVal})
+	if ok {
+		t.Error("NaN lat should fail")
+	}
+	if !strings.Contains(reason, "lat") {
+		t.Errorf("reason should mention lat: %s", reason)
+	}
+}
+
+func TestValidateAdvertInfLon(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	infVal := math.Inf(1)
+	ok, reason := ValidateAdvert(&Payload{PubKey: goodPk, Lon: &infVal})
+	if ok {
+		t.Error("Inf lon should fail")
+	}
+	if !strings.Contains(reason, "lon") {
+		t.Errorf("reason should mention lon: %s", reason)
+	}
+}
+
+func TestValidateAdvertNegInfLat(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	negInf := math.Inf(-1)
+	ok, _ := ValidateAdvert(&Payload{PubKey: goodPk, Lat: &negInf})
+	if ok {
+		t.Error("-Inf lat should fail")
+	}
+}
+
+func TestValidateAdvertNaNLon(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	nan := math.NaN()
+	ok, _ := ValidateAdvert(&Payload{PubKey: goodPk, Lon: &nan})
+	if ok {
+		t.Error("NaN lon should fail")
+	}
+}
+
+func TestValidateAdvertControlChars(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	tests := []struct {
+		name string
+		char string
+	}{
+		{"null", "\x00"},
+		{"bell", "\x07"},
+		{"backspace", "\x08"},
+		{"vtab", "\x0b"},
+		{"formfeed", "\x0c"},
+		{"shift out", "\x0e"},
+		{"unit sep", "\x1f"},
+		{"delete", "\x7f"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, _ := ValidateAdvert(&Payload{PubKey: goodPk, Name: "test" + tt.char + "name"})
+			if ok {
+				t.Errorf("control char %q in name should fail", tt.char)
+			}
+		})
+	}
+}
+
+func TestValidateAdvertAllowedCharsInName(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	// Tab (\t = 0x09), newline (\n = 0x0a), carriage return (\r = 0x0d) are NOT blocked
+	ok, reason := ValidateAdvert(&Payload{PubKey: goodPk, Name: "hello\tworld", Flags: &AdvertFlags{Repeater: true}})
+	if !ok {
+		t.Errorf("tab in name should be allowed, got reason: %s", reason)
+	}
+}
+
+func TestValidateAdvertUnknownRole(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	// type=0 maps to companion via Chat=false, Repeater=false, Room=false, Sensor=false → companion
+	// type=5 (unknown) → companion (default), which IS a valid role
+	// But if all booleans are false AND type is 0, advertRole returns "companion" which is valid
+	// To get "unknown", we'd need a flags combo that doesn't match any valid role
+	// Actually advertRole always returns companion as default — so let's just test the validation path
+	flags := &AdvertFlags{Type: 5, Chat: false, Repeater: false, Room: false, Sensor: false}
+	ok, reason := ValidateAdvert(&Payload{PubKey: goodPk, Flags: flags})
+	// advertRole returns "companion" for this, which is valid
+	if !ok {
+		t.Errorf("default companion role should be valid, got: %s", reason)
+	}
+}
+
+func TestValidateAdvertValidLocation(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	lat := 45.0
+	lon := -90.0
+	ok, _ := ValidateAdvert(&Payload{PubKey: goodPk, Lat: &lat, Lon: &lon, Flags: &AdvertFlags{Repeater: true}})
+	if !ok {
+		t.Error("valid lat/lon should pass")
+	}
+}
+
+func TestValidateAdvertBoundaryLat(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	// Exactly at boundary
+	lat90 := 90.0
+	ok, _ := ValidateAdvert(&Payload{PubKey: goodPk, Lat: &lat90})
+	if !ok {
+		t.Error("lat=90 should pass")
+	}
+	latNeg90 := -90.0
+	ok, _ = ValidateAdvert(&Payload{PubKey: goodPk, Lat: &latNeg90})
+	if !ok {
+		t.Error("lat=-90 should pass")
+	}
+	// Just over
+	lat91 := 90.001
+	ok, _ = ValidateAdvert(&Payload{PubKey: goodPk, Lat: &lat91})
+	if ok {
+		t.Error("lat=90.001 should fail")
+	}
+}
+
+func TestValidateAdvertBoundaryLon(t *testing.T) {
+	goodPk := strings.Repeat("aa", 32)
+	lon180 := 180.0
+	ok, _ := ValidateAdvert(&Payload{PubKey: goodPk, Lon: &lon180})
+	if !ok {
+		t.Error("lon=180 should pass")
+	}
+	lonNeg180 := -180.0
+	ok, _ = ValidateAdvert(&Payload{PubKey: goodPk, Lon: &lonNeg180})
+	if !ok {
+		t.Error("lon=-180 should pass")
+	}
+}
+
+func TestComputeContentHashShortHex(t *testing.T) {
+	// Less than 16 hex chars and invalid hex
+	hash := ComputeContentHash("AB")
+	if hash != "AB" {
+		t.Errorf("short hex hash=%s, want AB", hash)
+	}
+
+	// Exactly 16 chars invalid hex
+	hash = ComputeContentHash("ZZZZZZZZZZZZZZZZ")
+	if len(hash) != 16 {
+		t.Errorf("invalid hex hash length=%d, want 16", len(hash))
+	}
+}
+
+func TestComputeContentHashTransportRoute(t *testing.T) {
+	// Route type 0 (TRANSPORT_FLOOD) with no path hops + 4 transport code bytes
+	// header=0x14 (TRANSPORT_FLOOD, ADVERT), path=0x00 (0 hops)
+	// transport codes = 4 bytes, then payload
+	hex := "1400" + "AABBCCDD" + strings.Repeat("EE", 10)
+	hash := ComputeContentHash(hex)
+	if len(hash) != 16 {
+		t.Errorf("hash length=%d, want 16", len(hash))
+	}
+}
+
+func TestComputeContentHashPayloadBeyondBuffer(t *testing.T) {
+	// path claims more bytes than buffer has → fallback
+	// header=0x05 (FLOOD, REQ), pathByte=0x3F (63 hops of 1 byte = 63 path bytes)
+	// but total buffer is only 4 bytes
+	hex := "053F" + "AABB"
+	hash := ComputeContentHash(hex)
+	// payloadStart = 2 + 63 = 65, but buffer is only 4 bytes
+	// Should fallback — rawHex is 8 chars (< 16), so returns rawHex
+	if hash != hex {
+		t.Errorf("hash=%s, want %s", hash, hex)
+	}
+}
+
+func TestComputeContentHashPayloadBeyondBufferLongHex(t *testing.T) {
+	// Same as above but with rawHex >= 16 chars → returns first 16
+	hex := "053F" + strings.Repeat("AA", 20) // 44 chars total, but pathByte claims 63 hops
+	hash := ComputeContentHash(hex)
+	if len(hash) != 16 {
+		t.Errorf("hash length=%d, want 16", len(hash))
+	}
+	if hash != hex[:16] {
+		t.Errorf("hash=%s, want %s", hash, hex[:16])
+	}
+}
+
+func TestComputeContentHashTransportBeyondBuffer(t *testing.T) {
+	// Transport route (0x00 = TRANSPORT_FLOOD) with path claiming some bytes
+	// total buffer too short for transport codes + path
+	// header=0x00, pathByte=0x02 (2 hops, 1-byte hash), then only 2 more bytes
+	// payloadStart = 2 + 2 + 4(transport) = 8, but buffer only 6 bytes
+	hex := "0002" + "AABB" + strings.Repeat("CC", 6) // 20 chars = 10 bytes
+	hash := ComputeContentHash(hex)
+	// payloadStart = 2 + 2 + 4 = 8, buffer is 10 bytes → should work
+	if len(hash) != 16 {
+		t.Errorf("hash length=%d, want 16", len(hash))
+	}
+}
+
+func TestComputeContentHashLongFallback(t *testing.T) {
+	// Long rawHex (>= 16) but invalid → returns first 16 chars
+	longInvalid := "ZZZZZZZZZZZZZZZZZZZZZZZZ"
+	hash := ComputeContentHash(longInvalid)
+	if hash != longInvalid[:16] {
+		t.Errorf("hash=%s, want first 16 of input", hash)
+	}
+}
+
+func TestDecodePacketWithWhitespace(t *testing.T) {
+	raw := "0A 00 D6 9F D7 A5 A7 47 5D B0 73 37 74 9A E6 1F A5 3A 47 88 E9 76"
+	pkt, err := DecodePacket(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkt.Header.PayloadType != PayloadTXT_MSG {
+		t.Errorf("payloadType=%d, want %d", pkt.Header.PayloadType, PayloadTXT_MSG)
+	}
+}
+
+func TestDecodePacketWithNewlines(t *testing.T) {
+	raw := "0A00\nD69F\r\nD7A5A7475DB07337749AE61FA53A4788E976"
+	pkt, err := DecodePacket(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkt.Payload.Type != "TXT_MSG" {
+		t.Errorf("type=%s, want TXT_MSG", pkt.Payload.Type)
+	}
+}
+
+func TestDecodePacketTransportRouteTooShort(t *testing.T) {
+	// TRANSPORT_FLOOD (route=0) but only 3 bytes total → too short for transport codes
+	_, err := DecodePacket("140011")
+	if err == nil {
+		t.Error("expected error for transport route with too-short buffer")
+	}
+	if !strings.Contains(err.Error(), "transport codes") {
+		t.Errorf("error should mention transport codes: %v", err)
+	}
+}
+
+func TestDecodeAckShort(t *testing.T) {
+	p := decodeAck([]byte{0x01, 0x02, 0x03})
+	if p.Error != "too short" {
+		t.Errorf("expected 'too short', got %q", p.Error)
+	}
+}
+
+func TestDecodeAckValid(t *testing.T) {
+	buf := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+	p := decodeAck(buf)
+	if p.Error != "" {
+		t.Errorf("unexpected error: %s", p.Error)
+	}
+	if p.DestHash != "aa" {
+		t.Errorf("destHash=%s, want aa", p.DestHash)
+	}
+	if p.ExtraHash != "ccddeeff" {
+		t.Errorf("extraHash=%s, want ccddeeff", p.ExtraHash)
+	}
+}
+
+func TestIsTransportRoute(t *testing.T) {
+	if !isTransportRoute(RouteTransportFlood) {
+		t.Error("RouteTransportFlood should be transport")
+	}
+	if !isTransportRoute(RouteTransportDirect) {
+		t.Error("RouteTransportDirect should be transport")
+	}
+	if isTransportRoute(RouteFlood) {
+		t.Error("RouteFlood should not be transport")
+	}
+	if isTransportRoute(RouteDirect) {
+		t.Error("RouteDirect should not be transport")
+	}
+}
+
+func TestDecodeHeaderUnknownTypes(t *testing.T) {
+	// Payload type that doesn't map to any known name
+	// bits 5-2 = 0x0C (12) is CONTROL but 0x0D (13) would be unknown
+	// byte = 0b00_1101_01 = 0x35 → routeType=1, payloadType=0x0D(13), version=0
+	h := decodeHeader(0x35)
+	if h.PayloadTypeName != "UNKNOWN" {
+		t.Errorf("payloadTypeName=%s, want UNKNOWN for type 13", h.PayloadTypeName)
+	}
+}
+
+func TestDecodePayloadMultipart(t *testing.T) {
+	// MULTIPART (0x0A) falls through to default → UNKNOWN
+	p := decodePayload(PayloadMULTIPART, []byte{0x01, 0x02})
+	if p.Type != "UNKNOWN" {
+		t.Errorf("MULTIPART type=%s, want UNKNOWN", p.Type)
+	}
+}
+
+func TestDecodePayloadControl(t *testing.T) {
+	// CONTROL (0x0B) falls through to default → UNKNOWN
+	p := decodePayload(PayloadCONTROL, []byte{0x01, 0x02})
+	if p.Type != "UNKNOWN" {
+		t.Errorf("CONTROL type=%s, want UNKNOWN", p.Type)
+	}
+}
+
+func TestDecodePathTruncatedBuffer(t *testing.T) {
+	// path byte claims 5 hops of 2 bytes = 10 bytes, but only 4 available
+	path, consumed := decodePath(0x45, []byte{0xAA, 0x11, 0xBB, 0x22}, 0)
+	if path.HashCount != 5 {
+		t.Errorf("hashCount=%d, want 5", path.HashCount)
+	}
+	// Should only decode 2 hops (4 bytes / 2 bytes per hop)
+	if len(path.Hops) != 2 {
+		t.Errorf("hops=%d, want 2 (truncated)", len(path.Hops))
+	}
+	if consumed != 10 {
+		t.Errorf("consumed=%d, want 10 (full claimed size)", consumed)
+	}
+}
+
 func TestDecodeFloodAdvert5Hops(t *testing.T) {
 	// From test-decoder.js Test 1
 	raw := "11451000D818206D3AAC152C8A91F89957E6D30CA51F36E28790228971C473B755F244F718754CF5EE4A2FD58D944466E42CDED140C66D0CC590183E32BAF40F112BE8F3F2BDF6012B4B2793C52F1D36F69EE054D9A05593286F78453E56C0EC4A3EB95DDA2A7543FCCC00B939CACC009278603902FC12BCF84B706120526F6F6620536F6C6172"

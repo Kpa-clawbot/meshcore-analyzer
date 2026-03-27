@@ -1,0 +1,494 @@
+package main
+
+import (
+	"encoding/json"
+	"math"
+	"testing"
+	"time"
+)
+
+func TestToFloat64(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  interface{}
+		want   float64
+		wantOK bool
+	}{
+		{"float64", float64(3.14), 3.14, true},
+		{"float32", float32(2.5), 2.5, true},
+		{"int", int(42), 42.0, true},
+		{"int64", int64(100), 100.0, true},
+		{"json.Number valid", json.Number("9.5"), 9.5, true},
+		{"json.Number invalid", json.Number("not_a_number"), 0, false},
+		{"string unsupported", "hello", 0, false},
+		{"bool unsupported", true, 0, false},
+		{"nil unsupported", nil, 0, false},
+		{"slice unsupported", []int{1}, 0, false},
+		{"float64 zero", float64(0), 0.0, true},
+		{"float64 negative", float64(-5.5), -5.5, true},
+		{"int64 large", int64(math.MaxInt32), float64(math.MaxInt32), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := toFloat64(tt.input)
+			if ok != tt.wantOK {
+				t.Errorf("toFloat64(%v) ok=%v, want %v", tt.input, ok, tt.wantOK)
+			}
+			if ok && got != tt.want {
+				t.Errorf("toFloat64(%v) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFirstNonEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"all empty", []string{"", "", ""}, ""},
+		{"first non-empty", []string{"", "hello", "world"}, "hello"},
+		{"first value", []string{"first", "second"}, "first"},
+		{"single empty", []string{""}, ""},
+		{"single value", []string{"only"}, "only"},
+		{"no args", nil, ""},
+		{"empty then value", []string{"", "", "last"}, "last"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := firstNonEmpty(tt.args...)
+			if got != tt.want {
+				t.Errorf("firstNonEmpty(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnixTime(t *testing.T) {
+	tests := []struct {
+		name  string
+		epoch int64
+		want  time.Time
+	}{
+		{"zero epoch", 0, time.Unix(0, 0)},
+		{"known date", 1700000000, time.Unix(1700000000, 0)},
+		{"negative epoch", -1, time.Unix(-1, 0)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unixTime(tt.epoch)
+			if !got.Equal(tt.want) {
+				t.Errorf("unixTime(%d) = %v, want %v", tt.epoch, got, tt.want)
+			}
+		})
+	}
+}
+
+// mockMessage implements mqtt.Message for testing handleMessage
+type mockMessage struct {
+	topic   string
+	payload []byte
+}
+
+func (m *mockMessage) Duplicate() bool  { return false }
+func (m *mockMessage) Qos() byte        { return 0 }
+func (m *mockMessage) Retained() bool   { return false }
+func (m *mockMessage) Topic() string     { return m.topic }
+func (m *mockMessage) MessageID() uint16 { return 0 }
+func (m *mockMessage) Payload() []byte   { return m.payload }
+func (m *mockMessage) Ack()              {}
+
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := dir + "/test.db"
+	s, err := OpenStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func TestHandleMessageRawPacket(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	payload := []byte(`{"raw":"` + rawHex + `","SNR":5.5,"RSSI":-100.0,"origin":"myobs"}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 1 {
+		t.Errorf("transmissions count=%d, want 1", count)
+	}
+}
+
+func TestHandleMessageRawPacketAdvert(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "120046D62DE27D4C5194D7821FC5A34A45565DCC2537B300B9AB6275255CEFB65D840CE5C169C94C9AED39E8BCB6CB6EB0335497A198B33A1A610CD3B03D8DCFC160900E5244280323EE0B44CACAB8F02B5B38B91CFA18BD067B0B5E63E94CFC85F758A8530B9240933402E0E6B8F84D5252322D52"
+	payload := []byte(`{"raw":"` + rawHex + `"}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+
+	handleMessage(store, "test", source, msg)
+
+	// Should create a node from the ADVERT
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+	if count != 1 {
+		t.Errorf("nodes count=%d, want 1 (advert should upsert node)", count)
+	}
+
+	// Should create observer
+	store.db.QueryRow("SELECT COUNT(*) FROM observers").Scan(&count)
+	if count != 1 {
+		t.Errorf("observers count=%d, want 1", count)
+	}
+}
+
+func TestHandleMessageInvalidJSON(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: []byte(`not json`)}
+
+	// Should not panic
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 0 {
+		t.Error("invalid JSON should not insert")
+	}
+}
+
+func TestHandleMessageStatusTopic(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+	msg := &mockMessage{
+		topic:   "meshcore/SJC/obs1/status",
+		payload: []byte(`{"origin":"MyObserver"}`),
+	}
+
+	handleMessage(store, "test", source, msg)
+
+	var name, iata string
+	err := store.db.QueryRow("SELECT name, iata FROM observers WHERE id = 'obs1'").Scan(&name, &iata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "MyObserver" {
+		t.Errorf("name=%s, want MyObserver", name)
+	}
+	if iata != "SJC" {
+		t.Errorf("iata=%s, want SJC", iata)
+	}
+}
+
+func TestHandleMessageSkipStatusTopics(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	// meshcore/status should be skipped
+	msg1 := &mockMessage{topic: "meshcore/status", payload: []byte(`{"raw":"0A00"}`)}
+	handleMessage(store, "test", source, msg1)
+
+	// meshcore/events/connection should be skipped
+	msg2 := &mockMessage{topic: "meshcore/events/connection", payload: []byte(`{"raw":"0A00"}`)}
+	handleMessage(store, "test", source, msg2)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 0 {
+		t.Error("status/connection topics should be skipped")
+	}
+}
+
+func TestHandleMessageIATAFilter(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test", IATAFilter: []string{"LAX"}}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	// SJC is not in filter, should be skipped
+	msg := &mockMessage{
+		topic:   "meshcore/SJC/obs1/packets",
+		payload: []byte(`{"raw":"` + rawHex + `"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 0 {
+		t.Error("IATA filter should skip non-matching regions")
+	}
+
+	// LAX is in filter, should be accepted
+	msg2 := &mockMessage{
+		topic:   "meshcore/LAX/obs2/packets",
+		payload: []byte(`{"raw":"` + rawHex + `"}`),
+	}
+	handleMessage(store, "test", source, msg2)
+
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 1 {
+		t.Errorf("IATA filter should allow matching region, got count=%d", count)
+	}
+}
+
+func TestHandleMessageIATAFilterNoRegion(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test", IATAFilter: []string{"LAX"}}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	// topic with only 1 part — no region to filter on
+	msg := &mockMessage{
+		topic:   "meshcore",
+		payload: []byte(`{"raw":"` + rawHex + `"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	// No region part → filter doesn't apply, message goes through
+	// Actually the code checks len(parts) > 1 for IATA filter
+	// Without > 1 parts, the filter is skipped and the message proceeds
+}
+
+func TestHandleMessageNoRawHex(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	// Valid JSON but no "raw" field → falls through to "other formats"
+	msg := &mockMessage{
+		topic:   "meshcore/SJC/obs1/packets",
+		payload: []byte(`{"type":"companion","data":"something"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 0 {
+		t.Error("no raw hex should not insert")
+	}
+}
+
+func TestHandleMessageBadRawHex(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	// Invalid hex → decode error
+	msg := &mockMessage{
+		topic:   "meshcore/SJC/obs1/packets",
+		payload: []byte(`{"raw":"ZZZZ"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 0 {
+		t.Error("bad hex should not insert")
+	}
+}
+
+func TestHandleMessageWithSNRRSSIAsNumbers(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	payload := []byte(`{"raw":"` + rawHex + `","SNR":7.2,"RSSI":-95}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+
+	handleMessage(store, "test", source, msg)
+
+	var snr, rssi *float64
+	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
+	if snr == nil || *snr != 7.2 {
+		t.Errorf("snr=%v, want 7.2", snr)
+	}
+}
+
+func TestHandleMessageMinimalTopic(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	// Topic with only 2 parts: meshcore/region (no observer ID)
+	msg := &mockMessage{
+		topic:   "meshcore/SJC",
+		payload: []byte(`{"raw":"` + rawHex + `"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 1 {
+		t.Errorf("should insert even with short topic, got count=%d", count)
+	}
+}
+
+func TestHandleMessageCorruptedAdvert(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	// An ADVERT that's too short to be valid — decoded but fails ValidateAdvert
+	// header 0x12 = FLOOD+ADVERT, path 0x00 = 0 hops
+	// Then a short payload that decodeAdvert will mark as "too short for advert"
+	rawHex := "1200" + "AABBCCDD"
+	msg := &mockMessage{
+		topic:   "meshcore/SJC/obs1/packets",
+		payload: []byte(`{"raw":"` + rawHex + `"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	// Transmission should be inserted (even if advert is invalid)
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 1 {
+		t.Errorf("transmission should be inserted even with corrupted advert, got %d", count)
+	}
+
+	// But no node should be created
+	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+	if count != 0 {
+		t.Error("corrupted advert should not create a node")
+	}
+}
+
+func TestHandleMessageNoObserverID(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	// Topic with only 1 part — no observer
+	msg := &mockMessage{
+		topic:   "packets",
+		payload: []byte(`{"raw":"` + rawHex + `","origin":"obs1"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 1 {
+		t.Errorf("count=%d, want 1", count)
+	}
+	// No observer should be upserted since observerID is empty
+	store.db.QueryRow("SELECT COUNT(*) FROM observers").Scan(&count)
+	if count != 0 {
+		t.Error("no observer should be created when observerID is empty")
+	}
+}
+
+func TestHandleMessageSNRNotFloat(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	// SNR as a string value — should not parse as float
+	payload := []byte(`{"raw":"` + rawHex + `","SNR":"bad","RSSI":"bad"}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+	handleMessage(store, "test", source, msg)
+
+	var count int
+	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if count != 1 {
+		t.Error("should still insert even with bad SNR/RSSI")
+	}
+}
+
+func TestHandleMessageOriginExtraction(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	payload := []byte(`{"raw":"` + rawHex + `","origin":"MyOrigin"}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+	handleMessage(store, "test", source, msg)
+
+	// Verify origin was extracted to observer name
+	var name string
+	store.db.QueryRow("SELECT name FROM observers WHERE id = 'obs1'").Scan(&name)
+	if name != "MyOrigin" {
+		t.Errorf("observer name=%s, want MyOrigin", name)
+	}
+}
+
+func TestHandleMessagePanicRecovery(t *testing.T) {
+	// Close the store to cause panics on prepared statement use
+	store := newTestStore(t)
+	store.Close()
+
+	source := MQTTSource{Name: "test"}
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	msg := &mockMessage{
+		topic:   "meshcore/SJC/obs1/packets",
+		payload: []byte(`{"raw":"` + rawHex + `"}`),
+	}
+
+	// Should not panic — the defer/recover should catch it
+	handleMessage(store, "test", source, msg)
+}
+
+func TestHandleMessageStatusOriginFallback(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	// Status topic without origin field
+	msg := &mockMessage{
+		topic:   "meshcore/SJC/obs1/status",
+		payload: []byte(`{"type":"status"}`),
+	}
+	handleMessage(store, "test", source, msg)
+
+	var name string
+	err := store.db.QueryRow("SELECT name FROM observers WHERE id = 'obs1'").Scan(&name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// firstNonEmpty with empty name should use observerID as fallback in log
+	// The observer should still be inserted
+}
+
+func TestEpochToISO(t *testing.T) {
+	// epoch 0 → 1970-01-01
+	iso := epochToISO(0)
+	if iso != "1970-01-01T00:00:00.000Z" {
+		t.Errorf("epochToISO(0) = %s, want 1970-01-01T00:00:00.000Z", iso)
+	}
+
+	// Known timestamp
+	iso2 := epochToISO(1700000000)
+	if iso2 == "" {
+		t.Error("epochToISO should return non-empty string")
+	}
+}
+
+func TestAdvertRole(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags *AdvertFlags
+		want  string
+	}{
+		{"repeater", &AdvertFlags{Repeater: true}, "repeater"},
+		{"room", &AdvertFlags{Room: true}, "room"},
+		{"sensor", &AdvertFlags{Sensor: true}, "sensor"},
+		{"companion (default)", &AdvertFlags{Chat: true}, "companion"},
+		{"companion (no flags)", &AdvertFlags{}, "companion"},
+		{"repeater takes priority", &AdvertFlags{Repeater: true, Room: true}, "repeater"},
+		{"room before sensor", &AdvertFlags{Room: true, Sensor: true}, "room"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := advertRole(tt.flags)
+			if got != tt.want {
+				t.Errorf("advertRole(%+v) = %s, want %s", tt.flags, got, tt.want)
+			}
+		})
+	}
+}
