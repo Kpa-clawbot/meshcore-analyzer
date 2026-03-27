@@ -69,19 +69,39 @@ jobs:
         if: steps.changes.outputs.frontend == 'true'
         run: npx playwright install chromium --with-deps 2>/dev/null || true
 
-      - name: Frontend coverage (instrumented Playwright)
+      - name: Instrument frontend JS
+        if: steps.changes.outputs.frontend == 'true'
+        run: sh scripts/instrument-frontend.sh
+
+      - name: Start test server (instrumented)
         if: steps.changes.outputs.frontend == 'true'
         run: |
-          sh scripts/instrument-frontend.sh
           COVERAGE=1 PORT=13581 node server.js &
-          SERVER_PID=$!
-          sleep 5
-          
-          BASE_URL=http://localhost:13581 node test-e2e-playwright.js 2>&1 | tee e2e-output.txt
-          E2E_PASS=$(grep -oP '[0-9]+(?=/)' e2e-output.txt | tail -1)
-          
+          echo $! > .server.pid
+          echo "Server PID: $(cat .server.pid)"
+          # Health-check poll loop (up to 30s)
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:13581/api/stats > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Server failed to start within 30s"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run Playwright E2E tests
+        if: steps.changes.outputs.frontend == 'true'
+        run: BASE_URL=http://localhost:13581 node test-e2e-playwright.js 2>&1 | tee e2e-output.txt
+
+      - name: Extract coverage + generate report
+        if: always() && steps.changes.outputs.frontend == 'true'
+        run: |
           BASE_URL=http://localhost:13581 node scripts/collect-frontend-coverage.js 2>&1 | tee fe-coverage-output.txt
-          kill $SERVER_PID 2>/dev/null || true
+          
+          E2E_PASS=$(grep -oP '[0-9]+(?=/)' e2e-output.txt | tail -1)
           
           mkdir -p .badges
           if [ -f .nyc_output/frontend-coverage.json ]; then
@@ -95,6 +115,15 @@ jobs:
             echo "## Frontend: ${FE_COVERAGE}% coverage" >> $GITHUB_STEP_SUMMARY
           fi
           echo "{\"schemaVersion\":1,\"label\":\"frontend tests\",\"message\":\"${E2E_PASS:-0} E2E passed\",\"color\":\"brightgreen\"}" > .badges/frontend-tests.json
+
+      - name: Stop test server
+        if: always() && steps.changes.outputs.frontend == 'true'
+        run: |
+          if [ -f .server.pid ]; then
+            kill $(cat .server.pid) 2>/dev/null || true
+            rm -f .server.pid
+            echo "Server stopped"
+          fi
 
       - name: Frontend E2E only (no coverage)
         if: steps.changes.outputs.frontend == 'false'
