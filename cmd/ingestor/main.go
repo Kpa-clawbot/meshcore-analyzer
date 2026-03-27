@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -228,8 +231,164 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message) 
 		return
 	}
 
-	// Other message formats (companion bridge etc.) are not handled yet.
-	// This first iteration focuses on the raw packet format (Format 1).
+	// Format 2: Companion bridge channel message (meshcore/message/channel/<n>)
+	if strings.HasPrefix(topic, "meshcore/message/channel/") {
+		text, _ := msg["text"].(string)
+		if text == "" {
+			return
+		}
+
+		channelIdx := ""
+		if len(parts) >= 4 {
+			channelIdx = parts[3]
+		}
+		if ci, ok := msg["channel_idx"]; ok {
+			channelIdx = fmt.Sprintf("%v", ci)
+		}
+
+		// Extract sender from "Name: message" format
+		sender := ""
+		if idx := strings.Index(text, ": "); idx > 0 && idx < 50 {
+			sender = text[:idx]
+		}
+
+		channelName := fmt.Sprintf("ch%s", channelIdx)
+
+		// Build decoded JSON matching Node.js CHAN format
+		channelMsg := map[string]interface{}{
+			"type":    "CHAN",
+			"channel": channelName,
+			"text":    text,
+			"sender":  sender,
+		}
+		if st, ok := msg["sender_timestamp"]; ok {
+			channelMsg["sender_timestamp"] = st
+		}
+
+		decodedJSON, _ := json.Marshal(channelMsg)
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		hashInput := fmt.Sprintf("ch:%s:%s:%s", channelIdx, text, now)
+		h := sha256.Sum256([]byte(hashInput))
+		hash := hex.EncodeToString(h[:])[:16]
+
+		var snr, rssi *float64
+		if v, ok := msg["SNR"]; ok {
+			if f, ok := toFloat64(v); ok {
+				snr = &f
+			}
+		} else if v, ok := msg["snr"]; ok {
+			if f, ok := toFloat64(v); ok {
+				snr = &f
+			}
+		}
+		if v, ok := msg["RSSI"]; ok {
+			if f, ok := toFloat64(v); ok {
+				rssi = &f
+			}
+		} else if v, ok := msg["rssi"]; ok {
+			if f, ok := toFloat64(v); ok {
+				rssi = &f
+			}
+		}
+
+		pktData := &PacketData{
+			Timestamp:    now,
+			ObserverID:   "companion",
+			ObserverName: "L1 Pro (BLE)",
+			SNR:          snr,
+			RSSI:         rssi,
+			Hash:         hash,
+			RouteType:    1, // FLOOD
+			PayloadType:  5, // GRP_TXT
+			PathJSON:     "[]",
+			DecodedJSON:  string(decodedJSON),
+		}
+
+		if err := store.InsertTransmission(pktData); err != nil {
+			log.Printf("MQTT [%s] channel insert error: %v", tag, err)
+		}
+
+		// Upsert sender as a companion node
+		if sender != "" {
+			senderKey := "sender-" + strings.ToLower(sender)
+			if err := store.UpsertNode(senderKey, sender, "companion", nil, nil, now); err != nil {
+				log.Printf("MQTT [%s] sender node upsert error: %v", tag, err)
+			}
+		}
+
+		log.Printf("MQTT [%s] channel message: ch%s from %s", tag, channelIdx, firstNonEmpty(sender, "unknown"))
+		return
+	}
+
+	// Format 2b: Companion bridge direct message (meshcore/message/direct/<id>)
+	if strings.HasPrefix(topic, "meshcore/message/direct/") {
+		text, _ := msg["text"].(string)
+		if text == "" {
+			return
+		}
+
+		sender := ""
+		if idx := strings.Index(text, ": "); idx > 0 && idx < 50 {
+			sender = text[:idx]
+		}
+
+		dm := map[string]interface{}{
+			"type":   "DM",
+			"text":   text,
+			"sender": sender,
+		}
+		if st, ok := msg["sender_timestamp"]; ok {
+			dm["sender_timestamp"] = st
+		}
+
+		decodedJSON, _ := json.Marshal(dm)
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		hashInput := fmt.Sprintf("dm:%s:%s", text, now)
+		h := sha256.Sum256([]byte(hashInput))
+		hash := hex.EncodeToString(h[:])[:16]
+
+		var snr, rssi *float64
+		if v, ok := msg["SNR"]; ok {
+			if f, ok := toFloat64(v); ok {
+				snr = &f
+			}
+		} else if v, ok := msg["snr"]; ok {
+			if f, ok := toFloat64(v); ok {
+				snr = &f
+			}
+		}
+		if v, ok := msg["RSSI"]; ok {
+			if f, ok := toFloat64(v); ok {
+				rssi = &f
+			}
+		} else if v, ok := msg["rssi"]; ok {
+			if f, ok := toFloat64(v); ok {
+				rssi = &f
+			}
+		}
+
+		pktData := &PacketData{
+			Timestamp:    now,
+			ObserverID:   "companion",
+			ObserverName: "L1 Pro (BLE)",
+			SNR:          snr,
+			RSSI:         rssi,
+			Hash:         hash,
+			RouteType:    1, // FLOOD
+			PayloadType:  2, // TXT_MSG
+			PathJSON:     "[]",
+			DecodedJSON:  string(decodedJSON),
+		}
+
+		if err := store.InsertTransmission(pktData); err != nil {
+			log.Printf("MQTT [%s] DM insert error: %v", tag, err)
+		}
+
+		log.Printf("MQTT [%s] direct message from %s", tag, firstNonEmpty(sender, "unknown"))
+		return
+	}
 }
 
 func toFloat64(v interface{}) (float64, bool) {

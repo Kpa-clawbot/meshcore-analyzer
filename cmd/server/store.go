@@ -961,6 +961,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			"snr":               floatPtrOrNil(tx.SNR),
 			"rssi":              floatPtrOrNil(tx.RSSI),
 			"path_json":         strOrNil(tx.PathJSON),
+			"direction":         strOrNil(tx.Direction),
 			"observation_count": tx.ObservationCount,
 		}
 		// Broadcast map: top-level fields for live.js + nested packet for packets.js
