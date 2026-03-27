@@ -180,7 +180,7 @@
         filters.node = routeParam;
       }
     }
-    app.innerHTML = `<div class="split-layout">
+    app.innerHTML = `<div class="split-layout detail-collapsed">
       <div class="panel-left" id="pktLeft"></div>
       <div class="panel-right empty" id="pktRight" aria-live="polite">
         <div class="panel-resize-handle" id="pktResizeHandle"></div>

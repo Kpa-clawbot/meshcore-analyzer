@@ -1116,6 +1116,30 @@ console.log('\n=== compare.js: comparePacketSets ===');
   });
 }
 
+// ===== Packets page: detail pane starts collapsed =====
+{
+  console.log('\nPackets page — detail pane initial state:');
+  const packetsSource = fs.readFileSync('public/packets.js', 'utf8');
+
+  test('split-layout starts with detail-collapsed class', () => {
+    // The template literal that creates the split-layout must include detail-collapsed
+    const match = packetsSource.match(/innerHTML\s*=\s*`<div class="split-layout([^"]*)">/);
+    assert.ok(match, 'should find split-layout innerHTML assignment');
+    assert.ok(match[1].includes('detail-collapsed'),
+      'split-layout initial class should include detail-collapsed, got: "split-layout' + match[1] + '"');
+  });
+
+  test('closeDetailPanel adds detail-collapsed', () => {
+    assert.ok(packetsSource.includes("classList.add('detail-collapsed')"),
+      'closeDetailPanel should add detail-collapsed class');
+  });
+
+  test('selectPacket removes detail-collapsed', () => {
+    assert.ok(packetsSource.includes("classList.remove('detail-collapsed')"),
+      'selectPacket should remove detail-collapsed class');
+  });
+}
+
 // ===== SUMMARY =====
 console.log(`\n${'═'.repeat(40)}`);
 console.log(`  Frontend helpers: ${passed} passed, ${failed} failed`);
