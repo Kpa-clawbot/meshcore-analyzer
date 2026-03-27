@@ -251,6 +251,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Validate JavaScript syntax
         run: sh scripts/validate.sh
 
