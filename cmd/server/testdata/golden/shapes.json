@@ -996,6 +996,12 @@
             "elementShape": {
               "type": "number"
             }
+          },
+          "battery_mv": {
+            "type": "nullable_number"
+          },
+          "temperature_c": {
+            "type": "nullable_number"
           }
         }
       },
@@ -1097,6 +1103,12 @@
             },
             "last_heard": {
               "type": "string"
+            },
+            "battery_mv": {
+              "type": "nullable_number"
+            },
+            "temperature_c": {
+              "type": "nullable_number"
             }
           }
         }

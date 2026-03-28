@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -54,6 +55,20 @@ func resolveBuildTime() string {
 }
 
 func main() {
+	// pprof profiling — off by default, enable with ENABLE_PPROF=true
+	if os.Getenv("ENABLE_PPROF") == "true" {
+		pprofPort := os.Getenv("PPROF_PORT")
+		if pprofPort == "" {
+			pprofPort = "6060"
+		}
+		go func() {
+			log.Printf("[pprof] profiling UI at http://localhost:%s/debug/pprof/", pprofPort)
+			if err := http.ListenAndServe(":"+pprofPort, nil); err != nil {
+				log.Printf("[pprof] failed to start: %v (non-fatal)", err)
+			}
+		}()
+	}
+
 	var (
 		configDir  string
 		port       int

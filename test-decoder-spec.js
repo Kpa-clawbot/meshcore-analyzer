@@ -213,6 +213,48 @@ console.log('── Spec Tests: Advert Payload ──');
   assertEq(p.name, undefined, 'advert no name: name undefined');
 }
 
+// Telemetry: sensor node with battery + positive temperature
+{
+  const pubkey = 'AA'.repeat(32);
+  const sig = 'BB'.repeat(64);
+  const flags = '84'; // sensor(4) | hasName(0x80)
+  const name = Buffer.from('S1').toString('hex') + '00'; // null-terminated
+  const battBuf = Buffer.alloc(2); battBuf.writeUInt16LE(3700);
+  const tempBuf = Buffer.alloc(2); tempBuf.writeInt16LE(2850); // 28.50°C
+  const hex = '1200' + pubkey + '00000000' + sig + flags + name +
+    battBuf.toString('hex') + tempBuf.toString('hex');
+  const p = decodePacket(hex).payload;
+  assertEq(p.battery_mv, 3700, 'telemetry: battery_mv decoded');
+  assert(Math.abs(p.temperature_c - 28.50) < 0.01, 'telemetry: temperature_c positive');
+}
+
+// Telemetry: sensor node with 0°C must still emit temperature_c
+{
+  const pubkey = 'CC'.repeat(32);
+  const sig = 'DD'.repeat(64);
+  const flags = '84'; // sensor(4) | hasName(0x80)
+  const name = Buffer.from('S2').toString('hex') + '00';
+  const battBuf = Buffer.alloc(2); battBuf.writeUInt16LE(3600);
+  const tempBuf = Buffer.alloc(2); // 0°C
+  const hex = '1200' + pubkey + '00000000' + sig + flags + name +
+    battBuf.toString('hex') + tempBuf.toString('hex');
+  const p = decodePacket(hex).payload;
+  assert(p.temperature_c === 0, 'telemetry: 0°C is valid and emitted');
+}
+
+// Telemetry: non-sensor node with trailing bytes must NOT decode telemetry
+{
+  const pubkey = 'EE'.repeat(32);
+  const sig = 'FF'.repeat(64);
+  const flags = '82'; // repeater(2) | hasName(0x80)
+  const name = Buffer.from('R1').toString('hex') + '00';
+  const extraBytes = 'B40ED403'; // battery-like and temp-like bytes
+  const hex = '1200' + pubkey + '00000000' + sig + flags + name + extraBytes;
+  const p = decodePacket(hex).payload;
+  assertEq(p.battery_mv, undefined, 'telemetry: non-sensor node: battery_mv must be undefined');
+  assertEq(p.temperature_c, undefined, 'telemetry: non-sensor node: temperature_c must be undefined');
+}
+
 console.log('── Spec Tests: Encrypted Payload Format ──');
 
 // NOTE: Spec says v1 encrypted payloads have dest(1) + src(1) + MAC(2) + ciphertext

@@ -58,12 +58,15 @@ services:
     ports:
       - "${STAGING_GO_HTTP_PORT:-82}:80"
       - "${STAGING_GO_MQTT_PORT:-1885}:1883"
+      - "6060:6060"   # pprof server
+      - "6061:6061"   # pprof ingestor
     volumes:
       - ${STAGING_DATA_DIR:-~/meshcore-staging-data}/config.json:/app/config.json:ro
       - ${STAGING_DATA_DIR:-~/meshcore-staging-data}:/app/data
       - caddy-data-staging-go:/data/caddy
     environment:
       - NODE_ENV=staging
+      - ENABLE_PPROF=true
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/stats"]
       interval: 30s

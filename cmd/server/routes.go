@@ -526,7 +526,11 @@ func (s *Server) handlePerfReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.APIKey != "" && r.Header.Get("X-API-Key") != s.cfg.APIKey {
+	if s.cfg.APIKey == "" {
+		writeError(w, 401, "set apiKey in config to enable this endpoint")
+		return
+	}
+	if r.Header.Get("X-API-Key") != s.cfg.APIKey {
 		writeError(w, 401, "invalid or missing API key")
 		return
 	}
@@ -850,16 +854,61 @@ func (s *Server) handlePostPacket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	nodes, total, counts, err := s.db.GetNodes(
-		queryInt(r, "limit", 50),
-		queryInt(r, "offset", 0),
-		q.Get("role"), q.Get("search"), q.Get("before"),
-		q.Get("lastHeard"), q.Get("sortBy"), q.Get("region"),
-	)
-	if err != nil {
-		writeError(w, 500, err.Error())
-		return
+
+	var nodes []map[string]interface{}
+	var total int
+	var counts map[string]int
+	var err error
+
+	if s.cfg.GeoFilter != nil {
+		// Fetch all matching nodes before applying geo filter so that total and
+		// role counts reflect only in-area nodes, and pagination is correct.
+		nodes, _, _, err = s.db.GetNodes(
+			1_000_000, 0,
+			q.Get("role"), q.Get("search"), q.Get("before"),
+			q.Get("lastHeard"), q.Get("sortBy"), q.Get("region"),
+		)
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		filtered := nodes[:0]
+		for _, node := range nodes {
+			if NodePassesGeoFilter(node["lat"], node["lon"], s.cfg.GeoFilter) {
+				filtered = append(filtered, node)
+			}
+		}
+		nodes = filtered
+		total = len(nodes)
+		counts = make(map[string]int)
+		for _, node := range nodes {
+			if role, ok := node["role"].(string); ok && role != "" {
+				counts[role]++
+			}
+		}
+		limit := queryInt(r, "limit", 50)
+		offset := queryInt(r, "offset", 0)
+		if offset > total {
+			offset = total
+		}
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		nodes = nodes[offset:end]
+	} else {
+		nodes, total, counts, err = s.db.GetNodes(
+			queryInt(r, "limit", 50),
+			queryInt(r, "offset", 0),
+			q.Get("role"), q.Get("search"), q.Get("before"),
+			q.Get("lastHeard"), q.Get("sortBy"), q.Get("region"),
+		)
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
 	}
+
 	if s.store != nil {
 		hashInfo := s.store.GetNodeHashSizeInfo()
 		for _, node := range nodes {
@@ -867,16 +916,6 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 				EnrichNodeWithHashSize(node, hashInfo[pk])
 			}
 		}
-	}
-	if s.cfg.GeoFilter != nil {
-		filtered := nodes[:0]
-		for _, node := range nodes {
-			if NodePassesGeoFilter(node["lat"], node["lon"], s.cfg.GeoFilter) {
-				filtered = append(filtered, node)
-			}
-		}
-		total = len(filtered)
-		nodes = filtered
 	}
 	writeJSON(w, NodeListResponse{Nodes: nodes, Total: total, Counts: counts})
 }

@@ -7,14 +7,26 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
+// DBStats tracks operational metrics for the ingestor database.
+type DBStats struct {
+	TransmissionsInserted atomic.Int64
+	ObservationsInserted  atomic.Int64
+	DuplicateTransmissions atomic.Int64
+	NodeUpserts           atomic.Int64
+	ObserverUpserts       atomic.Int64
+	WriteErrors           atomic.Int64
+}
+
 // Store wraps the SQLite database for packet ingestion.
 type Store struct {
-	db *sql.DB
+	db    *sql.DB
+	Stats DBStats
 
 	stmtGetTxByHash          *sql.Stmt
 	stmtInsertTransmission   *sql.Stmt
@@ -23,7 +35,8 @@ type Store struct {
 	stmtUpsertNode           *sql.Stmt
 	stmtIncrementAdvertCount *sql.Stmt
 	stmtUpsertObserver       *sql.Stmt
-	stmtGetObserverRowid     *sql.Stmt
+	stmtGetObserverRowid        *sql.Stmt
+	stmtUpdateNodeTelemetry *sql.Stmt
 }
 
 // OpenStore opens or creates a SQLite DB at the given path, applying the
@@ -34,7 +47,7 @@ func OpenStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("creating data dir: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
@@ -42,6 +55,10 @@ func OpenStore(dbPath string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("pinging db: %w", err)
 	}
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	log.Printf("SQLite config: busy_timeout=5000ms, max_open_conns=1, max_idle_conns=1, journal=WAL")
 
 	if err := applySchema(db); err != nil {
 		return nil, fmt.Errorf("applying schema: %w", err)
@@ -65,7 +82,9 @@ func applySchema(db *sql.DB) error {
 			lon REAL,
 			last_seen TEXT,
 			first_seen TEXT,
-			advert_count INTEGER DEFAULT 0
+			advert_count INTEGER DEFAULT 0,
+			battery_mv INTEGER,
+			temperature_c REAL
 		);
 
 		CREATE TABLE IF NOT EXISTS observers (
@@ -81,7 +100,7 @@ func applySchema(db *sql.DB) error {
 			radio TEXT,
 			battery_mv INTEGER,
 			uptime_secs INTEGER,
-			noise_floor INTEGER
+			noise_floor REAL
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
@@ -95,7 +114,9 @@ func applySchema(db *sql.DB) error {
 			lon REAL,
 			last_seen TEXT,
 			first_seen TEXT,
-			advert_count INTEGER DEFAULT 0
+			advert_count INTEGER DEFAULT 0,
+			battery_mv INTEGER,
+			temperature_c REAL
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_inactive_nodes_last_seen ON inactive_nodes(last_seen);
@@ -151,6 +172,25 @@ func applySchema(db *sql.DB) error {
 		}
 	}
 
+	// Create/rebuild packets_v view (v3 schema: observer_idx → observers.rowid)
+	// The Go server reads this view; without it fresh installs get "no such table: packets_v".
+	db.Exec(`DROP VIEW IF EXISTS packets_v`)
+	_, vErr := db.Exec(`
+		CREATE VIEW packets_v AS
+			SELECT o.id, t.raw_hex,
+				   datetime(o.timestamp, 'unixepoch') AS timestamp,
+				   obs.id AS observer_id, obs.name AS observer_name,
+				   o.direction, o.snr, o.rssi, o.score, t.hash, t.route_type,
+				   t.payload_type, t.payload_version, o.path_json, t.decoded_json,
+				   t.created_at
+			FROM observations o
+			JOIN transmissions t ON t.id = o.transmission_id
+			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+	`)
+	if vErr != nil {
+		return fmt.Errorf("packets_v view: %w", vErr)
+	}
+
 	// One-time migration: recalculate advert_count to count unique transmissions only
 	db.Exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY)`)
 	var migDone int
@@ -166,6 +206,77 @@ func applySchema(db *sql.DB) error {
 		`)
 		db.Exec(`INSERT INTO _migrations (name) VALUES ('advert_count_unique_v1')`)
 		log.Println("[migration] advert_count recalculated")
+	}
+
+	// One-time migration: change noise_floor from INTEGER to REAL affinity.
+	// SQLite doesn't support ALTER COLUMN, but existing float values are stored
+	// as REAL regardless of column affinity. New table definition already uses REAL.
+	// This migration casts any integer-stored noise_floor values to real.
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'noise_floor_real_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Ensuring noise_floor values are stored as REAL...")
+		db.Exec(`UPDATE observers SET noise_floor = CAST(noise_floor AS REAL) WHERE noise_floor IS NOT NULL AND typeof(noise_floor) = 'integer'`)
+		db.Exec(`INSERT INTO _migrations (name) VALUES ('noise_floor_real_v1')`)
+		log.Println("[migration] noise_floor migration complete")
+	}
+
+	// One-time migration: add telemetry columns to nodes and inactive_nodes tables.
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'node_telemetry_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Adding telemetry columns to nodes/inactive_nodes...")
+
+		// checkAndAddColumn checks whether `column` already exists in `table`
+		// using PRAGMA table_info, and adds it if missing. All call sites pass
+		// hardcoded table/column/type literals so there is no SQL injection risk.
+		checkAndAddColumn := func(table, column, colType string) error {
+			rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+			if err != nil {
+				return fmt.Errorf("querying table info for %s: %w", table, err)
+			}
+			defer rows.Close()
+
+			exists := false
+			for rows.Next() {
+				var cid int
+				var name, ctype string
+				var notnull, pk int
+				var dfltValue sql.NullString
+				if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+					return fmt.Errorf("scanning table info for %s: %w", table, err)
+				}
+				if name == column {
+					exists = true
+					break
+				}
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("iterating table info for %s: %w", table, err)
+			}
+			if exists {
+				return nil
+			}
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, colType)); err != nil {
+				return fmt.Errorf("adding column %s to %s: %w", column, table, err)
+			}
+			return nil
+		}
+
+		if err := checkAndAddColumn("nodes", "battery_mv", "INTEGER"); err != nil {
+			return err
+		}
+		if err := checkAndAddColumn("nodes", "temperature_c", "REAL"); err != nil {
+			return err
+		}
+		if err := checkAndAddColumn("inactive_nodes", "battery_mv", "INTEGER"); err != nil {
+			return err
+		}
+		if err := checkAndAddColumn("inactive_nodes", "temperature_c", "REAL"); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`INSERT INTO _migrations (name) VALUES ('node_telemetry_v1')`); err != nil {
+			return fmt.Errorf("recording node_telemetry_v1 migration: %w", err)
+		}
+		log.Println("[migration] node telemetry columns added")
 	}
 
 	return nil
@@ -222,19 +333,32 @@ func (s *Store) prepareStatements() error {
 	}
 
 	s.stmtUpsertObserver, err = s.db.Prepare(`
-		INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count)
-		VALUES (?, ?, ?, ?, ?, 1)
+		INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count, battery_mv, uptime_secs, noise_floor)
+		VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = COALESCE(?, name),
 			iata = COALESCE(?, iata),
 			last_seen = ?,
-			packet_count = packet_count + 1
+			packet_count = packet_count + 1,
+			battery_mv = COALESCE(?, battery_mv),
+			uptime_secs = COALESCE(?, uptime_secs),
+			noise_floor = COALESCE(?, noise_floor)
 	`)
 	if err != nil {
 		return err
 	}
 
 	s.stmtGetObserverRowid, err = s.db.Prepare("SELECT rowid FROM observers WHERE id = ?")
+	if err != nil {
+		return err
+	}
+
+	s.stmtUpdateNodeTelemetry, err = s.db.Prepare(`
+		UPDATE nodes SET
+			battery_mv = COALESCE(?, battery_mv),
+			temperature_c = COALESCE(?, temperature_c)
+		WHERE public_key = ?
+	`)
 	if err != nil {
 		return err
 	}
@@ -277,9 +401,15 @@ func (s *Store) InsertTransmission(data *PacketData) (bool, error) {
 			data.DecodedJSON,
 		)
 		if err != nil {
+			s.Stats.WriteErrors.Add(1)
 			return false, fmt.Errorf("insert transmission: %w", err)
 		}
 		txID, _ = result.LastInsertId()
+		s.Stats.TransmissionsInserted.Add(1)
+	}
+
+	if !isNew {
+		s.Stats.DuplicateTransmissions.Add(1)
 	}
 
 	// Resolve observer_idx
@@ -304,7 +434,10 @@ func (s *Store) InsertTransmission(data *PacketData) (bool, error) {
 		data.PathJSON, epochTs,
 	)
 	if err != nil {
+		s.Stats.WriteErrors.Add(1)
 		log.Printf("[db] observation insert (non-fatal): %v", err)
+	} else {
+		s.Stats.ObservationsInserted.Add(1)
 	}
 
 	return isNew, nil
@@ -320,6 +453,11 @@ func (s *Store) UpsertNode(pubKey, name, role string, lat, lon *float64, lastSee
 		pubKey, name, role, lat, lon, now, now,
 		name, role, lat, lon, now,
 	)
+	if err != nil {
+		s.Stats.WriteErrors.Add(1)
+	} else {
+		s.Stats.NodeUpserts.Add(1)
+	}
 	return err
 }
 
@@ -329,19 +467,73 @@ func (s *Store) IncrementAdvertCount(pubKey string) error {
 	return err
 }
 
-// UpsertObserver inserts or updates an observer.
-func (s *Store) UpsertObserver(id, name, iata string) error {
+// UpdateNodeTelemetry updates battery and temperature for a node.
+func (s *Store) UpdateNodeTelemetry(pubKey string, batteryMv *int, temperatureC *float64) error {
+	var bv, tc interface{}
+	if batteryMv != nil {
+		bv = *batteryMv
+	}
+	if temperatureC != nil {
+		tc = *temperatureC
+	}
+	_, err := s.stmtUpdateNodeTelemetry.Exec(bv, tc, pubKey)
+	if err != nil {
+		s.Stats.WriteErrors.Add(1)
+	}
+	return err
+}
+
+// ObserverMeta holds optional observer hardware metadata.
+type ObserverMeta struct {
+	BatteryMv  *int     // millivolts, always integer
+	UptimeSecs *int64   // seconds, always integer
+	NoiseFloor *float64 // dBm, may have decimals
+}
+
+// UpsertObserver inserts or updates an observer with optional hardware metadata.
+func (s *Store) UpsertObserver(id, name, iata string, meta *ObserverMeta) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+
+	var batteryMv, uptimeSecs, noiseFloor interface{}
+	if meta != nil {
+		if meta.BatteryMv != nil {
+			batteryMv = *meta.BatteryMv
+		}
+		if meta.UptimeSecs != nil {
+			uptimeSecs = *meta.UptimeSecs
+		}
+		if meta.NoiseFloor != nil {
+			noiseFloor = *meta.NoiseFloor
+		}
+	}
+
 	_, err := s.stmtUpsertObserver.Exec(
-		id, name, iata, now, now,
-		name, iata, now,
+		id, name, iata, now, now, batteryMv, uptimeSecs, noiseFloor,
+		name, iata, now, batteryMv, uptimeSecs, noiseFloor,
 	)
+	if err != nil {
+		s.Stats.WriteErrors.Add(1)
+	} else {
+		s.Stats.ObserverUpserts.Add(1)
+	}
 	return err
 }
 
 // Close closes the database.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// LogStats logs current operational metrics.
+func (s *Store) LogStats() {
+	log.Printf("[stats] tx_inserted=%d tx_dupes=%d obs_inserted=%d node_upserts=%d observer_upserts=%d write_errors=%d",
+		s.Stats.TransmissionsInserted.Load(),
+		s.Stats.DuplicateTransmissions.Load(),
+		s.Stats.ObservationsInserted.Load(),
+		s.Stats.NodeUpserts.Load(),
+		s.Stats.ObserverUpserts.Load(),
+		s.Stats.WriteErrors.Load(),
+	)
 }
 
 // MoveStaleNodes moves nodes not seen in nodeDays to the inactive_nodes table.

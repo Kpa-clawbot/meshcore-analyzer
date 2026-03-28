@@ -716,6 +716,10 @@ for (const source of mqttSources) {
             const role = p.flags ? (p.flags.repeater ? 'repeater' : p.flags.room ? 'room' : p.flags.sensor ? 'sensor' : 'companion') : 'companion';
             db.upsertNode({ public_key: p.pubKey, name: p.name || null, role, lat: p.lat, lon: p.lon, last_seen: now });
             if (txResult && txResult.isNew) db.incrementAdvertCount(p.pubKey);
+            // Update telemetry if present in advert
+            if (p.battery_mv != null || p.temperature_c != null) {
+                db.updateNodeTelemetry({ public_key: p.pubKey, battery_mv: p.battery_mv ?? null, temperature_c: p.temperature_c ?? null });
+            }
             // Invalidate this node's caches on advert
             cache.invalidate('node:' + p.pubKey);
             cache.invalidate('health:' + p.pubKey);
@@ -1057,6 +1061,10 @@ app.post('/api/packets', requireApiKey, (req, res) => {
         const role = p.flags ? (p.flags.repeater ? 'repeater' : p.flags.room ? 'room' : p.flags.sensor ? 'sensor' : 'companion') : 'companion';
         db.upsertNode({ public_key: p.pubKey, name: p.name || null, role, lat: p.lat, lon: p.lon, last_seen: now });
         if (txResult && txResult.isNew) db.incrementAdvertCount(p.pubKey);
+        // Update telemetry if present in advert
+        if (p.battery_mv != null || p.temperature_c != null) {
+            db.updateNodeTelemetry({ public_key: p.pubKey, battery_mv: p.battery_mv ?? null, temperature_c: p.temperature_c ?? null });
+        }
       } else {
         console.warn(`[advert] Skipping corrupted ADVERT (API): ${validation.reason}`);
       }
