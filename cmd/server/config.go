@@ -45,6 +45,17 @@ type Config struct {
 	CacheTTL map[string]interface{} `json:"cacheTTL"`
 
 	Retention *RetentionConfig `json:"retention,omitempty"`
+
+	GeoFilter *GeoFilterConfig `json:"geo_filter,omitempty"`
+}
+
+type GeoFilterConfig struct {
+	Polygon  [][2]float64 `json:"polygon,omitempty"`
+	BufferKm float64      `json:"bufferKm,omitempty"`
+	LatMin   *float64     `json:"latMin,omitempty"`
+	LatMax   *float64     `json:"latMax,omitempty"`
+	LonMin   *float64     `json:"lonMin,omitempty"`
+	LonMax   *float64     `json:"lonMax,omitempty"`
 }
 
 type RetentionConfig struct {

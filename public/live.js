@@ -5,7 +5,7 @@
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
   function statusGreen() { return cssVar('--status-green') || '#22c55e'; }
 
-  let map, ws, nodesLayer, pathsLayer, animLayer, heatLayer;
+  let map, ws, nodesLayer, pathsLayer, animLayer, heatLayer, geoFilterLayer;
   let nodeMarkers = {};
   let nodeData = {};
   let packetCount = 0;
@@ -658,6 +658,7 @@
             <span id="audioDesc" class="sr-only">Sonify packets — turn raw bytes into generative music</span>
             <label><input type="checkbox" id="liveFavoritesToggle" aria-describedby="favDesc"> ⭐ Favorites</label>
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
+            <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
           </div>
           <div class="audio-controls hidden" id="audioControls">
             <label class="audio-slider-label">Voice <select id="audioVoiceSelect" class="audio-voice-select"></select></label>
@@ -800,6 +801,9 @@
       localStorage.setItem('live-favorites-only', showOnlyFavorites);
       applyFavoritesFilter();
     });
+
+    // Geo filter overlay
+    initGeoFilterOverlay(map, 'liveGeoFilterToggle', 'liveGeoFilterLabel').then(function (layer) { geoFilterLayer = layer; });
 
     const matrixToggle = document.getElementById('liveMatrixToggle');
     matrixToggle.checked = matrixMode;
@@ -2431,7 +2435,7 @@
       }
       _navCleanup = null;
     }
-    nodesLayer = pathsLayer = animLayer = heatLayer = null;
+    nodesLayer = pathsLayer = animLayer = heatLayer = geoFilterLayer = null;
     stopMatrixRain();
     nodeMarkers = {}; nodeData = {};
     recentPaths = [];

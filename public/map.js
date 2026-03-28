@@ -225,6 +225,9 @@
       });
     });
 
+    // Geo filter overlay
+    initGeoFilterOverlay(map, 'mcGeoFilter', 'mcGeoFilterLabel').then(function (layer) { geoFilterLayer = layer; });
+
     // WS for live advert updates
     wsHandler = debouncedOnWS(function (msgs) {
       if (msgs.some(function (m) { return m.type === 'packet' && m.data?.decoded?.header?.payloadTypeName === 'ADVERT'; })) {
@@ -727,6 +730,7 @@
     markerLayer = null;
     routeLayer = null;
     if (heatLayer) { heatLayer = null; }
+    geoFilterLayer = null;
   }
 
   function toggleHeatmap(on) {

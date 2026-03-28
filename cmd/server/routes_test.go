@@ -1936,6 +1936,60 @@ t.Errorf("field %q is null, expected []", field)
 }
 }
 }
+func TestConfigGeoFilterEndpoint(t *testing.T) {
+	t.Run("no geo filter configured", func(t *testing.T) {
+		_, router := setupTestServer(t)
+		req := httptest.NewRequest("GET", "/api/config/geo-filter", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		if body["polygon"] != nil {
+			t.Errorf("expected polygon to be nil when no geo filter configured, got %v", body["polygon"])
+		}
+	})
+
+	t.Run("with polygon configured", func(t *testing.T) {
+		db := setupTestDB(t)
+		seedTestData(t, db)
+		lat0, lat1 := 50.0, 51.5
+		lon0, lon1 := 3.0, 5.5
+		cfg := &Config{
+			Port: 3000,
+			GeoFilter: &GeoFilterConfig{
+				Polygon:  [][2]float64{{lat0, lon0}, {lat1, lon0}, {lat1, lon1}, {lat0, lon1}},
+				BufferKm: 20,
+			},
+		}
+		hub := NewHub()
+		srv := NewServer(db, cfg, hub)
+		srv.store = NewPacketStore(db)
+		srv.store.Load()
+		router := mux.NewRouter()
+		srv.RegisterRoutes(router)
+
+		req := httptest.NewRequest("GET", "/api/config/geo-filter", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		if body["polygon"] == nil {
+			t.Error("expected polygon in response when geo filter is configured")
+		}
+		if body["bufferKm"] == nil {
+			t.Error("expected bufferKm in response")
+		}
+	})
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
