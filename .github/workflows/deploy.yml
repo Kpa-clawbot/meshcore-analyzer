@@ -474,16 +474,7 @@ jobs:
                   > "proto/testdata/node-fixtures/packet-type-grptxt-decrypted.json" 2>/dev/null && \
                   echo "  ✓ packet-type-grptxt-decrypted.json (hash: $TYPE_HASH)"
                 # Find a decryption_failed packet
-                UNDEC_HASH=$(docker exec meshcore-prod wget -qO- "http://localhost:3000/api/packets?type=5&limit=20" 2>/dev/null | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-for p in d.get('packets',[]):
-    dj = p.get('decoded_json','')
-    if dj:
-        dd = json.loads(dj)
-        if dd.get('decryptionStatus') in ('no_key','decryption_failed'):
-            print(p['hash']); break
-" 2>/dev/null || echo "")
+                UNDEC_HASH=$(docker exec meshcore-prod wget -qO- "http://localhost:3000/api/packets?type=5&limit=20" 2>/dev/null | python3 -c "import sys,json;d=json.load(sys.stdin);[print(p['hash']) or exit() for p in d.get('packets',[]) if 'decryption_failed' in p.get('decoded_json','') or 'no_key' in p.get('decoded_json','')]" 2>/dev/null || echo "")
                 if [ -n "$UNDEC_HASH" ]; then
                   docker exec meshcore-prod wget -qO- "http://localhost:3000/api/packets/$UNDEC_HASH" \
                     > "proto/testdata/node-fixtures/packet-type-grptxt-undecrypted.json" 2>/dev/null && \
