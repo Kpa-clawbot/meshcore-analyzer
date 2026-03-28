@@ -152,10 +152,10 @@ verify_health() {
     fi
   fi
 
-  # Wait for /api/stats response
+  # Wait for /api/stats response (Go backend loads packets into memory — may take 60s+)
   info "Waiting for server to respond..."
   local healthy=false
-  for i in $(seq 1 10); do
+  for i in $(seq 1 45); do
     if docker exec "$CONTAINER_NAME" wget -qO- http://localhost:3000/api/stats &>/dev/null; then
       healthy=true
       break
@@ -164,7 +164,7 @@ verify_health() {
   done
 
   if ! $healthy; then
-    err "Server did not respond after 20 seconds."
+    err "Server did not respond after 90 seconds."
     warn "Check logs: ./manage.sh logs"
     return 1
   fi
@@ -371,12 +371,12 @@ cmd_setup() {
   if [ -n "$IMAGE_EXISTS" ] && is_done "build"; then
     log "Image already built."
     if confirm "Rebuild? (only needed if you updated the code)"; then
-      docker build -t "$IMAGE_NAME" .
+      docker build --build-arg APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown") --build-arg GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) -t "$IMAGE_NAME" .
       log "Image rebuilt."
     fi
   else
     info "This takes 1-2 minutes the first time..."
-    docker build -t "$IMAGE_NAME" .
+    docker build --build-arg APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown") --build-arg GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) -t "$IMAGE_NAME" .
     log "Image built."
   fi
   mark_done "build"
@@ -905,7 +905,7 @@ cmd_update() {
   git pull
 
   info "Rebuilding image..."
-  docker build -t "$IMAGE_NAME" .
+  docker build --build-arg APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown") --build-arg GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) -t "$IMAGE_NAME" .
 
   info "Restarting with new image..."
   recreate_container
