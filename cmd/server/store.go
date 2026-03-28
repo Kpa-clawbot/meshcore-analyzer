@@ -88,6 +88,11 @@ type PacketStore struct {
 	nodeCache     []nodeInfo
 	nodePM        *prefixMap
 	nodeCacheTime time.Time
+	// Precomputed subpath index: raw comma-joined hops → occurrence count.
+	// Built during Load(), incrementally updated on ingest. Avoids full
+	// packet iteration at query time (O(unique_subpaths) vs O(total_packets)).
+	spIndex      map[string]int // "hop1,hop2" → count
+	spTotalPaths int            // transmissions with paths >= 2 hops
 }
 
 type cachedResult struct {
@@ -114,6 +119,7 @@ func NewPacketStore(db *DB) *PacketStore {
 		distCache:     make(map[string]*cachedResult),
 		subpathCache:  make(map[string]*cachedResult),
 		rfCacheTTL:    15 * time.Second,
+		spIndex:       make(map[string]int, 4096),
 	}
 }
 
@@ -236,6 +242,9 @@ func (s *PacketStore) Load() error {
 	for _, tx := range s.packets {
 		pickBestObservation(tx)
 	}
+
+	// Build precomputed subpath index for O(1) analytics queries
+	s.buildSubpathIndex()
 
 	s.loaded = true
 	elapsed := time.Since(t0)
@@ -935,6 +944,13 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		pickBestObservation(tx)
 	}
 
+	// Incrementally update precomputed subpath index with new transmissions
+	for _, tx := range broadcastTxs {
+		if addTxToSubpathIndex(s.spIndex, tx) {
+			s.spTotalPaths++
+		}
+	}
+
 	// Build broadcast maps (same shape as Node.js WS broadcast)
 	result := make([]map[string]interface{}, 0, len(broadcastOrder))
 	for _, txID := range broadcastOrder {
@@ -1126,9 +1142,34 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) int {
 		updatedTxs[r.txID] = tx
 	}
 
-	// Re-pick best observation for updated transmissions
+	// Re-pick best observation for updated transmissions and update subpath index
+	// if the path changed.
+	oldPaths := make(map[int]string, len(updatedTxs))
+	for txID, tx := range updatedTxs {
+		oldPaths[txID] = tx.PathJSON
+	}
 	for _, tx := range updatedTxs {
 		pickBestObservation(tx)
+	}
+	for txID, tx := range updatedTxs {
+		if tx.PathJSON != oldPaths[txID] {
+			// Path changed — remove old subpaths, add new ones.
+			oldHops := parsePathJSON(oldPaths[txID])
+			if len(oldHops) >= 2 {
+				// Temporarily set parsedPath to old hops for removal.
+				saved, savedFlag := tx.parsedPath, tx.pathParsed
+				tx.parsedPath, tx.pathParsed = oldHops, true
+				if removeTxFromSubpathIndex(s.spIndex, tx) {
+					s.spTotalPaths--
+				}
+				tx.parsedPath, tx.pathParsed = saved, savedFlag
+			}
+			// pickBestObservation already set pathParsed=false so
+			// addTxToSubpathIndex will re-parse the new path.
+			if addTxToSubpathIndex(s.spIndex, tx) {
+				s.spTotalPaths++
+			}
+		}
 	}
 
 	if len(updatedTxs) > 0 {
@@ -1432,6 +1473,59 @@ func txGetParsedPath(tx *StoreTx) []string {
 	tx.parsedPath = parsePathJSON(tx.PathJSON)
 	tx.pathParsed = true
 	return tx.parsedPath
+}
+
+// addTxToSubpathIndex extracts all raw subpaths (lengths 2–8) from tx and
+// increments their counts in the index.  Returns true if the tx contributed
+// (path had ≥ 2 hops).
+func addTxToSubpathIndex(idx map[string]int, tx *StoreTx) bool {
+	hops := txGetParsedPath(tx)
+	if len(hops) < 2 {
+		return false
+	}
+	maxL := min(8, len(hops))
+	for l := 2; l <= maxL; l++ {
+		for start := 0; start <= len(hops)-l; start++ {
+			key := strings.Join(hops[start:start+l], ",")
+			idx[key]++
+		}
+	}
+	return true
+}
+
+// removeTxFromSubpathIndex is the inverse of addTxToSubpathIndex — it
+// decrements counts for all raw subpaths of tx.  Returns true if the tx
+// had a path.
+func removeTxFromSubpathIndex(idx map[string]int, tx *StoreTx) bool {
+	hops := txGetParsedPath(tx)
+	if len(hops) < 2 {
+		return false
+	}
+	maxL := min(8, len(hops))
+	for l := 2; l <= maxL; l++ {
+		for start := 0; start <= len(hops)-l; start++ {
+			key := strings.Join(hops[start:start+l], ",")
+			idx[key]--
+			if idx[key] <= 0 {
+				delete(idx, key)
+			}
+		}
+	}
+	return true
+}
+
+// buildSubpathIndex scans all packets and populates spIndex + spTotalPaths.
+// Must be called with s.mu held.
+func (s *PacketStore) buildSubpathIndex() {
+	s.spIndex = make(map[string]int, 4096)
+	s.spTotalPaths = 0
+	for _, tx := range s.packets {
+		if addTxToSubpathIndex(s.spIndex, tx) {
+			s.spTotalPaths++
+		}
+	}
+	log.Printf("[store] Built subpath index: %d unique raw subpaths from %d paths",
+		len(s.spIndex), s.spTotalPaths)
 }
 
 func filterTxSlice(s []*StoreTx, fn func(*StoreTx) bool) []*StoreTx {
@@ -4234,14 +4328,15 @@ func (s *PacketStore) GetAnalyticsSubpaths(region string, minLen, maxLen, limit 
 	return result
 }
 
+// subpathAccum holds a running count for a single named subpath.
+type subpathAccum struct {
+	count int
+	raw   string // first raw-hop key seen (used for rawHops in the API response)
+}
+
 func (s *PacketStore) computeAnalyticsSubpaths(region string, minLen, maxLen, limit int) map[string]interface{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	var regionObs map[string]bool
-	if region != "" {
-		regionObs = s.resolveRegionObservers(region)
-	}
 
 	_, pm := s.getCachedNodesAndPM()
 	hopCache := make(map[string]*nodeInfo)
@@ -4260,10 +4355,43 @@ func (s *PacketStore) computeAnalyticsSubpaths(region string, minLen, maxLen, li
 		return hop
 	}
 
-	subpathCounts := map[string]*struct {
-		count int
-		raw   string
-	}{}
+	// For region queries fall back to packet iteration (region filtering
+	// requires per-transmission observer checks).
+	if region != "" {
+		return s.computeSubpathsSlow(region, minLen, maxLen, limit, resolveHop)
+	}
+
+	// Fast path: read from precomputed raw-hop subpath index.
+	// Resolve raw hop prefixes to names and merge counts.
+	namedCounts := make(map[string]*subpathAccum, len(s.spIndex))
+	for rawKey, count := range s.spIndex {
+		hops := strings.Split(rawKey, ",")
+		hopLen := len(hops)
+		if hopLen < minLen || hopLen > maxLen {
+			continue
+		}
+		named := make([]string, hopLen)
+		for i, h := range hops {
+			named[i] = resolveHop(h)
+		}
+		namedKey := strings.Join(named, " → ")
+		entry := namedCounts[namedKey]
+		if entry == nil {
+			entry = &subpathAccum{raw: rawKey}
+			namedCounts[namedKey] = entry
+		}
+		entry.count += count
+	}
+
+	return s.rankSubpaths(namedCounts, s.spTotalPaths, limit)
+}
+
+// computeSubpathsSlow is the original O(N) packet-iteration path, used only
+// for region-filtered queries where we must check per-transmission observers.
+func (s *PacketStore) computeSubpathsSlow(region string, minLen, maxLen, limit int, resolveHop func(string) string) map[string]interface{} {
+	regionObs := s.resolveRegionObservers(region)
+
+	subpathCounts := make(map[string]*subpathAccum)
 	totalPaths := 0
 
 	for _, tx := range s.packets {
@@ -4285,7 +4413,6 @@ func (s *PacketStore) computeAnalyticsSubpaths(region string, minLen, maxLen, li
 		}
 		totalPaths++
 
-		// Resolve hops to names
 		named := make([]string, len(hops))
 		for i, h := range hops {
 			named[i] = resolveHop(h)
@@ -4297,10 +4424,7 @@ func (s *PacketStore) computeAnalyticsSubpaths(region string, minLen, maxLen, li
 				raw := strings.Join(hops[start:start+l], ",")
 				entry := subpathCounts[sub]
 				if entry == nil {
-					entry = &struct {
-						count int
-						raw   string
-					}{raw: raw}
+					entry = &subpathAccum{raw: raw}
 					subpathCounts[sub] = entry
 				}
 				entry.count++
@@ -4308,13 +4432,19 @@ func (s *PacketStore) computeAnalyticsSubpaths(region string, minLen, maxLen, li
 		}
 	}
 
+	return s.rankSubpaths(subpathCounts, totalPaths, limit)
+}
+
+// rankSubpaths sorts accumulated subpath counts by frequency, truncates to
+// limit, and builds the API response map.
+func (s *PacketStore) rankSubpaths(counts map[string]*subpathAccum, totalPaths, limit int) map[string]interface{} {
 	type subpathEntry struct {
 		path  string
 		count int
 		raw   string
 	}
-	ranked := make([]subpathEntry, 0, len(subpathCounts))
-	for path, data := range subpathCounts {
+	ranked := make([]subpathEntry, 0, len(counts))
+	for path, data := range counts {
 		ranked = append(ranked, subpathEntry{path, data.count, data.raw})
 	}
 	sort.Slice(ranked, func(i, j int) bool { return ranked[i].count > ranked[j].count })

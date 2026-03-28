@@ -2050,6 +2050,60 @@ func TestStoreGetAnalyticsSubpaths(t *testing.T) {
 	})
 }
 
+func TestSubpathPrecomputedIndex(t *testing.T) {
+	db := setupRichTestDB(t)
+	defer db.Close()
+	store := NewPacketStore(db)
+	store.Load()
+
+	// After Load(), the precomputed index must be populated.
+	if len(store.spIndex) == 0 {
+		t.Fatal("expected spIndex to be populated after Load()")
+	}
+	if store.spTotalPaths == 0 {
+		t.Fatal("expected spTotalPaths > 0 after Load()")
+	}
+
+	// The rich test DB has paths ["aa","bb"], ["aabb","ccdd"], and
+	// ["eeff","0011","2233"].  That yields 5 unique raw subpaths.
+	expectedRaw := map[string]int{
+		"aa,bb":          1,
+		"aabb,ccdd":      1,
+		"eeff,0011":      1,
+		"0011,2233":      1,
+		"eeff,0011,2233": 1,
+	}
+	for key, want := range expectedRaw {
+		got, ok := store.spIndex[key]
+		if !ok {
+			t.Errorf("expected spIndex[%q] to exist", key)
+		} else if got != want {
+			t.Errorf("spIndex[%q] = %d, want %d", key, got, want)
+		}
+	}
+	if store.spTotalPaths != 3 {
+		t.Errorf("spTotalPaths = %d, want 3", store.spTotalPaths)
+	}
+
+	// Fast-path (no region) and slow-path (with region) must return the
+	// same shape.
+	fast := store.GetAnalyticsSubpaths("", 2, 8, 100)
+	slow := store.GetAnalyticsSubpaths("SJC", 2, 4, 50)
+	for _, r := range []map[string]interface{}{fast, slow} {
+		if _, ok := r["subpaths"]; !ok {
+			t.Error("missing subpaths in result")
+		}
+		if _, ok := r["totalPaths"]; !ok {
+			t.Error("missing totalPaths in result")
+		}
+	}
+
+	// Verify fast path totalPaths matches index.
+	if tp, ok := fast["totalPaths"].(int); ok && tp != store.spTotalPaths {
+		t.Errorf("fast totalPaths=%d, spTotalPaths=%d", tp, store.spTotalPaths)
+	}
+}
+
 func TestStoreGetAnalyticsRFCacheHit(t *testing.T) {
 	db := setupRichTestDB(t)
 	defer db.Close()
