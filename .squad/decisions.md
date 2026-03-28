@@ -2,6 +2,11 @@
 
 ## Active Decisions
 
+### 2026-03-28T05:30:00Z: User directive — soft-delete nodes
+**By:** User (via Copilot)
+**What:** Don't delete stale nodes from DB — mark them as inactive instead. Add an `active` boolean column (or use last_seen threshold). All node queries (API, stats, analytics) should exclude inactive nodes. Historical data preserved but not shown on the site.
+**Why:** User request — keep historical data, just don't pollute the UI with stale nodes.
+
 ### 2026-03-27T22:00:00Z: Proto fixture capture in CI
 **By:** Copilot (User directive)
 **What:** Proto fixture capture in CI should run against prod (the stable reference), not staging. Staging may have broken code. Prod is known-good.
