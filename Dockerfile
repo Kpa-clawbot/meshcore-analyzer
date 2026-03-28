@@ -34,9 +34,9 @@ COPY --from=builder /meshcore-server /meshcore-ingestor /app/
 COPY public/ ./public/
 COPY config.example.json channel-rainbow.json ./
 
-# Bake git commit SHA (CI writes .git-commit before build; fallback for non-ldflags usage)
-COPY .git-commi[t] ./
-RUN if [ ! -f .git-commit ]; then echo "unknown" > .git-commit; fi
+# Bake git commit SHA — manage.sh and CI write .git-commit before build
+# Default to "unknown" if not provided
+RUN echo "unknown" > .git-commit
 
 # Supervisor + Mosquitto + Caddy config
 COPY docker/supervisord-go.conf /etc/supervisor/conf.d/supervisord.conf

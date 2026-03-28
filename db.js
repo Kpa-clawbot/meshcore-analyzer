@@ -33,7 +33,9 @@ db.exec(`
     lon REAL,
     last_seen TEXT,
     first_seen TEXT,
-    advert_count INTEGER DEFAULT 0
+    advert_count INTEGER DEFAULT 0,
+    battery_mv INTEGER,
+    temperature_c REAL
   );
 
   CREATE TABLE IF NOT EXISTS observers (
@@ -60,7 +62,9 @@ db.exec(`
     lon REAL,
     last_seen TEXT,
     first_seen TEXT,
-    advert_count INTEGER DEFAULT 0
+    advert_count INTEGER DEFAULT 0,
+    battery_mv INTEGER,
+    temperature_c REAL
   );
 
   CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
@@ -324,6 +328,22 @@ for (const col of ['model', 'firmware', 'client_version', 'radio', 'battery_mv',
   }
 }
 
+// --- One-time migration: add telemetry columns to nodes and inactive_nodes ---
+{
+  const done = db.prepare(`SELECT 1 FROM _migrations WHERE name = 'node_telemetry_v1'`).get();
+  if (!done) {
+    console.log('[migration] Adding telemetry columns to nodes/inactive_nodes...');
+    const nodeCols = db.pragma('table_info(nodes)').map(c => c.name);
+    if (!nodeCols.includes('battery_mv')) db.exec(`ALTER TABLE nodes ADD COLUMN battery_mv INTEGER`);
+    if (!nodeCols.includes('temperature_c')) db.exec(`ALTER TABLE nodes ADD COLUMN temperature_c REAL`);
+    const inactiveCols = db.pragma('table_info(inactive_nodes)').map(c => c.name);
+    if (!inactiveCols.includes('battery_mv')) db.exec(`ALTER TABLE inactive_nodes ADD COLUMN battery_mv INTEGER`);
+    if (!inactiveCols.includes('temperature_c')) db.exec(`ALTER TABLE inactive_nodes ADD COLUMN temperature_c REAL`);
+    db.prepare(`INSERT INTO _migrations (name) VALUES ('node_telemetry_v1')`).run();
+    console.log('[migration] node telemetry columns added');
+  }
+}
+
 // --- Prepared statements ---
 const stmts = {
   upsertNode: db.prepare(`
@@ -338,6 +358,12 @@ const stmts = {
   `),
   incrementAdvertCount: db.prepare(`
     UPDATE nodes SET advert_count = advert_count + 1 WHERE public_key = @public_key
+  `),
+  updateNodeTelemetry: db.prepare(`
+    UPDATE nodes SET
+      battery_mv = COALESCE(@battery_mv, battery_mv),
+      temperature_c = COALESCE(@temperature_c, temperature_c)
+    WHERE public_key = @public_key
   `),
   upsertObserver: db.prepare(`
     INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count, model, firmware, client_version, radio, battery_mv, uptime_secs, noise_floor)
@@ -509,6 +535,14 @@ function insertTransmission(data) {
 
 function incrementAdvertCount(publicKey) {
   stmts.incrementAdvertCount.run({ public_key: publicKey });
+}
+
+function updateNodeTelemetry(data) {
+  stmts.updateNodeTelemetry.run({
+    public_key: data.public_key,
+    battery_mv: data.battery_mv ?? null,
+    temperature_c: data.temperature_c ?? null,
+  });
 }
 
 function upsertNode(data) {
@@ -898,4 +932,4 @@ function moveStaleNodes(nodeDays) {
   return moved;
 }
 
-module.exports = { db, schemaVersion, observerIdToRowid, resolveObserverIdx, insertTransmission, upsertNode, incrementAdvertCount, upsertObserver, updateObserverStatus, getPackets, getPacket, getTransmission, getNodes, getNode, getObservers, getStats, searchNodes, getNodeHealth, getNodeAnalytics, removePhantomNodes, moveStaleNodes };
+module.exports = { db, schemaVersion, observerIdToRowid, resolveObserverIdx, insertTransmission, upsertNode, incrementAdvertCount, updateNodeTelemetry, upsertObserver, updateObserverStatus, getPackets, getPacket, getTransmission, getNodes, getNode, getObservers, getStats, searchNodes, getNodeHealth, getNodeAnalytics, removePhantomNodes, moveStaleNodes };

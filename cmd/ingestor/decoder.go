@@ -111,6 +111,8 @@ type Payload struct {
 	Lat           *float64     `json:"lat,omitempty"`
 	Lon           *float64     `json:"lon,omitempty"`
 	Name          string       `json:"name,omitempty"`
+	BatteryMv     *int         `json:"battery_mv,omitempty"`
+	TemperatureC  *float64     `json:"temperature_c,omitempty"`
 	ChannelHash   int          `json:"channelHash,omitempty"`
 	ChannelHashHex   string    `json:"channelHashHex,omitempty"`
 	DecryptionStatus string    `json:"decryptionStatus,omitempty"`
@@ -251,10 +253,37 @@ func decodeAdvert(buf []byte) Payload {
 			off += 8
 		}
 		if p.Flags.HasName {
-			name := string(appdata[off:])
-			name = strings.TrimRight(name, "\x00")
+			// Find null terminator to separate name from trailing telemetry bytes
+			nameEnd := len(appdata)
+			for i := off; i < len(appdata); i++ {
+				if appdata[i] == 0x00 {
+					nameEnd = i
+					break
+				}
+			}
+			name := string(appdata[off:nameEnd])
 			name = sanitizeName(name)
 			p.Name = name
+			off = nameEnd
+			// Skip null terminator(s)
+			for off < len(appdata) && appdata[off] == 0x00 {
+				off++
+			}
+		}
+
+		// Telemetry bytes after name: battery_mv(2 LE) + temperature_c(2 LE, signed, /100)
+		// Only sensor nodes (advType=4) carry telemetry bytes.
+		if p.Flags.Sensor && off+4 <= len(appdata) {
+			batteryMv := int(binary.LittleEndian.Uint16(appdata[off : off+2]))
+			tempRaw := int16(binary.LittleEndian.Uint16(appdata[off+2 : off+4]))
+			tempC := float64(tempRaw) / 100.0
+			if batteryMv > 0 && batteryMv <= 10000 {
+				p.BatteryMv = &batteryMv
+			}
+			// Raw int16 / 100 → °C; accept -50°C to 100°C (raw: -5000 to 10000)
+			if tempRaw >= -5000 && tempRaw <= 10000 {
+				p.TemperatureC = &tempC
+			}
 		}
 	}
 

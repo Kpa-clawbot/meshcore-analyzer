@@ -28,7 +28,9 @@ func setupTestDB(t *testing.T) *DB {
 			lon REAL,
 			last_seen TEXT,
 			first_seen TEXT,
-			advert_count INTEGER DEFAULT 0
+			advert_count INTEGER DEFAULT 0,
+			battery_mv INTEGER,
+			temperature_c REAL
 		);
 
 		CREATE TABLE observers (
@@ -44,7 +46,7 @@ func setupTestDB(t *testing.T) *DB {
 			radio TEXT,
 			battery_mv INTEGER,
 			uptime_secs INTEGER,
-			noise_floor INTEGER
+			noise_floor REAL
 		);
 
 		CREATE TABLE transmissions (
@@ -366,6 +368,88 @@ func TestGetObserverByIDNotFound(t *testing.T) {
 	_, err := db.GetObserverByID("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent observer")
+	}
+}
+
+func TestObserverTypeConsistency(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Insert observer with typed metadata matching ingestor writes
+	db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count, battery_mv, uptime_secs, noise_floor)
+		VALUES ('obs_typed', 'TypedObs', 'SJC', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 10, 3500, 86400, -115.5)`)
+
+	obs, err := db.GetObserverByID("obs_typed")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// battery_mv should be *int
+	if obs.BatteryMv == nil {
+		t.Fatal("BatteryMv should not be nil")
+	}
+	if *obs.BatteryMv != 3500 {
+		t.Errorf("BatteryMv=%d, want 3500", *obs.BatteryMv)
+	}
+
+	// uptime_secs should be *int64
+	if obs.UptimeSecs == nil {
+		t.Fatal("UptimeSecs should not be nil")
+	}
+	if *obs.UptimeSecs != 86400 {
+		t.Errorf("UptimeSecs=%d, want 86400", *obs.UptimeSecs)
+	}
+
+	// noise_floor should be *float64
+	if obs.NoiseFloor == nil {
+		t.Fatal("NoiseFloor should not be nil")
+	}
+	if *obs.NoiseFloor != -115.5 {
+		t.Errorf("NoiseFloor=%f, want -115.5", *obs.NoiseFloor)
+	}
+
+	// Verify NULL handling: observer without metadata
+	db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count)
+		VALUES ('obs_null', 'NullObs', 'SFO', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 5)`)
+
+	obsNull, err := db.GetObserverByID("obs_null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obsNull.BatteryMv != nil {
+		t.Errorf("BatteryMv should be nil for observer without metadata, got %d", *obsNull.BatteryMv)
+	}
+	if obsNull.UptimeSecs != nil {
+		t.Errorf("UptimeSecs should be nil for observer without metadata, got %d", *obsNull.UptimeSecs)
+	}
+	if obsNull.NoiseFloor != nil {
+		t.Errorf("NoiseFloor should be nil for observer without metadata, got %f", *obsNull.NoiseFloor)
+	}
+}
+
+func TestObserverTypesInGetObservers(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count, battery_mv, uptime_secs, noise_floor)
+		VALUES ('obs1', 'Obs1', 'SJC', '2026-06-01T00:00:00Z', '2026-01-01T00:00:00Z', 10, 4200, 172800, -110.3)`)
+
+	observers, err := db.GetObservers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observers) != 1 {
+		t.Fatalf("expected 1 observer, got %d", len(observers))
+	}
+	o := observers[0]
+	if o.BatteryMv == nil || *o.BatteryMv != 4200 {
+		t.Errorf("BatteryMv=%v, want 4200", o.BatteryMv)
+	}
+	if o.UptimeSecs == nil || *o.UptimeSecs != 172800 {
+		t.Errorf("UptimeSecs=%v, want 172800", o.UptimeSecs)
+	}
+	if o.NoiseFloor == nil || *o.NoiseFloor != -110.3 {
+		t.Errorf("NoiseFloor=%v, want -110.3", o.NoiseFloor)
 	}
 }
 
@@ -1383,6 +1467,49 @@ func TestGetChannelsStaleMessage(t *testing.T) {
 	}
 	if ch["messageCount"] != 2 {
 		t.Errorf("expected messageCount=2 (unique transmissions), got %v", ch["messageCount"])
+	}
+}
+
+func TestNodeTelemetryFields(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c)
+		VALUES ('pk_telem1', 'SensorNode', 'sensor', 37.0, -122.0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 5, 3700, 28.5)`)
+
+	node, err := db.GetNodeByPubkey("pk_telem1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node == nil {
+		t.Fatal("expected node, got nil")
+	}
+	if node["battery_mv"] != 3700 {
+		t.Errorf("battery_mv=%v, want 3700", node["battery_mv"])
+	}
+	if node["temperature_c"] != 28.5 {
+		t.Errorf("temperature_c=%v, want 28.5", node["temperature_c"])
+	}
+
+	nodes, _, _, err := db.GetNodes(50, 0, "sensor", "", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 sensor node, got %d", len(nodes))
+	}
+	if nodes[0]["battery_mv"] != 3700 {
+		t.Errorf("GetNodes battery_mv=%v, want 3700", nodes[0]["battery_mv"])
+	}
+
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, last_seen, first_seen, advert_count)
+		VALUES ('pk_notelem', 'PlainNode', 'repeater', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 3)`)
+	node2, _ := db.GetNodeByPubkey("pk_notelem")
+	if node2["battery_mv"] != nil {
+		t.Errorf("expected nil battery_mv for node without telemetry, got %v", node2["battery_mv"])
+	}
+	if node2["temperature_c"] != nil {
+		t.Errorf("expected nil temperature_c for node without telemetry, got %v", node2["temperature_c"])
 	}
 }
 

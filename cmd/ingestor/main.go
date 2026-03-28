@@ -8,6 +8,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,6 +22,20 @@ import (
 )
 
 func main() {
+	// pprof profiling — off by default, enable with ENABLE_PPROF=true
+	if os.Getenv("ENABLE_PPROF") == "true" {
+		pprofPort := os.Getenv("PPROF_PORT")
+		if pprofPort == "" {
+			pprofPort = "6061"
+		}
+		go func() {
+			log.Printf("[pprof] ingestor profiling at http://localhost:%s/debug/pprof/", pprofPort)
+			if err := http.ListenAndServe(":"+pprofPort, nil); err != nil {
+				log.Printf("[pprof] failed to start: %v (non-fatal)", err)
+			}
+		}()
+	}
+
 	configPath := flag.String("config", "config.json", "path to config file")
 	flag.Parse()
 
@@ -54,6 +71,14 @@ func main() {
 		}
 	}()
 
+	// Periodic stats logging (every 5 minutes)
+	statsTicker := time.NewTicker(5 * time.Minute)
+	go func() {
+		for range statsTicker.C {
+			store.LogStats()
+		}
+	}()
+
 	channelKeys := loadChannelKeys(cfg, *configPath)
 	if len(channelKeys) > 0 {
 		log.Printf("Loaded %d channel keys for GRP_TXT decryption", len(channelKeys))
@@ -73,7 +98,7 @@ func main() {
 			AddBroker(source.Broker).
 			SetAutoReconnect(true).
 			SetConnectRetry(true).
-			SetOrderMatters(false)
+			SetOrderMatters(true)
 
 		if source.Username != "" {
 			opts.SetUsername(source.Username)
@@ -137,6 +162,8 @@ func main() {
 
 	log.Println("Shutting down...")
 	retentionTicker.Stop()
+	statsTicker.Stop()
+	store.LogStats() // final stats on shutdown
 	for _, c := range clients {
 		c.Disconnect(1000)
 	}
@@ -183,7 +210,8 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		observerID := parts[2]
 		name, _ := msg["origin"].(string)
 		iata := parts[1]
-		if err := store.UpsertObserver(observerID, name, iata); err != nil {
+		meta := extractObserverMeta(msg)
+		if err := store.UpsertObserver(observerID, name, iata, meta); err != nil {
 			log.Printf("MQTT [%s] observer status error: %v", tag, err)
 		}
 		log.Printf("MQTT [%s] status: %s (%s)", tag, firstNonEmpty(name, observerID), iata)
@@ -242,6 +270,12 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 						log.Printf("MQTT [%s] advert count error: %v", tag, err)
 					}
 				}
+				// Update telemetry if present in advert
+				if decoded.Payload.BatteryMv != nil || decoded.Payload.TemperatureC != nil {
+					if err := store.UpdateNodeTelemetry(decoded.Payload.PubKey, decoded.Payload.BatteryMv, decoded.Payload.TemperatureC); err != nil {
+						log.Printf("MQTT [%s] node telemetry update error: %v", tag, err)
+					}
+				}
 			} else {
 				log.Printf("MQTT [%s] skipping corrupted ADVERT: %s", tag, reason)
 			}
@@ -250,7 +284,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		// Upsert observer
 		if observerID != "" {
 			origin, _ := msg["origin"].(string)
-			if err := store.UpsertObserver(observerID, origin, region); err != nil {
+			if err := store.UpsertObserver(observerID, origin, region, nil); err != nil {
 				log.Printf("MQTT [%s] observer upsert error: %v", tag, err)
 			}
 		}
@@ -434,6 +468,39 @@ func toFloat64(v interface{}) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// extractObserverMeta extracts hardware metadata from an MQTT status message.
+// Casts battery_mv and uptime_secs to integers (they're always whole numbers).
+func extractObserverMeta(msg map[string]interface{}) *ObserverMeta {
+	meta := &ObserverMeta{}
+	hasData := false
+
+	if v, ok := msg["battery_mv"]; ok {
+		if f, ok := toFloat64(v); ok {
+			iv := int(math.Round(f))
+			meta.BatteryMv = &iv
+			hasData = true
+		}
+	}
+	if v, ok := msg["uptime_secs"]; ok {
+		if f, ok := toFloat64(v); ok {
+			iv := int64(math.Round(f))
+			meta.UptimeSecs = &iv
+			hasData = true
+		}
+	}
+	if v, ok := msg["noise_floor"]; ok {
+		if f, ok := toFloat64(v); ok {
+			meta.NoiseFloor = &f
+			hasData = true
+		}
+	}
+
+	if !hasData {
+		return nil
+	}
+	return meta
 }
 
 func firstNonEmpty(vals ...string) string {
