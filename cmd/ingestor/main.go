@@ -111,7 +111,7 @@ func main() {
 		// Capture source for closure
 		src := source
 		opts.SetDefaultPublishHandler(func(c mqtt.Client, m mqtt.Message) {
-			handleMessage(store, tag, src, m, channelKeys)
+			handleMessage(store, tag, src, m, channelKeys, cfg.GeoFilter)
 		})
 
 		client := mqtt.NewClient(opts)
@@ -143,7 +143,7 @@ func main() {
 	log.Println("Done.")
 }
 
-func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string) {
+func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, geoFilter *GeoFilterConfig) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("MQTT [%s] panic in handler: %v", tag, r)
@@ -234,6 +234,9 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 			ok, reason := ValidateAdvert(&decoded.Payload)
 			if ok {
 				role := advertRole(decoded.Payload.Flags)
+				if !NodePassesGeoFilter(decoded.Payload.Lat, decoded.Payload.Lon, geoFilter) {
+					return
+				}
 				if err := store.UpsertNode(decoded.Payload.PubKey, decoded.Payload.Name, role, decoded.Payload.Lat, decoded.Payload.Lon, pktData.Timestamp); err != nil {
 					log.Printf("MQTT [%s] node upsert error: %v", tag, err)
 				}

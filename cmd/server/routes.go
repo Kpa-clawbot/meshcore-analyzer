@@ -842,6 +842,16 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if s.cfg.GeoFilter != nil {
+		filtered := nodes[:0]
+		for _, node := range nodes {
+			if NodePassesGeoFilter(node["lat"], node["lon"], s.cfg.GeoFilter) {
+				filtered = append(filtered, node)
+			}
+		}
+		total = len(filtered)
+		nodes = filtered
+	}
 	writeJSON(w, NodeListResponse{Nodes: nodes, Total: total, Counts: counts})
 }
 

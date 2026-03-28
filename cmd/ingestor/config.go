@@ -26,13 +26,24 @@ type MQTTLegacy struct {
 
 // Config holds the ingestor configuration, compatible with the Node.js config.json format.
 type Config struct {
-	DBPath         string            `json:"dbPath"`
-	MQTT           *MQTTLegacy       `json:"mqtt,omitempty"`
-	MQTTSources    []MQTTSource      `json:"mqttSources,omitempty"`
-	LogLevel       string            `json:"logLevel,omitempty"`
-	ChannelKeysPath string           `json:"channelKeysPath,omitempty"`
-	ChannelKeys    map[string]string `json:"channelKeys,omitempty"`
-	Retention      *RetentionConfig  `json:"retention,omitempty"`
+	DBPath          string            `json:"dbPath"`
+	MQTT            *MQTTLegacy       `json:"mqtt,omitempty"`
+	MQTTSources     []MQTTSource      `json:"mqttSources,omitempty"`
+	LogLevel        string            `json:"logLevel,omitempty"`
+	ChannelKeysPath string            `json:"channelKeysPath,omitempty"`
+	ChannelKeys     map[string]string `json:"channelKeys,omitempty"`
+	Retention       *RetentionConfig  `json:"retention,omitempty"`
+	GeoFilter       *GeoFilterConfig  `json:"geo_filter,omitempty"`
+}
+
+// GeoFilterConfig defines the geographic filter polygon or bounding box.
+type GeoFilterConfig struct {
+	Polygon  [][2]float64 `json:"polygon,omitempty"`
+	BufferKm float64      `json:"bufferKm,omitempty"`
+	LatMin   *float64     `json:"latMin,omitempty"`
+	LatMax   *float64     `json:"latMax,omitempty"`
+	LonMin   *float64     `json:"lonMin,omitempty"`
+	LonMax   *float64     `json:"lonMax,omitempty"`
 }
 
 // RetentionConfig controls how long stale nodes are kept before being moved to inactive_nodes.
