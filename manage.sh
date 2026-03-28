@@ -2,26 +2,20 @@
 # CoreScope — Setup & Management Helper
 # Usage: ./manage.sh [command]
 #
+# All container management goes through docker compose.
+# Container config lives in docker-compose.yml — this script is just a wrapper.
+#
 # Idempotent: safe to cancel and re-run at any point.
 # Each step checks what's already done and skips it.
 set -e
 
-CONTAINER_NAME="corescope"
 IMAGE_NAME="corescope"
-DATA_VOLUME="meshcore-data"
-CADDY_VOLUME="caddy-data"
 STATE_FILE=".setup-state"
 
-# Source .env for port/path overrides (if present)
+# Source .env for port/path overrides (same file docker compose reads)
 [ -f .env ] && set -a && . ./.env && set +a
 
-# Docker Compose mode detection
-COMPOSE_MODE=false
-if [ -f docker-compose.yml ]; then
-  COMPOSE_MODE=true
-fi
-
-# Resolved paths for prod/staging data
+# Resolved paths for prod/staging data (must match docker-compose.yml)
 PROD_DATA="${PROD_DATA_DIR:-$HOME/meshcore-data}"
 STAGING_DATA="${STAGING_DATA_DIR:-$HOME/meshcore-staging-data}"
 
@@ -51,83 +45,6 @@ is_done()    { [ -f "$STATE_FILE" ] && grep -qx "$1" "$STATE_FILE" 2>/dev/null; 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
-# Determine the correct data volume/mount args for docker run.
-# Detects existing host data directories and uses bind mounts if found.
-get_data_mount_args() {
-  # Check for existing host data directories with a DB file
-  if [ -d "$HOME/meshcore-data" ] && [ -f "$HOME/meshcore-data/meshcore.db" ]; then
-    echo "-v $HOME/meshcore-data:/app/data"
-    return
-  fi
-  if [ -d "$(pwd)/data" ] && [ -f "$(pwd)/data/meshcore.db" ]; then
-    echo "-v $(pwd)/data:/app/data"
-    return
-  fi
-  # Default: Docker named volume
-  echo "-v ${DATA_VOLUME}:/app/data"
-}
-
-# Determine the required port mappings from Caddyfile
-get_required_ports() {
-  local caddyfile_domain
-  caddyfile_domain=$(grep -v '^#' caddy-config/Caddyfile 2>/dev/null | head -1 | tr -d ' {')
-  if echo "$caddyfile_domain" | grep -qE '^:[0-9]+$'; then
-    # HTTP-only on a specific port (e.g., :80, :8080)
-    echo "${caddyfile_domain#:}"
-  else
-    # Domain name — needs 80 + 443 for Caddy auto-TLS
-    echo "80 443"
-  fi
-}
-
-# Get current container port mappings (just the host ports)
-get_current_ports() {
-  docker inspect "$CONTAINER_NAME" 2>/dev/null | \
-    grep -oP '"HostPort":\s*"\K[0-9]+' | sort -u | tr '\n' ' ' | sed 's/ $//'
-}
-
-# Check if container port mappings match what's needed.
-# Returns 0 if they match, 1 if mismatch.
-check_port_match() {
-  local required current
-  required=$(get_required_ports | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')
-  current=$(get_current_ports | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')
-  [ "$required" = "$current" ]
-}
-
-# Build the docker run command args (ports + volumes)
-get_docker_run_args() {
-  local ports_arg=""
-  for port in $(get_required_ports); do
-    ports_arg="$ports_arg -p ${port}:${port}"
-  done
-
-  local data_mount
-  data_mount=$(get_data_mount_args)
-
-  echo "$ports_arg \
-    -v $(pwd)/config.json:/app/config.json:ro \
-    -v $(pwd)/caddy-config/Caddyfile:/etc/caddy/Caddyfile:ro \
-    $data_mount \
-    -v ${CADDY_VOLUME}:/data/caddy"
-}
-
-# Recreate the container with current settings
-recreate_container() {
-  info "Stopping and removing old container..."
-  docker stop "$CONTAINER_NAME" 2>/dev/null || true
-  docker rm "$CONTAINER_NAME" 2>/dev/null || true
-
-  local run_args
-  run_args=$(get_docker_run_args)
-
-  eval docker run -d \
-    --name "$CONTAINER_NAME" \
-    --restart unless-stopped \
-    $run_args \
-    "$IMAGE_NAME"
-}
-
 # Check config.json for placeholder values
 check_config_placeholders() {
   if [ -f config.json ]; then
@@ -140,7 +57,7 @@ check_config_placeholders() {
 
 # Verify the running container is actually healthy
 verify_health() {
-  local base_url="http://localhost:3000"
+  local container="corescope-prod"
   local use_https=false
 
   # Check if Caddyfile has a real domain (not :80)
@@ -156,7 +73,7 @@ verify_health() {
   info "Waiting for server to respond..."
   local healthy=false
   for i in $(seq 1 45); do
-    if docker exec "$CONTAINER_NAME" wget -qO- http://localhost:3000/api/stats &>/dev/null; then
+    if docker exec "$container" wget -qO- http://localhost:3000/api/stats &>/dev/null; then
       healthy=true
       break
     fi
@@ -172,7 +89,7 @@ verify_health() {
 
   # Check for MQTT errors in recent logs
   local mqtt_errors
-  mqtt_errors=$(docker logs "$CONTAINER_NAME" --tail 50 2>&1 | grep -i 'mqtt.*error\|mqtt.*fail\|ECONNREFUSED.*1883' || true)
+  mqtt_errors=$(docker logs "$container" --tail 50 2>&1 | grep -i 'mqtt.*error\|mqtt.*fail\|ECONNREFUSED.*1883' || true)
   if [ -n "$mqtt_errors" ]; then
     warn "MQTT errors detected in logs:"
     echo "$mqtt_errors" | head -5 | sed 's/^/   /'
@@ -371,12 +288,12 @@ cmd_setup() {
   if [ -n "$IMAGE_EXISTS" ] && is_done "build"; then
     log "Image already built."
     if confirm "Rebuild? (only needed if you updated the code)"; then
-      docker build --build-arg APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown") --build-arg GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) -t "$IMAGE_NAME" .
+      docker compose build prod
       log "Image rebuilt."
     fi
   else
     info "This takes 1-2 minutes the first time..."
-    docker build --build-arg APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown") --build-arg GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) -t "$IMAGE_NAME" .
+    docker compose build prod
     log "Image built."
   fi
   mark_done "build"
@@ -385,45 +302,15 @@ cmd_setup() {
   step 5 "Starting container"
 
   # Detect existing data directories
-  if [ -d "$HOME/meshcore-data" ] && [ -f "$HOME/meshcore-data/meshcore.db" ]; then
-    info "Found existing data at \$HOME/meshcore-data/ — will use bind mount."
-  elif [ -d "$(pwd)/data" ] && [ -f "$(pwd)/data/meshcore.db" ]; then
-    info "Found existing data at ./data/ — will use bind mount."
+  if [ -d "$PROD_DATA" ] && [ -f "$PROD_DATA/meshcore.db" ]; then
+    info "Found existing data at $PROD_DATA/ — will use bind mount."
   fi
 
-  if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+  if docker ps --format '{{.Names}}' | grep -q "^corescope-prod$"; then
     log "Container already running."
-    # Check port mappings match
-    if ! check_port_match; then
-      warn "Container port mappings don't match Caddyfile configuration."
-      warn "Current ports: $(get_current_ports)"
-      warn "Required ports: $(get_required_ports)"
-      if confirm "Recreate container with correct ports?"; then
-        recreate_container
-        log "Container recreated with correct ports."
-      fi
-    fi
-  elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    # Exists but stopped — check ports before starting
-    if ! check_port_match; then
-      warn "Stopped container has wrong port mappings."
-      warn "Current ports: $(get_current_ports)"
-      warn "Required ports: $(get_required_ports)"
-      if confirm "Recreate container with correct ports?"; then
-        recreate_container
-        log "Container recreated with correct ports."
-      else
-        info "Starting existing container (ports unchanged)..."
-        docker start "$CONTAINER_NAME"
-        log "Started (with old port mappings)."
-      fi
-    else
-      info "Container exists but is stopped. Starting..."
-      docker start "$CONTAINER_NAME"
-      log "Started."
-    fi
   else
-    recreate_container
+    mkdir -p "$PROD_DATA"
+    docker compose up -d prod
     log "Container started."
   fi
   mark_done "container"
@@ -431,7 +318,7 @@ cmd_setup() {
   # ── Step 6: Verify ──
   step 6 "Verifying"
 
-  if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+  if docker ps --format '{{.Names}}' | grep -q "^corescope-prod$"; then
     verify_health
 
     CADDYFILE_DOMAIN=$(grep -v '^#' caddy-config/Caddyfile 2>/dev/null | head -1 | tr -d ' {')
@@ -463,7 +350,7 @@ cmd_setup() {
     err "Container failed to start."
     echo ""
     echo "   Check what went wrong:"
-    echo "     docker logs ${CONTAINER_NAME}"
+    echo "     docker compose logs prod"
     echo ""
     echo "   Common fixes:"
     echo "     • Invalid config.json — check JSON syntax"
@@ -535,132 +422,72 @@ cmd_start() {
     WITH_STAGING=true
   fi
 
-  if $COMPOSE_MODE; then
-    if $WITH_STAGING; then
-      # Prepare staging data and config
-      prepare_staging_db
-      prepare_staging_config
+  if $WITH_STAGING; then
+    # Prepare staging data and config
+    prepare_staging_db
+    prepare_staging_config
 
-      info "Starting production container (corescope-prod) on ports ${PROD_HTTP_PORT:-80}/${PROD_HTTPS_PORT:-443}..."
-      info "Starting staging container (corescope-staging) on port ${STAGING_HTTP_PORT:-81}..."
-      docker compose --profile staging up -d
-      log "Production started on ports ${PROD_HTTP_PORT:-80}/${PROD_HTTPS_PORT:-443}/${PROD_MQTT_PORT:-1883}"
-      log "Staging started on port ${STAGING_HTTP_PORT:-81} (MQTT: ${STAGING_MQTT_PORT:-1884})"
-    else
-      info "Starting production container (corescope-prod) on ports ${PROD_HTTP_PORT:-80}/${PROD_HTTPS_PORT:-443}..."
-      docker compose up -d prod
-      log "Production started. Staging NOT running (use --with-staging to start both)."
-    fi
+    info "Starting production container (corescope-prod) on ports ${PROD_HTTP_PORT:-80}/${PROD_HTTPS_PORT:-443}..."
+    info "Starting staging container (corescope-staging) on port ${STAGING_HTTP_PORT:-81}..."
+    docker compose --profile staging up -d
+    log "Production started on ports ${PROD_HTTP_PORT:-80}/${PROD_HTTPS_PORT:-443}/${PROD_MQTT_PORT:-1883}"
+    log "Staging started on port ${STAGING_HTTP_PORT:-81} (MQTT: ${STAGING_MQTT_PORT:-1884})"
   else
-    # Legacy single-container mode
-    if $WITH_STAGING; then
-      err "--with-staging requires docker-compose.yml. Run setup or add docker-compose.yml first."
-      exit 1
-    fi
-    warn "No docker-compose.yml found — using legacy single-container mode."
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      warn "Already running."
-    elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      if ! check_port_match; then
-        warn "Container port mappings don't match Caddyfile configuration."
-        warn "Current ports: $(get_current_ports)"
-        warn "Required ports: $(get_required_ports)"
-        if confirm "Recreate container with correct ports?"; then
-          recreate_container
-          log "Container recreated and started with correct ports."
-          return
-        fi
-      fi
-      docker start "$CONTAINER_NAME"
-      log "Started."
-    else
-      err "Container doesn't exist. Run './manage.sh setup' first."
-      exit 1
-    fi
+    info "Starting production container (corescope-prod) on ports ${PROD_HTTP_PORT:-80}/${PROD_HTTPS_PORT:-443}..."
+    docker compose up -d prod
+    log "Production started. Staging NOT running (use --with-staging to start both)."
   fi
 }
 
 cmd_stop() {
   local TARGET="${1:-all}"
 
-  if $COMPOSE_MODE; then
-    case "$TARGET" in
-      prod)
-        info "Stopping production container (corescope-prod)..."
-        docker compose stop prod
-        log "Production stopped."
-        ;;
-      staging)
-        info "Stopping staging container (corescope-staging)..."
-        docker compose stop staging
-        log "Staging stopped."
-        ;;
-      all)
-        info "Stopping all containers..."
-        docker compose --profile staging --profile staging-go down 2>/dev/null
-        docker rm -f "$CONTAINER_NAME" 2>/dev/null
-        log "All containers stopped."
-        ;;
-      *)
-        err "Usage: ./manage.sh stop [prod|staging|all]"
-        exit 1
-        ;;
-    esac
-  else
-    # Legacy mode
-    docker stop "$CONTAINER_NAME" 2>/dev/null && log "Stopped." || warn "Not running."
-  fi
+  case "$TARGET" in
+    prod)
+      info "Stopping production container (corescope-prod)..."
+      docker compose stop prod
+      log "Production stopped."
+      ;;
+    staging)
+      info "Stopping staging container (corescope-staging)..."
+      docker compose --profile staging stop staging
+      log "Staging stopped."
+      ;;
+    all)
+      info "Stopping all containers..."
+      docker compose --profile staging --profile staging-go down
+      log "All containers stopped."
+      ;;
+    *)
+      err "Usage: ./manage.sh stop [prod|staging|all]"
+      exit 1
+      ;;
+  esac
 }
 
 cmd_restart() {
-  if $COMPOSE_MODE; then
-    local TARGET="${1:-prod}"
-    case "$TARGET" in
-      prod)
-        info "Restarting production container (corescope-prod)..."
-        docker compose up -d --force-recreate prod
-        log "Production restarted."
-        ;;
-      staging)
-        info "Restarting staging container (corescope-staging)..."
-        docker compose --profile staging up -d --force-recreate staging
-        log "Staging restarted."
-        ;;
-      all)
-        info "Restarting all containers..."
-        docker compose --profile staging up -d --force-recreate
-        log "All containers restarted."
-        ;;
-      *)
-        err "Usage: ./manage.sh restart [prod|staging|all]"
-        exit 1
-        ;;
-    esac
-  else
-    # Legacy mode
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      if ! check_port_match; then
-        warn "Port mappings have changed. Recreating container..."
-        recreate_container
-        log "Container recreated with correct ports."
-      else
-        docker restart "$CONTAINER_NAME"
-        log "Restarted."
-      fi
-    elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      if ! check_port_match; then
-        warn "Port mappings have changed. Recreating container..."
-        recreate_container
-        log "Container recreated with correct ports."
-      else
-        docker start "$CONTAINER_NAME"
-        log "Started."
-      fi
-    else
-      err "Not running. Use './manage.sh setup'."
+  local TARGET="${1:-prod}"
+  case "$TARGET" in
+    prod)
+      info "Restarting production container (corescope-prod)..."
+      docker compose up -d --force-recreate prod
+      log "Production restarted."
+      ;;
+    staging)
+      info "Restarting staging container (corescope-staging)..."
+      docker compose --profile staging up -d --force-recreate staging
+      log "Staging restarted."
+      ;;
+    all)
+      info "Restarting all containers..."
+      docker compose --profile staging up -d --force-recreate
+      log "All containers restarted."
+      ;;
+    *)
+      err "Usage: ./manage.sh restart [prod|staging|all]"
       exit 1
-    fi
-  fi
+      ;;
+  esac
 }
 
 # ─── Status ───────────────────────────────────────────────────────────────
@@ -695,143 +522,68 @@ show_container_status() {
 
 cmd_status() {
   echo ""
+  echo "═══════════════════════════════════════"
+  echo "  CoreScope Status"
+  echo "═══════════════════════════════════════"
+  echo ""
 
-  if $COMPOSE_MODE; then
-    echo "═══════════════════════════════════════"
-    echo "  CoreScope Status (Compose)"
-    echo "═══════════════════════════════════════"
-    echo ""
+  # Production
+  show_container_status "corescope-prod" "Production"
+  echo ""
 
-    # Production
-    show_container_status "corescope-prod" "Production"
-    echo ""
-
-    # Staging
-    if container_running "corescope-staging"; then
-      show_container_status "corescope-staging" "Staging"
-    else
-      info "Staging (corescope-staging): Not running (use --with-staging to start both)"
-    fi
-    echo ""
-
-    # Disk usage
-    if [ -d "$PROD_DATA" ] && [ -f "$PROD_DATA/meshcore.db" ]; then
-      local db_size
-      db_size=$(du -h "$PROD_DATA/meshcore.db" 2>/dev/null | cut -f1)
-      info "Production DB: ${db_size}"
-    fi
-    if [ -d "$STAGING_DATA" ] && [ -f "$STAGING_DATA/meshcore.db" ]; then
-      local staging_db_size
-      staging_db_size=$(du -h "$STAGING_DATA/meshcore.db" 2>/dev/null | cut -f1)
-      info "Staging DB: ${staging_db_size}"
-    fi
-
+  # Staging
+  if container_running "corescope-staging"; then
+    show_container_status "corescope-staging" "Staging"
   else
-    # Legacy single-container status
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      log "Container is running."
-      echo ""
-      docker ps --filter "name=${CONTAINER_NAME}" --format "   Status: {{.Status}}"
-      docker ps --filter "name=${CONTAINER_NAME}" --format "   Ports:  {{.Ports}}"
-      echo ""
-
-      info "Service health:"
-      # Server
-      if docker exec "$CONTAINER_NAME" wget -qO /dev/null http://localhost:3000/api/stats 2>/dev/null; then
-        STATS=$(docker exec "$CONTAINER_NAME" wget -qO- http://localhost:3000/api/stats 2>/dev/null)
-        PACKETS=$(echo "$STATS" | grep -oP '"totalPackets":\K[0-9]+' 2>/dev/null || echo "?")
-        NODES=$(echo "$STATS" | grep -oP '"totalNodes":\K[0-9]+' 2>/dev/null || echo "?")
-        log "  Server — ${PACKETS} packets, ${NODES} nodes"
-      else
-        err "  Server — not responding"
-      fi
-
-      # Mosquitto
-      if docker exec "$CONTAINER_NAME" pgrep mosquitto &>/dev/null; then
-        log "  Mosquitto — running"
-      else
-        err "  Mosquitto — not running"
-      fi
-
-      # Caddy
-      if docker exec "$CONTAINER_NAME" pgrep caddy &>/dev/null; then
-        log "  Caddy — running"
-      else
-        err "  Caddy — not running"
-      fi
-
-      # Check for MQTT errors in recent logs
-      MQTT_ERRORS=$(docker logs "$CONTAINER_NAME" --tail 50 2>&1 | grep -i 'mqtt.*error\|mqtt.*fail\|ECONNREFUSED.*1883' || true)
-      if [ -n "$MQTT_ERRORS" ]; then
-        echo ""
-        warn "MQTT errors in recent logs:"
-        echo "$MQTT_ERRORS" | head -3 | sed 's/^/   /'
-      fi
-
-      # Port mapping check
-      if ! check_port_match; then
-        echo ""
-        warn "Port mappings don't match Caddyfile. Run './manage.sh restart' to fix."
-      fi
-
-      # Disk usage
-      DB_SIZE=$(docker exec "$CONTAINER_NAME" du -h /app/data/meshcore.db 2>/dev/null | cut -f1)
-      if [ -n "$DB_SIZE" ]; then
-        echo ""
-        info "Database size: ${DB_SIZE}"
-      fi
-    else
-      err "Container is not running."
-      if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "   Start with: ./manage.sh start"
-      else
-        echo "   Set up with: ./manage.sh setup"
-      fi
-    fi
+    info "Staging (corescope-staging): Not running (use --with-staging to start both)"
   fi
+  echo ""
+
+  # Disk usage
+  if [ -d "$PROD_DATA" ] && [ -f "$PROD_DATA/meshcore.db" ]; then
+    local db_size
+    db_size=$(du -h "$PROD_DATA/meshcore.db" 2>/dev/null | cut -f1)
+    info "Production DB: ${db_size}"
+  fi
+  if [ -d "$STAGING_DATA" ] && [ -f "$STAGING_DATA/meshcore.db" ]; then
+    local staging_db_size
+    staging_db_size=$(du -h "$STAGING_DATA/meshcore.db" 2>/dev/null | cut -f1)
+    info "Staging DB: ${staging_db_size}"
+  fi
+
   echo ""
 }
 
 # ─── Logs ─────────────────────────────────────────────────────────────────
 
 cmd_logs() {
-  if $COMPOSE_MODE; then
-    local TARGET="${1:-prod}"
-    local LINES="${2:-100}"
-    case "$TARGET" in
-      prod)
-        info "Tailing production logs..."
-        docker compose logs -f --tail="$LINES" prod
-        ;;
-      staging)
-        if container_running "corescope-staging"; then
-          info "Tailing staging logs..."
-          docker compose logs -f --tail="$LINES" staging
-        else
-          err "Staging container is not running."
-          info "Start with: ./manage.sh start --with-staging"
-          exit 1
-        fi
-        ;;
-      *)
-        err "Usage: ./manage.sh logs [prod|staging] [lines]"
+  local TARGET="${1:-prod}"
+  local LINES="${2:-100}"
+  case "$TARGET" in
+    prod)
+      info "Tailing production logs..."
+      docker compose logs -f --tail="$LINES" prod
+      ;;
+    staging)
+      if container_running "corescope-staging"; then
+        info "Tailing staging logs..."
+        docker compose logs -f --tail="$LINES" staging
+      else
+        err "Staging container is not running."
+        info "Start with: ./manage.sh start --with-staging"
         exit 1
-        ;;
-    esac
-  else
-    # Legacy mode
-    docker logs -f "$CONTAINER_NAME" --tail "${1:-100}"
-  fi
+      fi
+      ;;
+    *)
+      err "Usage: ./manage.sh logs [prod|staging] [lines]"
+      exit 1
+      ;;
+  esac
 }
 
 # ─── Promote ──────────────────────────────────────────────────────────────
 
 cmd_promote() {
-  if ! $COMPOSE_MODE; then
-    err "Promotion requires Docker Compose setup (docker-compose.yml)."
-    exit 1
-  fi
-
   echo ""
   info "Promotion Flow: Staging → Production"
   echo ""
@@ -906,10 +658,10 @@ cmd_update() {
   git pull
 
   info "Rebuilding image..."
-  docker build --build-arg APP_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "unknown") --build-arg GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) -t "$IMAGE_NAME" .
+  docker compose build prod
 
   info "Restarting with new image..."
-  recreate_container
+  docker compose up -d --force-recreate prod
 
   log "Updated and restarted. Data preserved."
 }
@@ -924,12 +676,13 @@ cmd_backup() {
   info "Backing up to ${BACKUP_DIR}/"
 
   # Database
-  DB_PATH=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/meshcore.db
+  # Always use bind mount path (from .env or default)
+  DB_PATH="$PROD_DATA/meshcore.db"
   if [ -f "$DB_PATH" ]; then
     cp "$DB_PATH" "$BACKUP_DIR/meshcore.db"
     log "Database ($(du -h "$BACKUP_DIR/meshcore.db" | cut -f1))"
-  elif docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    docker cp "${CONTAINER_NAME}:/app/data/meshcore.db" "$BACKUP_DIR/meshcore.db" 2>/dev/null && \
+  elif container_running "corescope-prod"; then
+    docker cp corescope-prod:/app/data/meshcore.db "$BACKUP_DIR/meshcore.db" 2>/dev/null && \
       log "Database (via docker cp)" || warn "Could not backup database"
   else
     warn "Database not found (container not running?)"
@@ -948,7 +701,8 @@ cmd_backup() {
   fi
 
   # Theme
-  THEME_PATH=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/theme.json
+  # Always use bind mount path (from .env or default)
+  THEME_PATH="$PROD_DATA/theme.json"
   if [ -f "$THEME_PATH" ]; then
     cp "$THEME_PATH" "$BACKUP_DIR/theme.json"
     log "theme.json"
@@ -1021,15 +775,12 @@ cmd_restore() {
   info "Backing up current state..."
   cmd_backup "./backups/corescope-pre-restore-$(date +%Y%m%d-%H%M%S)"
 
-  docker stop "$CONTAINER_NAME" 2>/dev/null || true
+  docker compose stop prod 2>/dev/null || true
 
   # Restore database
-  DEST_DB=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/meshcore.db
-  if [ -d "$(dirname "$DEST_DB")" ]; then
-    cp "$DB_FILE" "$DEST_DB"
-  else
-    docker cp "$DB_FILE" "${CONTAINER_NAME}:/app/data/meshcore.db"
-  fi
+  mkdir -p "$PROD_DATA"
+  DEST_DB="$PROD_DATA/meshcore.db"
+  cp "$DB_FILE" "$DEST_DB"
   log "Database restored"
 
   # Restore config if present
@@ -1047,27 +798,25 @@ cmd_restore() {
 
   # Restore theme if present
   if [ -n "$THEME_FILE" ] && [ -f "$THEME_FILE" ]; then
-    DEST_THEME=$(docker volume inspect "$DATA_VOLUME" --format '{{ .Mountpoint }}' 2>/dev/null)/theme.json
-    if [ -d "$(dirname "$DEST_THEME")" ]; then
-      cp "$THEME_FILE" "$DEST_THEME"
-    fi
+    DEST_THEME="$PROD_DATA/theme.json"
+    cp "$THEME_FILE" "$DEST_THEME"
     log "theme.json restored"
   fi
 
-  docker start "$CONTAINER_NAME"
+  docker compose up -d prod
   log "Restored and restarted."
 }
 
 # ─── MQTT Test ────────────────────────────────────────────────────────────
 
 cmd_mqtt_test() {
-  if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+  if ! container_running "corescope-prod"; then
     err "Container not running. Start with: ./manage.sh start"
     exit 1
   fi
 
   info "Listening for MQTT messages (10 second timeout)..."
-  MSG=$(docker exec "$CONTAINER_NAME" mosquitto_sub -h localhost -t 'meshcore/#' -C 1 -W 10 2>/dev/null)
+  MSG=$(docker exec corescope-prod mosquitto_sub -h localhost -t 'meshcore/#' -C 1 -W 10 2>/dev/null)
   if [ -n "$MSG" ]; then
     log "Received MQTT message:"
     echo "   $MSG" | head -c 200
@@ -1084,21 +833,19 @@ cmd_mqtt_test() {
 
 cmd_reset() {
   echo ""
-  warn "This will remove the container, image, and setup state."
-  warn "Your config.json, Caddyfile, and data volume are NOT deleted."
+  warn "This will remove all containers, images, and setup state."
+  warn "Your config.json, Caddyfile, and data directory are NOT deleted."
   echo ""
   if ! confirm "Continue?"; then
     echo "   Aborted."
     exit 0
   fi
 
-  docker stop "$CONTAINER_NAME" 2>/dev/null || true
-  docker rm "$CONTAINER_NAME" 2>/dev/null || true
-  docker rmi "$IMAGE_NAME" 2>/dev/null || true
+  docker compose --profile staging --profile staging-go down --rmi local 2>/dev/null || true
   rm -f "$STATE_FILE"
 
   log "Reset complete. Run './manage.sh setup' to start over."
-  echo "   Data volume preserved. To delete it: docker volume rm ${DATA_VOLUME}"
+  echo "   Data directory: $PROD_DATA (not removed)"
 }
 
 # ─── Help ─────────────────────────────────────────────────────────────────
@@ -1128,11 +875,7 @@ cmd_help() {
   echo "    restore <d>        Restore from backup dir or .db file"
   echo "    mqtt-test          Check if MQTT data is flowing"
   echo ""
-  if $COMPOSE_MODE; then
-    info "Docker Compose mode detected (docker-compose.yml present)."
-  else
-    warn "Legacy mode (no docker-compose.yml). Some commands unavailable."
-  fi
+  echo "All commands use docker compose with docker-compose.yml."
   echo ""
 }
 
