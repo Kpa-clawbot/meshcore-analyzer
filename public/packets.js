@@ -1056,6 +1056,8 @@
         const groupTypeName = payloadTypeName(p.payload_type);
         const groupTypeClass = payloadTypeColor(p.payload_type);
         const groupSize = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
+        const groupRawPathByte = p.raw_hex ? parseInt(p.raw_hex.slice(2, 4), 16) : NaN;
+        const groupHashBytes = isNaN(groupRawPathByte) ? null : ((groupRawPathByte >> 6) + 1);
         const isSingle = p.count <= 1;
         html += `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" tabindex="0" role="row">
           <td style="width:28px;text-align:center;cursor:pointer">${isSingle ? '' : (isExpanded ? '▼' : '▶')}</td>
@@ -1063,6 +1065,7 @@
           <td class="col-time">${renderTimestampCell(p.latest)}</td>
           <td class="mono col-hash">${truncate(p.hash || '—', 8)}</td>
           <td class="col-size">${groupSize ? groupSize + 'B' : '—'}</td>
+          <td class="col-hashsize mono">${groupHashBytes !== null ? groupHashBytes : '—'}</td>
           <td class="col-type">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>` : '—'}</td>
           <td class="col-observer">${isSingle ? truncate(obsName(headerObserverId), 16) : truncate(obsName(headerObserverId), 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
@@ -1081,6 +1084,8 @@
             const typeName = payloadTypeName(c.payload_type);
             const typeClass = payloadTypeColor(c.payload_type);
             const size = c.raw_hex ? Math.floor(c.raw_hex.length / 2) : 0;
+            const childRawPathByte = c.raw_hex ? parseInt(c.raw_hex.slice(2, 4), 16) : NaN;
+            const childHashBytes = isNaN(childRawPathByte) ? null : ((childRawPathByte >> 6) + 1);
             const childRegion = c.observer_id ? (observers.find(o => o.id === c.observer_id)?.iata || '') : '';
             let childPath = [];
             try { childPath = JSON.parse(c.path_json || '[]'); } catch {}
@@ -1090,6 +1095,7 @@
               <td class="col-time">${renderTimestampCell(c.timestamp)}</td>
               <td class="mono col-hash">${truncate(c.hash || '', 8)}</td>
               <td class="col-size">${size}B</td>
+              <td class="col-hashsize mono">${childHashBytes !== null ? childHashBytes : '—'}</td>
               <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span></td>
               <td class="col-observer">${truncate(obsName(c.observer_id), 16)}</td>
               <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
