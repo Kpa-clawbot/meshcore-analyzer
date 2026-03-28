@@ -93,6 +93,7 @@ Both must pass before deploy.
 
 ```bash
 git pull
+docker compose down
 docker compose build prod
 docker compose up -d prod
 ```
@@ -101,6 +102,7 @@ docker compose up -d prod
 
 ```bash
 git pull
+./manage.sh stop
 ./manage.sh setup
 ```
 
