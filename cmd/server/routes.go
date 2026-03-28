@@ -104,6 +104,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.HandleFunc("/api/perf/reset", s.handlePerfReset).Methods("POST")
+	r.HandleFunc("/api/admin/prune", s.handleAdminPrune).Methods("POST")
 
 	// Packet endpoints
 	r.HandleFunc("/api/packets/timestamps", s.handlePacketTimestamps).Methods("GET")
@@ -522,6 +523,31 @@ func (s *Server) handlePerf(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePerfReset(w http.ResponseWriter, r *http.Request) {
 	s.perfStats = NewPerfStats()
 	writeJSON(w, OkResp{Ok: true})
+}
+
+func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.APIKey != "" && r.Header.Get("X-API-Key") != s.cfg.APIKey {
+		writeError(w, 401, "invalid or missing API key")
+		return
+	}
+	days := 0
+	if d := r.URL.Query().Get("days"); d != "" {
+		fmt.Sscanf(d, "%d", &days)
+	}
+	if days <= 0 && s.cfg.Retention != nil {
+		days = s.cfg.Retention.PacketDays
+	}
+	if days <= 0 {
+		writeError(w, 400, "days parameter required (or set retention.packetDays in config)")
+		return
+	}
+	n, err := s.db.PruneOldPackets(days)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
+	writeJSON(w, map[string]interface{}{"deleted": n, "days": days})
 }
 
 // --- Packet Handlers ---

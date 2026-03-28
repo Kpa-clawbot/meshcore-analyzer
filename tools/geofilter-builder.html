@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoFilter Builder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 16px; background: #0f0f23; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 1rem; font-weight: 600; color: #4a9eff; white-space: nowrap; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500; }
+  #btnUndo  { background: #333; color: #ccc; }
+  #btnClear { background: #5a2020; color: #ffaaaa; }
+  #btnUndo:hover  { background: #444; }
+  #btnClear:hover { background: #7a2020; }
+  .hint { font-size: 0.8rem; color: #888; margin-left: auto; }
+  #map { flex: 1; }
+  #output-panel { background: #0f0f23; border-top: 1px solid #333; padding: 12px 16px; display: flex; gap: 12px; align-items: flex-start; }
+  #output-panel label { font-size: 0.75rem; color: #888; white-space: nowrap; padding-top: 6px; }
+  #output { flex: 1; background: #111; border: 1px solid #333; border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 0.78rem; color: #7ec8e3; white-space: pre; overflow-x: auto; min-height: 54px; max-height: 140px; overflow-y: auto; cursor: text; }
+  #output.empty { color: #555; font-style: italic; }
+  #btnCopy { padding: 6px 14px; background: #1a4a7a; color: #7ec8e3; border-radius: 6px; border: none; cursor: pointer; font-size: 0.85rem; white-space: nowrap; align-self: flex-end; }
+  #btnCopy:hover { background: #2a6aaa; }
+  #btnCopy.copied { background: #1a6a3a; color: #7effa0; }
+  #counter { font-size: 0.8rem; color: #888; padding-top: 6px; white-space: nowrap; }
+  .bufferRow { display: flex; align-items: center; gap: 8px; }
+  .bufferRow label { font-size: 0.85rem; color: #aaa; }
+  .bufferRow input { width: 60px; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 6px; color: #eee; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>GeoFilter Builder</h1>
+  <div class="controls">
+    <button id="btnUndo">↩ Undo</button>
+    <button id="btnClear">✕ Clear</button>
+  </div>
+  <div class="bufferRow">
+    <label for="bufferKm">Buffer km:</label>
+    <input type="number" id="bufferKm" value="20" min="0" max="500"/>
+  </div>
+  <span class="hint">Click on the map to add polygon points</span>
+</header>
+
+<div id="map"></div>
+
+<div id="output-panel">
+  <label>config.json</label>
+  <div id="output" class="empty">Add at least 3 points to generate config…</div>
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
+    <span id="counter">0 points</span>
+    <button id="btnCopy">Copy</button>
+  </div>
+</div>
+
+<script>
+const map = L.map('map').setView([50.5, 4.4], 8);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CartoDB',
+  maxZoom: 19
+}).addTo(map);
+
+let points = [];
+let markers = [];
+let polygon = null;
+let closingLine = null;
+
+function latLonPair(latlng) {
+  return [parseFloat(latlng.lat.toFixed(6)), parseFloat(latlng.lng.toFixed(6))];
+}
+
+function render() {
+  // Remove existing polygon and closing line
+  if (polygon) { map.removeLayer(polygon); polygon = null; }
+  if (closingLine) { map.removeLayer(closingLine); closingLine = null; }
+
+  if (points.length >= 3) {
+    polygon = L.polygon(points, {
+      color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.12
+    }).addTo(map);
+  } else if (points.length === 2) {
+    closingLine = L.polyline(points, { color: '#4a9eff', weight: 2, dashArray: '5,5' }).addTo(map);
+  }
+
+  updateOutput();
+}
+
+function updateOutput() {
+  const el = document.getElementById('output');
+  const counter = document.getElementById('counter');
+  counter.textContent = points.length + ' point' + (points.length !== 1 ? 's' : '');
+
+  if (points.length < 3) {
+    el.textContent = 'Add at least 3 points to generate config…';
+    el.classList.add('empty');
+    return;
+  }
+  el.classList.remove('empty');
+
+  const bufferKm = parseFloat(document.getElementById('bufferKm').value) || 0;
+  const config = { bufferKm, polygon: points };
+  el.textContent = JSON.stringify({ geo_filter: config }, null, 2);
+}
+
+map.on('click', function(e) {
+  const pt = latLonPair(e.latlng);
+  points.push(pt);
+
+  const idx = points.length;
+  const marker = L.circleMarker(e.latlng, {
+    radius: 6, color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.9
+  }).addTo(map).bindTooltip(String(idx), { permanent: true, direction: 'top', offset: [0, -8], className: 'pt-label' });
+  markers.push(marker);
+
+  render();
+});
+
+document.getElementById('btnUndo').addEventListener('click', function() {
+  if (!points.length) return;
+  points.pop();
+  const m = markers.pop();
+  if (m) map.removeLayer(m);
+  render();
+});
+
+document.getElementById('btnClear').addEventListener('click', function() {
+  points = [];
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+  render();
+});
+
+document.getElementById('bufferKm').addEventListener('input', updateOutput);
+
+document.getElementById('btnCopy').addEventListener('click', function() {
+  if (points.length < 3) return;
+  const text = document.getElementById('output').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('btnCopy');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+});
+</script>
+</body>
+</html>

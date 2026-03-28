@@ -59,7 +59,8 @@ type GeoFilterConfig struct {
 }
 
 type RetentionConfig struct {
-	NodeDays int `json:"nodeDays"`
+	NodeDays   int `json:"nodeDays"`
+	PacketDays int `json:"packetDays"`
 }
 
 // NodeDaysOrDefault returns the configured retention.nodeDays or 7 if not set.
