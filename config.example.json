@@ -3,7 +3,8 @@
   "apiKey": "your-secret-api-key-here",
   "retention": {
     "nodeDays": 7,
-    "_comment": "Nodes not seen in this many days are moved to inactive_nodes table. Default 7."
+    "packetDays": 30,
+    "_comment": "nodeDays: nodes not seen in N days are moved to inactive_nodes (default 7). packetDays: transmissions+observations older than N days are deleted daily (0 = disabled)."
   },
   "https": {
     "cert": "/path/to/cert.pem",

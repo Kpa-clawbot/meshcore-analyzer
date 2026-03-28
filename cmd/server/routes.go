@@ -109,6 +109,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
+	r.Handle("/api/admin/prune", s.requireAPIKey(http.HandlerFunc(s.handleAdminPrune))).Methods("POST")
 
 	// Packet endpoints
 	r.HandleFunc("/api/packets/timestamps", s.handlePacketTimestamps).Methods("GET")
@@ -1851,4 +1852,25 @@ func nullFloatVal(n sql.NullFloat64) float64 {
 		return n.Float64
 	}
 	return 0
+}
+
+func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
+	days := 0
+	if d := r.URL.Query().Get("days"); d != "" {
+		fmt.Sscanf(d, "%d", &days)
+	}
+	if days <= 0 && s.cfg.Retention != nil {
+		days = s.cfg.Retention.PacketDays
+	}
+	if days <= 0 {
+		writeError(w, 400, "days parameter required (or set retention.packetDays in config)")
+		return
+	}
+	n, err := s.db.PruneOldPackets(days)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
+	writeJSON(w, map[string]interface{}{"deleted": n, "days": days})
 }

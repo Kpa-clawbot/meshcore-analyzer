@@ -79,7 +79,8 @@ type TimestampConfig struct {
 }
 
 type RetentionConfig struct {
-	NodeDays int `json:"nodeDays"`
+	NodeDays   int `json:"nodeDays"`
+	PacketDays int `json:"packetDays"`
 }
 
 func defaultTimestampConfig() TimestampConfig {
