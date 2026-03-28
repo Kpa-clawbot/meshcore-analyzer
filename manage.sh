@@ -151,6 +151,13 @@ cmd_setup() {
   fi
 
   log "Docker $(docker --version | grep -oP 'version \K[^ ,]+')"
+  
+  # Check docker compose (separate check since it's a plugin/separate binary)
+  if ! docker compose version &>/dev/null; then
+    err "docker compose is required. Install Docker Desktop or docker-compose-plugin."
+    exit 1
+  fi
+  
   mark_done "docker"
 
   # ── Step 2: Config ──

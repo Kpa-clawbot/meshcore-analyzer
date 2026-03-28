@@ -78,6 +78,7 @@ services:
       - staging-go
 
 volumes:
+  # Named volumes for Caddy TLS certificates (not user data — managed by Caddy internally)
   caddy-data:
   caddy-data-staging:
   caddy-data-staging-go:
