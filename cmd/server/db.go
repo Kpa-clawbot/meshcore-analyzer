@@ -1691,9 +1691,18 @@ func nullInt(ni sql.NullInt64) interface{} {
 // PruneOldPackets deletes transmissions and their observations older than the
 // given number of days. Nodes and observers are never touched.
 // Returns the number of transmissions deleted.
+// Opens a separate read-write connection since the main connection is read-only.
 func (db *DB) PruneOldPackets(days int) (int64, error) {
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000", db.path)
+	rw, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return 0, err
+	}
+	rw.SetMaxOpenConns(1)
+	defer rw.Close()
+
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339)
-	tx, err := db.conn.Begin()
+	tx, err := rw.Begin()
 	if err != nil {
 		return 0, err
 	}
