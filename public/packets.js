@@ -561,6 +561,7 @@
       <table class="data-table" id="pktTable">
         <thead><tr>
           <th scope="col"></th><th scope="col" class="col-region">Region</th><th scope="col" class="col-time">Time</th><th scope="col" class="col-hash">Hash</th><th scope="col" class="col-size">Size</th>
+          <th scope="col" class="col-hashsize">HB</th>
           <th scope="col" class="col-type">Type</th><th scope="col" class="col-observer">Observer</th><th scope="col" class="col-path">Path</th><th scope="col" class="col-rpt">Rpt</th><th scope="col" class="col-details">Details</th>
         </tr></thead>
         <tbody id="pktBody"></tbody>
@@ -1076,6 +1077,8 @@
       const typeName = payloadTypeName(p.payload_type);
       const typeClass = payloadTypeColor(p.payload_type);
       const size = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
+      const rawPathByte = p.raw_hex ? parseInt(p.raw_hex.slice(2, 4), 16) : NaN;
+      const hashBytes = isNaN(rawPathByte) ? null : ((rawPathByte >> 6) + 1);
       const pathStr = renderPath(pathHops, p.observer_id);      const detail = getDetailPreview(decoded);
 
       return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select-hash" data-value="${p.hash || p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
@@ -1083,6 +1086,7 @@
         <td class="col-time">${timeAgo(p.timestamp)}</td>
         <td class="mono col-hash">${truncate(p.hash || String(p.id), 8)}</td>
         <td class="col-size">${size}B</td>
+        <td class="col-hashsize mono">${hashBytes !== null ? hashBytes : '—'}</td>
         <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span></td>
         <td class="col-observer">${truncate(obsName(p.observer_id), 16)}</td>
         <td class="col-path"><span class="path-hops">${pathStr}</span></td>

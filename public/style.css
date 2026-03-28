@@ -1205,7 +1205,7 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 
 /* Hide low-value columns on mobile */
 @media (max-width: 640px) {
-  .col-region, .col-rpt, .col-size, .col-pubkey { display: none; }
+  .col-region, .col-rpt, .col-size, .col-hashsize, .col-pubkey { display: none; }
 }
 
 /* Clickable hop links */
@@ -1351,6 +1351,7 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .hide-col-observer .col-observer,
 .hide-col-path .col-path,
 .hide-col-rpt .col-rpt,
+.hide-col-hashsize .col-hashsize,
 .hide-col-details .col-details { display: none; }
 
 /* === Home page fixes === */
