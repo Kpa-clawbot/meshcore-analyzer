@@ -111,7 +111,7 @@ func main() {
 		// Capture source for closure
 		src := source
 		opts.SetDefaultPublishHandler(func(c mqtt.Client, m mqtt.Message) {
-			handleMessage(store, tag, src, m, channelKeys)
+			handleMessage(store, tag, src, m, channelKeys, cfg.GeoFilter)
 		})
 
 		client := mqtt.NewClient(opts)
@@ -143,7 +143,7 @@ func main() {
 	log.Println("Done.")
 }
 
-func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string) {
+func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, geoFilter *GeoFilterConfig) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("MQTT [%s] panic in handler: %v", tag, r)
@@ -223,27 +223,37 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 			mqttMsg.Origin = v
 		}
 
-		pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
-		isNew, err := store.InsertTransmission(pktData)
-		if err != nil {
-			log.Printf("MQTT [%s] db insert error: %v", tag, err)
-		}
-
-		// Process ADVERT → upsert node
+		// For ADVERT packets with known coordinates, enforce geo_filter before
+		// storing anything — drop the entire message if outside the area.
 		if decoded.Header.PayloadTypeName == "ADVERT" && decoded.Payload.PubKey != "" {
 			ok, reason := ValidateAdvert(&decoded.Payload)
-			if ok {
-				role := advertRole(decoded.Payload.Flags)
-				if err := store.UpsertNode(decoded.Payload.PubKey, decoded.Payload.Name, role, decoded.Payload.Lat, decoded.Payload.Lon, pktData.Timestamp); err != nil {
-					log.Printf("MQTT [%s] node upsert error: %v", tag, err)
-				}
-				if isNew {
-					if err := store.IncrementAdvertCount(decoded.Payload.PubKey); err != nil {
-						log.Printf("MQTT [%s] advert count error: %v", tag, err)
-					}
-				}
-			} else {
+			if !ok {
 				log.Printf("MQTT [%s] skipping corrupted ADVERT: %s", tag, reason)
+				return
+			}
+			if !NodePassesGeoFilter(decoded.Payload.Lat, decoded.Payload.Lon, geoFilter) {
+				return
+			}
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
+			isNew, err := store.InsertTransmission(pktData)
+			if err != nil {
+				log.Printf("MQTT [%s] db insert error: %v", tag, err)
+			}
+			role := advertRole(decoded.Payload.Flags)
+			if err := store.UpsertNode(decoded.Payload.PubKey, decoded.Payload.Name, role, decoded.Payload.Lat, decoded.Payload.Lon, pktData.Timestamp); err != nil {
+				log.Printf("MQTT [%s] node upsert error: %v", tag, err)
+			}
+			if isNew {
+				if err := store.IncrementAdvertCount(decoded.Payload.PubKey); err != nil {
+					log.Printf("MQTT [%s] advert count error: %v", tag, err)
+				}
+			}
+		} else {
+			// Non-ADVERT packets: store normally (routing/channel messages from
+			// in-area observers are relevant regardless of relay hop origin).
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
+			if _, err := store.InsertTransmission(pktData); err != nil {
+				log.Printf("MQTT [%s] db insert error: %v", tag, err)
 			}
 		}
 

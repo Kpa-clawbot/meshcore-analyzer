@@ -1687,3 +1687,39 @@ func nullInt(ni sql.NullInt64) interface{} {
 	}
 	return nil
 }
+
+// PruneOldPackets deletes transmissions and their observations older than the
+// given number of days. Nodes and observers are never touched.
+// Returns the number of transmissions deleted.
+// Opens a separate read-write connection since the main connection is read-only.
+func (db *DB) PruneOldPackets(days int) (int64, error) {
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000", db.path)
+	rw, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return 0, err
+	}
+	rw.SetMaxOpenConns(1)
+	defer rw.Close()
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339)
+	tx, err := rw.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	// Delete observations linked to old transmissions first (no CASCADE in SQLite)
+	_, err = tx.Exec(`DELETE FROM observations WHERE transmission_id IN (
+		SELECT id FROM transmissions WHERE first_seen < ?
+	)`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+
+	res, err := tx.Exec(`DELETE FROM transmissions WHERE first_seen < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, tx.Commit()
+}

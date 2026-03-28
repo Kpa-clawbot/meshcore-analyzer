@@ -149,6 +149,27 @@ func main() {
 	poller.store = store
 	go poller.Start()
 
+	// Auto-prune old packets if retention.packetDays is configured
+	if cfg.Retention != nil && cfg.Retention.PacketDays > 0 {
+		days := cfg.Retention.PacketDays
+		go func() {
+			time.Sleep(1 * time.Minute)
+			if n, err := database.PruneOldPackets(days); err != nil {
+				log.Printf("[prune] error: %v", err)
+			} else {
+				log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
+			}
+			for range time.Tick(24 * time.Hour) {
+				if n, err := database.PruneOldPackets(days); err != nil {
+					log.Printf("[prune] error: %v", err)
+				} else {
+					log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
+				}
+			}
+		}()
+		log.Printf("[prune] auto-prune enabled: packets older than %d days will be removed daily", days)
+	}
+
 	// Graceful shutdown
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),

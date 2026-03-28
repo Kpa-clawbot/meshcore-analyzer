@@ -97,12 +97,14 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/config/regions", s.handleConfigRegions).Methods("GET")
 	r.HandleFunc("/api/config/theme", s.handleConfigTheme).Methods("GET")
 	r.HandleFunc("/api/config/map", s.handleConfigMap).Methods("GET")
+	r.HandleFunc("/api/config/geo-filter", s.handleConfigGeoFilter).Methods("GET")
 
 	// System endpoints
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.HandleFunc("/api/perf/reset", s.handlePerfReset).Methods("POST")
+	r.HandleFunc("/api/admin/prune", s.handleAdminPrune).Methods("POST")
 
 	// Packet endpoints
 	r.HandleFunc("/api/packets/timestamps", s.handlePacketTimestamps).Methods("GET")
@@ -289,6 +291,15 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 		zoom = 9
 	}
 	writeJSON(w, MapConfigResponse{Center: center, Zoom: zoom})
+}
+
+func (s *Server) handleConfigGeoFilter(w http.ResponseWriter, r *http.Request) {
+	gf := s.cfg.GeoFilter
+	if gf == nil || len(gf.Polygon) == 0 {
+		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm})
 }
 
 // --- System Handlers ---
@@ -512,6 +523,31 @@ func (s *Server) handlePerf(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePerfReset(w http.ResponseWriter, r *http.Request) {
 	s.perfStats = NewPerfStats()
 	writeJSON(w, OkResp{Ok: true})
+}
+
+func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.APIKey != "" && r.Header.Get("X-API-Key") != s.cfg.APIKey {
+		writeError(w, 401, "invalid or missing API key")
+		return
+	}
+	days := 0
+	if d := r.URL.Query().Get("days"); d != "" {
+		fmt.Sscanf(d, "%d", &days)
+	}
+	if days <= 0 && s.cfg.Retention != nil {
+		days = s.cfg.Retention.PacketDays
+	}
+	if days <= 0 {
+		writeError(w, 400, "days parameter required (or set retention.packetDays in config)")
+		return
+	}
+	n, err := s.db.PruneOldPackets(days)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
+	writeJSON(w, map[string]interface{}{"deleted": n, "days": days})
 }
 
 // --- Packet Handlers ---
@@ -831,6 +867,16 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 				EnrichNodeWithHashSize(node, hashInfo[pk])
 			}
 		}
+	}
+	if s.cfg.GeoFilter != nil {
+		filtered := nodes[:0]
+		for _, node := range nodes {
+			if NodePassesGeoFilter(node["lat"], node["lon"], s.cfg.GeoFilter) {
+				filtered = append(filtered, node)
+			}
+		}
+		total = len(filtered)
+		nodes = filtered
 	}
 	writeJSON(w, NodeListResponse{Nodes: nodes, Total: total, Counts: counts})
 }

@@ -561,6 +561,7 @@
       <table class="data-table" id="pktTable">
         <thead><tr>
           <th scope="col"></th><th scope="col" class="col-region">Region</th><th scope="col" class="col-time">Time</th><th scope="col" class="col-hash">Hash</th><th scope="col" class="col-size">Size</th>
+          <th scope="col" class="col-hashsize">HB</th>
           <th scope="col" class="col-type">Type</th><th scope="col" class="col-observer">Observer</th><th scope="col" class="col-path">Path</th><th scope="col" class="col-rpt">Rpt</th><th scope="col" class="col-details">Details</th>
         </tr></thead>
         <tbody id="pktBody"></tbody>
@@ -1020,6 +1021,7 @@
         const groupTypeName = payloadTypeName(p.payload_type);
         const groupTypeClass = payloadTypeColor(p.payload_type);
         const groupSize = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
+        const groupHashBytes = ((parseInt(p.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
         const isSingle = p.count <= 1;
         html += `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" tabindex="0" role="row">
           <td style="width:28px;text-align:center;cursor:pointer">${isSingle ? '' : (isExpanded ? '▼' : '▶')}</td>
@@ -1027,6 +1029,7 @@
           <td class="col-time">${timeAgo(p.latest)}</td>
           <td class="mono col-hash">${truncate(p.hash || '—', 8)}</td>
           <td class="col-size">${groupSize ? groupSize + 'B' : '—'}</td>
+          <td class="col-hashsize mono">${groupHashBytes}</td>
           <td class="col-type">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>` : '—'}</td>
           <td class="col-observer">${isSingle ? truncate(obsName(headerObserverId), 16) : truncate(obsName(headerObserverId), 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
@@ -1045,6 +1048,7 @@
             const typeName = payloadTypeName(c.payload_type);
             const typeClass = payloadTypeColor(c.payload_type);
             const size = c.raw_hex ? Math.floor(c.raw_hex.length / 2) : 0;
+            const childHashBytes = ((parseInt(c.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
             const childRegion = c.observer_id ? (observers.find(o => o.id === c.observer_id)?.iata || '') : '';
             let childPath = [];
             try { childPath = JSON.parse(c.path_json || '[]'); } catch {}
@@ -1054,6 +1058,7 @@
               <td class="col-time">${timeAgo(c.timestamp)}</td>
               <td class="mono col-hash">${truncate(c.hash || '', 8)}</td>
               <td class="col-size">${size}B</td>
+              <td class="col-hashsize mono">${childHashBytes}</td>
               <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span></td>
               <td class="col-observer">${truncate(obsName(c.observer_id), 16)}</td>
               <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
@@ -1076,6 +1081,7 @@
       const typeName = payloadTypeName(p.payload_type);
       const typeClass = payloadTypeColor(p.payload_type);
       const size = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
+      const hashBytes = ((parseInt(p.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
       const pathStr = renderPath(pathHops, p.observer_id);      const detail = getDetailPreview(decoded);
 
       return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select-hash" data-value="${p.hash || p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
@@ -1083,6 +1089,7 @@
         <td class="col-time">${timeAgo(p.timestamp)}</td>
         <td class="mono col-hash">${truncate(p.hash || String(p.id), 8)}</td>
         <td class="col-size">${size}B</td>
+        <td class="col-hashsize mono">${hashBytes}</td>
         <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span></td>
         <td class="col-observer">${truncate(obsName(p.observer_id), 16)}</td>
         <td class="col-path"><span class="path-hops">${pathStr}</span></td>

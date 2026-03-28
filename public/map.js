@@ -12,6 +12,7 @@
   let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clusters: false, hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false', statusFilter: localStorage.getItem('meshcore-map-status-filter') || 'all' };
   let wsHandler = null;
   let heatLayer = null;
+  let geoFilterLayer = null;
   let userHasMoved = false;
   let controlsCollapsed = false;
 
@@ -94,6 +95,7 @@
             <label for="mcClusters"><input type="checkbox" id="mcClusters"> Show clusters</label>
             <label for="mcHeatmap"><input type="checkbox" id="mcHeatmap"> Heat map</label>
             <label for="mcHashLabels"><input type="checkbox" id="mcHashLabels"> Hash prefix labels</label>
+            <label id="mcGeoFilterLabel" for="mcGeoFilter" style="display:none"><input type="checkbox" id="mcGeoFilter"> Mesh live area</label>
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Status</legend>
@@ -224,6 +226,50 @@
         renderMarkers();
       });
     });
+
+    // Geo filter overlay
+    (async function () {
+      try {
+        const gf = await api('/config/geo-filter', { ttl: 3600 });
+        if (!gf || !gf.polygon || gf.polygon.length < 3) return;
+        const latlngs = gf.polygon.map(function (p) { return [p[0], p[1]]; });
+        const innerPoly = L.polygon(latlngs, {
+          color: '#3b82f6', weight: 2, opacity: 0.8,
+          fillColor: '#3b82f6', fillOpacity: 0.08
+        });
+        // Approximate buffer zone — expand each vertex outward from centroid by bufferKm
+        const bufferPoly = gf.bufferKm > 0 ? (function () {
+          let cLat = 0, cLon = 0;
+          gf.polygon.forEach(function (p) { cLat += p[0]; cLon += p[1]; });
+          cLat /= gf.polygon.length; cLon /= gf.polygon.length;
+          const cosLat = Math.cos(cLat * Math.PI / 180);
+          const outer = gf.polygon.map(function (p) {
+            const dLatM = (p[0] - cLat) * 111000;
+            const dLonM = (p[1] - cLon) * 111000 * cosLat;
+            const dist = Math.sqrt(dLatM * dLatM + dLonM * dLonM);
+            if (dist === 0) return [p[0], p[1]];
+            const scale = (gf.bufferKm * 1000) / dist;
+            return [p[0] + dLatM * scale / 111000, p[1] + dLonM * scale / (111000 * cosLat)];
+          });
+          return L.polygon(outer, {
+            color: '#3b82f6', weight: 1.5, opacity: 0.4, dashArray: '6 4',
+            fillColor: '#3b82f6', fillOpacity: 0.04
+          });
+        })() : null;
+        geoFilterLayer = L.layerGroup(bufferPoly ? [bufferPoly, innerPoly] : [innerPoly]);
+        const label = document.getElementById('mcGeoFilterLabel');
+        if (label) label.style.display = '';
+        const el = document.getElementById('mcGeoFilter');
+        if (el) {
+          const saved = localStorage.getItem('meshcore-map-geo-filter');
+          if (saved === 'true') { el.checked = true; geoFilterLayer.addTo(map); }
+          el.addEventListener('change', function (e) {
+            localStorage.setItem('meshcore-map-geo-filter', e.target.checked);
+            if (e.target.checked) { geoFilterLayer.addTo(map); } else { map.removeLayer(geoFilterLayer); }
+          });
+        }
+      } catch (e) { /* no geo filter configured */ }
+    })();
 
     // WS for live advert updates
     wsHandler = debouncedOnWS(function (msgs) {
