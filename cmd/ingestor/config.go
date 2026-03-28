@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/meshcore-analyzer/geofilter"
 )
 
 // MQTTSource represents a single MQTT broker connection.
@@ -34,7 +36,11 @@ type Config struct {
 	ChannelKeys     map[string]string `json:"channelKeys,omitempty"`
 	HashChannels    []string          `json:"hashChannels,omitempty"`
 	Retention       *RetentionConfig  `json:"retention,omitempty"`
+	GeoFilter       *GeoFilterConfig  `json:"geo_filter,omitempty"`
 }
+
+// GeoFilterConfig is an alias for the shared geofilter.Config type.
+type GeoFilterConfig = geofilter.Config
 
 // RetentionConfig controls how long stale nodes are kept before being moved to inactive_nodes.
 type RetentionConfig struct {

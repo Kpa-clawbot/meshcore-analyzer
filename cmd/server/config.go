@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/meshcore-analyzer/geofilter"
 )
 
 // Config mirrors the Node.js config.json structure (read-only fields).
@@ -61,14 +63,14 @@ type PacketStoreConfig struct {
 	MaxMemoryMB    int     `json:"maxMemoryMB"`     // hard memory ceiling in MB (0 = unlimited)
 }
 
-type GeoFilterConfig struct {
-	Polygon  [][2]float64 `json:"polygon,omitempty"`
-	BufferKm float64      `json:"bufferKm,omitempty"`
-	LatMin   *float64     `json:"latMin,omitempty"`
-	LatMax   *float64     `json:"latMax,omitempty"`
-	LonMin   *float64     `json:"lonMin,omitempty"`
-	LonMax   *float64     `json:"lonMax,omitempty"`
+// GeoFilterConfig is an alias for the shared geofilter.Config type.
+type GeoFilterConfig = geofilter.Config
+
+type RetentionConfig struct {
+	NodeDays   int `json:"nodeDays"`
+	PacketDays int `json:"packetDays"`
 }
+
 
 type TimestampConfig struct {
 	DefaultMode       string `json:"defaultMode"`       // "ago" | "absolute"
@@ -76,11 +78,6 @@ type TimestampConfig struct {
 	FormatPreset      string `json:"formatPreset"`      // "iso" | "iso-seconds" | "locale"
 	CustomFormat      string `json:"customFormat"`      // freeform, only used when AllowCustomFormat=true
 	AllowCustomFormat bool   `json:"allowCustomFormat"` // admin gate
-}
-
-type RetentionConfig struct {
-	NodeDays   int `json:"nodeDays"`
-	PacketDays int `json:"packetDays"`
 }
 
 func defaultTimestampConfig() TimestampConfig {
@@ -222,17 +219,11 @@ func (c *Config) ResolveDBPath(baseDir string) string {
 	return filepath.Join(baseDir, "data", "meshcore.db")
 }
 
-func (c *Config) PropagationBufferMs() int {
-	if c.LiveMap.PropagationBufferMs > 0 {
-		return c.LiveMap.PropagationBufferMs
-	}
-	return 5000
-}
 
 func (c *Config) NormalizeTimestampConfig() {
 	defaults := defaultTimestampConfig()
 	if c.Timestamps == nil {
-		log.Printf("[config] timestamps not configured â€” using defaults (ago/local/iso)")
+		log.Printf("[config] timestamps not configured — using defaults (ago/local/iso)")
 		c.Timestamps = &defaults
 		return
 	}
@@ -273,4 +264,10 @@ func (c *Config) GetTimestampConfig() TimestampConfig {
 		return defaultTimestampConfig()
 	}
 	return *c.Timestamps
+}
+func (c *Config) PropagationBufferMs() int {
+	if c.LiveMap.PropagationBufferMs > 0 {
+		return c.LiveMap.PropagationBufferMs
+	}
+	return 5000
 }
