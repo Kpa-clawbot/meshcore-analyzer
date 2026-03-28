@@ -4,10 +4,11 @@ Delete nodes from the database that fall outside the configured geo_filter polyg
 Nodes with no GPS coordinates are always kept.
 
 Usage:
-  python3 prune-nodes-outside-geo-filter.py [db_path] [--dry-run]
+  python3 prune-nodes-outside-geo-filter.py [db_path] [--config config.json] [--dry-run]
 
-  db_path   Path to meshcore.db  (default: /app/data/meshcore.db)
-  --dry-run  Show what would be deleted without making any changes
+  db_path         Path to meshcore.db   (default: /app/data/meshcore.db)
+  --config PATH   Path to config.json   (default: /app/config.json)
+  --dry-run       Show what would be deleted without making any changes
 """
 
 import sqlite3
@@ -15,33 +16,6 @@ import math
 import sys
 import json
 import os
-
-# ---------------------------------------------------------------------------
-# geo_filter config — paste your polygon here (or let the script read
-# config.json automatically when run inside the container)
-# ---------------------------------------------------------------------------
-POLYGON = [
-    [51.087294, 2.543335],
-    [50.841814, 2.614746],
-    [50.692512, 2.911377],
-    [50.775677, 3.147583],
-    [50.524993, 3.279419],
-    [50.476093, 3.630981],
-    [50.315067, 3.685913],
-    [50.265951, 4.141846],
-    [49.984311, 4.11438],
-    [49.49815,  5.465698],
-    [49.544491, 5.83374],
-    [50.329091, 6.410522],
-    [50.754837, 6.053467],
-    [51.15953,  5.844727],
-    [51.300512, 5.509644],
-    [51.485537, 5.042725],
-    [51.482117, 4.520874],
-    [51.375983, 3.378296],
-]
-BUFFER_KM = 20.0
-# ---------------------------------------------------------------------------
 
 
 def point_in_polygon(lat, lon, polygon):
@@ -101,12 +75,40 @@ def node_passes_filter(lat, lon, polygon, buffer_km):
     return False
 
 
+def load_geo_filter(config_path):
+    """Load polygon and bufferKm from config.json geo_filter section."""
+    if not os.path.exists(config_path):
+        print(f"ERROR: config not found at {config_path}")
+        sys.exit(1)
+    with open(config_path) as f:
+        cfg = json.load(f)
+    gf = cfg.get('geo_filter')
+    if not gf:
+        print("ERROR: no geo_filter section found in config.json")
+        sys.exit(1)
+    polygon = gf.get('polygon', [])
+    if len(polygon) < 3:
+        print("ERROR: geo_filter.polygon must have at least 3 points")
+        sys.exit(1)
+    buffer_km = gf.get('bufferKm', 0.0)
+    print(f"Loaded geo_filter from {config_path}: {len(polygon)} points, bufferKm={buffer_km}")
+    return polygon, buffer_km
+
+
 def main():
     args = sys.argv[1:]
     dry_run = '--dry-run' in args
-    args = [a for a in args if not a.startswith('--')]
+    args = [a for a in args if a != '--dry-run']
+
+    config_path = '/app/config.json'
+    if '--config' in args:
+        idx = args.index('--config')
+        config_path = args[idx + 1]
+        args = args[:idx] + args[idx + 2:]
 
     db_path = args[0] if args else '/app/data/meshcore.db'
+
+    polygon, buffer_km = load_geo_filter(config_path)
 
     if not os.path.exists(db_path):
         print(f"ERROR: database not found at {db_path}")
@@ -123,7 +125,7 @@ def main():
     for row in nodes:
         lat = row['lat']
         lon = row['lon']
-        if node_passes_filter(lat, lon, POLYGON, BUFFER_KM):
+        if node_passes_filter(lat, lon, polygon, buffer_km):
             keep.append(row)
         else:
             remove.append(row)

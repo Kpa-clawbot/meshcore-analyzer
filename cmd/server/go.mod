@@ -5,8 +5,11 @@ go 1.22
 require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/meshcore-analyzer/geofilter v0.0.0
 	modernc.org/sqlite v1.34.5
 )
+
+replace github.com/meshcore-analyzer/geofilter => ../../internal/geofilter
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

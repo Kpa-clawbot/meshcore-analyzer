@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/meshcore-analyzer/geofilter"
 )
 
 // MQTTSource represents a single MQTT broker connection.
@@ -36,15 +38,8 @@ type Config struct {
 	GeoFilter       *GeoFilterConfig  `json:"geo_filter,omitempty"`
 }
 
-// GeoFilterConfig defines the geographic filter polygon or bounding box.
-type GeoFilterConfig struct {
-	Polygon  [][2]float64 `json:"polygon,omitempty"`
-	BufferKm float64      `json:"bufferKm,omitempty"`
-	LatMin   *float64     `json:"latMin,omitempty"`
-	LatMax   *float64     `json:"latMax,omitempty"`
-	LonMin   *float64     `json:"lonMin,omitempty"`
-	LonMax   *float64     `json:"lonMax,omitempty"`
-}
+// GeoFilterConfig is an alias for the shared geofilter.Config type.
+type GeoFilterConfig = geofilter.Config
 
 // RetentionConfig controls how long stale nodes are kept before being moved to inactive_nodes.
 type RetentionConfig struct {

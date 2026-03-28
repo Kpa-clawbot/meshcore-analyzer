@@ -232,10 +232,11 @@
       try {
         const gf = await api('/config/geo-filter', { ttl: 3600 });
         if (!gf || !gf.polygon || gf.polygon.length < 3) return;
+        const geoColor = getComputedStyle(document.documentElement).getPropertyValue('--geo-filter-color').trim() || '#3b82f6';
         const latlngs = gf.polygon.map(function (p) { return [p[0], p[1]]; });
         const innerPoly = L.polygon(latlngs, {
-          color: '#3b82f6', weight: 2, opacity: 0.8,
-          fillColor: '#3b82f6', fillOpacity: 0.08
+          color: geoColor, weight: 2, opacity: 0.8,
+          fillColor: geoColor, fillOpacity: 0.08
         });
         // Approximate buffer zone — expand each vertex outward from centroid by bufferKm
         const bufferPoly = gf.bufferKm > 0 ? (function () {
@@ -252,8 +253,8 @@
             return [p[0] + dLatM * scale / 111000, p[1] + dLonM * scale / (111000 * cosLat)];
           });
           return L.polygon(outer, {
-            color: '#3b82f6', weight: 1.5, opacity: 0.4, dashArray: '6 4',
-            fillColor: '#3b82f6', fillOpacity: 0.04
+            color: geoColor, weight: 1.5, opacity: 0.4, dashArray: '6 4',
+            fillColor: geoColor, fillOpacity: 0.04
           });
         })() : null;
         geoFilterLayer = L.layerGroup(bufferPoly ? [bufferPoly, innerPoly] : [innerPoly]);
