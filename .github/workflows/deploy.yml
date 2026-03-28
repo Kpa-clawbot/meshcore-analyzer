@@ -8,9 +8,16 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - 'docs/**'
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'docs/**'
 
 concurrency:
-  group: deploy
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -147,10 +154,11 @@ jobs:
       - name: Detect changed files
         id: changes
         run: |
-          BACKEND=$(git diff --name-only HEAD~1 | grep -cE '^(server|db|decoder|packet-store|server-helpers|iata-coords)\.js$' || true)
-          FRONTEND=$(git diff --name-only HEAD~1 | grep -cE '^public/' || true)
-          TESTS=$(git diff --name-only HEAD~1 | grep -cE '^test-|^tools/' || true)
-          CI=$(git diff --name-only HEAD~1 | grep -cE '\.github/|package\.json|test-all\.sh|scripts/' || true)
+          BASE=${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'HEAD~1' }}
+          BACKEND=$(git diff --name-only $BASE | grep -cE '^(server|db|decoder|packet-store|server-helpers|iata-coords)\.js$' || true)
+          FRONTEND=$(git diff --name-only $BASE | grep -cE '^public/' || true)
+          TESTS=$(git diff --name-only $BASE | grep -cE '^test-|^tools/' || true)
+          CI=$(git diff --name-only $BASE | grep -cE '\.github/|package\.json|test-all\.sh|scripts/' || true)
           # If CI/test infra changed, run everything
           if [ "$CI" -gt 0 ]; then BACKEND=1; FRONTEND=1; fi
           # If test files changed, run everything
@@ -271,6 +279,7 @@ jobs:
   build:
     name: "🏗️ Build Docker Image"
     needs: [go-test]
+    if: github.event_name == 'push'
     runs-on: self-hosted
     steps:
       - name: Checkout code
@@ -295,6 +304,7 @@ jobs:
   deploy:
     name: "🚀 Deploy Staging"
     needs: [build]
+    if: github.event_name == 'push'
     runs-on: self-hosted
     steps:
       - name: Checkout code
@@ -339,6 +349,7 @@ jobs:
   publish:
     name: "📝 Publish Badges & Summary"
     needs: [deploy]
+    if: github.event_name == 'push'
     runs-on: self-hosted
     steps:
       - name: Checkout code
