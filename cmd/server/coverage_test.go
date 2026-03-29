@@ -23,6 +23,8 @@ func setupTestDBv2(t *testing.T) *DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Force single connection so all goroutines share the same in-memory DB
+	conn.SetMaxOpenConns(1)
 	schema := `
 		CREATE TABLE nodes (
 			public_key TEXT PRIMARY KEY, name TEXT, role TEXT,
