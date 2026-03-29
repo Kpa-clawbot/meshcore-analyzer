@@ -17,6 +17,8 @@ async function test(name, fn) {
   } catch (err) {
     results.push({ name, pass: false, error: err.message });
     console.log(`  \u274c ${name}: ${err.message}`);
+    console.log(`\nFail-fast: stopping after first failure.`);
+    process.exit(1);
   }
 }
 
