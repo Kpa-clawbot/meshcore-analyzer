@@ -171,10 +171,12 @@ jobs:
         run: |
           BASE_URL=http://localhost:13581 node test-e2e-playwright.js 2>&1 | tee e2e-output.txt
 
-      - name: Collect frontend coverage
-        if: success()
-        run: |
-          BASE_URL=http://localhost:13581 node scripts/collect-frontend-coverage.js 2>&1 | tee fe-coverage-output.txt || true
+      # DISABLED: Coverage collector takes 8+ min. E2E tests extract window.__coverage__ directly.
+      # Re-enable when collector is optimized or if E2E coverage numbers are insufficient.
+      # - name: Collect frontend coverage
+      #   if: success()
+      #   run: |
+      #     BASE_URL=http://localhost:13581 node scripts/collect-frontend-coverage.js 2>&1 | tee fe-coverage-output.txt || true
 
       - name: Generate frontend coverage badges
         if: success()
