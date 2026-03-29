@@ -1035,14 +1035,11 @@
         else if (bytes === 2) matrixDesc.textContent = 'Each cell = first-byte group. Color shows worst 2-byte collision within. Click a cell to see the breakdown.';
         else matrixDesc.textContent = '3-byte prefix space is too large to visualize as a matrix — collision table is shown below.';
       }
-      // 1-byte: repeaters only (they're the routing nodes for 1-byte paths)
-      // 2/3-byte: all nodes — rooms and other types can also share prefixes
-      const nodesForMode = bytes === 1 ? repeaterNodes : allNodes;
-      renderHashMatrix(data.topHops, nodesForMode, bytes, allNodes);
+      renderHashMatrix(data.topHops, repeaterNodes, bytes, allNodes);
       // Hide collision risk card for 3-byte — stats are shown in the matrix panel
       const riskCard = document.getElementById('collisionRiskSection');
       if (riskCard) riskCard.style.display = bytes === 3 ? 'none' : '';
-      if (bytes !== 3) renderCollisions(data.topHops, nodesForMode, bytes);
+      if (bytes !== 3) renderCollisions(data.topHops, repeaterNodes, bytes);
     }
 
     // Wire up selector
@@ -1198,7 +1195,7 @@
             <div class="analytics-stat-value" style="color:${collisions > 0 ? 'var(--status-red)' : 'var(--status-green)'}">${collisions}</div>
           </div>
         </div>
-        <p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid. Collision details are in the risk table below.</p>`;
+        <p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid.</p>`;
       return;
     }
 
