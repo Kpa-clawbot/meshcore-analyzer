@@ -37,8 +37,23 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip if docs-only change
+        id: docs-check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+            NON_DOCS=$(echo "$CHANGED" | grep -cvE '\.(md)$|^LICENSE$|^\.gitignore$|^docs/' || true)
+            if [ "$NON_DOCS" -eq 0 ]; then
+              echo "docs_only=true" >> $GITHUB_OUTPUT
+              echo "📄 Docs-only PR — skipping heavy CI"
+            fi
+          fi
 
       - name: Set up Go 1.22
+        if: steps.docs-check.outputs.docs_only != 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
@@ -47,6 +62,7 @@ jobs:
             cmd/ingestor/go.sum
 
       - name: Build and test Go server (with coverage)
+        if: steps.docs-check.outputs.docs_only != 'true'
         run: |
           set -e -o pipefail
           cd cmd/server
@@ -56,6 +72,7 @@ jobs:
           go tool cover -func=server-coverage.out | tail -1
 
       - name: Build and test Go ingestor (with coverage)
+        if: steps.docs-check.outputs.docs_only != 'true'
         run: |
           set -e -o pipefail
           cd cmd/ingestor
@@ -65,6 +82,7 @@ jobs:
           go tool cover -func=ingestor-coverage.out | tail -1
 
       - name: Verify proto syntax (all .proto files compile)
+        if: steps.docs-check.outputs.docs_only != 'true'
         run: |
           set -e
           echo "Installing protoc..."
@@ -79,7 +97,7 @@ jobs:
           echo "✅ All .proto files are syntactically valid"
 
       - name: Generate Go coverage badges
-        if: always()
+        if: always() && steps.docs-check.outputs.docs_only != 'true'
         run: |
           mkdir -p .badges
 
@@ -143,17 +161,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+
+      - name: Skip if docs-only change
+        id: docs-check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+            NON_DOCS=$(echo "$CHANGED" | grep -cvE '\.(md)$|^LICENSE$|^\.gitignore$|^docs/' || true)
+            if [ "$NON_DOCS" -eq 0 ]; then
+              echo "docs_only=true" >> $GITHUB_OUTPUT
+              echo "📄 Docs-only PR — skipping heavy CI"
+            fi
+          fi
 
       - name: Set up Node.js 22
+        if: steps.docs-check.outputs.docs_only != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
       - name: Install npm dependencies
+        if: steps.docs-check.outputs.docs_only != 'true'
         run: npm ci --production=false
 
       - name: Detect changed files
+        if: steps.docs-check.outputs.docs_only != 'true'
         id: changes
         run: |
           BACKEND=$(git diff --name-only HEAD~1 | grep -cE '^(server|db|decoder|packet-store|server-helpers|iata-coords)\.js$' || true)
@@ -169,7 +202,7 @@ jobs:
           echo "Changes: backend=$BACKEND frontend=$FRONTEND tests=$TESTS ci=$CI"
 
       - name: Run backend tests with coverage
-        if: steps.changes.outputs.backend == 'true'
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.backend == 'true'
         run: |
           npx c8 --reporter=text-summary --reporter=text sh test-all.sh 2>&1 | tee test-output.txt
           
@@ -187,19 +220,19 @@ jobs:
           echo "## Backend: ${TOTAL_PASS} tests, ${BE_COVERAGE}% coverage" >> $GITHUB_STEP_SUMMARY
 
       - name: Run backend tests (quick, no coverage)
-        if: steps.changes.outputs.backend == 'false'
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.backend == 'false'
         run: npm run test:unit
 
       - name: Install Playwright browser
-        if: steps.changes.outputs.frontend == 'true'
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
         run: npx playwright install chromium --with-deps 2>/dev/null || true
 
       - name: Instrument frontend JS for coverage
-        if: steps.changes.outputs.frontend == 'true'
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
         run: sh scripts/instrument-frontend.sh
 
       - name: Start instrumented test server on port 13581
-        if: steps.changes.outputs.frontend == 'true'
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
         run: |
           # Kill any stale server on 13581
           fuser -k 13581/tcp 2>/dev/null || true
@@ -223,11 +256,11 @@ jobs:
           done
 
       - name: Run Playwright E2E tests
-        if: steps.changes.outputs.frontend == 'true'
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
         run: BASE_URL=http://localhost:13581 node test-e2e-playwright.js 2>&1 | tee e2e-output.txt
 
       - name: Collect frontend coverage report
-        if: always() && steps.changes.outputs.frontend == 'true'
+        if: always() && steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
         run: |
           BASE_URL=http://localhost:13581 node scripts/collect-frontend-coverage.js 2>&1 | tee fe-coverage-output.txt
           
@@ -247,7 +280,7 @@ jobs:
           echo "{\"schemaVersion\":1,\"label\":\"frontend tests\",\"message\":\"${E2E_PASS:-0} E2E passed\",\"color\":\"brightgreen\"}" > .badges/frontend-tests.json
 
       - name: Stop test server
-        if: always() && steps.changes.outputs.frontend == 'true'
+        if: always() && steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
         run: |
           if [ -f .server.pid ]; then
             kill $(cat .server.pid) 2>/dev/null || true
@@ -256,7 +289,7 @@ jobs:
           fi
 
       - name: Run frontend E2E (quick, no coverage)
-        if: steps.changes.outputs.frontend == 'false'
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'false'
         run: |
           fuser -k 13581/tcp 2>/dev/null || true
           PORT=13581 node server.js &
