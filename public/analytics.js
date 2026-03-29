@@ -1262,9 +1262,9 @@
       }
 
       const twoByteCount = allNodes.filter(n => n.hash_size === 2).length;
-      const twoUsed = Object.values(firstByteInfo).filter(v => v.groupNodes.length > 0).length;
+      const uniqueTwoBytePrefixes = new Set(allNodes.map(n => n.public_key.slice(0, 4).toUpperCase())).size;
       const twoCollisions = Object.values(firstByteInfo).filter(v => v.collisionCount > 0).length;
-      const twoPct = ((twoUsed / 256) * 100).toFixed(1);
+      const twoPct = ((uniqueTwoBytePrefixes / 65536) * 100).toFixed(3);
 
       let html = `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
         <div class="analytics-stat-card" style="flex:1;min-width:110px">
@@ -1278,7 +1278,7 @@
         <div class="analytics-stat-card" style="flex:1;min-width:110px">
           <div class="analytics-stat-label">Prefix space used</div>
           <div class="analytics-stat-value" style="font-size:16px">${twoPct}%</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">of 256 first-byte groups</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${uniqueTwoBytePrefixes} of 65,536 possible</div>
         </div>
         <div class="analytics-stat-card" style="flex:1;min-width:110px;border-color:${twoCollisions > 0 ? 'var(--status-red)' : 'var(--border)'}">
           <div class="analytics-stat-label">Prefix collisions</div>
