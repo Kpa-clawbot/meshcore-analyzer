@@ -254,12 +254,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Stop old staging containers
+      - name: Stop old staging container
         run: |
-          docker compose --profile staging-go down --remove-orphans 2>/dev/null || true
-          docker rm -f corescope-staging-go 2>/dev/null || true
+          docker stop corescope-staging-go 2>/dev/null || true
+          docker rm corescope-staging-go 2>/dev/null || true
           fuser -k 82/tcp 2>/dev/null || true
-          docker system prune -f 2>/dev/null || true
 
       - name: Start staging on port 82
         run: |
