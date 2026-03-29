@@ -18,10 +18,16 @@ async function collectCoverage() {
   page.setDefaultTimeout(10000);
   const BASE = process.env.BASE_URL || 'http://localhost:13581';
 
-  // Helper: safe click
+  // Helper: navigate via hash (SPA — no full page reload needed after initial load)
+  async function navHash(hash, wait = 150) {
+    await page.evaluate((h) => { location.hash = h; }, hash);
+    await new Promise(r => setTimeout(r, wait));
+  }
+
+  // Helper: safe click — 500ms timeout (elements exist immediately or not at all)
   async function safeClick(selector, timeout) {
     try {
-      await page.click(selector, { timeout: timeout || 3000 });
+      await page.click(selector, { timeout: timeout || 500 });
     } catch {}
   }
 
@@ -120,7 +126,7 @@ async function collectCoverage() {
   // NODES PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Nodes page...');
-  await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/nodes');
 
   // Sort by EVERY column
   for (const col of ['name', 'public_key', 'role', 'last_seen', 'advert_count']) {
@@ -156,7 +162,7 @@ async function collectCoverage() {
   }
 
   // In side pane — click detail/analytics links
-  await safeClick('a[href*="/nodes/"]', 2000);
+  await safeClick('a[href*="/nodes/"]');
   // Click fav star
   await clickAll('.fav-star', 2);
 
@@ -168,7 +174,7 @@ async function collectCoverage() {
   try {
     const firstNodeKey = await page.$eval('#nodesBody tr td:nth-child(2)', el => el.textContent.trim());
     if (firstNodeKey) {
-      await page.goto(`${BASE}/#/nodes/${firstNodeKey}`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+      await navHash('#/nodes/' + firstNodeKey);
 
       // Click tabs on detail page
       await clickAll('.tab-btn, [data-tab]', 10);
@@ -191,7 +197,7 @@ async function collectCoverage() {
   try {
     const firstKey = await page.$eval('#nodesBody tr td:nth-child(2)', el => el.textContent.trim()).catch(() => null);
     if (firstKey) {
-      await page.goto(`${BASE}/#/nodes/${firstKey}?scroll=paths`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+      await navHash('#/nodes/' + firstKey + '?scroll=paths');
     }
   } catch {}
 
@@ -199,7 +205,7 @@ async function collectCoverage() {
   // PACKETS PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Packets page...');
-  await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/packets');
 
   // Open filter bar
   await safeClick('#filterToggleBtn');
@@ -285,13 +291,13 @@ async function collectCoverage() {
   } catch {}
 
   // Navigate to specific packet by hash
-  await page.goto(`${BASE}/#/packets/deadbeef`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/packets/deadbeef');
 
   // ══════════════════════════════════════════════
   // MAP PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Map page...');
-  await page.goto(`${BASE}/#/map`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/map');
 
   // Toggle controls panel
   await safeClick('#mapControlsToggle');
@@ -345,7 +351,7 @@ async function collectCoverage() {
   // ANALYTICS PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Analytics page...');
-  await page.goto(`${BASE}/#/analytics`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/analytics');
 
   // Click EVERY analytics tab
   const analyticsTabs = ['overview', 'rf', 'topology', 'channels', 'hashsizes', 'collisions', 'subpaths', 'nodes', 'distance'];
@@ -381,9 +387,12 @@ async function collectCoverage() {
     await clickAll('.analytics-table th', 8);
   } catch {}
 
-  // Deep-link to each analytics tab via URL
+  // Deep-link to each analytics tab via hash (avoid full page.goto)
   for (const tab of analyticsTabs) {
-    await page.goto(`${BASE}/#/analytics?tab=${tab}`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+    try {
+      await page.evaluate((t) => { location.hash = '#/analytics?tab=' + t; }, tab);
+      await new Promise(r => setTimeout(r, 100));
+    } catch {}
   }
 
   // Region filter on analytics
@@ -396,7 +405,7 @@ async function collectCoverage() {
   // CUSTOMIZE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Customizer...');
-  await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/home');
   await safeClick('#customizeToggle');
 
   // Click EVERY customizer tab
@@ -503,7 +512,7 @@ async function collectCoverage() {
   // CHANNELS PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Channels page...');
-  await page.goto(`${BASE}/#/channels`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/channels');
   // Click channel rows/items
   await clickAll('.channel-item, .channel-row, .channel-card', 3);
   await clickAll('table tbody tr', 3);
@@ -512,7 +521,7 @@ async function collectCoverage() {
   try {
     const channelHash = await page.$eval('table tbody tr td:first-child', el => el.textContent.trim()).catch(() => null);
     if (channelHash) {
-      await page.goto(`${BASE}/#/channels/${channelHash}`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+      await navHash('#/channels/' + channelHash);
     }
   } catch {}
 
@@ -520,7 +529,7 @@ async function collectCoverage() {
   // LIVE PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Live page...');
-  await page.goto(`${BASE}/#/live`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/live');
 
   // VCR controls
   await safeClick('#vcrPauseBtn');
@@ -603,14 +612,14 @@ async function collectCoverage() {
   // TRACES PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Traces page...');
-  await page.goto(`${BASE}/#/traces`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/traces');
   await clickAll('table tbody tr', 3);
 
   // ══════════════════════════════════════════════
   // OBSERVERS PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Observers page...');
-  await page.goto(`${BASE}/#/observers`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/observers');
   // Click observer rows
   const obsRows = await page.$$('table tbody tr, .observer-card, .observer-row');
   for (let i = 0; i < Math.min(obsRows.length, 3); i++) {
@@ -631,7 +640,7 @@ async function collectCoverage() {
   // PERF PAGE
   // ══════════════════════════════════════════════
   console.log('  [coverage] Perf page...');
-  await page.goto(`${BASE}/#/perf`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/perf');
   await safeClick('#perfRefresh');
   await safeClick('#perfReset');
 
@@ -641,14 +650,14 @@ async function collectCoverage() {
   console.log('  [coverage] App.js — router + global...');
 
   // Navigate to bad route to trigger error/404
-  await page.goto(`${BASE}/#/nonexistent-route`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+  await navHash('#/nonexistent-route');
 
-  // Navigate to every route via hash
+  // Navigate to every route via hash (50ms is enough for SPA hash routing)
   const allRoutes = ['home', 'nodes', 'packets', 'map', 'live', 'channels', 'traces', 'observers', 'analytics', 'perf'];
   for (const route of allRoutes) {
     try {
       await page.evaluate((r) => { location.hash = '#/' + r; }, route);
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 50));
     } catch {}
   }
 
@@ -714,10 +723,11 @@ async function collectCoverage() {
     await page.evaluate(() => { if (window.apiPerf) window.apiPerf(); });
   } catch {}
 
-  // Exercise utility functions
+  // Exercise utility functions + packet filter parser in one evaluate call
+  console.log('  [coverage] Utility functions + packet filter...');
   try {
     await page.evaluate(() => {
-      // timeAgo with various inputs
+      // Utility functions
       if (typeof timeAgo === 'function') {
         timeAgo(null);
         timeAgo(new Date().toISOString());
@@ -725,13 +735,11 @@ async function collectCoverage() {
         timeAgo(new Date(Date.now() - 3600000).toISOString());
         timeAgo(new Date(Date.now() - 86400000 * 2).toISOString());
       }
-      // truncate
       if (typeof truncate === 'function') {
         truncate('hello world', 5);
         truncate(null, 5);
         truncate('hi', 10);
       }
-      // routeTypeName, payloadTypeName, payloadTypeColor
       if (typeof routeTypeName === 'function') {
         for (let i = 0; i <= 4; i++) routeTypeName(i);
       }
@@ -741,23 +749,14 @@ async function collectCoverage() {
       if (typeof payloadTypeColor === 'function') {
         for (let i = 0; i <= 15; i++) payloadTypeColor(i);
       }
-      // invalidateApiCache
       if (typeof invalidateApiCache === 'function') {
         invalidateApiCache();
         invalidateApiCache('/test');
       }
-    });
-  } catch {}
 
-  // ══════════════════════════════════════════════
-  // PACKET FILTER — exercise the filter parser
-  // ══════════════════════════════════════════════
-  console.log('  [coverage] Packet filter parser...');
-  try {
-    await page.evaluate(() => {
+      // Packet filter parser
       if (window.PacketFilter && window.PacketFilter.compile) {
         const PF = window.PacketFilter;
-        // Valid expressions
         const exprs = [
           'type == ADVERT', 'type == GRP_TXT', 'type != ACK',
           'snr > 0', 'snr < -5', 'snr >= 10', 'snr <= 3',
@@ -773,7 +772,6 @@ async function collectCoverage() {
         for (const e of exprs) {
           try { PF.compile(e); } catch {}
         }
-        // Bad expressions
         const bad = ['@@@', '== ==', '(((', 'type ==', ''];
         for (const e of bad) {
           try { PF.compile(e); } catch {}
@@ -787,29 +785,24 @@ async function collectCoverage() {
   // ══════════════════════════════════════════════
   console.log('  [coverage] Region filter...');
   try {
-    // Open region filter on nodes page
-    await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+    // Open region filter on nodes page (use hash nav, already visited)
+    await page.evaluate(() => { location.hash = '#/nodes'; });
+    await new Promise(r => setTimeout(r, 100));
     await safeClick('#nodesRegionFilter');
     await clickAll('#nodesRegionFilter input[type="checkbox"]', 3);
   } catch {}
 
   // Region filter on packets
   try {
-    await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+    await page.evaluate(() => { location.hash = '#/packets'; });
+    await new Promise(r => setTimeout(r, 100));
     await safeClick('#packetsRegionFilter');
     await clickAll('#packetsRegionFilter input[type="checkbox"]', 3);
   } catch {}
 
   // ══════════════════════════════════════════════
-  // FINAL — navigate through all routes once more
+  // FINAL — extract coverage (all routes already visited above)
   // ══════════════════════════════════════════════
-  console.log('  [coverage] Final route sweep...');
-  for (const route of allRoutes) {
-    try {
-      await page.evaluate((r) => { location.hash = '#/' + r; }, route);
-      await new Promise(r => setTimeout(r, 200));
-    } catch {}
-  }
 
   // Extract coverage
   const coverage = await page.evaluate(() => window.__coverage__);
