@@ -5,6 +5,7 @@
 
 services:
   prod:
+    build: .
     image: corescope:latest
     container_name: corescope-prod
     restart: unless-stopped
@@ -26,6 +27,7 @@ services:
       retries: 3
 
   staging:
+    build: .
     image: corescope:latest
     container_name: corescope-staging
     restart: unless-stopped
