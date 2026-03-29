@@ -354,10 +354,17 @@ async function run() {
   await test('Packets clicking row shows detail pane', async () => {
     // Fresh navigation to avoid stale row references from previous test
     await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
+    // Wait for table rows AND initial API data to settle
     await page.waitForSelector('table tbody tr[data-action]', { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
     const firstRow = await page.$('table tbody tr[data-action]');
     assert(firstRow, 'No clickable packet rows found');
-    await firstRow.click();
+    // Click the row and wait for the /packets/{hash} API response
+    const [response] = await Promise.all([
+      page.waitForResponse(resp => resp.url().includes('/packets/') && resp.status() === 200, { timeout: 15000 }),
+      firstRow.click(),
+    ]);
+    assert(response, 'API response for packet detail not received');
     await page.waitForFunction(() => {
       const panel = document.getElementById('pktRight');
       return panel && !panel.classList.contains('empty');
@@ -375,12 +382,16 @@ async function run() {
     if (!pktRight) {
       await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('table tbody tr[data-action]', { timeout: 15000 });
+      await page.waitForLoadState('networkidle');
     }
     const panelOpen = await page.$eval('#pktRight', el => !el.classList.contains('empty'));
     if (!panelOpen) {
       const firstRow = await page.$('table tbody tr[data-action]');
       if (!firstRow) { console.log('    ⏭️  Skipped (no clickable rows)'); return; }
-      await firstRow.click();
+      await Promise.all([
+        page.waitForResponse(resp => resp.url().includes('/packets/') && resp.status() === 200, { timeout: 15000 }),
+        firstRow.click(),
+      ]);
       await page.waitForFunction(() => {
         const panel = document.getElementById('pktRight');
         return panel && !panel.classList.contains('empty');
@@ -908,6 +919,19 @@ async function run() {
     const hexDump = await page.$('#alabHex');
     assert(hexDump, 'Hex dump should be visible after selecting a packet');
   });
+
+  // Extract frontend coverage if instrumented server is running
+  try {
+    const coverage = await page.evaluate(() => window.__coverage__);
+    if (coverage) {
+      const fs = require('fs');
+      const path = require('path');
+      const outDir = path.join(__dirname, '.nyc_output');
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(path.join(outDir, 'e2e-coverage.json'), JSON.stringify(coverage));
+      console.log(`Frontend coverage from E2E: ${Object.keys(coverage).length} files`);
+    }
+  } catch {}
 
   await browser.close();
 
