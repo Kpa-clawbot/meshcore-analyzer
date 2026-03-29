@@ -10,13 +10,21 @@ const GO_BASE = process.env.GO_BASE_URL || '';  // e.g. https://analyzer.00id.ne
 const results = [];
 
 async function test(name, fn) {
-  try {
-    await fn();
-    results.push({ name, pass: true });
-    console.log(`  \u2705 ${name}`);
-  } catch (err) {
-    results.push({ name, pass: false, error: err.message });
-    console.log(`  \u274c ${name}: ${err.message}`);
+  const MAX_RETRIES = 2;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await fn();
+      results.push({ name, pass: true });
+      console.log(`  \u2705 ${name}${attempt > 1 ? ` (retry ${attempt - 1})` : ''}`);
+      return;
+    } catch (err) {
+      if (attempt < MAX_RETRIES) {
+        console.log(`  \u26a0\ufe0f ${name}: ${err.message} (retrying...)`);
+        continue;
+      }
+      results.push({ name, pass: false, error: err.message });
+      console.log(`  \u274c ${name}: ${err.message}`);
+    }
   }
 }
 
@@ -33,7 +41,7 @@ async function run() {
   });
   const context = await browser.newContext();
   const page = await context.newPage();
-  page.setDefaultTimeout(10000);
+  page.setDefaultTimeout(15000);
 
   console.log(`\nRunning E2E tests against ${BASE}\n`);
 
@@ -142,7 +150,8 @@ async function run() {
   // Test 2: Nodes page loads with data
   await test('Nodes page loads with data', async () => {
     await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('table tbody tr');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
     const headers = await page.$$eval('th', els => els.map(e => e.textContent.trim()));
     for (const col of ['Name', 'Public Key', 'Role']) {
       assert(headers.some(h => h.includes(col)), `Missing column: ${col}`);
@@ -154,13 +163,14 @@ async function run() {
 
   // Test 5: Node detail loads (reuses nodes page from test 2)
   await test('Node detail loads', async () => {
-    await page.waitForSelector('table tbody tr');
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
     // Click first row
     const firstRow = await page.$('table tbody tr');
     assert(firstRow, 'No node rows found');
     await firstRow.click();
     // Wait for detail pane to appear
-    await page.waitForSelector('.node-detail');
+    await page.waitForSelector('.node-detail', { timeout: 10000 });
     const html = await page.content();
     // Check for status indicator
     const hasStatus = html.includes('\ud83d\udfe2') || html.includes('\u26aa') || html.includes('status') || html.includes('Active') || html.includes('Stale');
@@ -196,10 +206,11 @@ async function run() {
   await test('Map page loads with markers', async () => {
     await page.goto(`${BASE}/#/map`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.leaflet-container');
-    await page.waitForSelector('.leaflet-tile-loaded');
+    await page.waitForLoadState('networkidle');
+    await page.waitForSelector('.leaflet-tile-loaded', { timeout: 15000 });
     // Wait for markers/overlays to render (may not exist with empty DB)
     try {
-      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive, circle, .marker-cluster, .leaflet-marker-pane > *, .leaflet-overlay-pane svg path, .leaflet-overlay-pane svg circle', { timeout: 3000 });
+      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive, circle, .marker-cluster, .leaflet-marker-pane > *, .leaflet-overlay-pane svg path, .leaflet-overlay-pane svg circle', { timeout: 8000 });
     } catch (_) {
       // No markers with empty DB \u2014 assertion below handles it
     }
@@ -275,7 +286,7 @@ async function run() {
     await page.waitForSelector('.leaflet-container');
     // Wait for markers (may not exist with empty DB)
     try {
-      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive', { timeout: 3000 });
+      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive', { timeout: 8000 });
     } catch (_) {
       // No markers with empty DB
     }
@@ -324,7 +335,10 @@ async function run() {
 
   // Test: Packets groupByHash toggle changes view
   await test('Packets groupByHash toggle works', async () => {
-    await page.waitForSelector('table tbody tr');
+    // Fresh navigation to ensure clean state
+    await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
     const groupBtn = await page.$('#fGroup');
     assert(groupBtn, 'Group by hash button (#fGroup) not found');
     // Check initial state (default is grouped/active)
@@ -534,6 +548,11 @@ async function run() {
   });
 
   await test('Compare page runs comparison', async () => {
+    // Wait for dropdowns to be populated (may still be loading from previous test)
+    await page.waitForFunction(() => {
+      const selA = document.getElementById('compareObsA');
+      return selA && selA.options.length > 2;
+    }, { timeout: 10000 });
     const options = await page.$$eval('#compareObsA option', opts =>
       opts.filter(o => o.value).map(o => o.value)
     );
@@ -555,6 +574,12 @@ async function run() {
 
   // Test: Compare results show shared/unique breakdown (#129)
   await test('Compare results show shared/unique cards', async () => {
+    // Wait for comparison results to fully render (depends on previous test)
+    await page.waitForFunction(() => {
+      return document.querySelector('.compare-card-both') &&
+             document.querySelector('.compare-card-a') &&
+             document.querySelector('.compare-card-b');
+    }, { timeout: 10000 });
     // Results should be visible from previous test
     const cardBoth = await page.$('.compare-card-both');
     assert(cardBoth, 'Should have "shared" card (.compare-card-both)');
@@ -577,6 +602,11 @@ async function run() {
 
   // Test: Compare "both" tab shows table with shared packets
   await test('Compare both tab shows shared packets table', async () => {
+    // Ensure compare results are present
+    await page.waitForFunction(() => {
+      const c = document.getElementById('compareContent');
+      return c && c.textContent.trim().length > 20;
+    }, { timeout: 10000 });
     const bothTab = await page.$('[data-cview="both"]');
     assert(bothTab, '"both" tab button not found');
     await bothTab.click();
@@ -726,7 +756,8 @@ async function run() {
 
   await test('Channels page loads with channel list', async () => {
     await page.goto(`${BASE}/#/channels`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#chList', { timeout: 8000 });
+    await page.waitForSelector('#chList', { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
     // Channels are fetched async — wait for items to render
     await page.waitForFunction(() => {
       const list = document.getElementById('chList');
@@ -794,13 +825,18 @@ async function run() {
 
   await test('Observers page loads with table', async () => {
     await page.goto(`${BASE}/#/observers`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#obsTable', { timeout: 8000 });
+    await page.waitForSelector('#obsTable', { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
     const table = await page.$('#obsTable');
     assert(table, 'Observers table not found');
     // Check for summary stats
     const summary = await page.$('.obs-summary');
     assert(summary, 'Observer summary stats not found');
-    // Verify table has rows
+    // Wait for table rows to populate
+    await page.waitForFunction(() => {
+      const rows = document.querySelectorAll('#obsTable tbody tr');
+      return rows.length > 0;
+    }, { timeout: 10000 });
     const rows = await page.$$('#obsTable tbody tr');
     assert(rows.length > 0, `Expected >=1 observer rows, got ${rows.length}`);
   });

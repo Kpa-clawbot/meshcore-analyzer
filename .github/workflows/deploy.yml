@@ -262,6 +262,10 @@ jobs:
             sleep 1
           done
 
+      - name: Seed test data for Playwright
+        if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
+        run: BASE_URL=http://localhost:13581 node tools/seed-test-data.js
+
       - name: Run Playwright E2E + coverage collection concurrently
         if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'true'
         run: |
@@ -319,6 +323,7 @@ jobs:
             curl -sf http://localhost:13581/api/stats > /dev/null 2>&1 && break
             sleep 1
           done
+          BASE_URL=http://localhost:13581 node tools/seed-test-data.js || true
           BASE_URL=http://localhost:13581 node test-e2e-playwright.js || true
           kill $SERVER_PID 2>/dev/null || true
 
