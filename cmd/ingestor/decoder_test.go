@@ -129,7 +129,8 @@ func TestDecodePath3ByteHashes(t *testing.T) {
 
 func TestTransportCodes(t *testing.T) {
 	// Route type 0 (TRANSPORT_FLOOD) should have transport codes
-	hex := "1400" + "AABB" + "CCDD" + "1A" + strings.Repeat("00", 10)
+	// Firmware order: header + transport_codes(4) + path_len + path + payload
+	hex := "14" + "AABB" + "CCDD" + "00" + strings.Repeat("00", 10)
 	pkt, err := DecodePacket(hex, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -140,11 +141,11 @@ func TestTransportCodes(t *testing.T) {
 	if pkt.TransportCodes == nil {
 		t.Fatal("transportCodes should not be nil for TRANSPORT_FLOOD")
 	}
-	if pkt.TransportCodes.NextHop != "AABB" {
-		t.Errorf("nextHop=%s, want AABB", pkt.TransportCodes.NextHop)
+	if pkt.TransportCodes.Code1 != "AABB" {
+		t.Errorf("code1=%s, want AABB", pkt.TransportCodes.Code1)
 	}
-	if pkt.TransportCodes.LastHop != "CCDD" {
-		t.Errorf("lastHop=%s, want CCDD", pkt.TransportCodes.LastHop)
+	if pkt.TransportCodes.Code2 != "CCDD" {
+		t.Errorf("code2=%s, want CCDD", pkt.TransportCodes.Code2)
 	}
 
 	// Route type 1 (FLOOD) should NOT have transport codes
@@ -537,10 +538,11 @@ func TestDecodeTraceShort(t *testing.T) {
 
 func TestDecodeTraceValid(t *testing.T) {
 	buf := make([]byte, 16)
-	buf[0] = 0x00
-	buf[1] = 0x01 // tag LE uint32 = 1
-	buf[5] = 0xAA // destHash start
-	buf[11] = 0xBB
+	// tag(4) + authCode(4) + flags(1) + pathData
+	binary.LittleEndian.PutUint32(buf[0:4], 1)          // tag = 1
+	binary.LittleEndian.PutUint32(buf[4:8], 0xDEADBEEF) // authCode
+	buf[8] = 0x02                                         // flags
+	buf[9] = 0xAA                                         // path data
 	p := decodeTrace(buf)
 	if p.Error != "" {
 		t.Errorf("unexpected error: %s", p.Error)
@@ -548,8 +550,17 @@ func TestDecodeTraceValid(t *testing.T) {
 	if p.Tag != 1 {
 		t.Errorf("tag=%d, want 1", p.Tag)
 	}
+	if p.AuthCode != 0xDEADBEEF {
+		t.Errorf("authCode=%d, want 0xDEADBEEF", p.AuthCode)
+	}
+	if p.TraceFlags == nil || *p.TraceFlags != 2 {
+		t.Errorf("traceFlags=%v, want 2", p.TraceFlags)
+	}
 	if p.Type != "TRACE" {
 		t.Errorf("type=%s, want TRACE", p.Type)
+	}
+	if p.PathData == "" {
+		t.Error("pathData should not be empty")
 	}
 }
 
@@ -833,10 +844,9 @@ func TestComputeContentHashShortHex(t *testing.T) {
 }
 
 func TestComputeContentHashTransportRoute(t *testing.T) {
-	// Route type 0 (TRANSPORT_FLOOD) with no path hops + 4 transport code bytes
-	// header=0x14 (TRANSPORT_FLOOD, ADVERT), path=0x00 (0 hops)
-	// transport codes = 4 bytes, then payload
-	hex := "1400" + "AABBCCDD" + strings.Repeat("EE", 10)
+	// Route type 0 (TRANSPORT_FLOOD) with transport codes then path=0x00 (0 hops)
+	// header=0x14 (TRANSPORT_FLOOD, ADVERT), transport(4), path=0x00
+	hex := "14" + "AABBCCDD" + "00" + strings.Repeat("EE", 10)
 	hash := ComputeContentHash(hex)
 	if len(hash) != 16 {
 		t.Errorf("hash length=%d, want 16", len(hash))
@@ -870,12 +880,10 @@ func TestComputeContentHashPayloadBeyondBufferLongHex(t *testing.T) {
 
 func TestComputeContentHashTransportBeyondBuffer(t *testing.T) {
 	// Transport route (0x00 = TRANSPORT_FLOOD) with path claiming some bytes
-	// total buffer too short for transport codes + path
-	// header=0x00, pathByte=0x02 (2 hops, 1-byte hash), then only 2 more bytes
-	// payloadStart = 2 + 2 + 4(transport) = 8, but buffer only 6 bytes
-	hex := "0002" + "AABB" + strings.Repeat("CC", 6) // 20 chars = 10 bytes
+	// header=0x00, transport(4), pathByte=0x02 (2 hops, 1-byte hash)
+	// offset=1+4+1+2=8, buffer needs to be >= 8
+	hex := "00" + "AABB" + "CCDD" + "02" + strings.Repeat("CC", 6) // 20 chars = 10 bytes  
 	hash := ComputeContentHash(hex)
-	// payloadStart = 2 + 2 + 4 = 8, buffer is 10 bytes → should work
 	if len(hash) != 16 {
 		t.Errorf("hash length=%d, want 16", len(hash))
 	}
@@ -913,8 +921,8 @@ func TestDecodePacketWithNewlines(t *testing.T) {
 }
 
 func TestDecodePacketTransportRouteTooShort(t *testing.T) {
-	// TRANSPORT_FLOOD (route=0) but only 3 bytes total → too short for transport codes
-	_, err := DecodePacket("140011", nil)
+	// TRANSPORT_FLOOD (route=0) but only 2 bytes total → too short for transport codes
+	_, err := DecodePacket("1400", nil)
 	if err == nil {
 		t.Error("expected error for transport route with too-short buffer")
 	}
@@ -931,16 +939,19 @@ func TestDecodeAckShort(t *testing.T) {
 }
 
 func TestDecodeAckValid(t *testing.T) {
-	buf := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+	buf := []byte{0xAA, 0xBB, 0xCC, 0xDD}
 	p := decodeAck(buf)
 	if p.Error != "" {
 		t.Errorf("unexpected error: %s", p.Error)
 	}
-	if p.DestHash != "aa" {
-		t.Errorf("destHash=%s, want aa", p.DestHash)
+	if p.ExtraHash != "ddccbbaa" {
+		t.Errorf("extraHash=%s, want ddccbbaa", p.ExtraHash)
 	}
-	if p.ExtraHash != "ccddeeff" {
-		t.Errorf("extraHash=%s, want ccddeeff", p.ExtraHash)
+	if p.DestHash != "" {
+		t.Errorf("destHash should be empty, got %s", p.DestHash)
+	}
+	if p.SrcHash != "" {
+		t.Errorf("srcHash should be empty, got %s", p.SrcHash)
 	}
 }
 

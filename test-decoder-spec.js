@@ -122,13 +122,14 @@ console.log('── Spec Tests: Transport Codes ──');
 
 {
   // Route type 0 (TRANSPORT_FLOOD) and 3 (TRANSPORT_DIRECT) should have 4-byte transport codes
-  // Route type 0: header byte = 0bPPPPPP00, e.g. 0x14 = payloadType 5 (GRP_TXT), routeType 0
-  const hex = '1400' + 'AABB' + 'CCDD' + '1A' + '00'.repeat(10); // transport codes + GRP_TXT payload
+  // Route type 0: header=0x14 = payloadType 5 (GRP_TXT), routeType 0 (TRANSPORT_FLOOD)
+  // Format: header(1) + transportCodes(4) + pathByte(1) + payload
+  const hex = '14' + 'AABB' + 'CCDD' + '00' + '1A' + '00'.repeat(10); // transport codes + pathByte + GRP_TXT payload
   const p = decodePacket(hex);
   assertEq(p.header.routeType, 0, 'transport: routeType=0 (TRANSPORT_FLOOD)');
   assert(p.transportCodes !== null, 'transport: transportCodes present for TRANSPORT_FLOOD');
-  assertEq(p.transportCodes.nextHop, 'AABB', 'transport: nextHop');
-  assertEq(p.transportCodes.lastHop, 'CCDD', 'transport: lastHop');
+  assertEq(p.transportCodes.code1, 'AABB', 'transport: code1');
+  assertEq(p.transportCodes.code2, 'CCDD', 'transport: code2');
 }
 
 {
@@ -257,13 +258,13 @@ console.log('── Spec Tests: Advert Payload ──');
 
 console.log('── Spec Tests: Encrypted Payload Format ──');
 
-// NOTE: Spec says v1 encrypted payloads have dest(1) + src(1) + MAC(2) + ciphertext
-// But decoder reads dest(6) + src(6) + MAC(4) + ciphertext
-// This is a known discrepancy — the decoder matches production behavior, not the spec.
-// The spec may describe the firmware's internal addressing while the OTA format differs,
-// or the decoder may be parsing the fields differently. Production data validates the decoder.
+// Spec says v1 encrypted payloads: dest(1)+src(1)+MAC(2)+cipher — decoder matches this.
 {
-  note('Spec says v1 encrypted payloads: dest(1)+src(1)+MAC(2)+cipher, but decoder reads dest(6)+src(6)+MAC(4)+cipher — decoder matches prod data');
+  const hex = '0100' + 'AA' + 'BB' + 'CCDD' + '00'.repeat(10);
+  const p = decodePacket(hex);
+  assertEq(p.payload.destHash, 'aa', 'encrypted payload: dest is 1 byte');
+  assertEq(p.payload.srcHash, 'bb', 'encrypted payload: src is 1 byte');
+  assertEq(p.payload.mac, 'ccdd', 'encrypted payload: MAC is 2 bytes');
 }
 
 console.log('── Spec Tests: validateAdvert ──');

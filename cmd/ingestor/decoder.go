@@ -72,8 +72,8 @@ type Header struct {
 
 // TransportCodes are present on TRANSPORT_FLOOD and TRANSPORT_DIRECT routes.
 type TransportCodes struct {
-	NextHop string `json:"nextHop"`
-	LastHop string `json:"lastHop"`
+	Code1 string `json:"code1"`
+	Code2 string `json:"code2"`
 }
 
 // Path holds decoded path/hop information.
@@ -92,6 +92,8 @@ type AdvertFlags struct {
 	Room        bool `json:"room"`
 	Sensor      bool `json:"sensor"`
 	HasLocation bool `json:"hasLocation"`
+	HasFeat1    bool `json:"hasFeat1"`
+	HasFeat2    bool `json:"hasFeat2"`
 	HasName     bool `json:"hasName"`
 }
 
@@ -111,6 +113,8 @@ type Payload struct {
 	Lat           *float64     `json:"lat,omitempty"`
 	Lon           *float64     `json:"lon,omitempty"`
 	Name          string       `json:"name,omitempty"`
+	Feat1         *int         `json:"feat1,omitempty"`
+	Feat2         *int         `json:"feat2,omitempty"`
 	BatteryMv     *int         `json:"battery_mv,omitempty"`
 	TemperatureC  *float64     `json:"temperature_c,omitempty"`
 	ChannelHash   int          `json:"channelHash,omitempty"`
@@ -123,6 +127,8 @@ type Payload struct {
 	EphemeralPubKey string     `json:"ephemeralPubKey,omitempty"`
 	PathData      string       `json:"pathData,omitempty"`
 	Tag           uint32       `json:"tag,omitempty"`
+	AuthCode      uint32       `json:"authCode,omitempty"`
+	TraceFlags    *int         `json:"traceFlags,omitempty"`
 	RawHex        string       `json:"raw,omitempty"`
 	Error         string       `json:"error,omitempty"`
 }
@@ -199,14 +205,13 @@ func decodeEncryptedPayload(typeName string, buf []byte) Payload {
 }
 
 func decodeAck(buf []byte) Payload {
-	if len(buf) < 6 {
+	if len(buf) < 4 {
 		return Payload{Type: "ACK", Error: "too short", RawHex: hex.EncodeToString(buf)}
 	}
+	checksum := binary.LittleEndian.Uint32(buf[0:4])
 	return Payload{
 		Type:      "ACK",
-		DestHash:  hex.EncodeToString(buf[0:1]),
-		SrcHash:   hex.EncodeToString(buf[1:2]),
-		ExtraHash: hex.EncodeToString(buf[2:6]),
+		ExtraHash: fmt.Sprintf("%08x", checksum),
 	}
 }
 
@@ -231,6 +236,8 @@ func decodeAdvert(buf []byte) Payload {
 	if len(appdata) > 0 {
 		flags := appdata[0]
 		advType := int(flags & 0x0F)
+		hasFeat1 := flags&0x20 != 0
+		hasFeat2 := flags&0x40 != 0
 		p.Flags = &AdvertFlags{
 			Raw:         int(flags),
 			Type:        advType,
@@ -239,6 +246,8 @@ func decodeAdvert(buf []byte) Payload {
 			Room:        advType == 3,
 			Sensor:      advType == 4,
 			HasLocation: flags&0x10 != 0,
+			HasFeat1:    hasFeat1,
+			HasFeat2:    hasFeat2,
 			HasName:     flags&0x80 != 0,
 		}
 
@@ -251,6 +260,16 @@ func decodeAdvert(buf []byte) Payload {
 			p.Lat = &lat
 			p.Lon = &lon
 			off += 8
+		}
+		if hasFeat1 && len(appdata) >= off+2 {
+			feat1 := int(binary.LittleEndian.Uint16(appdata[off : off+2]))
+			p.Feat1 = &feat1
+			off += 2
+		}
+		if hasFeat2 && len(appdata) >= off+2 {
+			feat2 := int(binary.LittleEndian.Uint16(appdata[off : off+2]))
+			p.Feat2 = &feat2
+			off += 2
 		}
 		if p.Flags.HasName {
 			// Find null terminator to separate name from trailing telemetry bytes
@@ -469,15 +488,22 @@ func decodePathPayload(buf []byte) Payload {
 }
 
 func decodeTrace(buf []byte) Payload {
-	if len(buf) < 12 {
+	if len(buf) < 9 {
 		return Payload{Type: "TRACE", Error: "too short", RawHex: hex.EncodeToString(buf)}
 	}
-	return Payload{
-		Type:     "TRACE",
-		DestHash: hex.EncodeToString(buf[5:11]),
-		SrcHash:  hex.EncodeToString(buf[11:12]),
-		Tag:      binary.LittleEndian.Uint32(buf[1:5]),
+	tag := binary.LittleEndian.Uint32(buf[0:4])
+	authCode := binary.LittleEndian.Uint32(buf[4:8])
+	flags := int(buf[8])
+	p := Payload{
+		Type:       "TRACE",
+		Tag:        tag,
+		AuthCode:   authCode,
+		TraceFlags: &flags,
 	}
+	if len(buf) > 9 {
+		p.PathData = hex.EncodeToString(buf[9:])
+	}
+	return p
 }
 
 func decodePayload(payloadType int, buf []byte, channelKeys map[string]string) Payload {
@@ -520,8 +546,7 @@ func DecodePacket(hexString string, channelKeys map[string]string) (*DecodedPack
 	}
 
 	header := decodeHeader(buf[0])
-	pathByte := buf[1]
-	offset := 2
+	offset := 1
 
 	var tc *TransportCodes
 	if isTransportRoute(header.RouteType) {
@@ -529,11 +554,17 @@ func DecodePacket(hexString string, channelKeys map[string]string) (*DecodedPack
 			return nil, fmt.Errorf("packet too short for transport codes")
 		}
 		tc = &TransportCodes{
-			NextHop: strings.ToUpper(hex.EncodeToString(buf[offset : offset+2])),
-			LastHop: strings.ToUpper(hex.EncodeToString(buf[offset+2 : offset+4])),
+			Code1: strings.ToUpper(hex.EncodeToString(buf[offset : offset+2])),
+			Code2: strings.ToUpper(hex.EncodeToString(buf[offset+2 : offset+4])),
 		}
 		offset += 4
 	}
+
+	if offset >= len(buf) {
+		return nil, fmt.Errorf("packet too short (no path byte)")
+	}
+	pathByte := buf[offset]
+	offset++
 
 	path, bytesConsumed := decodePath(pathByte, buf, offset)
 	offset += bytesConsumed
@@ -562,16 +593,24 @@ func ComputeContentHash(rawHex string) string {
 		return rawHex
 	}
 
-	pathByte := buf[1]
+	headerByte := buf[0]
+	offset := 1
+	if isTransportRoute(int(headerByte & 0x03)) {
+		offset += 4
+	}
+	if offset >= len(buf) {
+		if len(rawHex) >= 16 {
+			return rawHex[:16]
+		}
+		return rawHex
+	}
+	pathByte := buf[offset]
+	offset++
 	hashSize := int((pathByte>>6)&0x3) + 1
 	hashCount := int(pathByte & 0x3F)
 	pathBytes := hashSize * hashCount
 
-	headerByte := buf[0]
-	payloadStart := 2 + pathBytes
-	if isTransportRoute(int(headerByte & 0x03)) {
-		payloadStart += 4
-	}
+	payloadStart := offset + pathBytes
 	if payloadStart > len(buf) {
 		if len(rawHex) >= 16 {
 			return rawHex[:16]

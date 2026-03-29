@@ -12,14 +12,16 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // shapeSpec describes the expected JSON structure from the Node.js server.
 type shapeSpec struct {
-	Type        string               `json:"type"`
-	Keys        map[string]shapeSpec `json:"keys,omitempty"`
+	Type         string               `json:"type"`
+	Keys         map[string]shapeSpec `json:"keys,omitempty"`
 	ElementShape *shapeSpec           `json:"elementShape,omitempty"`
 	DynamicKeys  bool                 `json:"dynamicKeys,omitempty"`
 	ValueShape   *shapeSpec           `json:"valueShape,omitempty"`
@@ -138,8 +140,8 @@ func validateShape(actual interface{}, spec shapeSpec, path string) []string {
 
 // parityEndpoint defines one endpoint to test for parity.
 type parityEndpoint struct {
-	name     string // key in shapes.json
-	path     string // HTTP path to request
+	name string // key in shapes.json
+	path string // HTTP path to request
 }
 
 func TestParityShapes(t *testing.T) {
@@ -400,4 +402,105 @@ func TestValidateShapeFunction(t *testing.T) {
 			t.Errorf("unexpected errors: %v", errs)
 		}
 	})
+}
+
+func TestParityWSMultiObserverGolden(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+	hub := NewHub()
+	store := NewPacketStore(db)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store load failed: %v", err)
+	}
+
+	poller := NewPoller(db, hub, 50*time.Millisecond)
+	poller.store = store
+
+	client := &Client{send: make(chan []byte, 256)}
+	hub.Register(client)
+	defer hub.Unregister(client)
+
+	go poller.Start()
+	defer poller.Stop()
+
+	// Wait for poller to initialize its lastID/lastObsID cursors before
+	// inserting new data; otherwise the poller may snapshot a lastID that
+	// already includes the test data and never broadcast it.
+	time.Sleep(100 * time.Millisecond)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('BEEF', 'goldenstarburst237', ?, 1, 4, '{"pubKey":"aabbccdd11223344","type":"ADVERT"}')`, now); err != nil {
+		t.Fatalf("insert tx failed: %v", err)
+	}
+	var txID int
+	if err := db.conn.QueryRow(`SELECT id FROM transmissions WHERE hash='goldenstarburst237'`).Scan(&txID); err != nil {
+		t.Fatalf("query tx id failed: %v", err)
+	}
+	ts := time.Now().Unix()
+	if _, err := db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (?, 1, 11.0, -88, '["p1"]', ?),
+		       (?, 2, 9.0, -92, '["p1","p2"]', ?),
+		       (?, 1, 7.0, -96, '["p1","p2","p3"]', ?)`,
+		txID, ts, txID, ts+1, txID, ts+2); err != nil {
+		t.Fatalf("insert obs failed: %v", err)
+	}
+
+	type golden struct {
+		Hash        string
+		Count       int
+		Paths       []string
+		ObserverIDs []string
+	}
+	expected := golden{
+		Hash:        "goldenstarburst237",
+		Count:       3,
+		Paths:       []string{`["p1"]`, `["p1","p2"]`, `["p1","p2","p3"]`},
+		ObserverIDs: []string{"obs1", "obs2"},
+	}
+
+	gotPaths := make([]string, 0, expected.Count)
+	gotObservers := make(map[string]bool)
+	deadline := time.After(2 * time.Second)
+	for len(gotPaths) < expected.Count {
+		select {
+		case raw := <-client.send:
+			var msg map[string]interface{}
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				t.Fatalf("unmarshal ws message failed: %v", err)
+			}
+			if msg["type"] != "packet" {
+				continue
+			}
+			data, _ := msg["data"].(map[string]interface{})
+			if data == nil || data["hash"] != expected.Hash {
+				continue
+			}
+			if path, ok := data["path_json"].(string); ok {
+				gotPaths = append(gotPaths, path)
+			}
+			if oid, ok := data["observer_id"].(string); ok && oid != "" {
+				gotObservers[oid] = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d ws messages, got %d", expected.Count, len(gotPaths))
+		}
+	}
+
+	sort.Strings(gotPaths)
+	sort.Strings(expected.Paths)
+	if len(gotPaths) != len(expected.Paths) {
+		t.Fatalf("path count mismatch: got %d want %d", len(gotPaths), len(expected.Paths))
+	}
+	for i := range expected.Paths {
+		if gotPaths[i] != expected.Paths[i] {
+			t.Fatalf("path mismatch at %d: got %q want %q", i, gotPaths[i], expected.Paths[i])
+		}
+	}
+	for _, oid := range expected.ObserverIDs {
+		if !gotObservers[oid] {
+			t.Fatalf("missing expected observer %q in ws messages", oid)
+		}
+	}
 }

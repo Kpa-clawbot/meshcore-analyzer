@@ -1039,7 +1039,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		}
 	}
 
-	// Build broadcast maps (same shape as Node.js WS broadcast)
+	// Build broadcast maps (same shape as Node.js WS broadcast), one per observation.
 	result := make([]map[string]interface{}, 0, len(broadcastOrder))
 	for _, txID := range broadcastOrder {
 		tx := broadcastTxs[txID]
@@ -1055,32 +1055,46 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				decoded["payload"] = payload
 			}
 		}
-		// Build the nested packet object (packets.js checks m.data.packet)
-		pkt := map[string]interface{}{
-			"id":                tx.ID,
-			"raw_hex":           strOrNil(tx.RawHex),
-			"hash":              strOrNil(tx.Hash),
-			"first_seen":        strOrNil(tx.FirstSeen),
-			"timestamp":         strOrNil(tx.FirstSeen),
-			"route_type":        intPtrOrNil(tx.RouteType),
-			"payload_type":      intPtrOrNil(tx.PayloadType),
-			"decoded_json":      strOrNil(tx.DecodedJSON),
-			"observer_id":       strOrNil(tx.ObserverID),
-			"observer_name":     strOrNil(tx.ObserverName),
-			"snr":               floatPtrOrNil(tx.SNR),
-			"rssi":              floatPtrOrNil(tx.RSSI),
-			"path_json":         strOrNil(tx.PathJSON),
-			"direction":         strOrNil(tx.Direction),
-			"observation_count": tx.ObservationCount,
+		for _, obs := range tx.Observations {
+			// Build the nested packet object (packets.js checks m.data.packet)
+			pkt := map[string]interface{}{
+				"id":                tx.ID,
+				"raw_hex":           strOrNil(tx.RawHex),
+				"hash":              strOrNil(tx.Hash),
+				"first_seen":        strOrNil(tx.FirstSeen),
+				"timestamp":         strOrNil(tx.FirstSeen),
+				"route_type":        intPtrOrNil(tx.RouteType),
+				"payload_type":      intPtrOrNil(tx.PayloadType),
+				"decoded_json":      strOrNil(tx.DecodedJSON),
+				"observer_id":       strOrNil(obs.ObserverID),
+				"observer_name":     strOrNil(obs.ObserverName),
+				"snr":               floatPtrOrNil(obs.SNR),
+				"rssi":              floatPtrOrNil(obs.RSSI),
+				"path_json":         strOrNil(obs.PathJSON),
+				"direction":         strOrNil(obs.Direction),
+				"observation_count": tx.ObservationCount,
+			}
+			// Broadcast map: top-level fields for live.js + nested packet for packets.js
+			broadcastMap := make(map[string]interface{}, len(pkt)+2)
+			for k, v := range pkt {
+				broadcastMap[k] = v
+			}
+			broadcastMap["decoded"] = decoded
+			broadcastMap["packet"] = pkt
+			result = append(result, broadcastMap)
 		}
-		// Broadcast map: top-level fields for live.js + nested packet for packets.js
-		broadcastMap := make(map[string]interface{}, len(pkt)+2)
-		for k, v := range pkt {
-			broadcastMap[k] = v
-		}
-		broadcastMap["decoded"] = decoded
-		broadcastMap["packet"] = pkt
-		result = append(result, broadcastMap)
+	}
+
+	// Invalidate analytics caches since new data was ingested
+	if len(result) > 0 {
+		s.cacheMu.Lock()
+		s.rfCache = make(map[string]*cachedResult)
+		s.topoCache = make(map[string]*cachedResult)
+		s.hashCache = make(map[string]*cachedResult)
+		s.chanCache = make(map[string]*cachedResult)
+		s.distCache = make(map[string]*cachedResult)
+		s.subpathCache = make(map[string]*cachedResult)
+		s.cacheMu.Unlock()
 	}
 
 	return result, newMaxID
@@ -1089,7 +1103,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 // IngestNewObservations loads new observations for transmissions already in the
 // store. This catches observations that arrive after IngestNewFromDB has already
 // advanced past the transmission's ID (fixes #174).
-func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) int {
+func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]interface{} {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -1115,7 +1129,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) int {
 	rows, err := s.db.conn.Query(querySQL, sinceObsID, limit)
 	if err != nil {
 		log.Printf("[store] ingest observations query error: %v", err)
-		return sinceObsID
+		return nil
 	}
 	defer rows.Close()
 
@@ -1158,20 +1172,16 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) int {
 	}
 
 	if len(obsRows) == 0 {
-		return sinceObsID
+		return nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	newMaxObsID := sinceObsID
 	updatedTxs := make(map[int]*StoreTx)
+	broadcastMaps := make([]map[string]interface{}, 0, len(obsRows))
 
 	for _, r := range obsRows {
-		if r.obsID > newMaxObsID {
-			newMaxObsID = r.obsID
-		}
-
 		// Already ingested (e.g. by IngestNewFromDB in same cycle)
 		if _, exists := s.byObsID[r.obsID]; exists {
 			continue
@@ -1214,6 +1224,43 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) int {
 		}
 		s.totalObs++
 		updatedTxs[r.txID] = tx
+
+		decoded := map[string]interface{}{
+			"header": map[string]interface{}{
+				"payloadTypeName": resolvePayloadTypeName(tx.PayloadType),
+			},
+		}
+		if tx.DecodedJSON != "" {
+			var payload map[string]interface{}
+			if json.Unmarshal([]byte(tx.DecodedJSON), &payload) == nil {
+				decoded["payload"] = payload
+			}
+		}
+
+		pkt := map[string]interface{}{
+			"id":                tx.ID,
+			"raw_hex":           strOrNil(tx.RawHex),
+			"hash":              strOrNil(tx.Hash),
+			"first_seen":        strOrNil(tx.FirstSeen),
+			"timestamp":         strOrNil(tx.FirstSeen),
+			"route_type":        intPtrOrNil(tx.RouteType),
+			"payload_type":      intPtrOrNil(tx.PayloadType),
+			"decoded_json":      strOrNil(tx.DecodedJSON),
+			"observer_id":       strOrNil(obs.ObserverID),
+			"observer_name":     strOrNil(obs.ObserverName),
+			"snr":               floatPtrOrNil(obs.SNR),
+			"rssi":              floatPtrOrNil(obs.RSSI),
+			"path_json":         strOrNil(obs.PathJSON),
+			"direction":         strOrNil(obs.Direction),
+			"observation_count": tx.ObservationCount,
+		}
+		broadcastMap := make(map[string]interface{}, len(pkt)+2)
+		for k, v := range pkt {
+			broadcastMap[k] = v
+		}
+		broadcastMap["decoded"] = decoded
+		broadcastMap["packet"] = pkt
+		broadcastMaps = append(broadcastMaps, broadcastMap)
 	}
 
 	// Re-pick best observation for updated transmissions and update subpath index
@@ -1254,7 +1301,21 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) int {
 		}
 	}
 
-	return newMaxObsID
+	if len(updatedTxs) > 0 {
+		// Invalidate analytics caches
+		s.cacheMu.Lock()
+		s.rfCache = make(map[string]*cachedResult)
+		s.topoCache = make(map[string]*cachedResult)
+		s.hashCache = make(map[string]*cachedResult)
+		s.chanCache = make(map[string]*cachedResult)
+		s.distCache = make(map[string]*cachedResult)
+		s.subpathCache = make(map[string]*cachedResult)
+		s.cacheMu.Unlock()
+
+		// analytics caches cleared; no per-cycle log to avoid stdout overhead
+	}
+
+	return broadcastMaps
 }
 
 // MaxTransmissionID returns the highest transmission ID in the store.

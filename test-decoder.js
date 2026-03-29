@@ -28,22 +28,22 @@ test('FLOOD + ADVERT = 0x11', () => {
 });
 
 test('TRANSPORT_FLOOD = routeType 0', () => {
-  // 0x00 = TRANSPORT_FLOOD + REQ(0), needs transport codes + 16 byte payload
-  const hex = '0000' + 'AABB' + 'CCDD' + '00'.repeat(16);
+  // header=0x00 (TRANSPORT_FLOOD + REQ), transportCodes=AABB+CCDD, pathByte=0x00, payload
+  const hex = '00' + 'AABB' + 'CCDD' + '00' + '00'.repeat(16);
   const p = decodePacket(hex);
   assert.strictEqual(p.header.routeType, 0);
   assert.strictEqual(p.header.routeTypeName, 'TRANSPORT_FLOOD');
   assert.notStrictEqual(p.transportCodes, null);
-  assert.strictEqual(p.transportCodes.nextHop, 'AABB');
-  assert.strictEqual(p.transportCodes.lastHop, 'CCDD');
+  assert.strictEqual(p.transportCodes.code1, 'AABB');
+  assert.strictEqual(p.transportCodes.code2, 'CCDD');
 });
 
 test('TRANSPORT_DIRECT = routeType 3', () => {
-  const hex = '0300' + '1122' + '3344' + '00'.repeat(16);
+  const hex = '03' + '1122' + '3344' + '00' + '00'.repeat(16);
   const p = decodePacket(hex);
   assert.strictEqual(p.header.routeType, 3);
   assert.strictEqual(p.header.routeTypeName, 'TRANSPORT_DIRECT');
-  assert.strictEqual(p.transportCodes.nextHop, '1122');
+  assert.strictEqual(p.transportCodes.code1, '1122');
 });
 
 test('DIRECT = routeType 2, no transport codes', () => {
@@ -358,9 +358,7 @@ test('ACK decode', () => {
   const hex = '0D00' + '00'.repeat(18);
   const p = decodePacket(hex);
   assert.strictEqual(p.payload.type, 'ACK');
-  assert(p.payload.destHash);
-  assert(p.payload.srcHash);
-  assert(p.payload.extraHash);
+  assert(p.payload.ackChecksum);
 });
 
 test('ACK too short', () => {
@@ -424,9 +422,9 @@ test('TRACE decode', () => {
   const hex = '2500' + '00'.repeat(12);
   const p = decodePacket(hex);
   assert.strictEqual(p.payload.type, 'TRACE');
-  assert.strictEqual(p.payload.flags, 0);
   assert(p.payload.tag !== undefined);
-  assert(p.payload.destHash);
+  assert(p.payload.authCode !== undefined);
+  assert.strictEqual(p.payload.flags, 0);
 });
 
 test('TRACE too short', () => {
@@ -460,16 +458,18 @@ test('Transport route too short throws', () => {
   assert.throws(() => decodePacket('0000'), /too short for transport/);
 });
 
-test('Corrupt packet #183 — path overflow capped to buffer', () => {
+test('Corrupt packet #183 — TRANSPORT_DIRECT with correct field order', () => {
   const hex = 'BBAD6797EC8751D500BF95A1A776EF580E665BCBF6A0BBE03B5E730707C53489B8C728FD3FB902397197E1263CEC21E52465362243685DBBAD6797EC8751C90A75D9FD8213155D';
   const p = decodePacket(hex);
   assert.strictEqual(p.header.routeType, 3, 'routeType should be TRANSPORT_DIRECT');
   assert.strictEqual(p.header.payloadTypeName, 'UNKNOWN');
-  // pathByte 0xAD claims 45 hops × 3 bytes = 135, but only 65 bytes available
+  // transport codes are bytes 1-4, pathByte=0x87 at byte 5
+  assert.strictEqual(p.transportCodes.code1, 'AD67');
+  assert.strictEqual(p.transportCodes.code2, '97EC');
+  // pathByte 0x87: hashSize=3, hashCount=7
   assert.strictEqual(p.path.hashSize, 3);
-  assert.strictEqual(p.path.hashCount, 21, 'hashCount capped to fit buffer');
-  assert.strictEqual(p.path.hops.length, 21);
-  assert.strictEqual(p.path.truncated, true);
+  assert.strictEqual(p.path.hashCount, 7);
+  assert.strictEqual(p.path.hops.length, 7);
   // No empty strings in hops
   assert(p.path.hops.every(h => h.length > 0), 'no empty hops');
 });

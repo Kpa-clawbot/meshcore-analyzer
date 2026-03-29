@@ -1254,6 +1254,24 @@ seedTestData();
     lastPathSeenMap.delete(liveNode);
   });
 
+  // ── Cache hit rate includes stale hits ──
+  await t('Cache hitRate includes staleHits in formula', async () => {
+    cache.clear();
+    cache.hits = 0;
+    cache.misses = 0;
+    cache.staleHits = 0;
+    // Simulate: 3 hits, 2 stale hits, 5 misses => rate = (3+2)/(3+2+5) = 50%
+    cache.hits = 3;
+    cache.staleHits = 2;
+    cache.misses = 5;
+    const r = await request(app).get('/api/health').expect(200);
+    assert(r.body.cache.hitRate === 50, 'hitRate should be (hits+staleHits)/(hits+staleHits+misses) = 50%, got ' + r.body.cache.hitRate);
+    // Reset
+    cache.hits = 0;
+    cache.misses = 0;
+    cache.staleHits = 0;
+  });
+
   // ── Summary ──
   console.log(`\n═══ Server Route Tests: ${passed} passed, ${failed} failed ═══`);
   if (failed > 0) process.exit(1);

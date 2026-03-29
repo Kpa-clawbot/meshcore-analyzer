@@ -1512,14 +1512,12 @@
       rows += fieldRow(off + 1, 'Sender', decoded.sender || '—', '');
       if (decoded.sender_timestamp) rows += fieldRow(off + 2, 'Sender Time', decoded.sender_timestamp, '');
     } else if (decoded.type === 'ACK') {
-      rows += fieldRow(off, 'Dest Hash (6B)', decoded.destHash || '', '');
-      rows += fieldRow(off + 6, 'Src Hash (6B)', decoded.srcHash || '', '');
-      rows += fieldRow(off + 12, 'Extra (6B)', decoded.extraHash || '', '');
+      rows += fieldRow(off, 'Checksum (4B)', decoded.ackChecksum || '', '');
     } else if (decoded.destHash !== undefined) {
-      rows += fieldRow(off, 'Dest Hash (6B)', decoded.destHash || '', '');
-      rows += fieldRow(off + 6, 'Src Hash (6B)', decoded.srcHash || '', '');
-      rows += fieldRow(off + 12, 'MAC (4B)', decoded.mac || '', '');
-      rows += fieldRow(off + 16, 'Encrypted Data', truncate(decoded.encryptedData || '', 30), '');
+      rows += fieldRow(off, 'Dest Hash (1B)', decoded.destHash || '', '');
+      rows += fieldRow(off + 1, 'Src Hash (1B)', decoded.srcHash || '', '');
+      rows += fieldRow(off + 2, 'MAC (2B)', decoded.mac || '', '');
+      rows += fieldRow(off + 4, 'Encrypted Data', truncate(decoded.encryptedData || '', 30), '');
     } else {
       rows += fieldRow(off, 'Raw', truncate(buf.slice(off * 2), 40), '');
     }

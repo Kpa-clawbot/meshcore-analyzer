@@ -40,12 +40,12 @@
           html += `<h3>🔧 Go Runtime</h3><div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;">
             <div class="perf-card"><div class="perf-num">${gr.goroutines}</div><div class="perf-label">Goroutines</div></div>
             <div class="perf-card"><div class="perf-num">${gr.numGC}</div><div class="perf-label">GC Collections</div></div>
-            <div class="perf-card"><div class="perf-num" style="color:${gcColor}">${gr.pauseTotalMs}ms</div><div class="perf-label">GC Pause Total</div></div>
-            <div class="perf-card"><div class="perf-num">${gr.lastPauseMs}ms</div><div class="perf-label">Last GC Pause</div></div>
-            <div class="perf-card"><div class="perf-num">${gr.heapAllocMB}MB</div><div class="perf-label">Heap Alloc</div></div>
-            <div class="perf-card"><div class="perf-num">${gr.heapSysMB}MB</div><div class="perf-label">Heap Sys</div></div>
-            <div class="perf-card"><div class="perf-num">${gr.heapInuseMB}MB</div><div class="perf-label">Heap Inuse</div></div>
-            <div class="perf-card"><div class="perf-num">${gr.heapIdleMB}MB</div><div class="perf-label">Heap Idle</div></div>
+            <div class="perf-card"><div class="perf-num" style="color:${gcColor}">${(+gr.pauseTotalMs).toFixed(1)}ms</div><div class="perf-label">GC Pause Total</div></div>
+            <div class="perf-card"><div class="perf-num">${(+gr.lastPauseMs).toFixed(1)}ms</div><div class="perf-label">Last GC Pause</div></div>
+            <div class="perf-card"><div class="perf-num">${(+gr.heapAllocMB).toFixed(1)}MB</div><div class="perf-label">Heap Alloc</div></div>
+            <div class="perf-card"><div class="perf-num">${(+gr.heapSysMB).toFixed(1)}MB</div><div class="perf-label">Heap Sys</div></div>
+            <div class="perf-card"><div class="perf-num">${(+gr.heapInuseMB).toFixed(1)}MB</div><div class="perf-label">Heap Inuse</div></div>
+            <div class="perf-card"><div class="perf-num">${(+gr.heapIdleMB).toFixed(1)}MB</div><div class="perf-label">Heap Idle</div></div>
             <div class="perf-card"><div class="perf-num">${gr.numCPU}</div><div class="perf-label">CPUs</div></div>
             <div class="perf-card"><div class="perf-num">${health.websocket.clients}</div><div class="perf-label">WS Clients</div></div>
           </div>`;

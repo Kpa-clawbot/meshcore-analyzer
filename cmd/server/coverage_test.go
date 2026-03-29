@@ -23,6 +23,8 @@ func setupTestDBv2(t *testing.T) *DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Force single connection so all goroutines share the same in-memory DB
+	conn.SetMaxOpenConns(1)
 	schema := `
 		CREATE TABLE nodes (
 			public_key TEXT PRIMARY KEY, name TEXT, role TEXT,
@@ -3426,9 +3428,9 @@ func TestIngestNewObservations(t *testing.T) {
 	_ = newTxMax
 
 	// IngestNewObservations should pick it up
-	newObsMax := store.IngestNewObservations(maxObsID, 500)
-	if newObsMax <= maxObsID {
-		t.Errorf("expected newObsMax > %d, got %d", maxObsID, newObsMax)
+	newObsMaps := store.IngestNewObservations(maxObsID, 500)
+	if len(newObsMaps) != 1 {
+		t.Errorf("expected 1 observation broadcast map, got %d", len(newObsMaps))
 	}
 	if initialTx.ObservationCount != initialObsCount+1 {
 		t.Errorf("expected obs count %d, got %d", initialObsCount+1, initialTx.ObservationCount)
@@ -3443,9 +3445,9 @@ func TestIngestNewObservations(t *testing.T) {
 	}
 
 	t.Run("no new observations", func(t *testing.T) {
-		max := store.IngestNewObservations(newObsMax, 500)
-		if max != newObsMax {
-			t.Errorf("expected same max %d, got %d", newObsMax, max)
+		maps := store.IngestNewObservations(db.GetMaxObservationID(), 500)
+		if maps != nil {
+			t.Errorf("expected nil maps for no new observations, got %d", len(maps))
 		}
 	})
 
@@ -3454,16 +3456,18 @@ func TestIngestNewObservations(t *testing.T) {
 		db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 			VALUES (1, 1, 12.5, -90, '["aa","bb"]', ?)`, time.Now().Unix())
 		prevCount := initialTx.ObservationCount
-		newMax2 := store.IngestNewObservations(newObsMax, 500)
+		maps := store.IngestNewObservations(db.GetMaxObservationID()-1, 500)
 		if initialTx.ObservationCount != prevCount {
 			t.Errorf("duplicate obs should not increase count, was %d now %d",
 				prevCount, initialTx.ObservationCount)
 		}
-		_ = newMax2
+		if len(maps) != 0 {
+			t.Errorf("expected 0 broadcast maps for duplicate obs, got %d", len(maps))
+		}
 	})
 
 	t.Run("default limit", func(t *testing.T) {
-		_ = store.IngestNewObservations(newObsMax, 0)
+		_ = store.IngestNewObservations(db.GetMaxObservationID(), 0)
 	})
 }
 
@@ -3486,9 +3490,9 @@ func TestIngestNewObservationsV2(t *testing.T) {
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_id, observer_name, snr, rssi, path_json, timestamp)
 		VALUES (1, 'obs2', 'Obs Two', 6.0, -98, '["dd","ee"]', ?)`, time.Now().Unix())
 
-	newMax := store.IngestNewObservations(maxObsID, 500)
-	if newMax <= maxObsID {
-		t.Errorf("expected newMax > %d, got %d", maxObsID, newMax)
+	newMaps := store.IngestNewObservations(maxObsID, 500)
+	if len(newMaps) != 1 {
+		t.Errorf("expected 1 observation broadcast map, got %d", len(newMaps))
 	}
 	if tx.ObservationCount != initialCount+1 {
 		t.Errorf("expected obs count %d, got %d", initialCount+1, tx.ObservationCount)
@@ -3711,4 +3715,3 @@ func TestGetChannelMessagesAfterIngest(t *testing.T) {
 		t.Errorf("newest message should be 'brand new message', got %q", lastMsg["text"])
 	}
 }
-

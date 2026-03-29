@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -248,6 +249,145 @@ func TestPollerBroadcastsNewData(t *testing.T) {
 	hub.mu.Lock()
 	delete(hub.clients, client)
 	hub.mu.Unlock()
+}
+
+func TestPollerBroadcastsMultipleObservations(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+	hub := NewHub()
+
+	client := &Client{
+		send: make(chan []byte, 256),
+	}
+	hub.mu.Lock()
+	hub.clients[client] = true
+	hub.mu.Unlock()
+	defer func() {
+		hub.mu.Lock()
+		delete(hub.clients, client)
+		hub.mu.Unlock()
+	}()
+
+	poller := NewPoller(db, hub, 50*time.Millisecond)
+	store := NewPacketStore(db)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store load failed: %v", err)
+	}
+	poller.store = store
+	go poller.Start()
+	defer poller.Stop()
+
+	// Wait for poller to initialize its lastID/lastObsID cursors before
+	// inserting new data; otherwise the poller may snapshot a lastID that
+	// already includes the test data and never broadcast it.
+	time.Sleep(100 * time.Millisecond)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('FACE', 'starbursthash237a', ?, 1, 4, '{"pubKey":"aabbccdd11223344","type":"ADVERT"}')`, now); err != nil {
+		t.Fatalf("insert tx failed: %v", err)
+	}
+	var txID int
+	if err := db.conn.QueryRow(`SELECT id FROM transmissions WHERE hash='starbursthash237a'`).Scan(&txID); err != nil {
+		t.Fatalf("query tx id failed: %v", err)
+	}
+	ts := time.Now().Unix()
+	if _, err := db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (?, 1, 14.0, -82, '["aa"]', ?),
+		       (?, 2, 10.5, -90, '["aa","bb"]', ?),
+		       (?, 1, 7.0, -96, '["aa","bb","cc"]', ?)`,
+		txID, ts, txID, ts+1, txID, ts+2); err != nil {
+		t.Fatalf("insert observations failed: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	var dataMsgs []map[string]interface{}
+	for len(dataMsgs) < 3 {
+		select {
+		case raw := <-client.send:
+			var parsed map[string]interface{}
+			if err := json.Unmarshal(raw, &parsed); err != nil {
+				t.Fatalf("unmarshal ws msg failed: %v", err)
+			}
+			if parsed["type"] != "packet" {
+				continue
+			}
+			data, ok := parsed["data"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if data["hash"] == "starbursthash237a" {
+				dataMsgs = append(dataMsgs, data)
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for 3 observation broadcasts, got %d", len(dataMsgs))
+		}
+	}
+
+	if len(dataMsgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(dataMsgs))
+	}
+
+	paths := make([]string, 0, 3)
+	observers := make(map[string]bool)
+	for _, m := range dataMsgs {
+		hash, _ := m["hash"].(string)
+		if hash != "starbursthash237a" {
+			t.Fatalf("unexpected hash %q", hash)
+		}
+		p, _ := m["path_json"].(string)
+		paths = append(paths, p)
+		if oid, ok := m["observer_id"].(string); ok && oid != "" {
+			observers[oid] = true
+		}
+	}
+	sort.Strings(paths)
+	wantPaths := []string{`["aa","bb","cc"]`, `["aa","bb"]`, `["aa"]`}
+	sort.Strings(wantPaths)
+	for i := range wantPaths {
+		if paths[i] != wantPaths[i] {
+			t.Fatalf("path mismatch at %d: got %q want %q", i, paths[i], wantPaths[i])
+		}
+	}
+	if len(observers) < 2 {
+		t.Fatalf("expected observations from >=2 observers, got %d", len(observers))
+	}
+}
+
+func TestIngestNewObservationsBroadcast(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+	store := NewPacketStore(db)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store load failed: %v", err)
+	}
+
+	maxObs := db.GetMaxObservationID()
+	now := time.Now().Unix()
+	if _, err := db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, 2, 6.0, -100, '["aa","zz"]', ?),
+		       (1, 1, 5.0, -101, '["aa","yy"]', ?)`, now, now+1); err != nil {
+		t.Fatalf("insert new observations failed: %v", err)
+	}
+
+	maps := store.IngestNewObservations(maxObs, 500)
+	if len(maps) != 2 {
+		t.Fatalf("expected 2 broadcast maps, got %d", len(maps))
+	}
+	for _, m := range maps {
+		if m["hash"] != "abc123def4567890" {
+			t.Fatalf("unexpected hash in map: %v", m["hash"])
+		}
+		path, ok := m["path_json"].(string)
+		if !ok || path == "" {
+			t.Fatalf("missing path_json in map: %#v", m)
+		}
+		if _, ok := m["observer_id"]; !ok {
+			t.Fatalf("missing observer_id in map: %#v", m)
+		}
+	}
 }
 
 func TestHubRegisterUnregister(t *testing.T) {

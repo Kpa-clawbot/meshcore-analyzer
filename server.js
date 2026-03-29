@@ -207,6 +207,13 @@ class TTLCache {
       if (key.startsWith(prefix)) this.store.delete(key);
     }
   }
+  debouncedInvalidateBulkHealth() {
+    if (this._bulkHealthTimer) return;
+    this._bulkHealthTimer = setTimeout(() => {
+      this._bulkHealthTimer = null;
+      this.invalidate('bulk-health');
+    }, 30000);
+  }
   debouncedInvalidateAll() {
     if (this._debounceTimer) return;
     this._debounceTimer = setTimeout(() => {
@@ -410,7 +417,7 @@ app.get('/api/perf', (req, res) => {
     avgMs: perfStats.requests ? Math.round(perfStats.totalMs / perfStats.requests * 10) / 10 : 0,
     endpoints: Object.fromEntries(sorted),
     slowQueries: perfStats.slowQueries.slice(-20),
-    cache: { size: cache.size, hits: cache.hits, misses: cache.misses, staleHits: cache.staleHits, recomputes: cache.recomputes, hitRate: cache.hits + cache.misses > 0 ? Math.round(cache.hits / (cache.hits + cache.misses) * 1000) / 10 : 0 },
+    cache: { size: cache.size, hits: cache.hits, misses: cache.misses, staleHits: cache.staleHits, recomputes: cache.recomputes, hitRate: cache.hits + cache.staleHits + cache.misses > 0 ? Math.round((cache.hits + cache.staleHits) / (cache.hits + cache.staleHits + cache.misses) * 1000) / 10 : 0 },
     packetStore: pktStore.getStats(),
     sqlite: (() => {
       try {
@@ -519,7 +526,7 @@ app.get('/api/health', (req, res) => {
       misses: cache.misses,
       staleHits: cache.staleHits,
       recomputes: cache.recomputes,
-      hitRate: cache.hits + cache.misses > 0 ? Math.round(cache.hits / (cache.hits + cache.misses) * 1000) / 10 : 0,
+      hitRate: cache.hits + cache.staleHits + cache.misses > 0 ? Math.round((cache.hits + cache.staleHits) / (cache.hits + cache.staleHits + cache.misses) * 1000) / 10 : 0,
     },
     websocket: {
       clients: wsClients,
@@ -723,7 +730,7 @@ for (const source of mqttSources) {
             // Invalidate this node's caches on advert
             cache.invalidate('node:' + p.pubKey);
             cache.invalidate('health:' + p.pubKey);
-            cache.invalidate('bulk-health');
+            cache.debouncedInvalidateBulkHealth();
 
             // Cross-reference: if this node's pubkey matches an existing observer, backfill observer name
             if (p.name && p.pubKey) {

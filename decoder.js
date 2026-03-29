@@ -2,8 +2,8 @@
  * MeshCore Packet Decoder
  * Custom implementation — does NOT use meshcore-decoder library (known path_length bug).
  *
- * Packet layout:
- *   [header(1)] [pathLength(1)] [transportCodes?] [path hops] [payload...]
+ * Packet layout (per firmware docs/packet_format.md):
+ *   [header(1)] [transportCodes?(4)] [pathLength(1)] [path hops] [payload...]
  *
  * Header byte (LSB first):
  *   bits 1-0: routeType (0=TRANSPORT_FLOOD, 1=FLOOD, 2=DIRECT, 3=TRANSPORT_DIRECT)
@@ -42,7 +42,7 @@ const PAYLOAD_TYPES = {
   0x0F: 'RAW_CUSTOM',
 };
 
-// Route types that carry transport codes (nextHop + lastHop, 2 bytes each)
+// Route types that carry transport codes (2x uint16_t, 4 bytes total)
 const TRANSPORT_ROUTES = new Set([0, 3]); // TRANSPORT_FLOOD, TRANSPORT_DIRECT
 
 // --- Header parsing ---
@@ -94,13 +94,11 @@ function decodeEncryptedPayload(buf) {
   };
 }
 
-/** ACK: dest(1) + src(1) + ack_hash(4) (per Mesh.cpp) */
+/** ACK: checksum(4) — CRC of message timestamp + text + sender pubkey (per Mesh.cpp createAck) */
 function decodeAck(buf) {
-  if (buf.length < 6) return { error: 'too short', raw: buf.toString('hex') };
+  if (buf.length < 4) return { error: 'too short', raw: buf.toString('hex') };
   return {
-    destHash: buf.subarray(0, 1).toString('hex'),
-    srcHash: buf.subarray(1, 2).toString('hex'),
-    extraHash: buf.subarray(2, 6).toString('hex'),
+    ackChecksum: buf.subarray(0, 4).toString('hex'),
   };
 }
 
@@ -125,6 +123,8 @@ function decodeAdvert(buf) {
       room: advType === 3,
       sensor: advType === 4,
       hasLocation: !!(flags & 0x10),
+      hasFeat1: !!(flags & 0x20),
+      hasFeat2: !!(flags & 0x40),
       hasName: !!(flags & 0x80),
     };
 
@@ -133,6 +133,14 @@ function decodeAdvert(buf) {
       result.lat = appdata.readInt32LE(off) / 1e6;
       result.lon = appdata.readInt32LE(off + 4) / 1e6;
       off += 8;
+    }
+    if (result.flags.hasFeat1 && appdata.length >= off + 2) {
+      result.feat1 = appdata.readUInt16LE(off);
+      off += 2;
+    }
+    if (result.flags.hasFeat2 && appdata.length >= off + 2) {
+      result.feat2 = appdata.readUInt16LE(off);
+      off += 2;
     }
     if (result.flags.hasName) {
       // Find null terminator to separate name from trailing telemetry bytes
@@ -231,7 +239,7 @@ function decodeGrpTxt(buf, channelKeys) {
   return { type: 'GRP_TXT', channelHash, channelHashHex, decryptionStatus: 'no_key', mac, encryptedData };
 }
 
-/** ANON_REQ: dest(6) + ephemeral_pubkey(32) + MAC(4) + encrypted */
+/** ANON_REQ: dest(1) + ephemeral_pubkey(32) + MAC(2) + encrypted */
 function decodeAnonReq(buf) {
   if (buf.length < 35) return { error: 'too short', raw: buf.toString('hex') };
   return {
@@ -242,7 +250,7 @@ function decodeAnonReq(buf) {
   };
 }
 
-/** PATH: dest(6) + src(6) + MAC(4) + path_data */
+/** PATH: dest(1) + src(1) + MAC(2) + path_data */
 function decodePath_payload(buf) {
   if (buf.length < 4) return { error: 'too short', raw: buf.toString('hex') };
   return {
@@ -253,14 +261,14 @@ function decodePath_payload(buf) {
   };
 }
 
-/** TRACE: flags(1) + tag(4) + dest(6) + src(1) */
+/** TRACE: tag(4) + authCode(4) + flags(1) + pathData (per Mesh.cpp onRecvPacket TRACE) */
 function decodeTrace(buf) {
-  if (buf.length < 12) return { error: 'too short', raw: buf.toString('hex') };
+  if (buf.length < 9) return { error: 'too short', raw: buf.toString('hex') };
   return {
-    flags: buf[0],
-    tag: buf.readUInt32LE(1),
-    destHash: buf.subarray(5, 11).toString('hex'),
-    srcHash: buf.subarray(11, 12).toString('hex'),
+    tag: buf.readUInt32LE(0),
+    authCode: buf.subarray(4, 8).toString('hex'),
+    flags: buf[8],
+    pathData: buf.subarray(9).toString('hex'),
   };
 }
 
@@ -289,19 +297,21 @@ function decodePacket(hexString, channelKeys) {
   if (buf.length < 2) throw new Error('Packet too short (need at least header + pathLength)');
 
   const header = decodeHeader(buf[0]);
-  const pathByte = buf[1];
-  let offset = 2;
+  let offset = 1;
 
-  // Transport codes for TRANSPORT_FLOOD / TRANSPORT_DIRECT
+  // Transport codes for TRANSPORT_FLOOD / TRANSPORT_DIRECT — BEFORE path_length per spec
   let transportCodes = null;
   if (TRANSPORT_ROUTES.has(header.routeType)) {
     if (buf.length < offset + 4) throw new Error('Packet too short for transport codes');
     transportCodes = {
-      nextHop: buf.subarray(offset, offset + 2).toString('hex').toUpperCase(),
-      lastHop: buf.subarray(offset + 2, offset + 4).toString('hex').toUpperCase(),
+      code1: buf.subarray(offset, offset + 2).toString('hex').toUpperCase(),
+      code2: buf.subarray(offset + 2, offset + 4).toString('hex').toUpperCase(),
     };
     offset += 4;
   }
+
+  // Path length byte — AFTER transport codes per spec
+  const pathByte = buf[offset++];
 
   // Path
   const path = decodePath(pathByte, buf, offset);
@@ -386,7 +396,7 @@ module.exports = { decodePacket, validateAdvert, hasNonPrintableChars, ROUTE_TYP
 
 // --- Tests ---
 if (require.main === module) {
-  console.log('=== Test 1: ADVERT, FLOOD, 5 hops (2-byte hashes), "Test Repeater" ===');
+  console.log('=== Test 1: ADVERT, FLOOD, 5 hops (2-byte hashes), "Kpa Roof Solar" ===');
   const pkt1 = decodePacket(
     '11451000D818206D3AAC152C8A91F89957E6D30CA51F36E28790228971C473B755F244F718754CF5EE4A2FD58D944466E42CDED140C66D0CC590183E32BAF40F112BE8F3F2BDF6012B4B2793C52F1D36F69EE054D9A05593286F78453E56C0EC4A3EB95DDA2A7543FCCC00B939CACC009278603902FC12BCF84B706120526F6F6620536F6C6172'
   );
@@ -402,7 +412,7 @@ if (require.main === module) {
   assert(pkt1.path.hops[0] === '1000', 'first hop should be 1000');
   assert(pkt1.path.hops[1] === 'D818', 'second hop should be D818');
   assert(pkt1.transportCodes === null, 'FLOOD has no transport codes');
-  assert(pkt1.payload.name === 'Test Repeater', 'name should be "Test Repeater"');
+  assert(pkt1.payload.name === 'Kpa Roof Solar', 'name should be "Kpa Roof Solar"');
   console.log('✅ Test 1 passed\n');
 
   console.log('=== Test 2: ADVERT, FLOOD, 0 hops (zero-path) ===');

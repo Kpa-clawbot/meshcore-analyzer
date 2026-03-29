@@ -17,6 +17,8 @@ func setupTestDB(t *testing.T) *DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Force single connection so all goroutines share the same in-memory DB
+	conn.SetMaxOpenConns(1)
 
 	// Create schema matching MeshCore Analyzer v3
 	schema := `

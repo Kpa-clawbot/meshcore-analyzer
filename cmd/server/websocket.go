@@ -181,9 +181,19 @@ func (p *Poller) Start() {
 					lastID = newMax
 				}
 				// Ingest new observations for existing transmissions (fixes #174)
-				newObsMax := p.store.IngestNewObservations(lastObsID, 500)
-				if newObsMax > lastObsID {
-					lastObsID = newObsMax
+				nextObsID := lastObsID
+				if err := p.db.conn.QueryRow(`
+					SELECT COALESCE(MAX(id), ?) FROM (
+						SELECT id FROM observations
+						WHERE id > ?
+						ORDER BY id ASC
+						LIMIT 500
+					)`, lastObsID, lastObsID).Scan(&nextObsID); err != nil {
+					nextObsID = lastObsID
+				}
+				newObs := p.store.IngestNewObservations(lastObsID, 500)
+				if nextObsID > lastObsID {
+					lastObsID = nextObsID
 				}
 				if len(newTxs) > 0 {
 					log.Printf("[broadcast] sending %d packets to %d clients (lastID now %d)", len(newTxs), p.hub.ClientCount(), lastID)
@@ -192,6 +202,12 @@ func (p *Poller) Start() {
 					p.hub.Broadcast(WSMessage{
 						Type: "packet",
 						Data: tx,
+					})
+				}
+				for _, obs := range newObs {
+					p.hub.Broadcast(WSMessage{
+						Type: "packet",
+						Data: obs,
 					})
 				}
 			} else {
