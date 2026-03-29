@@ -5,9 +5,12 @@
 
 services:
   prod:
+    build: .
     image: corescope:latest
     container_name: corescope-prod
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${PROD_HTTP_PORT:-80}:${PROD_HTTP_PORT:-80}"
       - "${PROD_HTTPS_PORT:-443}:${PROD_HTTPS_PORT:-443}"
@@ -26,9 +29,12 @@ services:
       retries: 3
 
   staging:
+    build: .
     image: corescope:latest
     container_name: corescope-staging
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${STAGING_HTTP_PORT:-81}:${STAGING_HTTP_PORT:-81}"
       - "${STAGING_MQTT_PORT:-1884}:1883"
@@ -57,6 +63,8 @@ services:
     image: corescope-go:latest
     container_name: corescope-staging-go
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${STAGING_GO_HTTP_PORT:-82}:80"
       - "${STAGING_GO_MQTT_PORT:-1885}:1883"

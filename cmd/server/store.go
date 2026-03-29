@@ -98,6 +98,11 @@ type PacketStore struct {
 	// computed during Load() and incrementally updated on ingest.
 	distHops  []distHopRecord
 	distPaths []distPathRecord
+
+	// Cached GetNodeHashSizeInfo result — recomputed at most once every 15s
+	hashSizeInfoMu    sync.Mutex
+	hashSizeInfoCache map[string]*hashSizeNodeInfo
+	hashSizeInfoAt    time.Time
 }
 
 // Precomputed distance records for fast analytics aggregation.
@@ -3722,8 +3727,26 @@ type hashSizeNodeInfo struct {
 	Inconsistent bool
 }
 
-// GetNodeHashSizeInfo scans advert packets to compute per-node hash size data.
+// GetNodeHashSizeInfo returns cached per-node hash size data, recomputing at most every 15s.
 func (s *PacketStore) GetNodeHashSizeInfo() map[string]*hashSizeNodeInfo {
+	const ttl = 15 * time.Second
+	s.hashSizeInfoMu.Lock()
+	if s.hashSizeInfoCache != nil && time.Since(s.hashSizeInfoAt) < ttl {
+		cached := s.hashSizeInfoCache
+		s.hashSizeInfoMu.Unlock()
+		return cached
+	}
+	s.hashSizeInfoMu.Unlock()
+	result := s.computeNodeHashSizeInfo()
+	s.hashSizeInfoMu.Lock()
+	s.hashSizeInfoCache = result
+	s.hashSizeInfoAt = time.Now()
+	s.hashSizeInfoMu.Unlock()
+	return result
+}
+
+// computeNodeHashSizeInfo scans advert packets to compute per-node hash size data.
+func (s *PacketStore) computeNodeHashSizeInfo() map[string]*hashSizeNodeInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

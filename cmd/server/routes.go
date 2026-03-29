@@ -33,6 +33,11 @@ type Server struct {
 	memStatsMu   sync.Mutex
 	memStatsCache runtime.MemStats
 	memStatsCachedAt time.Time
+
+	// Cached /api/stats response — recomputed at most once every 10s
+	statsMu      sync.Mutex
+	statsCache   *StatsResponse
+	statsCachedAt time.Time
 }
 
 // PerfStats tracks request performance.
@@ -380,6 +385,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	const statsTTL = 10 * time.Second
+
+	s.statsMu.Lock()
+	if s.statsCache != nil && time.Since(s.statsCachedAt) < statsTTL {
+		cached := s.statsCache
+		s.statsMu.Unlock()
+		writeJSON(w, cached)
+		return
+	}
+	s.statsMu.Unlock()
+
 	var stats *Stats
 	var err error
 	if s.store != nil {
@@ -392,7 +408,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	counts := s.db.GetRoleCounts()
-	writeJSON(w, StatsResponse{
+	resp := &StatsResponse{
 		TotalPackets:       stats.TotalPackets,
 		TotalTransmissions: &stats.TotalTransmissions,
 		TotalObservations:  stats.TotalObservations,
@@ -411,7 +427,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			Companions: counts["companions"],
 			Sensors:    counts["sensors"],
 		},
-	})
+	}
+
+	s.statsMu.Lock()
+	s.statsCache = resp
+	s.statsCachedAt = time.Now()
+	s.statsMu.Unlock()
+
+	writeJSON(w, resp)
 }
 
 func (s *Server) handlePerf(w http.ResponseWriter, r *http.Request) {
