@@ -17,8 +17,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${PROD_HTTP_PORT:-80}:${PROD_HTTP_PORT:-80}"
-      - "${PROD_HTTPS_PORT:-443}:${PROD_HTTPS_PORT:-443}"
+      - "${PROD_HTTP_PORT:-80}:80"
+      - "${PROD_HTTPS_PORT:-443}:443"
       - "${PROD_MQTT_PORT:-1883}:1883"
     volumes:
       - ./config.json:/app/config.json:ro
