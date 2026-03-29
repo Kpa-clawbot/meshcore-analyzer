@@ -424,6 +424,11 @@ func TestParityWSMultiObserverGolden(t *testing.T) {
 	go poller.Start()
 	defer poller.Stop()
 
+	// Wait for poller to initialize its lastID/lastObsID cursors before
+	// inserting new data; otherwise the poller may snapshot a lastID that
+	// already includes the test data and never broadcast it.
+	time.Sleep(100 * time.Millisecond)
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
 		VALUES ('BEEF', 'goldenstarburst237', ?, 1, 4, '{"pubKey":"aabbccdd11223344","type":"ADVERT"}')`, now); err != nil {
