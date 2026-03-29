@@ -258,24 +258,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Stop old staging container
+      - name: Stop old containers
         run: |
+          # Kill legacy container names from pre-rename era
+          docker rm -f meshcore-analyzer meshcore-prod meshcore-staging meshcore-staging-go 2>/dev/null || true
+          # Kill current container names
           docker compose --profile staging-go stop staging-go 2>/dev/null || true
-          docker wait corescope-staging-go 2>/dev/null || true
-          docker rm -f corescope-staging-go 2>/dev/null || true
+          docker rm -f corescope-staging-go corescope-prod corescope-staging 2>/dev/null || true
           fuser -k 82/tcp 2>/dev/null || true
-          for i in $(seq 1 20); do
-            if ! docker ps --filter "name=^corescope-staging-go$" --format '{{.Names}}' | grep -q '^corescope-staging-go$'; then
-              echo "Old staging container fully stopped/removed"
-              break
-            fi
-            if [ "$i" -eq 20 ]; then
-              echo "Timed out waiting for old staging container to exit"
-              docker ps --filter "name=^corescope-staging-go$"
-              exit 1
-            fi
-            sleep 1
-          done
+          sleep 2
 
       - name: Start staging on port 82
         run: |
