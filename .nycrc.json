@@ -1,0 +1,10 @@
+{
+  "include": [
+    "public/*.js"
+  ],
+  "exclude": [
+    "public/vendor/**",
+    "public/leaflet-*.js",
+    "public/qrcode*.js"
+  ]
+}
