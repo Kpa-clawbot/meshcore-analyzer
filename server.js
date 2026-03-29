@@ -1987,9 +1987,17 @@ app.get('/api/analytics/hash-sizes', (req, res) => {
     .sort(([, a], [, b]) => b.packets - a.packets)
     .map(([name, data]) => ({ name, ...data }));
 
+  // Distribution by number of repeaters advertising each hash size
+  const distributionByRepeaters = { 1: 0, 2: 0, 3: 0 };
+  for (const [, v] of Object.entries(byNode)) {
+    const s = v.hashSize;
+    if (s >= 1 && s <= 3) distributionByRepeaters[s]++;
+  }
+
   const _hsResult = {
     total: packets.length,
     distribution,
+    distributionByRepeaters,
     hourly,
     topHops,
     multiByteNodes

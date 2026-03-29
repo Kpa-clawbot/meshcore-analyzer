@@ -876,6 +876,26 @@
             </div>`;
             }).join('')}
           </div>
+          ${data.distributionByRepeaters ? (() => {
+            const dr = data.distributionByRepeaters;
+            const totalRepeaters = (dr[1] || 0) + (dr[2] || 0) + (dr[3] || 0);
+            const rpct = (n) => totalRepeaters ? (n / totalRepeaters * 100).toFixed(1) : '0';
+            const maxRepeaters = Math.max(dr[1] || 0, dr[2] || 0, dr[3] || 0, 1);
+            const colors = { 1: '#ef4444', 2: '#22c55e', 3: '#3b82f6' };
+            return `<h4 style="margin:16px 0 4px">By Repeaters</h4>
+              <p class="text-muted">${totalRepeaters.toLocaleString()} unique repeaters</p>
+              <div class="hash-bars">
+                ${[1, 2, 3].map(size => {
+                  const count = dr[size] || 0;
+                  const width = Math.max((count / maxRepeaters) * 100, count ? 2 : 0);
+                  return `<div class="hash-bar-row">
+                  <div class="hash-bar-label"><strong>${size}-byte</strong></div>
+                  <div class="hash-bar-track"><div class="hash-bar-fill" style="width:${width}%;background:${colors[size]};opacity:0.7"></div></div>
+                  <div class="hash-bar-value">${count.toLocaleString()} <span class="text-muted">(${rpct(count)}%)</span></div>
+                </div>`;
+                }).join('')}
+              </div>`;
+          })() : ''}
         </div>
         <div class="analytics-card flex-1">
           <h3>📈 Hash Size Over Time</h3>

@@ -583,6 +583,11 @@ seedTestData();
   await t('GET /api/analytics/hash-sizes', async () => {
     const r = await request(app).get('/api/analytics/hash-sizes').expect(200);
     assert(typeof r.body === 'object', 'should return hash sizes');
+    assert(r.body.distributionByRepeaters, 'should include distributionByRepeaters');
+    assert(typeof r.body.distributionByRepeaters === 'object', 'distributionByRepeaters should be an object');
+    for (const s of [1, 2, 3]) {
+      assert(typeof r.body.distributionByRepeaters[s] === 'number', `distributionByRepeaters[${s}] should be a number`);
+    }
   });
 
   await t('GET /api/analytics/hash-sizes with region', async () => {
