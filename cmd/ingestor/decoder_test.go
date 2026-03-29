@@ -129,7 +129,7 @@ func TestDecodePath3ByteHashes(t *testing.T) {
 
 func TestTransportCodes(t *testing.T) {
 	// Route type 0 (TRANSPORT_FLOOD) should have transport codes
-	hex := "1400" + "AABB" + "CCDD" + "1A" + strings.Repeat("00", 10)
+	hex := "14" + "AABB" + "CCDD" + "00" + "1A" + strings.Repeat("00", 10)
 	pkt, err := DecodePacket(hex, nil)
 	if err != nil {
 		t.Fatal(err)
