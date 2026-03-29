@@ -520,8 +520,7 @@ func DecodePacket(hexString string, channelKeys map[string]string) (*DecodedPack
 	}
 
 	header := decodeHeader(buf[0])
-	pathByte := buf[1]
-	offset := 2
+	offset := 1
 
 	var tc *TransportCodes
 	if isTransportRoute(header.RouteType) {
@@ -534,6 +533,9 @@ func DecodePacket(hexString string, channelKeys map[string]string) (*DecodedPack
 		}
 		offset += 4
 	}
+
+	pathByte := buf[offset]
+	offset += 1
 
 	path, bytesConsumed := decodePath(pathByte, buf, offset)
 	offset += bytesConsumed
