@@ -184,6 +184,20 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Set up Go 1.22
+        if: steps.docs-check.outputs.docs_only != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.22'
+          cache-dependency-path: cmd/server/go.sum
+
+      - name: Build Go server for E2E tests
+        if: steps.docs-check.outputs.docs_only != 'true'
+        run: |
+          cd cmd/server
+          go build -o ../../corescope-server .
+          echo "Go server built successfully"
+
       - name: Install npm dependencies
         if: steps.docs-check.outputs.docs_only != 'true'
         run: npm ci --production=false
@@ -244,7 +258,7 @@ jobs:
           # Kill any stale server on 13581
           fuser -k 13581/tcp 2>/dev/null || true
           sleep 2
-          COVERAGE=1 PORT=13581 node server.js &
+          ./corescope-server -port 13581 -public public-instrumented &
           echo $! > .server.pid
           echo "Server PID: $(cat .server.pid)"
           # Health-check poll loop (up to 30s)
@@ -256,7 +270,7 @@ jobs:
             if [ "$i" -eq 30 ]; then
               echo "Server failed to start within 30s"
               echo "Last few lines from server logs:"
-              ps aux | grep "PORT=13581" || echo "No server process found"
+              ps aux | grep "corescope-server" || echo "No server process found"
               exit 1
             fi
             sleep 1
@@ -312,7 +326,7 @@ jobs:
         if: steps.docs-check.outputs.docs_only != 'true' && steps.changes.outputs.frontend == 'false'
         run: |
           fuser -k 13581/tcp 2>/dev/null || true
-          PORT=13581 node server.js &
+          ./corescope-server -port 13581 -public public &
           SERVER_PID=$!
           # Wait for server to be ready (up to 15s)
           for i in $(seq 1 15); do
