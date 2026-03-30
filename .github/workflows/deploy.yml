@@ -264,8 +264,7 @@ jobs:
 
       - name: Deploy staging
         run: |
-          # Use docker compose down (not just stop/rm) to properly clean up
-          # the old container, network, and release memory before starting new one
+          # Stop old container and release memory
           docker compose -f "$STAGING_COMPOSE_FILE" -p corescope-staging down --timeout 30 2>/dev/null || true
 
           # Wait for container to be fully gone and OS to reclaim memory (3GB limit)
@@ -277,14 +276,14 @@ jobs:
           done
           sleep 5  # extra pause for OS memory reclaim
 
-          # Ensure staging config exists (docker creates a directory if bind mount source missing)
+          # Ensure staging data dir exists (config.json lives here, no separate file mount)
           STAGING_DATA="${STAGING_DATA_DIR:-$HOME/meshcore-staging-data}"
           mkdir -p "$STAGING_DATA"
-          # Remove directory-masquerading-as-file left by failed docker mount
-          [ -d "$STAGING_DATA/config.json" ] && rm -rf "$STAGING_DATA/config.json"
+
+          # If no config exists, copy the example (CI doesn't have a real prod config)
           if [ ! -f "$STAGING_DATA/config.json" ]; then
-            echo "Staging config missing — copying from repo config.json"
-            cp config.json "$STAGING_DATA/config.json" 2>/dev/null || cp config.example.json "$STAGING_DATA/config.json"
+            echo "Staging config missing — copying config.example.json"
+            cp config.example.json "$STAGING_DATA/config.json" 2>/dev/null || true
           fi
 
           docker compose -f "$STAGING_COMPOSE_FILE" -p corescope-staging up -d staging-go

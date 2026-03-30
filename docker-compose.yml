@@ -21,7 +21,6 @@ services:
       - "${PROD_HTTPS_PORT:-443}:443"
       - "${PROD_MQTT_PORT:-1883}:1883"
     volumes:
-      - ./config.json:/app/config.json:ro
       - ./caddy-config/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${PROD_DATA_DIR:-~/meshcore-data}:/app/data
       - caddy-data:/data/caddy

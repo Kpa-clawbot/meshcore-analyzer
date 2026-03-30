@@ -68,10 +68,11 @@ is_done()    { [ -f "$STATE_FILE" ] && grep -qx "$1" "$STATE_FILE" 2>/dev/null; 
 
 # Check config.json for placeholder values
 check_config_placeholders() {
-  if [ -f config.json ]; then
-    if grep -qE 'your-username|your-password|your-secret|example\.com|changeme' config.json 2>/dev/null; then
+  local cfg="${1:-$PROD_DATA/config.json}"
+  if [ -f "$cfg" ]; then
+    if grep -qE 'your-username|your-password|your-secret|example\.com|changeme' "$cfg" 2>/dev/null; then
       warn "config.json contains placeholder values."
-      warn "Edit config.json and replace placeholder values before deploying."
+      warn "Edit ${cfg} and replace placeholder values before deploying."
     fi
   fi
 }
@@ -179,19 +180,27 @@ cmd_setup() {
   # ── Step 2: Config ──
   step 2 "Configuration"
 
-  if [ -f config.json ]; then
-    log "config.json already exists (not overwriting)."
+  if [ -f "$PROD_DATA/config.json" ]; then
+    log "config.json found in data directory."
     # Sanity check the JSON
-    if ! python3 -c "import json; json.load(open('config.json'))" 2>/dev/null && \
-       ! node -e "JSON.parse(require('fs').readFileSync('config.json'))" 2>/dev/null; then
+    if ! python3 -c "import json; json.load(open('$PROD_DATA/config.json'))" 2>/dev/null && \
+       ! node -e "JSON.parse(require('fs').readFileSync('$PROD_DATA/config.json'))" 2>/dev/null; then
       err "config.json has invalid JSON. Fix it and re-run setup."
       exit 1
     fi
     log "config.json is valid JSON."
-    check_config_placeholders
+    check_config_placeholders "$PROD_DATA/config.json"
+  elif [ -f config.json ]; then
+    # Legacy: config in repo root — move it to data dir
+    info "Found config.json in repo root — moving to data directory..."
+    mkdir -p "$PROD_DATA"
+    cp config.json "$PROD_DATA/config.json"
+    log "Config moved to ${PROD_DATA}/config.json"
+    check_config_placeholders "$PROD_DATA/config.json"
   else
-    info "Creating config.json from example..."
-    cp config.example.json config.json
+    info "Creating config.json in data directory from example..."
+    mkdir -p "$PROD_DATA"
+    cp config.example.json "$PROD_DATA/config.json"
 
     # Generate a random API key
     if command -v openssl &> /dev/null; then
@@ -201,14 +210,14 @@ cmd_setup() {
     fi
     # Replace the placeholder API key
     if command -v sed &> /dev/null; then
-      sed -i "s/your-secret-api-key-here/${API_KEY}/" config.json
+      sed -i "s/your-secret-api-key-here/${API_KEY}/" "$PROD_DATA/config.json"
     fi
 
     log "Created config.json with random API key."
-    check_config_placeholders
+    check_config_placeholders "$PROD_DATA/config.json"
     echo ""
-    echo "   You can customize config.json later (map center, branding, etc)."
-    echo "   Edit with: nano config.json"
+    echo "   Config saved to: ${PROD_DATA}/config.json"
+    echo "   Edit with: nano ${PROD_DATA}/config.json"
     echo ""
   fi
   mark_done "config"
@@ -402,10 +411,15 @@ prepare_staging_db() {
 
 # Copy config.prod.json → config.staging.json with siteName change
 prepare_staging_config() {
-  local prod_config="./config.json"
+  local prod_config="$PROD_DATA/config.json"
   local staging_config="$STAGING_DATA/config.json"
+  mkdir -p "$STAGING_DATA"
+
+  # Docker may have created config.json as a directory
+  [ -d "$staging_config" ] && rmdir "$staging_config" 2>/dev/null || true
+
   if [ ! -f "$prod_config" ]; then
-    warn "No config.json found at ${prod_config} — staging may not start correctly."
+    warn "No production config at ${prod_config} — staging may use defaults."
     return
   fi
   if [ ! -f "$staging_config" ] || [ "$prod_config" -nt "$staging_config" ]; then
@@ -439,11 +453,70 @@ container_health() {
 
 # ─── Start / Stop / Restart ──────────────────────────────────────────────
 
+# Ensure config.json exists in the data directory before starting
+ensure_config() {
+  local data_dir="$1"
+  local config="$data_dir/config.json"
+  mkdir -p "$data_dir"
+
+  # Docker may have created config.json as a directory from a prior failed mount
+  [ -d "$config" ] && rmdir "$config" 2>/dev/null || true
+
+  if [ -f "$config" ]; then
+    return 0
+  fi
+
+  # Try to copy from repo root (legacy location)
+  if [ -f ./config.json ]; then
+    info "No config in data directory — copying from ./config.json"
+    cp ./config.json "$config"
+    return 0
+  fi
+
+  # Prompt admin
+  echo ""
+  warn "No config.json found in ${data_dir}/"
+  echo ""
+  echo "   CoreScope needs a config.json to connect to MQTT brokers."
+  echo ""
+  echo "   Options:"
+  echo "     1) Create from example (you'll edit MQTT settings after)"
+  echo "     2) I'll put one there myself (abort for now)"
+  echo ""
+  read -p "   Choose [1/2]: " -n 1 -r
+  echo ""
+
+  case $REPLY in
+    1)
+      cp config.example.json "$config"
+      # Generate a random API key
+      if command -v openssl &>/dev/null; then
+        API_KEY=$(openssl rand -hex 16)
+      else
+        API_KEY=$(head -c 32 /dev/urandom | xxd -p | head -c 32)
+      fi
+      sed -i "s/your-secret-api-key-here/${API_KEY}/" "$config" 2>/dev/null || true
+      log "Created ${config} from example with random API key."
+      warn "Edit MQTT settings before connecting observers:"
+      echo "     nano ${config}"
+      echo ""
+      ;;
+    *)
+      echo "   Place your config.json at: ${config}"
+      echo "   Then run this command again."
+      exit 0
+      ;;
+  esac
+}
+
 cmd_start() {
   local WITH_STAGING=false
   if [ "$1" = "--with-staging" ]; then
     WITH_STAGING=true
   fi
+
+  # Always check prod config
+  ensure_config "$PROD_DATA"
 
   if $WITH_STAGING; then
     # Prepare staging data and config
@@ -736,10 +809,13 @@ cmd_backup() {
     warn "Database not found (container not running?)"
   fi
 
-  # Config
-  if [ -f config.json ]; then
-    cp config.json "$BACKUP_DIR/config.json"
+  # Config (now lives in data dir)
+  if [ -f "$PROD_DATA/config.json" ]; then
+    cp "$PROD_DATA/config.json" "$BACKUP_DIR/config.json"
     log "config.json"
+  elif [ -f config.json ]; then
+    cp config.json "$BACKUP_DIR/config.json"
+    log "config.json (legacy repo root)"
   fi
 
   # Caddyfile
@@ -833,8 +909,8 @@ cmd_restore() {
 
   # Restore config if present
   if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-    cp "$CONFIG_FILE" ./config.json
-    log "config.json restored"
+    cp "$CONFIG_FILE" "$PROD_DATA/config.json"
+    log "config.json restored to ${PROD_DATA}/"
   fi
 
   # Restore Caddyfile if present

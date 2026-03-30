@@ -25,7 +25,6 @@ services:
       - "6060:6060"   # pprof server
       - "6061:6061"   # pprof ingestor
     volumes:
-      - ${STAGING_DATA_DIR:-~/meshcore-staging-data}/config.json:/app/config.json:ro
       - ${STAGING_DATA_DIR:-~/meshcore-staging-data}:/app/data
       - caddy-data-staging-go:/data/caddy
     environment:
