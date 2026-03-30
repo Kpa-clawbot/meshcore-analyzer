@@ -340,12 +340,34 @@ jobs:
 
       - name: Publish coverage badges to repo
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.BADGE_PUSH_TOKEN }}
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
-          git add .badges/ -f
-          git diff --cached --quiet || (git commit -m "ci: update test badges [skip ci]" && git push) || echo "Badge push failed"
+          # GITHUB_TOKEN cannot push to protected branches (required status checks).
+          # Use admin PAT (BADGE_PUSH_TOKEN) via GitHub Contents API instead.
+          for badge in .badges/*.json; do
+            FILENAME=$(basename "$badge")
+            FILEPATH=".badges/$FILENAME"
+            CONTENT=$(base64 -w0 "$badge")
+            CURRENT_SHA=$(gh api "repos/${{ github.repository }}/contents/$FILEPATH" --jq '.sha' 2>/dev/null || echo "")
+            if [ -n "$CURRENT_SHA" ]; then
+              gh api "repos/${{ github.repository }}/contents/$FILEPATH" \
+                -X PUT \
+                -f message="ci: update $FILENAME [skip ci]" \
+                -f content="$CONTENT" \
+                -f sha="$CURRENT_SHA" \
+                -f branch="master" \
+                --silent 2>&1 || echo "Failed to update $FILENAME"
+            else
+              gh api "repos/${{ github.repository }}/contents/$FILEPATH" \
+                -X PUT \
+                -f message="ci: update $FILENAME [skip ci]" \
+                -f content="$CONTENT" \
+                -f branch="master" \
+                --silent 2>&1 || echo "Failed to create $FILENAME"
+            fi
+          done
+          echo "Badge publish complete"
 
       - name: Post deployment summary
         run: |

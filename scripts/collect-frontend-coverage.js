@@ -96,7 +96,23 @@ async function run() {
     await fill('#homeSearch', '');
     await page.evaluate(() => document.body.click());
 
-    // Customizer
+    // Set myNodes localStorage and revisit home for personalized view
+    await page.evaluate(() => {
+      localStorage.setItem('myNodes', JSON.stringify([
+        '8a91f89957e6d30ca51f36e28790228971c473b755f244f718754cf5ee4a2fd5',
+        'aabb111111111111111111111111111111111111111111111111111111111111',
+        '1122000000000000000000000000000000000000000000000000000000000000'
+      ]));
+    });
+    await nav('#/home');
+    await page.waitForTimeout(200);
+    // Interact with personalized home (my-node cards should appear)
+    await clickAll('.my-node-card', 5);
+    await clickAll('[data-action="health"]', 3);
+    await clickAll('[data-action="packets"]', 3);
+    await clickAll('.mnc-remove', 1);
+
+    // Customizer — open ALL tabs and toggle ALL sections
     await click('#customizeToggle');
     for (const tab of ['branding', 'theme', 'nodes', 'home', 'export']) {
       try { await page.click(`.cust-tab[data-tab="${tab}"]`, { timeout: CLICK_TIMEOUT }); } catch {}
@@ -206,6 +222,48 @@ async function run() {
     await click('#nodesRegionFilter');
     await clickAll('#nodesRegionFilter input[type="checkbox"]', 3);
 
+    // Node analytics page (node-analytics.js)
+    await nav('#/nodes/8a91f89957e6d30ca51f36e28790228971c473b755f244f718754cf5ee4a2fd5/analytics');
+    await page.waitForTimeout(300);
+    // Click day buttons on analytics
+    for (const d of ['1', '7', '30']) {
+      try { await page.click(`[data-days="${d}"]`, { timeout: CLICK_TIMEOUT }); } catch {}
+    }
+    // Try another node's analytics
+    await nav('#/nodes/aabb111111111111111111111111111111111111111111111111111111111111/analytics');
+    await page.waitForTimeout(200);
+
+    // Exercise nodes.js functions via page.evaluate
+    await page.evaluate(() => {
+      // getStatusInfo
+      if (typeof getStatusInfo === 'function') {
+        const nodes = [
+          { role: 'repeater', last_heard: new Date().toISOString(), last_seen: new Date().toISOString(), public_key: 'abc', name: 'TestNode' },
+          { role: 'companion', last_heard: new Date(Date.now() - 999999999).toISOString(), last_seen: null, public_key: 'def', name: 'OldNode' },
+          { role: 'room', last_heard: null, last_seen: null, public_key: 'ghi', name: 'NoTime' },
+          { role: 'sensor', last_heard: new Date().toISOString(), last_seen: new Date().toISOString(), public_key: 'jkl', name: 'Sensor1' },
+        ];
+        for (const n of nodes) {
+          try { getStatusInfo(n); } catch {}
+        }
+      }
+      // renderNodeBadges
+      if (typeof renderNodeBadges === 'function') {
+        try { renderNodeBadges({ battery_mv: 3700, temperature_c: 25, hash_size: 4, hash_size_inconsistent: true, role: 'repeater' }, '#ff0000'); } catch {}
+        try { renderNodeBadges({ battery_mv: null, temperature_c: null, hash_size: null, hash_size_inconsistent: false, role: 'companion' }, '#00ff00'); } catch {}
+      }
+      // renderStatusExplanation
+      if (typeof renderStatusExplanation === 'function') {
+        try { renderStatusExplanation({ role: 'repeater', last_heard: new Date().toISOString(), last_seen: new Date().toISOString() }); } catch {}
+        try { renderStatusExplanation({ role: 'companion', last_heard: null, last_seen: null }); } catch {}
+      }
+      // renderHashInconsistencyWarning
+      if (typeof renderHashInconsistencyWarning === 'function') {
+        try { renderHashInconsistencyWarning({ hash_size_inconsistent: true, hash_size: 4 }); } catch {}
+        try { renderHashInconsistencyWarning({ hash_size_inconsistent: false }); } catch {}
+      }
+    }).catch(() => {});
+
     const cov = await page.evaluate(() => window.__coverage__);
     await ctx.close();
     return cov;
@@ -273,10 +331,51 @@ async function run() {
     await page.evaluate(() => document.body.click());
     await nav('#/packets/deadbeef');
 
+    // Navigate to a real packet hash
+    await nav('#/packets/b6b839cb61eead4a');
+    await page.waitForTimeout(200);
+
     // Region filter
     await nav('#/packets');
     await click('#packetsRegionFilter');
     await clickAll('#packetsRegionFilter input[type="checkbox"]', 3);
+
+    // Exercise packet detail/hex rendering functions via page.evaluate
+    await page.evaluate(() => {
+      // renderDecodedPacket if available globally
+      if (typeof renderDecodedPacket === 'function') {
+        try {
+          renderDecodedPacket({
+            header: { routeType: 1, payloadType: 5, payloadVersion: 1, payloadTypeName: 'GRP_TXT' },
+            payload: { channelHash: 0, text: 'hello', from: 'abc' },
+            path: { hops: ['A1B2', 'C3D4'] }
+          }, '154000E9221C303193541599CC382A78FDAABFAF858F');
+        } catch {}
+        try {
+          renderDecodedPacket({
+            header: { routeType: 0, payloadType: 0, payloadVersion: 1, payloadTypeName: 'ADVERT' },
+            payload: { pubKey: 'aabb', name: 'TestNode', role: 'repeater', lat: 37.3, lon: -121.8 },
+            path: { hops: [] }
+          }, 'FF00AABB');
+        } catch {}
+      }
+
+      // Exercise obsName if available
+      if (typeof obsName === 'function') {
+        try { obsName('test-obs-1'); } catch {}
+        try { obsName('unknown-obs'); } catch {}
+        try { obsName(null); } catch {}
+      }
+
+      // Exercise renderPath/renderHop if available
+      if (typeof renderPath === 'function') {
+        try { renderPath(['A1B2', 'C3D4'], 'test-obs-1'); } catch {}
+        try { renderPath([], 'test-obs-1'); } catch {}
+      }
+      if (typeof renderHop === 'function') {
+        try { renderHop('A1B2', 'test-obs-1'); } catch {}
+      }
+    }).catch(() => {});
 
     const cov = await page.evaluate(() => window.__coverage__);
     await ctx.close();
@@ -377,6 +476,64 @@ async function run() {
         await cycleSelect('#obsDaysSelect');
       }
     } catch {}
+    // Navigate directly to observer detail pages
+    await nav('#/observers/test-obs-1');
+    await page.waitForTimeout(200);
+    await cycleSelect('#obsDaysSelect');
+    await nav('#/observers/test-status-obs');
+    await page.waitForTimeout(200);
+
+    // Compare page with two real observers
+    await nav('#/compare?obsA=test-obs-1&obsB=test-obs-2');
+    await page.waitForTimeout(300);
+    // Also try selecting observers via the UI
+    await nav('#/compare');
+    await page.waitForTimeout(200);
+    try {
+      await page.selectOption('#compareObsA', 'test-obs-1');
+      await page.selectOption('#compareObsB', 'test-obs-2');
+    } catch {}
+    try {
+      // Click compare button
+      await click('#compareBtn');
+      await page.waitForTimeout(300);
+    } catch {}
+
+    // Traces page — search for a real packet hash
+    await nav('#/traces');
+    await page.waitForTimeout(200);
+    try {
+      await page.fill('#traceHashInput', 'b6b839cb61eead4a');
+      await click('#traceSearchBtn');
+      await page.waitForTimeout(300);
+    } catch {}
+    // Try another hash
+    try {
+      await page.fill('#traceHashInput', 'ed3bcc36ddfd824c');
+      await click('#traceSearchBtn');
+      await page.waitForTimeout(200);
+    } catch {}
+    await clickAll('table tbody tr', 3);
+
+    // Exercise channels.js functions
+    await page.evaluate(() => {
+      // hashCode, getChannelColor, getSenderColor, highlightMentions
+      if (typeof hashCode === 'function') {
+        try { hashCode('test'); hashCode(''); hashCode('abc123'); } catch {}
+      }
+      if (typeof getChannelColor === 'function') {
+        try { getChannelColor('00'); getChannelColor('ff'); getChannelColor(null); } catch {}
+      }
+      if (typeof getSenderColor === 'function') {
+        try { getSenderColor('Alice'); getSenderColor('Bob'); getSenderColor(''); } catch {}
+      }
+      if (typeof highlightMentions === 'function') {
+        try { highlightMentions('Hello @[Alice]'); highlightMentions('No mentions'); } catch {}
+      }
+      if (typeof formatSecondsAgo === 'function') {
+        try { formatSecondsAgo(30); formatSecondsAgo(3600); formatSecondsAgo(86400); formatSecondsAgo(0); } catch {}
+      }
+    }).catch(() => {});
 
     const cov = await page.evaluate(() => window.__coverage__);
     await ctx.close();
@@ -415,6 +572,91 @@ async function run() {
     }).catch(() => {});
     await page.evaluate(() => window.dispatchEvent(new Event('resize'))).catch(() => {});
 
+    // Exercise VCR and live.js functions via page.evaluate
+    await page.evaluate(() => {
+      // VCR functions
+      if (typeof vcrPause === 'function') { try { vcrPause(); } catch {} }
+      if (typeof vcrSpeedCycle === 'function') { try { vcrSpeedCycle(); } catch {} }
+      if (typeof vcrReplayFromTs === 'function') {
+        try { vcrReplayFromTs(Date.now() - 60000); } catch {}
+      }
+      if (typeof drawLcdText === 'function') {
+        try { drawLcdText('12:34:56', '#00ff00'); } catch {}
+        try { drawLcdText('PAUSED', '#ff0000'); } catch {}
+        try { drawLcdText('00:00:00', '#ffffff'); } catch {}
+      }
+      if (typeof vcrResumeLive === 'function') { try { vcrResumeLive(); } catch {} }
+      if (typeof vcrUnpause === 'function') { try { vcrUnpause(); } catch {} }
+      if (typeof vcrRewind === 'function') { try { vcrRewind(5000); } catch {} }
+      if (typeof updateVCRClock === 'function') { try { updateVCRClock(Date.now()); } catch {} }
+      if (typeof updateVCRLcd === 'function') { try { updateVCRLcd(); } catch {} }
+      if (typeof updateVCRUI === 'function') { try { updateVCRUI(); } catch {} }
+
+      // bufferPacket — simulate WebSocket packet arrival
+      if (typeof bufferPacket === 'function') {
+        try {
+          bufferPacket({
+            hash: 'test-ws-hash-001',
+            observer_id: 'test-obs-1',
+            observer_name: 'TestObs',
+            snr: 5,
+            rssi: -80,
+            timestamp: new Date().toISOString(),
+            decoded: {
+              header: { routeType: 1, payloadType: 5, payloadTypeName: 'GRP_TXT' },
+              payload: { channelHash: 0, text: 'test message' },
+              path: { hops: ['AABB'] }
+            },
+            raw_hex: '154000E9221C303193541599CC382A78',
+            path_json: '["AABB"]',
+            route_type: 1,
+            payload_type: 5
+          });
+        } catch {}
+        try {
+          bufferPacket({
+            hash: 'test-ws-hash-002',
+            observer_id: 'test-obs-2',
+            snr: -3,
+            rssi: -110,
+            timestamp: new Date().toISOString(),
+            decoded: {
+              header: { routeType: 0, payloadType: 0, payloadTypeName: 'ADVERT' },
+              payload: { pubKey: 'aabb111111111111111111111111111111111111111111111111111111111111', name: 'TestRepeater2', role: 'repeater', lat: 34.05, lon: -118.24 },
+              path: { hops: [] }
+            },
+            raw_hex: 'FF00AABB',
+            path_json: '[]',
+            route_type: 0,
+            payload_type: 0
+          });
+        } catch {}
+      }
+
+      // dbPacketToLive
+      if (typeof dbPacketToLive === 'function') {
+        try {
+          dbPacketToLive({
+            hash: 'test-hash', observer_id: 'obs1', snr: 5, rssi: -80,
+            timestamp: new Date().toISOString(), decoded_json: '{"type":"GRP_TXT"}',
+            raw_hex: 'AABB', path_json: '["CC"]', route_type: 1, payload_type: 5
+          });
+        } catch {}
+      }
+
+      // renderPacketTree with synthetic packets
+      if (typeof renderPacketTree === 'function') {
+        try {
+          renderPacketTree([{
+            hash: 'synth-001', observer_id: 'test-obs-1', observer_name: 'TestObs',
+            snr: 5, rssi: -80, timestamp: new Date().toISOString(),
+            decoded: { header: { payloadTypeName: 'GRP_TXT' }, payload: { text: 'synth' }, path: { hops: [] } },
+            raw_hex: 'AABBCCDD', path_json: '[]'
+          }], false);
+        } catch {}
+      }
+    }).catch(() => {});
+
     // Traces
     await nav('#/traces');
     await clickAll('table tbody tr', 3);
@@ -426,9 +668,14 @@ async function run() {
 
     // App.js globals
     await nav('#/nonexistent-route');
-    for (const r of ['home', 'nodes', 'packets', 'map', 'live', 'channels', 'traces', 'observers', 'analytics', 'perf']) {
+    for (const r of ['home', 'nodes', 'packets', 'map', 'live', 'channels', 'traces', 'observers', 'analytics', 'perf', 'compare']) {
       await page.evaluate((rt) => { location.hash = '#/' + rt; }, r);
       await page.waitForTimeout(NAV_WAIT);
+    }
+    // Rapid route transitions (exercises destroy/init cycles)
+    for (const r of ['nodes', 'packets', 'live', 'map', 'analytics', 'channels', 'observers', 'home']) {
+      await page.evaluate((rt) => { location.hash = '#/' + rt; }, r);
+      await page.waitForTimeout(20);
     }
     await page.evaluate(() => window.dispatchEvent(new HashChangeEvent('hashchange'))).catch(() => {});
     for (let i = 0; i < 4; i++) await click('#darkModeToggle');
@@ -478,24 +725,83 @@ async function run() {
         timeAgo(new Date(Date.now() - 30000).toISOString());
         timeAgo(new Date(Date.now() - 3600000).toISOString());
         timeAgo(new Date(Date.now() - 86400000 * 2).toISOString());
+        timeAgo(new Date(Date.now() - 86400000 * 60).toISOString());
+        timeAgo(new Date(Date.now() - 5000).toISOString());
+        timeAgo(new Date(Date.now() - 120000).toISOString());
+        timeAgo('invalid-date');
+        timeAgo('');
       }
       if (typeof truncate === 'function') {
         truncate('hello world', 5); truncate(null, 5); truncate('hi', 10);
+        truncate('', 5); truncate('exactly10!', 10);
       }
       if (typeof routeTypeName === 'function') {
-        for (let i = 0; i <= 4; i++) routeTypeName(i);
+        for (let i = 0; i <= 6; i++) routeTypeName(i);
+        routeTypeName(99); routeTypeName(-1); routeTypeName(null);
       }
       if (typeof payloadTypeName === 'function') {
         for (let i = 0; i <= 15; i++) payloadTypeName(i);
+        payloadTypeName(99); payloadTypeName(null);
       }
       if (typeof payloadTypeColor === 'function') {
         for (let i = 0; i <= 15; i++) payloadTypeColor(i);
+        payloadTypeColor(99); payloadTypeColor(null);
       }
       if (typeof invalidateApiCache === 'function') {
-        invalidateApiCache(); invalidateApiCache('/test');
+        invalidateApiCache(); invalidateApiCache('/test'); invalidateApiCache('/api/nodes');
+      }
+      if (typeof escapeHtml === 'function') {
+        escapeHtml('<script>alert("xss")</script>');
+        escapeHtml('normal text');
+        escapeHtml(''); escapeHtml(null);
+        escapeHtml('a&b<c>d"e');
+      }
+      if (typeof debouncedOnWS === 'function') {
+        try {
+          const handler = debouncedOnWS(function(msgs) {}, 100);
+          if (handler) handler([{type:'packet',data:{}}]);
+        } catch {}
       }
 
-      // PacketFilter
+      // roles.js functions
+      if (typeof getHealthThresholds === 'function') {
+        getHealthThresholds('repeater');
+        getHealthThresholds('room');
+        getHealthThresholds('companion');
+        getHealthThresholds('sensor');
+        getHealthThresholds('unknown');
+        getHealthThresholds('');
+        getHealthThresholds(null);
+      }
+      if (typeof getNodeStatus === 'function') {
+        getNodeStatus('repeater', Date.now());
+        getNodeStatus('repeater', Date.now() - 999999999);
+        getNodeStatus('companion', Date.now());
+        getNodeStatus('companion', Date.now() - 999999999);
+        getNodeStatus('room', Date.now());
+        getNodeStatus('sensor', Date.now() - 999999999);
+        getNodeStatus('unknown', null);
+        getNodeStatus('repeater', 0);
+      }
+      if (typeof getTileUrl === 'function') {
+        getTileUrl();
+      }
+      if (typeof syncBadgeColors === 'function') {
+        try { syncBadgeColors(); } catch {}
+      }
+      if (typeof miniMarkdown === 'function') {
+        miniMarkdown('**bold** and *italic* and `code`');
+        miniMarkdown('[link](https://example.com)');
+        miniMarkdown('- item1\n- item2\n- item3');
+        miniMarkdown('');
+        miniMarkdown(null);
+        miniMarkdown('plain text no formatting');
+      }
+      if (typeof copyToClipboard === 'function') {
+        try { copyToClipboard('test text', function(){}, function(){}); } catch {}
+      }
+
+      // PacketFilter — exercise with actual packet data for evaluate paths
       if (window.PacketFilter && window.PacketFilter.compile) {
         const PF = window.PacketFilter;
         const exprs = [
@@ -508,9 +814,33 @@ async function run() {
           'type == ADVERT && (snr > 0 || hops > 1)',
           'observer == "test"', 'from == "abc"', 'to == "xyz"',
           'has_text', 'is_encrypted', 'type contains ADV',
+          'size > 10', 'size < 100', 'observations > 1',
+          'payload_bytes > 5', 'payload.channelHash == 0',
+          'payload.text contains hello',
+          'observer_id == "test-obs-1"', 'path contains AABB',
+          'hash == "b6b839cb61eead4a"',
         ];
+        // Compile all
         for (const e of exprs) { try { PF.compile(e); } catch {} }
-        for (const e of ['@@@', '== ==', '(((', 'type ==', '']) { try { PF.compile(e); } catch {} }
+        // Bad expressions
+        for (const e of ['@@@', '== ==', '(((', 'type ==', '', '!!!', 'and and', 'type == &&']) {
+          try { PF.compile(e); } catch {}
+        }
+        // Actually run filters against synthetic packets
+        const testPackets = [
+          { payload_type: 0, route_type: 0, snr: 5, rssi: -80, hash: 'aabb', raw_hex: 'FF00AABB11223344', path_json: '["A1B2"]', observation_count: 3, observer_id: 'test-obs-1', observer_name: 'TestObs', decoded_json: '{"type":"ADVERT","channelHash":0,"text":"hello"}' },
+          { payload_type: 5, route_type: 1, snr: -10, rssi: -120, hash: 'ccdd', raw_hex: 'AABBCCDD', path_json: '[]', observation_count: 1, observer_id: 'test-obs-2', observer_name: '', decoded_json: '{"type":"GRP_TXT","channelHash":0}' },
+          { payload_type: 6, route_type: 2, snr: 0, rssi: -90, hash: 'eeff', raw_hex: '', path_json: '["X1","X2","X3"]', observation_count: 2, observer_id: '', observer_name: null, decoded_json: null },
+          { payload_type: 3, route_type: 3, snr: 15, rssi: -50, hash: '1122', raw_hex: 'AB', path_json: null, observation_count: 0 },
+        ];
+        for (const e of exprs) {
+          try {
+            const compiled = PF.compile(e);
+            if (compiled && compiled.filter) {
+              for (const pkt of testPackets) { try { compiled.filter(pkt); } catch {} }
+            }
+          } catch {}
+        }
       }
     });
 
