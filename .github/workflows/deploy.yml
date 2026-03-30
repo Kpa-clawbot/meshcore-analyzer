@@ -279,10 +279,12 @@ jobs:
 
           # Ensure staging config exists (docker creates a directory if bind mount source missing)
           STAGING_DATA="${STAGING_DATA_DIR:-$HOME/meshcore-staging-data}"
+          mkdir -p "$STAGING_DATA"
+          # Remove directory-masquerading-as-file left by failed docker mount
+          [ -d "$STAGING_DATA/config.json" ] && rm -rf "$STAGING_DATA/config.json"
           if [ ! -f "$STAGING_DATA/config.json" ]; then
-            echo "Staging config missing — copying from repo config.example.json"
-            mkdir -p "$STAGING_DATA"
-            cp config.example.json "$STAGING_DATA/config.json"
+            echo "Staging config missing — copying from repo config.json"
+            cp config.json "$STAGING_DATA/config.json" 2>/dev/null || cp config.example.json "$STAGING_DATA/config.json"
           fi
 
           docker compose -f "$STAGING_COMPOSE_FILE" -p corescope-staging up -d staging-go
