@@ -279,13 +279,30 @@ jobs:
 
           # Ensure staging config exists (docker creates a directory if bind mount source missing)
           STAGING_DATA="${STAGING_DATA_DIR:-$HOME/meshcore-staging-data}"
-          mkdir -p "$STAGING_DATA"
+          CONFIG_TARGET="$STAGING_DATA/config.json"
+          mkdir -p "$STAGING_DATA" || true
+
           # Remove directory-masquerading-as-file left by failed docker mount
-          [ -d "$STAGING_DATA/config.json" ] && rm -rf "$STAGING_DATA/config.json"
-          if [ ! -f "$STAGING_DATA/config.json" ]; then
-            echo "Staging config missing — copying from repo config.json"
-            cp config.json "$STAGING_DATA/config.json" 2>/dev/null || cp config.example.json "$STAGING_DATA/config.json"
+          if [ -d "$CONFIG_TARGET" ]; then
+            echo "Removing invalid config directory at $CONFIG_TARGET"
+            sudo rm -rf "$CONFIG_TARGET" 2>/dev/null || rm -rf "$CONFIG_TARGET" 2>/dev/null || true
           fi
+
+          # Prefer real config.json, fallback to config.example.json for CI checkouts
+          if [ ! -f "$CONFIG_TARGET" ]; then
+            if [ -f config.json ]; then
+              echo "Staging config missing — copying from repo config.json"
+              cp config.json "$CONFIG_TARGET" 2>/dev/null || true
+            elif [ -f config.example.json ]; then
+              echo "Staging config missing — copying from repo config.example.json"
+              cp config.example.json "$CONFIG_TARGET" 2>/dev/null || true
+            else
+              echo "Warning: no config source found in checkout; creating minimal config stub"
+              printf '{}\n' > "$CONFIG_TARGET" 2>/dev/null || true
+            fi
+          fi
+
+          [ -f "$CONFIG_TARGET" ] || echo "Warning: staging config could not be prepared; continuing deploy"
 
           docker compose -f "$STAGING_COMPOSE_FILE" -p corescope-staging up -d staging-go
 
