@@ -203,7 +203,7 @@ func (s *Server) perfMiddleware(next http.Handler) http.Handler {
 func (s *Server) requireAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg == nil || s.cfg.APIKey == "" {
-			next.ServeHTTP(w, r)
+			writeError(w, http.StatusForbidden, "write endpoints disabled — set apiKey in config.json")
 			return
 		}
 		if r.Header.Get("X-API-Key") != s.cfg.APIKey {

@@ -85,15 +85,15 @@ func TestWriteEndpointsRequireAPIKey(t *testing.T) {
 	})
 }
 
-func TestWriteEndpointsAllowWhenAPIKeyEmpty(t *testing.T) {
+func TestWriteEndpointsBlockWhenAPIKeyEmpty(t *testing.T) {
 	_, router := setupTestServerWithAPIKey(t, "")
 
 	req := httptest.NewRequest("POST", "/api/decode", bytes.NewBufferString(`{"hex":"0200"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 with empty apiKey, got %d (body: %s)", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 with empty apiKey, got %d (body: %s)", w.Code, w.Body.String())
 	}
 }
 
