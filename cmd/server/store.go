@@ -2309,6 +2309,7 @@ func (s *PacketStore) computeAnalyticsRF(region string) map[string]interface{} {
 	seenTypeHashes := make(map[string]bool, len(s.packets))
 	typeBuckets := map[int]int{}
 	hourBuckets := map[string]int{}
+	seenHourHash := make(map[string]bool, len(s.packets)) // dedup packets-per-hour by hash+hour
 	snrByType := map[string]*struct{ vals []float64 }{}
 	sigTime := map[string]*struct {
 		snrs  []float64
@@ -2381,10 +2382,16 @@ func (s *PacketStore) computeAnalyticsRF(region string) map[string]interface{} {
 					rssiVals = append(rssiVals, *obs.RSSI)
 				}
 
-				// Packets per hour
+				// Packets per hour (unique by hash per hour)
 				if len(ts) >= 13 {
 					hr := ts[:13]
-					hourBuckets[hr]++
+					hk := hash + "|" + hr
+					if hash == "" || !seenHourHash[hk] {
+						if hash != "" {
+							seenHourHash[hk] = true
+						}
+						hourBuckets[hr]++
+					}
 				}
 
 				// Packet sizes (unique by hash)
@@ -2472,7 +2479,14 @@ func (s *PacketStore) computeAnalyticsRF(region string) map[string]interface{} {
 					}
 
 					if len(ts) >= 13 {
-						hourBuckets[ts[:13]]++
+						hr := ts[:13]
+						hk := hash + "|" + hr
+						if hash == "" || !seenHourHash[hk] {
+							if hash != "" {
+								seenHourHash[hk] = true
+							}
+							hourBuckets[hr]++
+						}
 					}
 				}
 			} else {
