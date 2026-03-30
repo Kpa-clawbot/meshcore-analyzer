@@ -107,16 +107,16 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
-	r.HandleFunc("/api/perf/reset", s.handlePerfReset).Methods("POST")
+	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
 
 	// Packet endpoints
 	r.HandleFunc("/api/packets/timestamps", s.handlePacketTimestamps).Methods("GET")
 	r.HandleFunc("/api/packets/{id}", s.handlePacketDetail).Methods("GET")
 	r.HandleFunc("/api/packets", s.handlePackets).Methods("GET")
-	r.HandleFunc("/api/packets", s.handlePostPacket).Methods("POST")
+	r.Handle("/api/packets", s.requireAPIKey(http.HandlerFunc(s.handlePostPacket))).Methods("POST")
 
 	// Decode endpoint
-	r.HandleFunc("/api/decode", s.handleDecode).Methods("POST")
+	r.Handle("/api/decode", s.requireAPIKey(http.HandlerFunc(s.handleDecode))).Methods("POST")
 
 	// Node endpoints — fixed routes BEFORE parameterized
 	r.HandleFunc("/api/nodes/search", s.handleNodeSearch).Methods("GET")
@@ -197,6 +197,20 @@ func (s *Server) perfMiddleware(next http.Handler) http.Handler {
 				s.perfStats.SlowQueries = s.perfStats.SlowQueries[1:]
 			}
 		}
+	})
+}
+
+func (s *Server) requireAPIKey(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg == nil || s.cfg.APIKey == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("X-API-Key") != s.cfg.APIKey {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

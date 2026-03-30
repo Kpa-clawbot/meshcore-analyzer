@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,75 @@ func setupTestServer(t *testing.T) (*Server, *mux.Router) {
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
 	return srv, router
+}
+
+func setupTestServerWithAPIKey(t *testing.T, apiKey string) (*Server, *mux.Router) {
+	t.Helper()
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	cfg := &Config{Port: 3000, APIKey: apiKey}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+	return srv, router
+}
+
+func TestWriteEndpointsRequireAPIKey(t *testing.T) {
+	_, router := setupTestServerWithAPIKey(t, "test-secret")
+
+	t.Run("missing key returns 401", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/perf/reset", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", w.Code)
+		}
+		var body map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		if body["error"] != "unauthorized" {
+			t.Fatalf("expected unauthorized error, got %v", body["error"])
+		}
+	})
+
+	t.Run("wrong key returns 401", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/decode", bytes.NewBufferString(`{"hex":"0200"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-API-Key", "wrong-secret")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", w.Code)
+		}
+	})
+
+	t.Run("correct key passes", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/decode", bytes.NewBufferString(`{"hex":"0200"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-API-Key", "test-secret")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+		}
+	})
+}
+
+func TestWriteEndpointsAllowWhenAPIKeyEmpty(t *testing.T) {
+	_, router := setupTestServerWithAPIKey(t, "")
+
+	req := httptest.NewRequest("POST", "/api/decode", bytes.NewBufferString(`{"hex":"0200"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with empty apiKey, got %d (body: %s)", w.Code, w.Body.String())
+	}
 }
 
 func TestHealthEndpoint(t *testing.T) {
