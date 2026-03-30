@@ -703,7 +703,7 @@ cmd_promote() {
 
 cmd_update() {
   info "Pulling latest code..."
-  git pull
+  git pull --ff-only
 
   info "Rebuilding image..."
   $DC build prod
