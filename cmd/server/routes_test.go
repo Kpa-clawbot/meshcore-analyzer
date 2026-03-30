@@ -2064,7 +2064,7 @@ func TestConfigGeoFilterEndpoint(t *testing.T) {
 		}
 		hub := NewHub()
 		srv := NewServer(db, cfg, hub)
-		srv.store = NewPacketStore(db)
+		srv.store = NewPacketStore(db, nil)
 		srv.store.Load()
 		router := mux.NewRouter()
 		srv.RegisterRoutes(router)
