@@ -66,6 +66,257 @@ is_done()    { [ -f "$STATE_FILE" ] && grep -qx "$1" "$STATE_FILE" 2>/dev/null; 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
+PORT_CHECK_METHOD=""
+
+resolve_port_check_method() {
+  if [ -n "$PORT_CHECK_METHOD" ]; then
+    return 0
+  fi
+
+  if command -v ss &>/dev/null; then
+    PORT_CHECK_METHOD="ss"
+  elif command -v lsof &>/dev/null; then
+    PORT_CHECK_METHOD="lsof"
+  elif command -v netstat &>/dev/null; then
+    PORT_CHECK_METHOD="netstat"
+  elif command -v nc &>/dev/null; then
+    PORT_CHECK_METHOD="nc"
+  else
+    PORT_CHECK_METHOD="none"
+  fi
+}
+
+# Returns 0 when in use, 1 when free, 2 when unavailable
+is_port_in_use() {
+  local port="$1"
+  resolve_port_check_method
+
+  case "$PORT_CHECK_METHOD" in
+    ss)
+      ss -tlnp 2>/dev/null | grep -E "[[:space:]]LISTEN[[:space:]].*[:.]${port}([[:space:]]|$)" >/dev/null
+      return $?
+      ;;
+    lsof)
+      lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+      return $?
+      ;;
+    netstat)
+      netstat -tlnp 2>/dev/null | grep -E "[[:space:]]${port}[[:space:]]" >/dev/null
+      if [ $? -eq 0 ]; then
+        return 0
+      fi
+      netstat -tlnp 2>/dev/null | grep -E "[:.]${port}[[:space:]]" >/dev/null
+      return $?
+      ;;
+    nc)
+      local bind_pid=""
+      ( nc -l 127.0.0.1 "$port" >/dev/null 2>&1 ) &
+      bind_pid=$!
+      sleep 0.2
+      if kill -0 "$bind_pid" 2>/dev/null; then
+        kill "$bind_pid" 2>/dev/null || true
+        wait "$bind_pid" 2>/dev/null || true
+        return 1
+      fi
+      wait "$bind_pid" 2>/dev/null || true
+      return 0
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
+port_in_use_details() {
+  local port="$1"
+  resolve_port_check_method
+
+  case "$PORT_CHECK_METHOD" in
+    ss)
+      ss -tlnp 2>/dev/null | grep -E "[[:space:]]LISTEN[[:space:]].*[:.]${port}([[:space:]]|$)" | head -1
+      ;;
+    lsof)
+      lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sed -n '2p'
+      ;;
+    netstat)
+      netstat -tlnp 2>/dev/null | grep -E "[:.]${port}[[:space:]]" | head -1
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+find_next_available_port() {
+  local start="$1"
+  local candidate=$((start + 1))
+  while [ "$candidate" -le 65535 ]; do
+    is_port_in_use "$candidate"
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
+      candidate=$((candidate + 1))
+      continue
+    fi
+    if [ "$rc" -eq 1 ]; then
+      echo "$candidate"
+      return 0
+    fi
+    break
+  done
+  echo ""
+  return 1
+}
+
+is_valid_port() {
+  local value="$1"
+  [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ]
+}
+
+show_env_port_summary() {
+  local http_port="$1"
+  local https_port="$2"
+  local mqtt_port="$3"
+  local data_dir="$4"
+  echo ""
+  echo "   Current .env values:"
+  echo "     PROD_HTTP_PORT=${http_port}"
+  echo "     PROD_HTTPS_PORT=${https_port}"
+  echo "     PROD_MQTT_PORT=${mqtt_port}"
+  echo "     PROD_DATA_DIR=${data_dir}"
+  echo ""
+}
+
+get_env_value() {
+  local key="$1"
+  local env_file="${2:-.env}"
+  if [ ! -f "$env_file" ]; then
+    echo ""
+    return 1
+  fi
+  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$env_file" | head -1
+}
+
+write_env_managed_values() {
+  local http_port="$1"
+  local https_port="$2"
+  local mqtt_port="$3"
+  local data_dir="$4"
+  local env_file=".env"
+  local tmp_file=".env.tmp.$$"
+
+  if [ ! -f "$env_file" ]; then
+    cp .env.example "$env_file"
+  fi
+
+  local seen_http=0
+  local seen_https=0
+  local seen_mqtt=0
+  local seen_data=0
+
+  : > "$tmp_file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      PROD_HTTP_PORT=*)
+        echo "PROD_HTTP_PORT=${http_port}" >> "$tmp_file"
+        seen_http=1
+        ;;
+      PROD_HTTPS_PORT=*)
+        echo "PROD_HTTPS_PORT=${https_port}" >> "$tmp_file"
+        seen_https=1
+        ;;
+      PROD_MQTT_PORT=*)
+        echo "PROD_MQTT_PORT=${mqtt_port}" >> "$tmp_file"
+        seen_mqtt=1
+        ;;
+      PROD_DATA_DIR=*)
+        echo "PROD_DATA_DIR=${data_dir}" >> "$tmp_file"
+        seen_data=1
+        ;;
+      *)
+        echo "$line" >> "$tmp_file"
+        ;;
+    esac
+  done < "$env_file"
+
+  [ "$seen_http" -eq 1 ] || echo "PROD_HTTP_PORT=${http_port}" >> "$tmp_file"
+  [ "$seen_https" -eq 1 ] || echo "PROD_HTTPS_PORT=${https_port}" >> "$tmp_file"
+  [ "$seen_mqtt" -eq 1 ] || echo "PROD_MQTT_PORT=${mqtt_port}" >> "$tmp_file"
+  [ "$seen_data" -eq 1 ] || echo "PROD_DATA_DIR=${data_dir}" >> "$tmp_file"
+
+  mv "$tmp_file" "$env_file"
+}
+
+prompt_for_port() {
+  local label="$1"
+  local current="$2"
+  local prompt_default="$3"
+
+  while true; do
+    if [ -n "$prompt_default" ] && [ "$prompt_default" != "$current" ]; then
+      read -p "   ${label} port [${prompt_default}] (current ${current}): " selected
+      selected=${selected:-$prompt_default}
+    else
+      read -p "   ${label} port [${current}]: " selected
+      selected=${selected:-$current}
+    fi
+
+    if ! is_valid_port "$selected"; then
+      warn "Invalid port '${selected}'. Enter a value between 1 and 65535."
+      continue
+    fi
+
+    is_port_in_use "$selected"
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
+      warn "Port ${selected} is in use."
+      local details
+      details=$(port_in_use_details "$selected")
+      [ -n "$details" ] && echo "     ${details}"
+      if confirm "Use ${selected} anyway? (start will fail if still occupied)"; then
+        echo "$selected"
+        return 0
+      fi
+      continue
+    fi
+    if [ "$rc" -eq 2 ]; then
+      warn "Port detection unavailable on this host. Proceeding with chosen value."
+    fi
+
+    echo "$selected"
+    return 0
+  done
+}
+
+preflight_validate_prod_ports() {
+  local http_port="${PROD_HTTP_PORT:-80}"
+  local https_port="${PROD_HTTPS_PORT:-443}"
+  local mqtt_port="${PROD_MQTT_PORT:-1883}"
+  local failed=0
+
+  info "Preflight: validating configured ports are free..."
+  for port in "$http_port" "$https_port" "$mqtt_port"; do
+    if is_port_in_use "$port"; then
+      err "Port ${port} is in use."
+      local details
+      details=$(port_in_use_details "$port")
+      [ -n "$details" ] && echo "   ${details}"
+      failed=1
+    fi
+  done
+
+  if [ "$failed" -eq 1 ]; then
+    echo ""
+    echo "   Remediation:"
+    echo "     • Stop the process using the conflicting port(s)"
+    echo "     • Or run ./manage.sh setup and re-negotiate ports"
+    echo "     • Then re-run this command"
+    return 1
+  fi
+
+  log "Preflight port validation passed."
+  return 0
+}
+
 # Check config.json for placeholder values
 check_config_placeholders() {
   local cfg="${1:-$PROD_DATA/config.json}"
@@ -222,12 +473,97 @@ cmd_setup() {
   fi
   mark_done "config"
 
-  # ── Step 3: Domain & HTTPS ──
-  step 3 "Domain & HTTPS"
+  # ── Step 3: Ports & Networking ──
+  step 3 "Ports & Networking"
+
+  local default_http=80
+  local default_https=443
+  local default_mqtt=1883
+  local selected_http="$default_http"
+  local selected_https="$default_https"
+  local selected_mqtt="$default_mqtt"
+  local selected_data_dir="${PROD_DATA_DIR:-$HOME/meshcore-data}"
+
+  local env_http=""
+  local env_https=""
+  local env_mqtt=""
+  local env_data_dir=""
+
+  if [ -f .env ]; then
+    env_http=$(get_env_value "PROD_HTTP_PORT" ".env")
+    env_https=$(get_env_value "PROD_HTTPS_PORT" ".env")
+    env_mqtt=$(get_env_value "PROD_MQTT_PORT" ".env")
+    env_data_dir=$(get_env_value "PROD_DATA_DIR" ".env")
+    [ -n "$env_data_dir" ] && selected_data_dir="$env_data_dir"
+    show_env_port_summary "${env_http:-<unset>}" "${env_https:-<unset>}" "${env_mqtt:-<unset>}" "${env_data_dir:-<unset>}"
+  else
+    info ".env not found. It will be created from .env.example."
+  fi
+
+  local has_current_ports=false
+  if is_valid_port "$env_http" && is_valid_port "$env_https" && is_valid_port "$env_mqtt"; then
+    has_current_ports=true
+  fi
+
+  local renegotiate=true
+  if [ -f .env ] && $has_current_ports; then
+    if confirm "Keep current ports from .env?"; then
+      renegotiate=false
+      selected_http="$env_http"
+      selected_https="$env_https"
+      selected_mqtt="$env_mqtt"
+      log "Keeping current ports from .env."
+    fi
+  fi
+
+  if $renegotiate; then
+    resolve_port_check_method
+    if [ "$PORT_CHECK_METHOD" = "none" ]; then
+      warn "No supported port detection tool found (ss/lsof/netstat/nc)."
+      warn "You'll still be prompted, but conflicts cannot be detected now."
+    else
+      info "Detecting listeners using ${PORT_CHECK_METHOD}..."
+    fi
+
+    local suggested_http="$default_http"
+    local suggested_https="$default_https"
+    local suggested_mqtt="$default_mqtt"
+
+    if is_port_in_use "$default_http"; then
+      warn "Port ${default_http} is in use."
+      local details_http
+      details_http=$(port_in_use_details "$default_http")
+      [ -n "$details_http" ] && echo "     ${details_http}"
+      suggested_http=$(find_next_available_port "$default_http")
+      [ -n "$suggested_http" ] && info "Suggested HTTP port: ${suggested_http}"
+    fi
+
+    if is_port_in_use "$default_https"; then
+      warn "Port ${default_https} is in use."
+      local details_https
+      details_https=$(port_in_use_details "$default_https")
+      [ -n "$details_https" ] && echo "     ${details_https}"
+      suggested_https=$(find_next_available_port "$default_https")
+      [ -n "$suggested_https" ] && info "Suggested HTTPS port: ${suggested_https}"
+    fi
+
+    if is_port_in_use "$default_mqtt"; then
+      warn "Port ${default_mqtt} is in use."
+      local details_mqtt
+      details_mqtt=$(port_in_use_details "$default_mqtt")
+      [ -n "$details_mqtt" ] && echo "     ${details_mqtt}"
+      suggested_mqtt=$(find_next_available_port "$default_mqtt")
+      [ -n "$suggested_mqtt" ] && info "Suggested MQTT port: ${suggested_mqtt}"
+    fi
+
+    selected_http=$(prompt_for_port "HTTP" "$default_http" "$suggested_http")
+    selected_https=$(prompt_for_port "HTTPS" "$default_https" "$suggested_https")
+    selected_mqtt=$(prompt_for_port "MQTT" "$default_mqtt" "$suggested_mqtt")
+  fi
 
   if [ -f caddy-config/Caddyfile ]; then
     EXISTING_DOMAIN=$(grep -v '^#' caddy-config/Caddyfile 2>/dev/null | head -1 | tr -d ' {')
-    if [ "$EXISTING_DOMAIN" = ":80" ]; then
+    if [ "$EXISTING_DOMAIN" = ":80" ] || [ "$EXISTING_DOMAIN" = ":${selected_http}" ]; then
       log "Caddyfile exists (HTTP only, no HTTPS)."
     else
       log "Caddyfile exists for ${EXISTING_DOMAIN}"
@@ -240,7 +576,7 @@ cmd_setup() {
     echo "   1) Direct with built-in HTTPS — Caddy auto-provisions a TLS cert"
     echo "      (requires ports 80 + 443 open, and a domain pointed at this server)"
     echo ""
-    echo "   2) Behind my own reverse proxy — HTTP only, I choose the port"
+    echo "   2) Behind my own reverse proxy — HTTP only"
     echo "      (for Cloudflare Tunnel, nginx, Traefik, etc.)"
     echo ""
     read -p "   Choose [1/2]: " -n 1 -r
@@ -283,33 +619,42 @@ cmd_setup() {
             exit 0
           fi
         fi
-
-        # Check port 80
-        if command -v curl &> /dev/null; then
-          if curl -s --connect-timeout 3 "http://localhost:80" &>/dev/null || \
-             curl -s --connect-timeout 3 "http://${MY_IP}:80" &>/dev/null 2>&1; then
-            warn "Something is already listening on port 80."
-            warn "Stop it first: sudo systemctl stop nginx apache2"
-          fi
-        fi
         ;;
       2)
-        read -p "   HTTP port [80]: " HTTP_PORT
-        HTTP_PORT=${HTTP_PORT:-80}
-        echo ":${HTTP_PORT} {
+        echo ":${selected_http} {
     reverse_proxy localhost:3000
 }" > caddy-config/Caddyfile
-        log "Caddyfile created (HTTP only on port ${HTTP_PORT})."
-        echo "   Point your reverse proxy or tunnel to this server's port ${HTTP_PORT}."
+        log "Caddyfile created (HTTP only on port ${selected_http})."
+        echo "   Point your reverse proxy or tunnel to this server's port ${selected_http}."
         ;;
       *)
         warn "Invalid choice. Defaulting to HTTP only."
-        echo ':80 {
+        echo ":${selected_http} {
     reverse_proxy localhost:3000
-}' > caddy-config/Caddyfile
+}" > caddy-config/Caddyfile
         ;;
     esac
   fi
+
+  write_env_managed_values "$selected_http" "$selected_https" "$selected_mqtt" "$selected_data_dir"
+  log "Saved negotiated ports to .env"
+  show_env_port_summary "$selected_http" "$selected_https" "$selected_mqtt" "$selected_data_dir"
+
+  echo "   Resolved port mapping:"
+  echo "     UI HTTP:  ${selected_http}"
+  echo "     UI HTTPS: ${selected_https}"
+  echo "     MQTT:     ${selected_mqtt}"
+  echo ""
+  if ! confirm "Proceed to build/start with these ports?"; then
+    echo "   Setup cancelled. Re-run ./manage.sh setup when ready."
+    exit 0
+  fi
+
+  export PROD_HTTP_PORT="$selected_http"
+  export PROD_HTTPS_PORT="$selected_https"
+  export PROD_MQTT_PORT="$selected_mqtt"
+  export PROD_DATA_DIR="$selected_data_dir"
+  PROD_DATA="$PROD_DATA_DIR"
   mark_done "caddyfile"
 
   # ── Step 4: Build ──
@@ -332,6 +677,14 @@ cmd_setup() {
 
   # ── Step 5: Start container ──
   step 5 "Starting container"
+
+  if docker ps --format '{{.Names}}' | grep -q "^corescope-prod$"; then
+    info "Production container already running — skipping preflight port check."
+  else
+    if ! preflight_validate_prod_ports; then
+      exit 1
+    fi
+  fi
 
   # Detect existing data directories
   if [ -d "$PROD_DATA" ] && [ -f "$PROD_DATA/meshcore.db" ]; then
@@ -513,6 +866,14 @@ cmd_start() {
   local WITH_STAGING=false
   if [ "$1" = "--with-staging" ]; then
     WITH_STAGING=true
+  fi
+
+  if docker ps --format '{{.Names}}' | grep -q "^corescope-prod$"; then
+    info "Production container already running — skipping preflight port check."
+  else
+    if ! preflight_validate_prod_ports; then
+      exit 1
+    fi
   fi
 
   # Always check prod config
