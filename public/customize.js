@@ -65,7 +65,10 @@
       ]
     },
     ui: {
-      timestampMode: 'ago'
+      timestampMode: 'ago',
+      timestampTimezone: 'local',
+      timestampFormat: 'iso',
+      timestampCustomFormat: ''
     }
   };
 
@@ -449,11 +452,28 @@
     }
     var mergedHome = mergeSection('home');
     var localTsMode = localStorage.getItem('meshcore-timestamp-mode');
+    var localTsTimezone = localStorage.getItem('meshcore-timestamp-timezone');
+    var localTsFormat = localStorage.getItem('meshcore-timestamp-format');
+    var localTsCustomFormat = localStorage.getItem('meshcore-timestamp-custom-format');
     var serverTsMode = (cfg.timestamps && cfg.timestamps.defaultMode === 'absolute') ? 'absolute' : 'ago';
+    var serverTsTimezone = (cfg.timestamps && cfg.timestamps.timezone === 'utc') ? 'utc' : 'local';
+    var serverTsFormat = (cfg.timestamps && (cfg.timestamps.formatPreset === 'iso' || cfg.timestamps.formatPreset === 'iso-seconds' || cfg.timestamps.formatPreset === 'locale'))
+      ? cfg.timestamps.formatPreset
+      : 'iso';
+    var serverTsCustomFormat = (cfg.timestamps && typeof cfg.timestamps.customFormat === 'string') ? cfg.timestamps.customFormat : '';
     var mergedUi = mergeSection('ui');
     mergedUi.timestampMode = (localTsMode === 'ago' || localTsMode === 'absolute')
       ? localTsMode
       : (mergedUi.timestampMode === 'absolute' || serverTsMode === 'absolute' ? 'absolute' : 'ago');
+    mergedUi.timestampTimezone = (localTsTimezone === 'local' || localTsTimezone === 'utc')
+      ? localTsTimezone
+      : (mergedUi.timestampTimezone === 'utc' || serverTsTimezone === 'utc' ? 'utc' : 'local');
+    mergedUi.timestampFormat = (localTsFormat === 'iso' || localTsFormat === 'iso-seconds' || localTsFormat === 'locale')
+      ? localTsFormat
+      : ((mergedUi.timestampFormat === 'iso' || mergedUi.timestampFormat === 'iso-seconds' || mergedUi.timestampFormat === 'locale') ? mergedUi.timestampFormat : serverTsFormat);
+    mergedUi.timestampCustomFormat = (localTsCustomFormat != null)
+      ? localTsCustomFormat
+      : (typeof mergedUi.timestampCustomFormat === 'string' ? mergedUi.timestampCustomFormat : serverTsCustomFormat);
     state = {
       branding: mergeSection('branding'),
       theme: mergeSection('theme'),
@@ -666,6 +686,11 @@
 
   function renderDisplay() {
     var tsMode = state.ui.timestampMode === 'absolute' ? 'absolute' : 'ago';
+    var tsTimezone = state.ui.timestampTimezone === 'utc' ? 'utc' : 'local';
+    var tsFormat = (state.ui.timestampFormat === 'iso-seconds' || state.ui.timestampFormat === 'locale') ? state.ui.timestampFormat : 'iso';
+    var canCustomFormat = !!(window.SITE_CONFIG && window.SITE_CONFIG.timestamps && window.SITE_CONFIG.timestamps.allowCustomFormat === true);
+    var customFormat = typeof state.ui.timestampCustomFormat === 'string' ? state.ui.timestampCustomFormat : '';
+    var showAbsoluteOnly = tsMode === 'absolute' ? '' : ' style="display:none"';
     return '<div class="cust-panel' + (activeTab === 'display' ? ' active' : '') + '" data-panel="display">' +
       '<p class="cust-section-title">Display Settings</p>' +
       '<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">UI preferences that affect how data is shown across pages.</p>' +
@@ -677,7 +702,25 @@
           '<option value="absolute"' + (tsMode === 'absolute' ? ' selected' : '') + '>Absolute (ISO timestamp)</option>' +
         '</select>' +
       '</div>' +
-      '<p style="font-size:11px;color:var(--text-muted);margin-top:10px">More display controls (UTC/local and format presets) can be added here in future.</p>' +
+      '<div class="cust-field"><label for="custTimestampTimezone">Timestamp Timezone</label>' +
+        '<select id="custTimestampTimezone" data-ui="timestampTimezone" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text)">' +
+          '<option value="local"' + (tsTimezone === 'local' ? ' selected' : '') + '>Local time</option>' +
+          '<option value="utc"' + (tsTimezone === 'utc' ? ' selected' : '') + '>UTC</option>' +
+        '</select>' +
+      '</div>' +
+      '<div class="cust-field" data-ts-absolute-only="format"' + showAbsoluteOnly + '><label for="custTimestampFormat">Timestamp Format (Absolute mode)</label>' +
+        '<select id="custTimestampFormat" data-ui="timestampFormat" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text)">' +
+          '<option value="iso"' + (tsFormat === 'iso' ? ' selected' : '') + '>ISO (2024-01-15 14:30:00)</option>' +
+          '<option value="iso-seconds"' + (tsFormat === 'iso-seconds' ? ' selected' : '') + '>ISO + milliseconds (2024-01-15 14:30:00.123)</option>' +
+          '<option value="locale"' + (tsFormat === 'locale' ? ' selected' : '') + '>Locale (browser format)</option>' +
+        '</select>' +
+      '</div>' +
+      (canCustomFormat
+        ? ('<div class="cust-field" data-ts-absolute-only="custom"' + showAbsoluteOnly + '><label for="custTimestampCustomFormat">Custom Timestamp Format (Absolute mode)</label>' +
+            '<input type="text" id="custTimestampCustomFormat" data-ui-input="timestampCustomFormat" value="' + escAttr(customFormat) + '" placeholder="YYYY-MM-DD HH:mm:ss">' +
+            '<div class="cust-hint">If non-empty, this overrides preset formatting.</div>' +
+          '</div>')
+        : '') +
     '</div>';
   }
 
@@ -886,6 +929,9 @@
     // UI
     var ui = {};
     if ((state.ui.timestampMode || 'ago') !== DEFAULTS.ui.timestampMode) ui.timestampMode = state.ui.timestampMode;
+    if ((state.ui.timestampTimezone || 'local') !== DEFAULTS.ui.timestampTimezone) ui.timestampTimezone = state.ui.timestampTimezone;
+    if ((state.ui.timestampFormat || 'iso') !== DEFAULTS.ui.timestampFormat) ui.timestampFormat = state.ui.timestampFormat;
+    if ((state.ui.timestampCustomFormat || '') !== DEFAULTS.ui.timestampCustomFormat) ui.timestampCustomFormat = state.ui.timestampCustomFormat;
     if (Object.keys(ui).length) out.ui = ui;
 
     return out;
@@ -981,11 +1027,38 @@
       sel.addEventListener('change', function () {
         var key = sel.dataset.ui;
         state.ui[key] = sel.value;
-        if (key === 'timestampMode') {
-          localStorage.setItem('meshcore-timestamp-mode', sel.value);
+        if (key === 'timestampMode' || key === 'timestampTimezone' || key === 'timestampFormat') {
           if (!window.SITE_CONFIG) window.SITE_CONFIG = {};
           if (!window.SITE_CONFIG.timestamps) window.SITE_CONFIG.timestamps = {};
-          window.SITE_CONFIG.timestamps.defaultMode = sel.value;
+          if (key === 'timestampMode') {
+            localStorage.setItem('meshcore-timestamp-mode', sel.value);
+            window.SITE_CONFIG.timestamps.defaultMode = sel.value;
+            var formatRow = container.querySelector('[data-ts-absolute-only="format"]');
+            if (formatRow) formatRow.style.display = sel.value === 'absolute' ? '' : 'none';
+            var customRow = container.querySelector('[data-ts-absolute-only="custom"]');
+            if (customRow) customRow.style.display = sel.value === 'absolute' ? '' : 'none';
+          } else if (key === 'timestampTimezone') {
+            localStorage.setItem('meshcore-timestamp-timezone', sel.value);
+            window.SITE_CONFIG.timestamps.timezone = sel.value;
+          } else if (key === 'timestampFormat') {
+            localStorage.setItem('meshcore-timestamp-format', sel.value);
+            window.SITE_CONFIG.timestamps.formatPreset = sel.value;
+          }
+          window.dispatchEvent(new CustomEvent('timestamp-mode-changed'));
+        }
+        autoSave();
+      });
+    });
+
+    container.querySelectorAll('input[data-ui-input]').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var key = inp.dataset.uiInput;
+        state.ui[key] = inp.value;
+        if (key === 'timestampCustomFormat') {
+          localStorage.setItem('meshcore-timestamp-custom-format', inp.value);
+          if (!window.SITE_CONFIG) window.SITE_CONFIG = {};
+          if (!window.SITE_CONFIG.timestamps) window.SITE_CONFIG.timestamps = {};
+          window.SITE_CONFIG.timestamps.customFormat = inp.value;
           window.dispatchEvent(new CustomEvent('timestamp-mode-changed'));
         }
         autoSave();

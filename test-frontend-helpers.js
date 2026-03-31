@@ -125,22 +125,52 @@ console.log('\n=== app.js: formatTimestamp / formatTimestampWithTooltip ===');
     const d = new Date(Date.now() - 300000).toISOString();
     assert.strictEqual(formatTimestamp(d, 'ago'), '5m ago');
   });
-  test('formatTimestamp absolute returns ISO string', () => {
+  test('formatTimestamp absolute returns formatted timestamp', () => {
     const d = '2024-01-02T03:04:05.000Z';
-    assert.strictEqual(formatTimestamp(d, 'absolute'), d);
+    const out = formatTimestamp(d, 'absolute');
+    assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(out));
+  });
+  test('formatTimestamp absolute with timezone utc uses UTC fields', () => {
+    const d = '2024-01-02T03:04:05.123Z';
+    ctx.localStorage.setItem('meshcore-timestamp-timezone', 'utc');
+    ctx.localStorage.setItem('meshcore-timestamp-format', 'iso');
+    assert.strictEqual(formatTimestamp(d, 'absolute'), '2024-01-02 03:04:05');
+  });
+  test('formatTimestamp absolute with timezone local uses local fields', () => {
+    const d = '2024-01-02T03:04:05.123Z';
+    ctx.localStorage.setItem('meshcore-timestamp-timezone', 'local');
+    ctx.localStorage.setItem('meshcore-timestamp-format', 'iso');
+    const out = formatTimestamp(d, 'absolute');
+    const expected = d.replace('T', ' ').slice(0, 19);
+    assert.strictEqual(out.length, 19);
+    assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(out));
+    if (new Date(d).getTimezoneOffset() === 0) assert.strictEqual(out, expected);
+    else assert.notStrictEqual(out, expected);
+  });
+  test('formatTimestamp absolute iso-seconds includes milliseconds', () => {
+    const d = '2024-01-02T03:04:05.123Z';
+    ctx.localStorage.setItem('meshcore-timestamp-timezone', 'utc');
+    ctx.localStorage.setItem('meshcore-timestamp-format', 'iso-seconds');
+    assert.strictEqual(formatTimestamp(d, 'absolute'), '2024-01-02 03:04:05.123');
+  });
+  test('formatTimestamp absolute locale uses toLocaleString', () => {
+    const d = '2024-01-02T03:04:05.123Z';
+    ctx.localStorage.setItem('meshcore-timestamp-timezone', 'local');
+    ctx.localStorage.setItem('meshcore-timestamp-format', 'locale');
+    assert.strictEqual(formatTimestamp(d, 'absolute'), new Date(d).toLocaleString());
   });
   test('formatTimestampWithTooltip future returns isFuture true', () => {
     const d = new Date(Date.now() + 120000).toISOString();
     const out = formatTimestampWithTooltip(d, 'ago');
     assert.strictEqual(out.isFuture, true);
-    assert.strictEqual(out.text, d);
+    assert.ok(typeof out.text === 'string' && out.text.length > 0);
     assert.strictEqual(out.tooltip, 'in 2m');
   });
   test('tooltip is opposite format', () => {
     const d = '2024-01-02T03:04:05.000Z';
     const ago = formatTimestampWithTooltip(d, 'ago');
     const absolute = formatTimestampWithTooltip(d, 'absolute');
-    assert.strictEqual(ago.tooltip, d);
+    assert.ok(typeof ago.tooltip === 'string' && ago.tooltip.length > 0);
     assert.ok(absolute.tooltip.endsWith('ago') || absolute.tooltip.startsWith('in '));
   });
 }

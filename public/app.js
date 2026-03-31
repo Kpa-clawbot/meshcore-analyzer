@@ -109,15 +109,78 @@ function getTimestampMode() {
   return serverDefault === 'absolute' ? 'absolute' : 'ago';
 }
 
+function getTimestampTimezone() {
+  const saved = localStorage.getItem('meshcore-timestamp-timezone');
+  if (saved === 'utc' || saved === 'local') return saved;
+  const serverDefault = window.SITE_CONFIG?.timestamps?.timezone;
+  return serverDefault === 'utc' ? 'utc' : 'local';
+}
+
+function getTimestampFormatPreset() {
+  const saved = localStorage.getItem('meshcore-timestamp-format');
+  if (saved === 'iso' || saved === 'iso-seconds' || saved === 'locale') return saved;
+  const serverDefault = window.SITE_CONFIG?.timestamps?.formatPreset;
+  return (serverDefault === 'iso' || serverDefault === 'iso-seconds' || serverDefault === 'locale') ? serverDefault : 'iso';
+}
+
+function getTimestampCustomFormat() {
+  if (window.SITE_CONFIG?.timestamps?.allowCustomFormat !== true) return '';
+  const saved = localStorage.getItem('meshcore-timestamp-custom-format');
+  if (saved != null) return String(saved);
+  const serverDefault = window.SITE_CONFIG?.timestamps?.customFormat;
+  return serverDefault == null ? '' : String(serverDefault);
+}
+
+function pad2(v) { return String(v).padStart(2, '0'); }
+function pad3(v) { return String(v).padStart(3, '0'); }
+
+function formatIsoLike(d, timezone, includeMs) {
+  const useUtc = timezone === 'utc';
+  const year = useUtc ? d.getUTCFullYear() : d.getFullYear();
+  const month = useUtc ? d.getUTCMonth() + 1 : d.getMonth() + 1;
+  const day = useUtc ? d.getUTCDate() : d.getDate();
+  const hour = useUtc ? d.getUTCHours() : d.getHours();
+  const minute = useUtc ? d.getUTCMinutes() : d.getMinutes();
+  const second = useUtc ? d.getUTCSeconds() : d.getSeconds();
+  const ms = useUtc ? d.getUTCMilliseconds() : d.getMilliseconds();
+  let out = year + '-' + pad2(month) + '-' + pad2(day) + ' ' + pad2(hour) + ':' + pad2(minute) + ':' + pad2(second);
+  if (includeMs) out += '.' + pad3(ms);
+  return out;
+}
+
+function formatTimestampCustom(d, formatString, timezone) {
+  if (!/YYYY|MM|DD|HH|mm|ss|SSS|Z/.test(String(formatString))) return '';
+  const useUtc = timezone === 'utc';
+  const replacements = {
+    YYYY: String(useUtc ? d.getUTCFullYear() : d.getFullYear()),
+    MM: pad2((useUtc ? d.getUTCMonth() : d.getMonth()) + 1),
+    DD: pad2(useUtc ? d.getUTCDate() : d.getDate()),
+    HH: pad2(useUtc ? d.getUTCHours() : d.getHours()),
+    mm: pad2(useUtc ? d.getUTCMinutes() : d.getMinutes()),
+    ss: pad2(useUtc ? d.getUTCSeconds() : d.getSeconds()),
+    SSS: pad3(useUtc ? d.getUTCMilliseconds() : d.getMilliseconds()),
+    Z: (timezone === 'utc' ? 'UTC' : 'local')
+  };
+  return String(formatString).replace(/YYYY|MM|DD|HH|mm|ss|SSS|Z/g, token => replacements[token] || token);
+}
+
 function formatAbsoluteTimestamp(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (!isFinite(d.getTime())) return '—';
-  const mobileShort = typeof window !== 'undefined' && window.innerWidth <= 640;
-  if (mobileShort) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timezone = getTimestampTimezone();
+  const preset = getTimestampFormatPreset();
+  const customFormat = getTimestampCustomFormat().trim();
+  if (customFormat) {
+    const customOut = formatTimestampCustom(d, customFormat, timezone);
+    if (customOut && !/Invalid Date|NaN|undefined|null/.test(customOut)) return customOut;
   }
-  return d.toISOString();
+  if (preset === 'iso-seconds') return formatIsoLike(d, timezone, true);
+  if (preset === 'locale') {
+    if (timezone === 'utc') return d.toLocaleString([], { timeZone: 'UTC' });
+    return d.toLocaleString();
+  }
+  return formatIsoLike(d, timezone, false);
 }
 
 function formatTimestamp(isoString, mode) {
@@ -649,11 +712,13 @@ window.addEventListener('DOMContentLoaded', () => {
   // Fetch theme config and apply branding/colors before first render
   fetch('/api/config/theme', { cache: 'no-store' }).then(r => r.json()).then(cfg => {
     window.SITE_CONFIG = cfg || {};
-    if (!window.SITE_CONFIG.timestamps) {
-      window.SITE_CONFIG.timestamps = { defaultMode: 'ago' };
-    } else if (window.SITE_CONFIG.timestamps.defaultMode !== 'absolute' && window.SITE_CONFIG.timestamps.defaultMode !== 'ago') {
-      window.SITE_CONFIG.timestamps.defaultMode = 'ago';
-    }
+    if (!window.SITE_CONFIG.timestamps) window.SITE_CONFIG.timestamps = {};
+    const tsCfg = window.SITE_CONFIG.timestamps;
+    if (tsCfg.defaultMode !== 'absolute' && tsCfg.defaultMode !== 'ago') tsCfg.defaultMode = 'ago';
+    if (tsCfg.timezone !== 'utc' && tsCfg.timezone !== 'local') tsCfg.timezone = 'local';
+    if (tsCfg.formatPreset !== 'iso' && tsCfg.formatPreset !== 'iso-seconds' && tsCfg.formatPreset !== 'locale') tsCfg.formatPreset = 'iso';
+    if (typeof tsCfg.customFormat !== 'string') tsCfg.customFormat = '';
+    tsCfg.allowCustomFormat = tsCfg.allowCustomFormat === true;
 
     // User's localStorage preferences take priority over server config
     const userTheme = (() => { try { return JSON.parse(localStorage.getItem('meshcore-user-theme') || '{}'); } catch { return {}; } })();
@@ -727,7 +792,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (favicon) favicon.href = cfg.branding.faviconUrl;
       }
     }
-  }).catch(() => { window.SITE_CONFIG = { timestamps: { defaultMode: 'ago' } }; }).finally(() => {
+  }).catch(() => { window.SITE_CONFIG = { timestamps: { defaultMode: 'ago', timezone: 'local', formatPreset: 'iso', customFormat: '', allowCustomFormat: false } }; }).finally(() => {
     if (!location.hash || location.hash === '#/') location.hash = '#/home';
     else navigate();
   });
