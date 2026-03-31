@@ -916,6 +916,48 @@ container_health() {
 
 # ─── Start / Stop / Restart ──────────────────────────────────────────────
 
+# Migrate legacy root config.json to data directory path
+migrate_config() {
+  local mode="${1:-interactive}"
+  local legacy_config="./config.json"
+  local target_config="$PROD_DATA/config.json"
+  local reply=""
+
+  mkdir -p "$PROD_DATA"
+
+  if [ -f "$target_config" ]; then
+    return 0
+  fi
+
+  if [ ! -f "$legacy_config" ]; then
+    return 0
+  fi
+
+  if [ "$mode" = "auto" ]; then
+    echo "→ Migrating config.json from repo root to ${PROD_DATA}/config.json..."
+    cp "$legacy_config" "$target_config"
+    echo "✓ Config migrated."
+    return 0
+  fi
+
+  echo ""
+  echo "Found legacy config location:"
+  echo "  Source: ./config.json (repo root)"
+  echo "  Destination: ${PROD_DATA}/config.json"
+  echo "  Note: CoreScope reads config from the data directory at runtime."
+  read -p "Move to ${PROD_DATA}/config.json? [Y/n] " reply
+
+  if [ -z "$reply" ] || [[ "$reply" =~ ^[Yy]$ ]]; then
+    cp "$legacy_config" "$target_config"
+    log "Copied config.json to ${target_config}"
+    return 0
+  fi
+
+  warn "Migration aborted."
+  echo "Move ./config.json to ${PROD_DATA}/config.json, then run this command again."
+  return 1
+}
+
 # Ensure config.json exists in the data directory before starting
 ensure_config() {
   local data_dir="$1"
@@ -986,6 +1028,7 @@ cmd_start() {
     fi
   fi
 
+  migrate_config || exit 1
   # Always check prod config
   ensure_config "$PROD_DATA"
 
@@ -1253,6 +1296,8 @@ cmd_promote() {
 cmd_update() {
   info "Pulling latest code..."
   git pull --ff-only
+
+  migrate_config auto
 
   info "Rebuilding image..."
   dc_prod build prod
