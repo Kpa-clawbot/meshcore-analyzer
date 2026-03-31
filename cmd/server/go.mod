@@ -3,6 +3,7 @@ module github.com/corescope/server
 go 1.22
 
 require (
+	github.com/corescope v0.0.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
 	modernc.org/sqlite v1.34.5
@@ -19,3 +20,5 @@ require (
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
 )
+
+replace github.com/corescope => ../..

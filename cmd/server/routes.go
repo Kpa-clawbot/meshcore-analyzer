@@ -30,13 +30,13 @@ type Server struct {
 	buildTime string
 
 	// Cached runtime.MemStats to avoid stop-the-world pauses on every health check
-	memStatsMu   sync.Mutex
-	memStatsCache runtime.MemStats
+	memStatsMu       sync.Mutex
+	memStatsCache    runtime.MemStats
 	memStatsCachedAt time.Time
 
 	// Cached /api/stats response — recomputed at most once every 10s
-	statsMu      sync.Mutex
-	statsCache   *StatsResponse
+	statsMu       sync.Mutex
+	statsCache    *StatsResponse
 	statsCachedAt time.Time
 }
 
@@ -117,7 +117,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.Handle("/api/packets", s.requireAPIKey(http.HandlerFunc(s.handlePostPacket))).Methods("POST")
 
 	// Decode endpoint
-	r.Handle("/api/decode", s.requireAPIKey(http.HandlerFunc(s.handleDecode))).Methods("POST")
+	r.HandleFunc("/api/decode", s.handleDecode).Methods("POST")
 
 	// Node endpoints — fixed routes BEFORE parameterized
 	r.HandleFunc("/api/nodes/search", s.handleNodeSearch).Methods("GET")
@@ -1181,7 +1181,7 @@ func (s *Server) handleAnalyticsHashSizes(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, map[string]interface{}{
-		"total":                    0,
+		"total":                   0,
 		"distribution":            map[string]int{"1": 0, "2": 0, "3": 0},
 		"distributionByRepeaters": map[string]int{"1": 0, "2": 0, "3": 0},
 		"hourly":                  []HashSizeHourly{},
@@ -1352,12 +1352,12 @@ func (s *Server) handleObservers(w http.ResponseWriter, r *http.Request) {
 			ID: o.ID, Name: o.Name, IATA: o.IATA,
 			LastSeen: o.LastSeen, FirstSeen: o.FirstSeen,
 			PacketCount: o.PacketCount,
-			Model: o.Model, Firmware: o.Firmware,
+			Model:       o.Model, Firmware: o.Firmware,
 			ClientVersion: o.ClientVersion, Radio: o.Radio,
 			BatteryMv: o.BatteryMv, UptimeSecs: o.UptimeSecs,
-			NoiseFloor: o.NoiseFloor,
+			NoiseFloor:      o.NoiseFloor,
 			PacketsLastHour: plh,
-			Lat: lat, Lon: lon, NodeRole: nodeRole,
+			Lat:             lat, Lon: lon, NodeRole: nodeRole,
 		})
 	}
 	writeJSON(w, ObserverListResponse{
@@ -1386,10 +1386,10 @@ func (s *Server) handleObserverDetail(w http.ResponseWriter, r *http.Request) {
 		ID: obs.ID, Name: obs.Name, IATA: obs.IATA,
 		LastSeen: obs.LastSeen, FirstSeen: obs.FirstSeen,
 		PacketCount: obs.PacketCount,
-		Model: obs.Model, Firmware: obs.Firmware,
+		Model:       obs.Model, Firmware: obs.Firmware,
 		ClientVersion: obs.ClientVersion, Radio: obs.Radio,
 		BatteryMv: obs.BatteryMv, UptimeSecs: obs.UptimeSecs,
-		NoiseFloor: obs.NoiseFloor,
+		NoiseFloor:      obs.NoiseFloor,
 		PacketsLastHour: plh,
 	})
 }

@@ -3,6 +3,7 @@ module github.com/corescope/ingestor
 go 1.22
 
 require (
+	github.com/corescope v0.0.0
 	github.com/eclipse/paho.mqtt.golang v1.5.0
 	modernc.org/sqlite v1.34.5
 )
@@ -21,3 +22,5 @@ require (
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
 )
+
+replace github.com/corescope => ../..
