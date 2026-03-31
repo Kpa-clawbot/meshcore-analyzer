@@ -2,7 +2,7 @@
 set -e
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
-MATOMO_COMMIT="38c30f9"
+MATOMO_COMMIT="bb8fb43"
 
 cd "$DEPLOY_DIR"
 
