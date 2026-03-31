@@ -80,7 +80,7 @@ No Go installation needed — everything builds inside the container.
 
 ```bash
 git clone https://github.com/Kpa-clawbot/CoreScope.git
-cd corescope
+cd CoreScope
 ./manage.sh setup
 ```
 
