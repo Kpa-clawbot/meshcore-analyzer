@@ -316,6 +316,29 @@ async function run() {
     assert(rowsAfter.length > 0, 'No packets after filtering');
   });
 
+  await test('Packets initial fetch honors persisted time window', async () => {
+    const requests = [];
+    await context.clearCookies();
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => localStorage.setItem('meshcore-time-window', '60'));
+    page.on('request', (req) => {
+      const url = req.url();
+      if (url.includes('/api/packets?')) requests.push(url);
+    });
+    await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => !!document.querySelector('#pktBody'));
+    await page.waitForTimeout(600);
+
+    const first = requests.find(u => u.includes('/api/packets?'));
+    assert(first, 'Expected an /api/packets request');
+    const parsed = new URL(first);
+    const since = parsed.searchParams.get('since');
+    assert(since, 'Expected since query parameter on initial packets request');
+
+    const deltaMin = (Date.now() - Date.parse(since)) / 60000;
+    assert(deltaMin > 45 && deltaMin < 75, `Expected ~60 minute window, got ${deltaMin.toFixed(2)} minutes`);
+  });
+
   // Test: Packet detail pane hidden on fresh load
   await test('Packets detail pane hidden on fresh load', async () => {
     await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });

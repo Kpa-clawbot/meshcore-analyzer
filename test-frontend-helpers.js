@@ -5,9 +5,28 @@ const fs = require('fs');
 const assert = require('assert');
 
 let passed = 0, failed = 0;
+const pendingTests = [];
 function test(name, fn) {
-  try { fn(); passed++; console.log(`  ✅ ${name}`); }
-  catch (e) { failed++; console.log(`  ❌ ${name}: ${e.message}`); }
+  try {
+    const out = fn();
+    if (out && typeof out.then === 'function') {
+      pendingTests.push(
+        out.then(() => {
+          passed++;
+          console.log(`  ✅ ${name}`);
+        }).catch((e) => {
+          failed++;
+          console.log(`  ❌ ${name}: ${e.message}`);
+        })
+      );
+      return;
+    }
+    passed++;
+    console.log(`  ✅ ${name}`);
+  } catch (e) {
+    failed++;
+    console.log(`  ❌ ${name}: ${e.message}`);
+  }
 }
 
 // --- Build a browser-like sandbox ---
@@ -1342,11 +1361,50 @@ console.log('\n=== compare.js: comparePacketSets ===');
       'bindDocumentHandler should remove previous handler before re-binding');
   });
 
-  test('loadPackets falls back to persisted time window before filter UI is rendered', () => {
-    assert.ok(packetsSource.includes("let savedTimeWindowMin = Number(localStorage.getItem('meshcore-time-window'));"),
-      'should initialize saved time window from localStorage');
-    assert.ok(packetsSource.includes("const windowMin = Number.isFinite(selectedWindow) ? selectedWindow : savedTimeWindowMin;"),
-      'loadPackets should use persisted time window when fTimeWindow is not yet available');
+  test('first packets fetch uses persisted time window before filters render', async () => {
+    const ctx = makeSandbox();
+    const apiCalls = [];
+    ctx.localStorage.setItem('meshcore-time-window', '60');
+    const dom = {
+      pktRight: { addEventListener() {}, classList: { add() {}, remove() {}, contains() { return false; } }, innerHTML: '' },
+    };
+    ctx.document.getElementById = (id) => {
+      if (id === 'fTimeWindow') return null; // Simulate first fetch before filter controls are rendered
+      return dom[id] || null;
+    };
+    ctx.document.addEventListener = () => {};
+    ctx.document.removeEventListener = () => {};
+    ctx.document.body = { appendChild() {}, removeChild() {}, contains() { return false; } };
+    ctx.window.addEventListener = () => {};
+    ctx.window.removeEventListener = () => {};
+    ctx.RegionFilter = { init() {}, onChange() { return () => {}; }, offChange() {}, getRegionParam() { return ''; } };
+    ctx.CLIENT_TTL = { observers: 120000 };
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.registerPage = (name, handlers) => { if (name === 'packets') ctx._packetsHandlers = handlers; };
+    ctx.api = (path) => {
+      apiCalls.push(path);
+      if (path.indexOf('/observers') === 0) return Promise.resolve({ observers: [] });
+      if (path.indexOf('/packets?') === 0) return Promise.reject(new Error('stop after request capture'));
+      if (path.indexOf('/config/regions') === 0) return Promise.resolve({});
+      return Promise.resolve({});
+    };
+
+    loadInCtx(ctx, 'public/packets.js');
+    assert.ok(ctx._packetsHandlers && typeof ctx._packetsHandlers.init === 'function',
+      'packets page should register init handler');
+    await ctx._packetsHandlers.init({ innerHTML: '' });
+
+    const firstPacketsCall = apiCalls.find(p => p.indexOf('/packets?') === 0);
+    assert.ok(firstPacketsCall, 'packets API should be called during initial packets page load');
+    const params = new URLSearchParams((firstPacketsCall.split('?')[1] || ''));
+    const since = params.get('since');
+    assert.ok(since, 'initial packets request should include since parameter');
+
+    const deltaMin = (Date.now() - Date.parse(since)) / 60000;
+    assert.ok(deltaMin > 45 && deltaMin < 75,
+      `expected persisted ~60m window, got ${deltaMin.toFixed(2)}m`);
   });
 }
 
@@ -2297,7 +2355,12 @@ console.log('\n=== channels.js: WS batch + region snapshot integration ===');
   });
 }
 // ===== SUMMARY =====
-console.log(`\n${'═'.repeat(40)}`);
-console.log(`  Frontend helpers: ${passed} passed, ${failed} failed`);
-console.log(`${'═'.repeat(40)}\n`);
-if (failed > 0) process.exit(1);
+Promise.allSettled(pendingTests).then(() => {
+  console.log(`\n${'═'.repeat(40)}`);
+  console.log(`  Frontend helpers: ${passed} passed, ${failed} failed`);
+  console.log(`${'═'.repeat(40)}\n`);
+  if (failed > 0) process.exit(1);
+}).catch((e) => {
+  console.error('Failed waiting for async tests:', e);
+  process.exit(1);
+});
