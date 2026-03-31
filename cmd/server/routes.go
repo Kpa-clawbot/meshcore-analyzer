@@ -1308,12 +1308,13 @@ func (s *Server) handleChannelMessages(w http.ResponseWriter, r *http.Request) {
 	hash := mux.Vars(r)["hash"]
 	limit := queryInt(r, "limit", 100)
 	offset := queryInt(r, "offset", 0)
+	region := r.URL.Query().Get("region")
 	if s.store != nil {
-		messages, total := s.store.GetChannelMessages(hash, limit, offset)
+		messages, total := s.store.GetChannelMessages(hash, limit, offset, region)
 		writeJSON(w, ChannelMessagesResponse{Messages: messages, Total: total})
 		return
 	}
-	messages, total, err := s.db.GetChannelMessages(hash, limit, offset)
+	messages, total, err := s.db.GetChannelMessages(hash, limit, offset, region)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

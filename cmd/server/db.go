@@ -951,17 +951,17 @@ func (db *DB) GetObserverByID(id string) (*Observer, error) {
 
 // GetObserverIdsForRegion returns observer IDs for given IATA codes.
 func (db *DB) GetObserverIdsForRegion(regionParam string) ([]string, error) {
-	if regionParam == "" {
+	codes := normalizeRegionCodes(regionParam)
+	if len(codes) == 0 {
 		return nil, nil
 	}
-	codes := strings.Split(regionParam, ",")
 	placeholders := make([]string, len(codes))
 	args := make([]interface{}, len(codes))
 	for i, c := range codes {
 		placeholders[i] = "?"
-		args[i] = strings.TrimSpace(c)
+		args[i] = c
 	}
-	rows, err := db.conn.Query(fmt.Sprintf("SELECT id FROM observers WHERE iata IN (%s)", strings.Join(placeholders, ",")), args...)
+	rows, err := db.conn.Query(fmt.Sprintf("SELECT id FROM observers WHERE UPPER(TRIM(iata)) IN (%s)", strings.Join(placeholders, ",")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -969,10 +969,30 @@ func (db *DB) GetObserverIdsForRegion(regionParam string) ([]string, error) {
 	var ids []string
 	for rows.Next() {
 		var id string
-		rows.Scan(&id)
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
 		ids = append(ids, id)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return ids, nil
+}
+
+func normalizeRegionCodes(regionParam string) []string {
+	if regionParam == "" {
+		return nil
+	}
+	tokens := strings.Split(regionParam, ",")
+	codes := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		code := strings.TrimSpace(strings.ToUpper(token))
+		if code != "" {
+			codes = append(codes, code)
+		}
+	}
+	return codes
 }
 
 // GetDistinctIATAs returns all distinct IATA codes from observers.
@@ -1159,30 +1179,62 @@ func (db *DB) GetChannels() ([]map[string]interface{}, error) {
 // GetChannelMessages returns messages for a specific channel.
 // Uses transmission-level ordering (first_seen) to ensure correct message
 // sequence even when observations arrive out of order.
-func (db *DB) GetChannelMessages(channelHash string, limit, offset int) ([]map[string]interface{}, int, error) {
+func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region ...string) ([]map[string]interface{}, int, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
+	regionParam := ""
+	if len(region) > 0 {
+		regionParam = region[0]
+	}
+	regionCodes := normalizeRegionCodes(regionParam)
+	regionArgs := make([]interface{}, 0, len(regionCodes))
+	regionPlaceholders := ""
+	if len(regionCodes) > 0 {
+		placeholders := make([]string, len(regionCodes))
+		for i, code := range regionCodes {
+			placeholders[i] = "?"
+			regionArgs = append(regionArgs, code)
+		}
+		regionPlaceholders = strings.Join(placeholders, ",")
+	}
+
 	var querySQL string
+	args := make([]interface{}, 0, len(regionArgs))
 	if db.isV3 {
 		querySQL = `SELECT o.id, t.hash, t.decoded_json, t.first_seen,
 				obs.id, obs.name, o.snr, o.path_json
 			FROM observations o
 			JOIN transmissions t ON t.id = o.transmission_id
 			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
-			WHERE t.payload_type = 5
+			WHERE t.payload_type = 5`
+		if len(regionCodes) > 0 {
+			querySQL += fmt.Sprintf(" AND obs.rowid IS NOT NULL AND UPPER(TRIM(obs.iata)) IN (%s)", regionPlaceholders)
+			args = append(args, regionArgs...)
+		}
+		querySQL += `
 			ORDER BY t.first_seen ASC`
 	} else {
 		querySQL = `SELECT o.id, t.hash, t.decoded_json, t.first_seen,
 				o.observer_id, o.observer_name, o.snr, o.path_json
 			FROM observations o
 			JOIN transmissions t ON t.id = o.transmission_id
-			WHERE t.payload_type = 5
+			WHERE t.payload_type = 5`
+		if len(regionCodes) > 0 {
+			querySQL += fmt.Sprintf(` AND EXISTS (
+				SELECT 1
+				FROM observers obs
+				WHERE obs.id = o.observer_id
+				AND UPPER(TRIM(obs.iata)) IN (%s)
+			)`, regionPlaceholders)
+			args = append(args, regionArgs...)
+		}
+		querySQL += `
 			ORDER BY t.first_seen ASC`
 	}
 
-	rows, err := db.conn.Query(querySQL)
+	rows, err := db.conn.Query(querySQL, args...)
 	if err != nil {
 		return nil, 0, err
 	}

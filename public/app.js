@@ -210,8 +210,13 @@ function formatEngineBadge(engine) {
   return ` <span class="engine-badge">${engine}</span>`;
 }
 
-function formatVersionBadge(version, commit, engine) {
+function formatVersionBadge(version, commit, engine, buildTime) {
   if (!version && !commit && !engine) return '';
+  var buildAge = '';
+  if (buildTime && buildTime !== 'unknown') {
+    var age = timeAgo(buildTime);
+    if (age && age !== '—') buildAge = ' <span class="build-age">(' + age + ')</span>';
+  }
   var port = (typeof location !== 'undefined' && location.port) || '';
   var isProd = !port || port === '80' || port === '443';
   var GH = 'https://github.com/Kpa-clawbot/corescope';
@@ -222,7 +227,7 @@ function formatVersionBadge(version, commit, engine) {
   }
   if (commit && commit !== 'unknown') {
     var short = commit.length > 7 ? commit.slice(0, 7) : commit;
-    parts.push('<a href="' + GH + '/commit/' + commit + '" target="_blank" rel="noopener">' + short + '</a>');
+    parts.push('<a href="' + GH + '/commit/' + commit + '" target="_blank" rel="noopener">' + short + '</a>' + buildAge);
   }
   if (engine) parts.push('<span class="engine-badge">' + engine + '</span>');
   if (parts.length === 0) return '';
@@ -698,7 +703,7 @@ window.addEventListener('DOMContentLoaded', () => {
       const stats = await api('/stats', { ttl: CLIENT_TTL.stats });
       const el = document.getElementById('navStats');
       if (el) {
-        el.innerHTML = `<span class="stat-val">${stats.totalPackets}</span> pkts · <span class="stat-val">${stats.totalNodes}</span> nodes · <span class="stat-val">${stats.totalObservers}</span> obs${formatVersionBadge(stats.version, stats.commit, stats.engine)}`;
+        el.innerHTML = `<span class="stat-val">${stats.totalPackets}</span> pkts · <span class="stat-val">${stats.totalNodes}</span> nodes · <span class="stat-val">${stats.totalObservers}</span> obs${formatVersionBadge(stats.version, stats.commit, stats.engine, stats.buildTime)}`;
         el.querySelectorAll('.stat-val').forEach(s => s.classList.add('updated'));
         setTimeout(() => { el.querySelectorAll('.stat-val').forEach(s => s.classList.remove('updated')); }, 600);
       }

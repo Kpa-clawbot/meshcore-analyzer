@@ -631,6 +631,18 @@ func TestGetObserverIdsForRegion(t *testing.T) {
 		}
 	})
 
+	t.Run("case and trim normalization", func(t *testing.T) {
+		db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count)
+			VALUES ('obs3', 'Observer Three', ' sjc ', ?, '2026-01-01T00:00:00Z', 1)`, time.Now().UTC().Format(time.RFC3339))
+		ids, err := db.GetObserverIdsForRegion(" sjc ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 2 {
+			t.Errorf("expected 2 observers for normalized sjc, got %d", len(ids))
+		}
+	})
+
 	t.Run("empty param", func(t *testing.T) {
 		ids, err := db.GetObserverIdsForRegion("")
 		if err != nil {
@@ -692,6 +704,49 @@ func TestGetChannelMessages(t *testing.T) {
 			t.Error("expected non-nil result")
 		}
 	})
+}
+
+func TestGetChannelMessagesRegionFiltering(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	ts1 := now.Add(-2 * time.Minute).Format(time.RFC3339)
+	ts2 := now.Add(-1 * time.Minute).Format(time.RFC3339)
+	epoch1 := now.Add(-2 * time.Minute).Unix()
+	epoch2 := now.Add(-1 * time.Minute).Unix()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Observer One', 'SJC')`)
+	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs2', 'Observer Two', ' sfo ')`)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('AA', 'chanregion0001', ?, 1, 5,
+		'{"type":"CHAN","channel":"#region","text":"SjcUser: One","sender":"SjcUser"}')`, ts1)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('BB', 'chanregion0002', ?, 1, 5,
+		'{"type":"CHAN","channel":"#region","text":"SfoUser: Two","sender":"SfoUser"}')`, ts2)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, 1, 10.0, -90, '[]', ?)`, epoch1)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (2, 2, 9.0, -91, '[]', ?)`, epoch2)
+
+	msgsSJC, totalSJC, err := db.GetChannelMessages("#region", 100, 0, " sjc ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totalSJC != 1 || len(msgsSJC) != 1 {
+		t.Fatalf("expected 1 SJC message, total=%d len=%d", totalSJC, len(msgsSJC))
+	}
+	if msgsSJC[0]["sender"] != "SjcUser" {
+		t.Fatalf("expected SJC sender SjcUser, got %v", msgsSJC[0]["sender"])
+	}
+
+	msgsMulti, totalMulti, err := db.GetChannelMessages("#region", 100, 0, "sjc, SFO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totalMulti != 2 || len(msgsMulti) != 2 {
+		t.Fatalf("expected 2 multi-region messages, total=%d len=%d", totalMulti, len(msgsMulti))
+	}
 }
 
 func TestBuildPacketWhereFilters(t *testing.T) {

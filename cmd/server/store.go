@@ -2144,7 +2144,7 @@ func (s *PacketStore) GetChannels(region string) []map[string]interface{} {
 }
 
 // GetChannelMessages returns deduplicated messages for a channel from in-memory packets.
-func (s *PacketStore) GetChannelMessages(channelHash string, limit, offset int) ([]map[string]interface{}, int) {
+func (s *PacketStore) GetChannelMessages(channelHash string, limit, offset int, region ...string) ([]map[string]interface{}, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -2159,6 +2159,11 @@ func (s *PacketStore) GetChannelMessages(channelHash string, limit, offset int) 
 	}
 	msgMap := map[string]*msgEntry{}
 	var msgOrder []string
+	regionParam := ""
+	if len(region) > 0 {
+		regionParam = region[0]
+	}
+	regionObs := s.resolveRegionObservers(regionParam)
 
 	// Iterate type-5 packets oldest-first (byPayloadType is ASC = oldest first)
 	type decodedMsg struct {
@@ -2172,6 +2177,19 @@ func (s *PacketStore) GetChannelMessages(channelHash string, limit, offset int) 
 
 	grpTxts := s.byPayloadType[5]
 	for _, tx := range grpTxts {
+		if regionObs != nil {
+			match := false
+			for _, obs := range tx.Observations {
+				if regionObs[obs.ObserverID] {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
 		if tx.DecodedJSON == "" {
 			continue
 		}
@@ -3992,7 +4010,7 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 	}
 
 	return map[string]interface{}{
-		"total":                    total,
+		"total":                   total,
 		"distribution":            distribution,
 		"distributionByRepeaters": distributionByRepeaters,
 		"hourly":                  hourly,

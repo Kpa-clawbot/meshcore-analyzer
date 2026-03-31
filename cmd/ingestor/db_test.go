@@ -219,7 +219,7 @@ func TestUpsertObserver(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := s.UpsertObserver("obs1", "Observer1", "SJC", nil); err != nil {
+	if err := s.UpsertObserver("obs1", "Observer1", " sjc ", nil); err != nil {
 		t.Fatal(err)
 	}
 

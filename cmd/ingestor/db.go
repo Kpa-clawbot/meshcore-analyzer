@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -501,6 +502,7 @@ type ObserverMeta struct {
 // UpsertObserver inserts or updates an observer with optional hardware metadata.
 func (s *Store) UpsertObserver(id, name, iata string, meta *ObserverMeta) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	normalizedIATA := strings.TrimSpace(strings.ToUpper(iata))
 
 	var model, firmware, clientVersion, radio interface{}
 	var batteryMv, uptimeSecs, noiseFloor interface{}
@@ -529,8 +531,8 @@ func (s *Store) UpsertObserver(id, name, iata string, meta *ObserverMeta) error 
 	}
 
 	_, err := s.stmtUpsertObserver.Exec(
-		id, name, iata, now, now, model, firmware, clientVersion, radio, batteryMv, uptimeSecs, noiseFloor,
-		name, iata, now, model, firmware, clientVersion, radio, batteryMv, uptimeSecs, noiseFloor,
+		id, name, normalizedIATA, now, now, model, firmware, clientVersion, radio, batteryMv, uptimeSecs, noiseFloor,
+		name, normalizedIATA, now, model, firmware, clientVersion, radio, batteryMv, uptimeSecs, noiseFloor,
 	)
 	if err != nil {
 		s.Stats.WriteErrors.Add(1)

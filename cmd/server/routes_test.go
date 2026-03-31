@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 )
@@ -120,6 +121,9 @@ func TestHealthEndpoint(t *testing.T) {
 	if _, ok := body["commit"]; !ok {
 		t.Error("expected commit field in health response")
 	}
+	if bt, ok := body["buildTime"]; !ok || bt == nil {
+		t.Error("expected non-nil buildTime field in health response")
+	}
 
 	// Verify memory has spec-defined fields (no heapMB or goRuntime per api-spec.md)
 	mem, ok := body["memory"].(map[string]interface{})
@@ -199,6 +203,9 @@ func TestStatsEndpoint(t *testing.T) {
 	}
 	if _, ok := body["commit"]; !ok {
 		t.Error("expected commit field in stats response")
+	}
+	if bt, ok := body["buildTime"]; !ok || bt == nil {
+		t.Error("expected non-nil buildTime field in stats response")
 	}
 }
 
@@ -946,6 +953,52 @@ func TestChannelMessages(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &body)
 	if body["messages"] == nil {
 		t.Error("expected messages")
+	}
+}
+
+func TestChannelMessagesWithRegion(t *testing.T) {
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('EEFF', 'chanextra000001', ?, 1, 5, '{"type":"CHAN","channel":"#test","text":"OtherUser: Cross region","sender":"OtherUser"}')`,
+		time.Now().UTC().Add(-30*time.Minute).Format(time.RFC3339))
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (4, 2, 11.0, -89, '[]', ?)`, time.Now().UTC().Add(-30*time.Minute).Unix())
+
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+
+	req := httptest.NewRequest("GET", "/api/channels/%23test/messages?region=SJC", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	msgs, ok := body["messages"].([]interface{})
+	if !ok {
+		t.Fatalf("expected messages array, got %T", body["messages"])
+	}
+	if len(msgs) == 0 {
+		t.Fatalf("expected at least one regional message")
+	}
+	for _, raw := range msgs {
+		msg, _ := raw.(map[string]interface{})
+		if msg["sender"] == "OtherUser" {
+			t.Fatalf("cross-region message should be excluded")
+		}
 	}
 }
 
