@@ -1927,6 +1927,368 @@ console.log('\n=== customize.js: initState merge behavior ===');
     assert.strictEqual(state.theme.navBg, '#fedcba');
   });
 }
+
+// ===== CHANNELS.JS: WS Region Filter helper =====
+console.log('\n=== channels.js: shouldProcessWSMessageForRegion ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  ctx.RegionFilter = { init() {}, onChange() { return () => {}; }, offChange() {}, getRegionParam() { return ''; } };
+  ctx.onWS = () => {};
+  ctx.offWS = () => {};
+  ctx.debouncedOnWS = (fn) => fn;
+  ctx.api = () => Promise.resolve({});
+  ctx.CLIENT_TTL = { observers: 120000, channels: 15000, channelMessages: 10000 };
+  ctx.history = { replaceState() {} };
+  ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+  ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
+  loadInCtx(ctx, 'public/channels.js');
+  const shouldProcess = ctx.window._channelsShouldProcessWSMessageForRegion;
+
+  test('helper is exported', () => assert.ok(typeof shouldProcess === 'function'));
+
+  test('allows all when no region selected', () => {
+    const msg = { data: { packet: { observer_id: 'obs1' } } };
+    assert.strictEqual(shouldProcess(msg, null, { obs1: 'SJC' }), true);
+    assert.strictEqual(shouldProcess(msg, [], { obs1: 'SJC' }), true);
+  });
+
+  test('allows message when observer region matches selection', () => {
+    const msg = { data: { packet: { observer_id: 'obs1' } } };
+    assert.strictEqual(shouldProcess(msg, ['SJC', 'SFO'], { obs1: 'SJC' }), true);
+  });
+
+  test('drops message when observer region is outside selection', () => {
+    const msg = { data: { packet: { observer_id: 'obs2' } } };
+    assert.strictEqual(shouldProcess(msg, ['SJC'], { obs2: 'LAX' }), false);
+  });
+
+  test('drops message when observer_id is missing under selected region', () => {
+    const msg = { data: {} };
+    assert.strictEqual(shouldProcess(msg, ['SJC'], { obs1: 'SJC' }), false);
+  });
+
+  test('falls back to observer_name mapping when observer_id is missing', () => {
+    const msg = { data: { packet: { observer_name: 'Observer Alpha' } } };
+    assert.strictEqual(shouldProcess(msg, ['SJC'], { obs1: 'LAX' }, { 'Observer Alpha': 'SJC' }), true);
+  });
+
+  test('drops message when observer region lookup missing', () => {
+    const msg = { data: { packet: { observer_id: 'obs9' } } };
+    assert.strictEqual(shouldProcess(msg, ['SJC'], { obs1: 'SJC' }), false);
+  });
+}
+
+console.log('\n=== channels.js: WS batch + region snapshot integration ===');
+{
+  function makeChannelsWsSandbox(regionParam) {
+    const ctx = makeSandbox();
+    const dom = {};
+    function makeEl(id) {
+      if (dom[id]) return dom[id];
+      dom[id] = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 80,
+        style: {},
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        addEventListener() {},
+        removeEventListener() {},
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        getBoundingClientRect() { return { left: 0, bottom: 0, width: 0 }; },
+        setAttribute() {},
+        removeAttribute() {},
+        focus() {},
+      };
+      return dom[id];
+    }
+
+    const headerText = { textContent: '' };
+    makeEl('chHeader').querySelector = (sel) => (sel === '.ch-header-text' ? headerText : null);
+    makeEl('chMessages');
+    makeEl('chList');
+    makeEl('chScrollBtn');
+    makeEl('chAriaLive');
+    makeEl('chBackBtn');
+    makeEl('chRegionFilter');
+
+    const appEl = {
+      innerHTML: '',
+      querySelector(sel) {
+        if (sel === '.ch-sidebar' || sel === '.ch-sidebar-resize' || sel === '.ch-main') return makeEl(sel);
+        if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+        return makeEl(sel);
+      },
+      addEventListener() {},
+    };
+
+    ctx.document.getElementById = makeEl;
+    ctx.document.querySelector = (sel) => {
+      if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+      return null;
+    };
+    ctx.document.querySelectorAll = () => [];
+    ctx.document.addEventListener = () => {};
+    ctx.document.removeEventListener = () => {};
+    ctx.document.documentElement = { getAttribute: () => null, setAttribute: () => {} };
+    ctx.document.body = { appendChild() {}, removeChild() {}, contains() { return false; } };
+    ctx.history = { replaceState() {} };
+    ctx.matchMedia = () => ({ matches: false });
+    ctx.window.matchMedia = ctx.matchMedia;
+    ctx.MutationObserver = function () { this.observe = () => {}; this.disconnect = () => {}; };
+    ctx.RegionFilter = {
+      init() {},
+      onChange() { return () => {}; },
+      offChange() {},
+      getRegionParam() { return regionParam || ''; },
+    };
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.api = (path) => {
+      if (path.indexOf('/observers') === 0) return Promise.resolve({ observers: [] });
+      if (path.indexOf('/channels') === 0) return Promise.resolve({ channels: [] });
+      return Promise.resolve({ messages: [] });
+    };
+    ctx.CLIENT_TTL = { observers: 120000, channels: 15000, channelMessages: 10000, nodeDetail: 10000 };
+    ctx.ROLE_EMOJI = {};
+    ctx.ROLE_LABELS = {};
+    ctx.timeAgo = () => '1m ago';
+    ctx.registerPage = (name, handlers) => { ctx._pageHandlers = handlers; };
+    ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+    ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
+
+    loadInCtx(ctx, 'public/channels.js');
+    ctx._pageHandlers.init(appEl);
+    return { ctx, dom };
+  }
+
+  test('WS batch respects region snapshot and observer_name fallback', () => {
+    const env = makeChannelsWsSandbox('SJC');
+    env.ctx.window._channelsSetObserverRegionsForTest({ obs1: 'SJC' }, { 'Observer Beta': 'SJC' });
+    env.ctx.window._channelsSetStateForTest({
+      selectedHash: 'general',
+      channels: [{ hash: 'general', name: 'general', messageCount: 0, lastActivityMs: 0 }],
+      messages: [],
+    });
+
+    env.ctx.window._channelsHandleWSBatchForTest([
+      {
+        type: 'packet',
+        data: {
+          hash: 'hash1',
+          decoded: { header: { payloadTypeName: 'GRP_TXT' }, payload: { channel: 'general', text: 'Alice: hello world' } },
+          packet: { observer_name: 'Observer Beta' },
+        },
+      },
+      {
+        type: 'packet',
+        data: {
+          hash: 'hash2',
+          decoded: { header: { payloadTypeName: 'GRP_TXT' }, payload: { channel: 'general', text: 'Bob: dropped' } },
+          packet: { observer_name: 'Observer Zeta' },
+        },
+      },
+    ]);
+
+    const state = env.ctx.window._channelsGetStateForTest();
+    assert.strictEqual(state.messages.length, 1, 'only matching-region message should be appended');
+    assert.strictEqual(state.messages[0].sender, 'Alice');
+    assert.strictEqual(state.channels[0].messageCount, 1, 'channel count increments only for accepted message');
+  });
+
+  test('stale selectChannel response is discarded after region change', async () => {
+    const ctx = makeSandbox();
+    const dom = {};
+    function makeEl(id) {
+      if (dom[id]) return dom[id];
+      dom[id] = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 80,
+        style: {},
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        addEventListener() {},
+        removeEventListener() {},
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        getBoundingClientRect() { return { left: 0, bottom: 0, width: 0 }; },
+        setAttribute() {},
+        removeAttribute() {},
+        focus() {},
+      };
+      return dom[id];
+    }
+    const headerText = { textContent: '' };
+    makeEl('chHeader').querySelector = (sel) => (sel === '.ch-header-text' ? headerText : null);
+    makeEl('chMessages');
+    makeEl('chList');
+    makeEl('chScrollBtn');
+    makeEl('chAriaLive');
+    makeEl('chBackBtn');
+    makeEl('chRegionFilter');
+    const appEl = {
+      innerHTML: '',
+      querySelector(sel) {
+        if (sel === '.ch-sidebar' || sel === '.ch-sidebar-resize' || sel === '.ch-main') return makeEl(sel);
+        if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+        return makeEl(sel);
+      },
+      addEventListener() {},
+    };
+    let region = 'SJC';
+    let resolver = null;
+    ctx.document.getElementById = makeEl;
+    ctx.document.querySelector = (sel) => {
+      if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+      return null;
+    };
+    ctx.document.querySelectorAll = () => [];
+    ctx.document.addEventListener = () => {};
+    ctx.document.removeEventListener = () => {};
+    ctx.document.documentElement = { getAttribute: () => null, setAttribute: () => {} };
+    ctx.document.body = { appendChild() {}, removeChild() {}, contains() { return false; } };
+    ctx.history = { replaceState() {} };
+    ctx.matchMedia = () => ({ matches: false });
+    ctx.window.matchMedia = ctx.matchMedia;
+    ctx.MutationObserver = function () { this.observe = () => {}; this.disconnect = () => {}; };
+    ctx.RegionFilter = { init() {}, onChange() { return () => {}; }, offChange() {}, getRegionParam() { return region; } };
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.api = (path) => {
+      if (path.indexOf('/observers') === 0) return Promise.resolve({ observers: [] });
+      if (path.indexOf('/channels?') === 0 || path === '/channels') return Promise.resolve({ channels: [{ hash: 'general', name: 'general', messageCount: 2, lastActivity: null }] });
+      if (path.indexOf('/channels/general/messages') === 0) {
+        return new Promise((resolve) => { resolver = resolve; });
+      }
+      return Promise.resolve({ messages: [] });
+    };
+    ctx.CLIENT_TTL = { observers: 120000, channels: 15000, channelMessages: 10000, nodeDetail: 10000 };
+    ctx.ROLE_EMOJI = {};
+    ctx.ROLE_LABELS = {};
+    ctx.timeAgo = () => '1m ago';
+    ctx.registerPage = (name, handlers) => { ctx._pageHandlers = handlers; };
+    ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+    ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
+
+    loadInCtx(ctx, 'public/channels.js');
+    ctx._pageHandlers.init(appEl);
+    await Promise.resolve();
+    const selectPromise = ctx.window._channelsSelectChannelForTest('general');
+    region = 'LAX';
+    ctx.window._channelsBeginMessageRequestForTest('other', 'LAX');
+    resolver({ messages: [{ sender: 'Alice', text: 'stale', timestamp: '2025-01-01T00:00:00Z' }] });
+    await selectPromise;
+    const state = ctx.window._channelsGetStateForTest();
+    assert.strictEqual(state.selectedHash, 'general', 'stale select response must not clear or overwrite selection');
+    assert.strictEqual(state.messages.length, 0, 'stale response must be discarded');
+  });
+
+  test('loadChannels clears selected hash when channel no longer exists in region', async () => {
+    const ctx = makeSandbox();
+    const dom = {};
+    function makeEl(id) {
+      if (dom[id]) return dom[id];
+      dom[id] = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 80,
+        style: {},
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        addEventListener() {},
+        removeEventListener() {},
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        getBoundingClientRect() { return { left: 0, bottom: 0, width: 0 }; },
+        setAttribute() {},
+        removeAttribute() {},
+        focus() {},
+      };
+      return dom[id];
+    }
+    const headerText = { textContent: '' };
+    makeEl('chHeader').querySelector = (sel) => (sel === '.ch-header-text' ? headerText : null);
+    makeEl('chMessages');
+    makeEl('chList');
+    makeEl('chScrollBtn');
+    makeEl('chAriaLive');
+    makeEl('chBackBtn');
+    makeEl('chRegionFilter');
+    const appEl = {
+      innerHTML: '',
+      querySelector(sel) {
+        if (sel === '.ch-sidebar' || sel === '.ch-sidebar-resize' || sel === '.ch-main') return makeEl(sel);
+        if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+        return makeEl(sel);
+      },
+      addEventListener() {},
+    };
+    const historyCalls = [];
+    let channelCall = 0;
+    ctx.document.getElementById = makeEl;
+    ctx.document.querySelector = (sel) => {
+      if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+      return null;
+    };
+    ctx.document.querySelectorAll = () => [];
+    ctx.document.addEventListener = () => {};
+    ctx.document.removeEventListener = () => {};
+    ctx.document.documentElement = { getAttribute: () => null, setAttribute: () => {} };
+    ctx.document.body = { appendChild() {}, removeChild() {}, contains() { return false; } };
+    ctx.history = { replaceState(_a, _b, url) { historyCalls.push(url); } };
+    ctx.matchMedia = () => ({ matches: false });
+    ctx.window.matchMedia = ctx.matchMedia;
+    ctx.MutationObserver = function () { this.observe = () => {}; this.disconnect = () => {}; };
+    ctx.RegionFilter = { init() {}, onChange() { return () => {}; }, offChange() {}, getRegionParam() { return 'SJC'; } };
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.api = (path) => {
+      if (path.indexOf('/observers') === 0) return Promise.resolve({ observers: [] });
+      if (path.indexOf('/channels') === 0) {
+        channelCall++;
+        if (channelCall === 1) return Promise.resolve({ channels: [{ hash: 'general', name: 'general', messageCount: 1, lastActivity: null }] });
+        return Promise.resolve({ channels: [{ hash: 'newchan', name: 'newchan', messageCount: 1, lastActivity: null }] });
+      }
+      if (path.indexOf('/channels/general/messages') === 0) return Promise.resolve({ messages: [{ sender: 'Alice', text: 'hi', timestamp: '2025-01-01T00:00:00Z' }] });
+      return Promise.resolve({ messages: [] });
+    };
+    ctx.CLIENT_TTL = { observers: 120000, channels: 15000, channelMessages: 10000, nodeDetail: 10000 };
+    ctx.ROLE_EMOJI = {};
+    ctx.ROLE_LABELS = {};
+    ctx.timeAgo = () => '1m ago';
+    ctx.registerPage = (name, handlers) => { ctx._pageHandlers = handlers; };
+    ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+    ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
+
+    loadInCtx(ctx, 'public/channels.js');
+    ctx._pageHandlers.init(appEl);
+    await Promise.resolve();
+    await ctx.window._channelsSelectChannelForTest('general');
+    await ctx.window._channelsLoadChannelsForTest(true);
+    ctx.window._channelsReconcileSelectionForTest();
+    const state = ctx.window._channelsGetStateForTest();
+    assert.strictEqual(state.selectedHash, null, 'selection should clear when channel disappears after region update');
+    assert.ok(historyCalls.includes('#/channels'), 'should route back to channels root');
+  });
+}
 // ===== SUMMARY =====
 console.log(`\n${'═'.repeat(40)}`);
 console.log(`  Frontend helpers: ${passed} passed, ${failed} failed`);
