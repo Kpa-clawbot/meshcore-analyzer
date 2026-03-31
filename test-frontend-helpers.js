@@ -1927,6 +1927,52 @@ console.log('\n=== customize.js: initState merge behavior ===');
     assert.strictEqual(state.theme.navBg, '#fedcba');
   });
 }
+
+// ===== CHANNELS.JS: WS Region Filter helper =====
+console.log('\n=== channels.js: shouldProcessWSMessageForRegion ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  ctx.RegionFilter = { init() {}, onChange() { return () => {}; }, offChange() {}, getRegionParam() { return ''; } };
+  ctx.onWS = () => {};
+  ctx.offWS = () => {};
+  ctx.debouncedOnWS = (fn) => fn;
+  ctx.api = () => Promise.resolve({});
+  ctx.CLIENT_TTL = { observers: 120000, channels: 15000, channelMessages: 10000 };
+  ctx.history = { replaceState() {} };
+  ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+  ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
+  loadInCtx(ctx, 'public/channels.js');
+  const shouldProcess = ctx.window._channelsShouldProcessWSMessageForRegion;
+
+  test('helper is exported', () => assert.ok(typeof shouldProcess === 'function'));
+
+  test('allows all when no region selected', () => {
+    const msg = { data: { packet: { observer_id: 'obs1' } } };
+    assert.strictEqual(shouldProcess(msg, null, { obs1: 'SJC' }), true);
+    assert.strictEqual(shouldProcess(msg, [], { obs1: 'SJC' }), true);
+  });
+
+  test('allows message when observer region matches selection', () => {
+    const msg = { data: { packet: { observer_id: 'obs1' } } };
+    assert.strictEqual(shouldProcess(msg, ['SJC', 'SFO'], { obs1: 'SJC' }), true);
+  });
+
+  test('drops message when observer region is outside selection', () => {
+    const msg = { data: { packet: { observer_id: 'obs2' } } };
+    assert.strictEqual(shouldProcess(msg, ['SJC'], { obs2: 'LAX' }), false);
+  });
+
+  test('drops message when observer_id is missing under selected region', () => {
+    const msg = { data: {} };
+    assert.strictEqual(shouldProcess(msg, ['SJC'], { obs1: 'SJC' }), false);
+  });
+
+  test('drops message when observer region lookup missing', () => {
+    const msg = { data: { packet: { observer_id: 'obs9' } } };
+    assert.strictEqual(shouldProcess(msg, ['SJC'], { obs1: 'SJC' }), false);
+  });
+}
 // ===== SUMMARY =====
 console.log(`\n${'═'.repeat(40)}`);
 console.log(`  Frontend helpers: ${passed} passed, ${failed} failed`);

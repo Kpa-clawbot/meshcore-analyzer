@@ -9,7 +9,37 @@
   let autoScroll = true;
   let nodeCache = {};
   let selectedNode = null;
+  let observerIataMap = {};
   var _nodeCacheTTL = 5 * 60 * 1000; // 5 minutes
+
+  function getSelectedRegionsSnapshot() {
+    var rp = RegionFilter.getRegionParam();
+    return rp ? rp.split(',').filter(Boolean) : null;
+  }
+
+  function shouldProcessWSMessageForRegion(msg, selectedRegions, observerRegions) {
+    if (!selectedRegions || !selectedRegions.length) return true;
+    var observerId = msg?.data?.packet?.observer_id || msg?.data?.observer_id || null;
+    if (!observerId) return false;
+    var observerRegion = observerRegions[observerId];
+    if (!observerRegion) return false;
+    return selectedRegions.indexOf(observerRegion) !== -1;
+  }
+
+  async function loadObserverRegions() {
+    try {
+      var data = await api('/observers', { ttl: CLIENT_TTL.observers });
+      var list = data && data.observers ? data.observers : [];
+      var map = {};
+      for (var i = 0; i < list.length; i++) {
+        var o = list[i];
+        var id = o.id || o.observer_id;
+        if (!id || !o.iata) continue;
+        map[id] = o.iata;
+      }
+      observerIataMap = map;
+    } catch {}
+  }
 
   async function lookupNode(name) {
     var cached = nodeCache[name];
@@ -251,8 +281,14 @@
     </div>`;
 
     RegionFilter.init(document.getElementById('chRegionFilter'));
-    regionChangeHandler = RegionFilter.onChange(function () { loadChannels(); });
+    regionChangeHandler = RegionFilter.onChange(function () {
+      loadChannels(true).then(async function () {
+        if (!selectedHash) return;
+        await refreshMessages({ regionSwitch: true, forceNoCache: true });
+      });
+    });
 
+    loadObserverRegions();
     loadChannels().then(() => {
       if (routeParam) selectChannel(routeParam);
     });
@@ -383,6 +419,7 @@
     });
 
     wsHandler = debouncedOnWS(function (msgs) {
+      var selectedRegions = getSelectedRegionsSnapshot();
       var dominated = msgs.filter(function (m) {
         return m.type === 'message' || (m.type === 'packet' && m.data?.decoded?.header?.payloadTypeName === 'GRP_TXT');
       });
@@ -394,6 +431,7 @@
 
       for (var i = 0; i < dominated.length; i++) {
         var m = dominated[i];
+        if (!shouldProcessWSMessageForRegion(m, selectedRegions, observerIataMap)) continue;
         var payload = m.data?.decoded?.payload;
         if (!payload) continue;
 
@@ -593,23 +631,38 @@
     msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';
 
     try {
-      const data = await api(`/channels/${encodeURIComponent(hash)}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages });
+      const rp = RegionFilter.getRegionParam();
+      const regionQs = rp ? '&region=' + encodeURIComponent(rp) : '';
+      const data = await api(`/channels/${encodeURIComponent(hash)}/messages?limit=200${regionQs}`, { ttl: CLIENT_TTL.channelMessages });
       messages = data.messages || [];
-      renderMessages();
-      scrollToBottom();
+      if (messages.length === 0 && rp) {
+        msgEl.innerHTML = '<div class="ch-empty">Channel not available in selected region</div>';
+      } else {
+        renderMessages();
+        scrollToBottom();
+      }
     } catch (e) {
       msgEl.innerHTML = `<div class="ch-empty">Failed to load messages: ${e.message}</div>`;
     }
   }
 
-  async function refreshMessages() {
+  async function refreshMessages(opts) {
     if (!selectedHash) return;
+    opts = opts || {};
     const msgEl = document.getElementById('chMessages');
     if (!msgEl) return;
     const wasAtBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 60;
     try {
-      const data = await api(`/channels/${encodeURIComponent(selectedHash)}/messages?limit=200`, { ttl: CLIENT_TTL.channelMessages });
+      const rp = RegionFilter.getRegionParam();
+      const regionQs = rp ? '&region=' + encodeURIComponent(rp) : '';
+      const data = await api(`/channels/${encodeURIComponent(selectedHash)}/messages?limit=200${regionQs}`, { ttl: CLIENT_TTL.channelMessages, bust: !!opts.forceNoCache });
       const newMsgs = data.messages || [];
+      if (opts.regionSwitch && rp && newMsgs.length === 0) {
+        messages = [];
+        msgEl.innerHTML = '<div class="ch-empty">Channel not available in selected region</div>';
+        document.getElementById('chScrollBtn')?.classList.add('hidden');
+        return;
+      }
       // #92: Use message ID/hash for change detection instead of count + timestamp
       var _getLastId = function (arr) { var m = arr.length ? arr[arr.length - 1] : null; return m ? (m.id || m.packetId || m.timestamp || '') : ''; };
       if (newMsgs.length === messages.length && _getLastId(newMsgs) === _getLastId(messages)) return;
@@ -665,5 +718,6 @@
     if (msgEl) { msgEl.scrollTop = msgEl.scrollHeight; autoScroll = true; document.getElementById('chScrollBtn')?.classList.add('hidden'); }
   }
 
+  window._channelsShouldProcessWSMessageForRegion = shouldProcessWSMessageForRegion;
   registerPage('channels', { init, destroy });
 })();
