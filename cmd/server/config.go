@@ -232,7 +232,6 @@ func (c *Config) NormalizeTimestampConfig() {
 	defaults := defaultTimestampConfig()
 	if c.Timestamps == nil {
 		log.Printf("[config] timestamps not configured — using defaults (ago/local/iso)")
-		log.Printf("[security] WARNING: timestamps section missing in config.json (using defaults)")
 		c.Timestamps = &defaults
 		return
 	}
