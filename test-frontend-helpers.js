@@ -1318,6 +1318,29 @@ console.log('\n=== compare.js: comparePacketSets ===');
     assert.ok(packetsSource.includes("classList.remove('detail-collapsed')"),
       'selectPacket should remove detail-collapsed class');
   });
+
+  test('BYOP uses dedicated overlay class and clears existing overlays before opening', () => {
+    assert.ok(packetsSource.includes("overlay.className = 'modal-overlay byop-overlay'"),
+      'BYOP overlay should have byop-overlay class');
+    assert.ok(/function showBYOP\(\)\s*\{\s*removeAllByopOverlays\(\);/m.test(packetsSource),
+      'showBYOP should clear existing overlays before creating a new one');
+  });
+
+  test('BYOP close removes all overlays in one click', () => {
+    assert.ok(packetsSource.includes("const close = () => { removeAllByopOverlays(); if (triggerBtn) triggerBtn.focus(); };"),
+      'close handler should remove all BYOP overlays');
+  });
+
+  test('packets page de-duplicates document click handlers', () => {
+    assert.ok(packetsSource.includes("bindDocumentHandler('action', 'click'"),
+      'action click handler should be bound through bindDocumentHandler');
+    assert.ok(packetsSource.includes("bindDocumentHandler('menu', 'click'"),
+      'menu close handler should be bound through bindDocumentHandler');
+    assert.ok(packetsSource.includes("bindDocumentHandler('colmenu', 'click'"),
+      'column menu close handler should be bound through bindDocumentHandler');
+    assert.ok(packetsSource.includes("if (prev) document.removeEventListener(eventName, prev);"),
+      'bindDocumentHandler should remove previous handler before re-binding');
+  });
 }
 
 // ===== APP.JS: formatEngineBadge =====

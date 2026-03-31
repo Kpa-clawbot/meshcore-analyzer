@@ -157,8 +157,28 @@
   let directPacketId = null;
   let directPacketHash = null;
   let initGeneration = 0;
+  let _docActionHandler = null;
+  let _docMenuCloseHandler = null;
+  let _docColMenuCloseHandler = null;
 
   let directObsId = null;
+
+  function removeAllByopOverlays() {
+    document.querySelectorAll('.byop-overlay').forEach(function (el) { el.remove(); });
+  }
+
+  function bindDocumentHandler(kind, eventName, handler) {
+    const prev = kind === 'action'
+      ? _docActionHandler
+      : kind === 'menu'
+        ? _docMenuCloseHandler
+        : _docColMenuCloseHandler;
+    if (prev) document.removeEventListener(eventName, prev);
+    document.addEventListener(eventName, handler);
+    if (kind === 'action') _docActionHandler = handler;
+    else if (kind === 'menu') _docMenuCloseHandler = handler;
+    else _docColMenuCloseHandler = handler;
+  }
 
   function renderTimestampCell(isoString) {
     if (typeof formatTimestampWithTooltip !== 'function' || typeof getTimestampMode !== 'function') {
@@ -237,7 +257,7 @@
     }
 
     // Event delegation for data-action buttons
-    document.addEventListener('click', function (e) {
+    bindDocumentHandler('action', 'click', function (e) {
       var btn = e.target.closest('[data-action]');
       if (!btn) return;
       if (btn.dataset.action === 'pkt-refresh') loadPackets();
@@ -376,6 +396,10 @@
   function destroy() {
     if (wsHandler) offWS(wsHandler);
     wsHandler = null;
+    if (_docActionHandler) { document.removeEventListener('click', _docActionHandler); _docActionHandler = null; }
+    if (_docMenuCloseHandler) { document.removeEventListener('click', _docMenuCloseHandler); _docMenuCloseHandler = null; }
+    if (_docColMenuCloseHandler) { document.removeEventListener('click', _docColMenuCloseHandler); _docColMenuCloseHandler = null; }
+    removeAllByopOverlays();
     packets = [];
     hashIndex = new Map();    selectedId = null;
     filtersBuilt = false;
@@ -705,7 +729,7 @@
     });
 
     // Close multi-select menus on outside click
-    document.addEventListener('click', (e) => {
+    bindDocumentHandler('menu', 'click', (e) => {
       const obsWrap = document.getElementById('observerFilterWrap');
       const typeWrap = document.getElementById('typeFilterWrap');
       if (obsWrap && !obsWrap.contains(e.target)) { const m = obsWrap.querySelector('.multi-select-menu'); if (m) m.classList.remove('open'); }
@@ -820,7 +844,7 @@
       e.stopPropagation();
       colMenu.classList.toggle('open');
     });
-    document.addEventListener('click', () => colMenu.classList.remove('open'));
+    bindDocumentHandler('colmenu', 'click', () => colMenu.classList.remove('open'));
     applyColVisibility();
 
     document.getElementById('hexHashToggle').addEventListener('click', function () {
@@ -1548,9 +1572,10 @@
 
   // BYOP modal — decode only, no DB injection
   function showBYOP() {
+    removeAllByopOverlays();
     const triggerBtn = document.querySelector('[data-action="pkt-byop"]');
     const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
+    overlay.className = 'modal-overlay byop-overlay';
     overlay.innerHTML = '<div class="modal byop-modal" role="dialog" aria-label="Decode a Packet" aria-modal="true">'
       + '<div class="byop-header"><h3>📦 Decode a Packet</h3><button class="btn-icon byop-x" title="Close" aria-label="Close dialog">✕</button></div>'
       + '<p class="text-muted" style="margin:0 0 12px;font-size:.85rem">Paste raw hex bytes from your radio or MQTT feed:</p>'
@@ -1561,7 +1586,7 @@
     document.body.appendChild(overlay);
 
     const modal = overlay.querySelector('.byop-modal');
-    const close = () => { overlay.remove(); if (triggerBtn) triggerBtn.focus(); };
+    const close = () => { removeAllByopOverlays(); if (triggerBtn) triggerBtn.focus(); };
     overlay.querySelector('.byop-x').onclick = close;
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
@@ -1597,7 +1622,7 @@
 
     async function doDecode() {
       const hex = textarea.value.trim().replace(/[\s\n]/g, '');
-      const result = document.getElementById('byopResult');
+      const result = overlay.querySelector('#byopResult');
       if (!hex) { result.innerHTML = '<p class="text-muted">Enter hex data</p>'; return; }
       if (!/^[0-9a-fA-F]+$/.test(hex)) { result.innerHTML = '<p class="byop-err" role="alert">Invalid hex — only 0-9 and A-F allowed</p>'; return; }
       result.innerHTML = '<p class="text-muted">Decoding...</p>';
