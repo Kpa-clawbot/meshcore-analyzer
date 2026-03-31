@@ -1857,12 +1857,75 @@ console.log('\n=== customize.js: initState merge behavior ===');
     const src = fs.readFileSync('public/customize.js', 'utf8');
     const withExports = src.replace(
       /\}\)\(\);\s*$/,
-      'window.__customizeExport = { initState: initState, getState: function () { return state; }, getDefaults: function () { return deepClone(DEFAULTS); } };})();'
+      'window.__customizeExport = { initState: initState, autoSave: autoSave, getState: function () { return state; }, getDefaults: function () { return deepClone(DEFAULTS); }, setInitialized: function (v) { _initialized = !!v; } };})();'
     );
     vm.runInContext(withExports, ctx);
     for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
     return ctx.window.__customizeExport;
   }
+
+  test('autoSave no-ops before initialization on panel open path', () => {
+    const ctx = makeSandbox();
+    let saveTimerCalls = 0;
+    ctx.setTimeout = function () { saveTimerCalls++; return 1; };
+    ctx.clearTimeout = function () {};
+    ctx.window.SITE_CONFIG = { home: { heroTitle: 'Server Hero' } };
+    const ex = loadCustomizeExports(ctx);
+    ex.initState();
+    ex.setInitialized(false);
+    ex.autoSave();
+    assert.strictEqual(saveTimerCalls, 0);
+    assert.strictEqual(ctx.localStorage.getItem('meshcore-user-theme'), null);
+  });
+
+  test('server home config survives customizer open without modification', () => {
+    const ctx = makeSandbox();
+    let saveTimerCalls = 0;
+    ctx.setTimeout = function () { saveTimerCalls++; return 1; };
+    ctx.clearTimeout = function () {};
+    ctx.window.SITE_CONFIG = {
+      home: {
+        heroTitle: 'Server Hero',
+        heroSubtitle: 'Server Subtitle',
+        steps: [{ emoji: 'S', title: 'Server Step', description: 'server' }],
+        checklist: [{ question: 'Server Q', answer: 'Server A' }],
+        footerLinks: [{ label: 'Server Link', url: '#/server' }]
+      }
+    };
+    const before = JSON.stringify(ctx.window.SITE_CONFIG.home);
+    const ex = loadCustomizeExports(ctx);
+    ex.initState();
+    ex.setInitialized(false);
+    ex.autoSave();
+    assert.strictEqual(saveTimerCalls, 0);
+    assert.strictEqual(JSON.stringify(ctx.window.SITE_CONFIG.home), before);
+  });
+
+  test('post-init autoSave exports user theme without mutating SITE_CONFIG.home', () => {
+    const ctx = makeSandbox();
+    let saveTimerCalls = 0;
+    ctx.setTimeout = function (fn) { saveTimerCalls++; fn(); return 1; };
+    ctx.clearTimeout = function () {};
+    ctx.HashChangeEvent = function HashChangeEvent(type) { this.type = type; };
+    ctx.window.SITE_CONFIG = {
+      home: {
+        heroTitle: 'Server Hero',
+        heroSubtitle: 'Server Subtitle',
+        steps: [{ emoji: 'S', title: 'Server Step', description: 'server' }],
+        checklist: [{ question: 'Server Q', answer: 'Server A' }],
+        footerLinks: [{ label: 'Server Link', url: '#/server' }]
+      }
+    };
+    const before = JSON.stringify(ctx.window.SITE_CONFIG.home);
+    const ex = loadCustomizeExports(ctx);
+    ex.initState();
+    ex.setInitialized(true);
+    ex.autoSave();
+    const saved = ctx.localStorage.getItem('meshcore-user-theme');
+    assert.strictEqual(saveTimerCalls, 1);
+    assert(saved && saved.length > 0, 'Expected autoSave to persist user theme');
+    assert.strictEqual(JSON.stringify(ctx.window.SITE_CONFIG.home), before);
+  });
 
   test('partial local checklist does not wipe steps/footerLinks and keeps server colors', () => {
     const ctx = makeSandbox();
@@ -1953,6 +2016,58 @@ console.log('\n=== customize.js: initState merge behavior ===');
     assert.strictEqual(state.home.footerLinks[0].label, 'Local Link');
     assert.strictEqual(state.theme.accent, '#abcdef');
     assert.strictEqual(state.theme.navBg, '#fedcba');
+  });
+}
+
+// ===== APP.JS: home rehydration merge =====
+console.log('\n=== app.js: home rehydration merge ===');
+{
+  test('mergeUserHomeConfig layers local home overrides on server home', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    const merged = ctx.mergeUserHomeConfig(
+      {
+        home: {
+          heroTitle: 'Server Hero',
+          heroSubtitle: 'Server Subtitle',
+          steps: [{ title: 'Server Step' }],
+          footerLinks: [{ label: 'Server Link' }]
+        }
+      },
+      {
+        home: {
+          heroSubtitle: 'Local Subtitle',
+          checklist: [{ question: 'Local Q', answer: 'Local A' }]
+        }
+      }
+    );
+    assert.strictEqual(merged.home.heroTitle, 'Server Hero');
+    assert.strictEqual(merged.home.heroSubtitle, 'Local Subtitle');
+    assert.strictEqual(merged.home.steps[0].title, 'Server Step');
+    assert.strictEqual(merged.home.footerLinks[0].label, 'Server Link');
+    assert.strictEqual(merged.home.checklist[0].question, 'Local Q');
+  });
+
+  test('mergeUserHomeConfig handles refresh-style localStorage payload', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    ctx.localStorage.setItem('meshcore-user-theme', JSON.stringify({
+      home: { heroTitle: 'Local Hero' }
+    }));
+    const cfg = {
+      home: {
+        heroTitle: 'Server Hero',
+        heroSubtitle: 'Server Subtitle',
+        steps: [{ title: 'Server Step' }]
+      }
+    };
+    const userTheme = JSON.parse(ctx.localStorage.getItem('meshcore-user-theme') || '{}');
+    const merged = ctx.mergeUserHomeConfig(cfg, userTheme);
+    assert.strictEqual(merged.home.heroTitle, 'Local Hero');
+    assert.strictEqual(merged.home.heroSubtitle, 'Server Subtitle');
+    assert.strictEqual(merged.home.steps[0].title, 'Server Step');
   });
 }
 

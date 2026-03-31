@@ -80,6 +80,68 @@ async function run() {
     assert(hasCustomizer, 'Customizer panel not found after clicking');
   });
 
+  await test('Customizer open does not overwrite server home config without edits', async () => {
+    // TODO: requires running server with full customize/home wiring
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('nav, .navbar, .nav, [class*="nav"]');
+    await page.evaluate(() => {
+      localStorage.removeItem('meshcore-user-theme');
+      window.SITE_CONFIG = window.SITE_CONFIG || {};
+      window.SITE_CONFIG.home = {
+        heroTitle: 'Server Hero (E2E)',
+        heroSubtitle: 'Server Subtitle (E2E)',
+        steps: [{ emoji: 'S', title: 'Server Step', description: 'server' }],
+        checklist: [{ question: 'Server Q', answer: 'Server A' }],
+        footerLinks: [{ label: 'Server Link', url: '#/server' }]
+      };
+    });
+    const before = await page.evaluate(() => JSON.stringify(window.SITE_CONFIG && window.SITE_CONFIG.home));
+    const btn = await page.$('#customizeToggle, button[title*="ustom" i], [class*="customize"]');
+    if (!btn) {
+      console.log('    ⏭️  Customizer toggle not found — TODO: requires running server');
+      return;
+    }
+    await btn.click();
+    await page.waitForTimeout(200);
+    const after = await page.evaluate(() => JSON.stringify(window.SITE_CONFIG && window.SITE_CONFIG.home));
+    assert(after === before, 'Opening customizer should not mutate server home config');
+  });
+
+  await test('Home customization persists through page refresh', async () => {
+    // TODO: requires running server with full customize/home wiring
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('nav, .navbar, .nav, [class*="nav"]');
+    const toggleSelector = '#customizeToggle, button[title*="ustom" i], button[aria-label*="theme" i], [class*="customize"]';
+    const btn = await page.$(toggleSelector);
+    if (!btn) {
+      console.log('    ⏭️  Customizer toggle not found — TODO: requires running server');
+      return;
+    }
+    const editedHero = 'Persisted Hero From Playwright';
+    await page.click(toggleSelector);
+    const homeTab = page.locator('.cust-tab[data-tab="home"]');
+    await homeTab.waitFor({ state: 'visible', timeout: 10000 });
+    await homeTab.click();
+    const heroInput = page.locator('#cust-heroTitle');
+    if (await heroInput.count() === 0) {
+      console.log('    ⏭️  #cust-heroTitle not found — TODO: requires running server');
+      return;
+    }
+    await heroInput.waitFor({ state: 'visible', timeout: 10000 });
+    await heroInput.fill(editedHero);
+    await page.waitForTimeout(700); // autoSave debounce is 500ms
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const persistedHero = await page.evaluate(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('meshcore-user-theme') || '{}');
+        return saved && saved.home ? saved.home.heroTitle : '';
+      } catch {
+        return '';
+      }
+    });
+    assert(persistedHero === editedHero, `Expected persisted hero "${editedHero}" but got "${persistedHero}"`);
+  });
+
   // Test 7: Dark mode toggle (fresh navigation \u2014 customizer panel may be open)
   await test('Dark mode toggle', async () => {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });

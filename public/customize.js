@@ -536,7 +536,9 @@
 
   // Auto-save to localStorage on every change
   let _autoSaveTimer = null;
+  let _initialized = false;
   function autoSave() {
+    if (!_initialized) return;
     if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
     _autoSaveTimer = setTimeout(function() {
       _autoSaveTimer = null;
@@ -546,7 +548,6 @@
         // Sync to SITE_CONFIG so live pages (home, etc.) pick up changes
         if (window.SITE_CONFIG) {
           if (state.branding) window.SITE_CONFIG.branding = Object.assign(window.SITE_CONFIG.branding || {}, state.branding);
-          if (state.home) window.SITE_CONFIG.home = deepClone(state.home);
         }
         // Re-render current page to reflect home/branding changes
         window.dispatchEvent(new HashChangeEvent('hashchange'));
@@ -1358,6 +1359,7 @@
     // First open — create the panel
     injectStyles();
     saveOriginalCSS();
+    _initialized = false;
     initState();
 
     panelEl = document.createElement('div');
@@ -1390,7 +1392,8 @@
     });
 
     render(panelEl.querySelector('.cust-inner'));
-    applyThemePreview(); autoSave();
+    applyThemePreview();
+    _initialized = true;
   }
 
   // Restore saved user theme IMMEDIATELY (before DOMContentLoaded, before map/app init)
