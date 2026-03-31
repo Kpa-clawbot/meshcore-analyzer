@@ -12,3 +12,6 @@
 .squad/agents/*/history.md merge=union
 .squad/log/** merge=union
 .squad/orchestration-log/** merge=union
+
+manage.sh text eol=lf
+*.sh text eol=lf
