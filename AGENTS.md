@@ -94,6 +94,9 @@ The packets page loads 30K+ packets. Don't add per-packet API calls. Don't add O
 ### 11. PR descriptions must be clean markdown
 When opening a pull request, the description must be **valid, readable markdown**. Use real newlines (not `\n` literals), proper code fences, and correct heading syntax. Write it using `--body-file -` (piped from a heredoc or file), never inline `--body` with escaped characters. If the description renders as garbage, fix it before requesting review. This is the first thing reviewers see.
 
+### 12. Post a follow-up comment when review feedback is addressed
+When you push fixes for review comments, post a comment on the PR listing what was changed and the commit hash. Reviewers should not have to dig through commits to find what was fixed. Format: "Review feedback addressed (commit `abc1234`)" followed by a numbered list of what was done.
+
 ## MeshCore Firmware — Source of Truth
 
 The MeshCore firmware source is cloned at `firmware/` (gitignored — not part of this repo). This is THE authoritative reference for anything related to the protocol, packet format, device behavior, advert structure, flags, hash sizes, route types, or how repeaters/companions/rooms/sensors behave.
