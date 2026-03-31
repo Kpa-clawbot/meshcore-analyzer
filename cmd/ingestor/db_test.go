@@ -1313,3 +1313,132 @@ func TestTelemetryMigrationAddsColumns(t *testing.T) {
 		t.Errorf("migration node_telemetry_v1 should be recorded, count=%d", count)
 	}
 }
+
+// --- Bug #320: Observer metadata nested stats ---
+
+func TestExtractObserverMetaNestedStats(t *testing.T) {
+	// Real-world MQTT status payload: stats fields nested under "stats"
+	msg := map[string]interface{}{
+		"status":           "online",
+		"origin":           "ObserverName",
+		"model":            "Heltec V3",
+		"firmware_version": "v1.14.0-9f1a3ea",
+		"stats": map[string]interface{}{
+			"battery_mv":  4174.0,
+			"uptime_secs": 80277.0,
+			"noise_floor": -110.0,
+		},
+	}
+	meta := extractObserverMeta(msg)
+	if meta == nil {
+		t.Fatal("expected non-nil meta")
+	}
+	if meta.Model == nil || *meta.Model != "Heltec V3" {
+		t.Errorf("Model=%v, want Heltec V3", meta.Model)
+	}
+	if meta.Firmware == nil || *meta.Firmware != "v1.14.0-9f1a3ea" {
+		t.Errorf("Firmware=%v, want v1.14.0-9f1a3ea", meta.Firmware)
+	}
+	if meta.BatteryMv == nil || *meta.BatteryMv != 4174 {
+		t.Errorf("BatteryMv=%v, want 4174", meta.BatteryMv)
+	}
+	if meta.UptimeSecs == nil || *meta.UptimeSecs != 80277 {
+		t.Errorf("UptimeSecs=%v, want 80277", meta.UptimeSecs)
+	}
+	if meta.NoiseFloor == nil || *meta.NoiseFloor != -110.0 {
+		t.Errorf("NoiseFloor=%v, want -110", meta.NoiseFloor)
+	}
+}
+
+func TestExtractObserverMetaNestedStatsPrecedence(t *testing.T) {
+	// If stats has a value AND top-level has a value, nested wins
+	msg := map[string]interface{}{
+		"battery_mv":  9999.0, // top-level (stale/wrong)
+		"noise_floor": -120.0, // top-level (stale/wrong)
+		"stats": map[string]interface{}{
+			"battery_mv":  4174.0, // nested (correct)
+			"noise_floor": -110.5, // nested (correct)
+		},
+	}
+	meta := extractObserverMeta(msg)
+	if meta == nil {
+		t.Fatal("expected non-nil meta")
+	}
+	if meta.BatteryMv == nil || *meta.BatteryMv != 4174 {
+		t.Errorf("BatteryMv=%v, want 4174 (nested should win over top-level)", meta.BatteryMv)
+	}
+	if meta.NoiseFloor == nil || *meta.NoiseFloor != -110.5 {
+		t.Errorf("NoiseFloor=%v, want -110.5 (nested should win over top-level)", meta.NoiseFloor)
+	}
+}
+
+func TestExtractObserverMetaFlatFallback(t *testing.T) {
+	// Backward compatibility: flat structure (no stats object) still works
+	msg := map[string]interface{}{
+		"battery_mv":  3500.0,
+		"uptime_secs": 86400.0,
+		"noise_floor": -115.5,
+	}
+	meta := extractObserverMeta(msg)
+	if meta == nil {
+		t.Fatal("expected non-nil meta for flat structure")
+	}
+	if meta.BatteryMv == nil || *meta.BatteryMv != 3500 {
+		t.Errorf("BatteryMv=%v, want 3500", meta.BatteryMv)
+	}
+	if meta.UptimeSecs == nil || *meta.UptimeSecs != 86400 {
+		t.Errorf("UptimeSecs=%v, want 86400", meta.UptimeSecs)
+	}
+	if meta.NoiseFloor == nil || *meta.NoiseFloor != -115.5 {
+		t.Errorf("NoiseFloor=%v, want -115.5", meta.NoiseFloor)
+	}
+}
+
+func TestExtractObserverMetaEmptyStats(t *testing.T) {
+	// Empty stats object should not crash, top-level fallback still applies
+	msg := map[string]interface{}{
+		"model": "T-Beam",
+		"stats": map[string]interface{}{},
+	}
+	meta := extractObserverMeta(msg)
+	if meta == nil {
+		t.Fatal("expected non-nil meta (model is present)")
+	}
+	if meta.Model == nil || *meta.Model != "T-Beam" {
+		t.Errorf("Model=%v, want T-Beam", meta.Model)
+	}
+	if meta.BatteryMv != nil {
+		t.Errorf("BatteryMv should be nil, got %v", *meta.BatteryMv)
+	}
+}
+
+func TestExtractObserverMetaStatsNotAMap(t *testing.T) {
+	// stats field is not a map (e.g., string) — should not crash, fall back to top-level
+	msg := map[string]interface{}{
+		"stats":      "invalid",
+		"battery_mv": 3700.0,
+	}
+	meta := extractObserverMeta(msg)
+	if meta == nil {
+		t.Fatal("expected non-nil meta")
+	}
+	if meta.BatteryMv == nil || *meta.BatteryMv != 3700 {
+		t.Errorf("BatteryMv=%v, want 3700 (top-level fallback when stats is not a map)", meta.BatteryMv)
+	}
+}
+
+func TestExtractObserverMetaNoiseFloorFloat(t *testing.T) {
+	// noise_floor migrated to REAL — verify float precision preserved
+	msg := map[string]interface{}{
+		"stats": map[string]interface{}{
+			"noise_floor": -108.75,
+		},
+	}
+	meta := extractObserverMeta(msg)
+	if meta == nil {
+		t.Fatal("expected non-nil meta")
+	}
+	if meta.NoiseFloor == nil || *meta.NoiseFloor != -108.75 {
+		t.Errorf("NoiseFloor=%v, want -108.75", meta.NoiseFloor)
+	}
+}

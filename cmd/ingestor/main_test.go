@@ -623,3 +623,66 @@ func TestLoadChannelKeysSkipExplicit(t *testing.T) {
 		t.Errorf("#General = %q, want my_explicit_key", keys["#General"])
 	}
 }
+
+// --- Bug #321: SNR/RSSI case-insensitive fallback ---
+
+func TestHandleMessageWithLowercaseSNRRSSI(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	payload := []byte(`{"raw":"` + rawHex + `","snr":5.5,"rssi":-102}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+
+	handleMessage(store, "test", source, msg, nil, nil)
+
+	var snr, rssi *float64
+	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
+	if snr == nil || *snr != 5.5 {
+		t.Errorf("snr=%v, want 5.5 (lowercase key)", snr)
+	}
+	if rssi == nil || *rssi != -102 {
+		t.Errorf("rssi=%v, want -102 (lowercase key)", rssi)
+	}
+}
+
+func TestHandleMessageSNRRSSIUppercaseWins(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	// Both uppercase and lowercase present — uppercase should take precedence
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	payload := []byte(`{"raw":"` + rawHex + `","SNR":7.2,"snr":1.0,"RSSI":-95,"rssi":-50}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+
+	handleMessage(store, "test", source, msg, nil, nil)
+
+	var snr, rssi *float64
+	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
+	if snr == nil || *snr != 7.2 {
+		t.Errorf("snr=%v, want 7.2 (uppercase should take precedence)", snr)
+	}
+	if rssi == nil || *rssi != -95 {
+		t.Errorf("rssi=%v, want -95 (uppercase should take precedence)", rssi)
+	}
+}
+
+func TestHandleMessageNoSNRRSSI(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	payload := []byte(`{"raw":"` + rawHex + `"}`)
+	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
+
+	handleMessage(store, "test", source, msg, nil, nil)
+
+	var snr, rssi *float64
+	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
+	if snr != nil {
+		t.Errorf("snr should be nil when not present, got %v", *snr)
+	}
+	if rssi != nil {
+		t.Errorf("rssi should be nil when not present, got %v", *rssi)
+	}
+}

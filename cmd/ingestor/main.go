@@ -241,8 +241,16 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 			if f, ok := toFloat64(v); ok {
 				mqttMsg.SNR = &f
 			}
+		} else if v, ok := msg["snr"]; ok {
+			if f, ok := toFloat64(v); ok {
+				mqttMsg.SNR = &f
+			}
 		}
 		if v, ok := msg["RSSI"]; ok {
+			if f, ok := toFloat64(v); ok {
+				mqttMsg.RSSI = &f
+			}
+		} else if v, ok := msg["rssi"]; ok {
 			if f, ok := toFloat64(v); ok {
 				mqttMsg.RSSI = &f
 			}
@@ -511,21 +519,25 @@ func extractObserverMeta(msg map[string]interface{}) *ObserverMeta {
 		hasData = true
 	}
 
-	if v, ok := msg["battery_mv"]; ok {
+	// Stats fields may be nested under a "stats" object or at top level.
+	// Try nested first, fall back to top-level for backward compatibility.
+	stats, _ := msg["stats"].(map[string]interface{})
+
+	if v := nestedOrTopLevel(stats, msg, "battery_mv"); v != nil {
 		if f, ok := toFloat64(v); ok {
 			iv := int(math.Round(f))
 			meta.BatteryMv = &iv
 			hasData = true
 		}
 	}
-	if v, ok := msg["uptime_secs"]; ok {
+	if v := nestedOrTopLevel(stats, msg, "uptime_secs"); v != nil {
 		if f, ok := toFloat64(v); ok {
 			iv := int64(math.Round(f))
 			meta.UptimeSecs = &iv
 			hasData = true
 		}
 	}
-	if v, ok := msg["noise_floor"]; ok {
+	if v := nestedOrTopLevel(stats, msg, "noise_floor"); v != nil {
 		if f, ok := toFloat64(v); ok {
 			meta.NoiseFloor = &f
 			hasData = true
@@ -536,6 +548,19 @@ func extractObserverMeta(msg map[string]interface{}) *ObserverMeta {
 		return nil
 	}
 	return meta
+}
+
+// nestedOrTopLevel looks up a key in the nested map first, then the top-level map.
+func nestedOrTopLevel(nested, toplevel map[string]interface{}, key string) interface{} {
+	if nested != nil {
+		if v, ok := nested[key]; ok {
+			return v
+		}
+	}
+	if v, ok := toplevel[key]; ok {
+		return v
+	}
+	return nil
 }
 
 func firstNonEmpty(vals ...string) string {
