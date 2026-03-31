@@ -120,6 +120,9 @@ func TestHealthEndpoint(t *testing.T) {
 	if _, ok := body["commit"]; !ok {
 		t.Error("expected commit field in health response")
 	}
+	if bt, ok := body["buildTime"]; !ok || bt == nil {
+		t.Error("expected non-nil buildTime field in health response")
+	}
 
 	// Verify memory has spec-defined fields (no heapMB or goRuntime per api-spec.md)
 	mem, ok := body["memory"].(map[string]interface{})
@@ -199,6 +202,9 @@ func TestStatsEndpoint(t *testing.T) {
 	}
 	if _, ok := body["commit"]; !ok {
 		t.Error("expected commit field in stats response")
+	}
+	if bt, ok := body["buildTime"]; !ok || bt == nil {
+		t.Error("expected non-nil buildTime field in stats response")
 	}
 }
 
