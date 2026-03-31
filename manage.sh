@@ -26,6 +26,13 @@ if [ -f .env ]; then
   set +a
 fi
 
+# Auto-fix CRLF in .env if detected
+if [ -f .env ] && grep -qP '\r' .env 2>/dev/null; then
+  warn ".env has Windows line endings (CRLF) — fixing automatically..."
+  sed -i 's/\r$//' .env
+  log ".env converted to Unix line endings."
+fi
+
 # Resolved paths for prod/staging data (must match docker-compose.yml)
 PROD_DATA="${PROD_DATA_DIR:-$HOME/meshcore-data}"
 STAGING_DATA="${STAGING_DATA_DIR:-$HOME/meshcore-staging-data}"
