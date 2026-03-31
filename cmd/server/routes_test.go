@@ -1257,6 +1257,19 @@ func TestConfigClientEndpoint(t *testing.T) {
 	if body["propagationBufferMs"] == nil {
 		t.Error("expected propagationBufferMs")
 	}
+	tsRaw, ok := body["timestamps"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected timestamps object")
+	}
+	if tsRaw["defaultMode"] != "ago" {
+		t.Errorf("expected timestamps.defaultMode=ago, got %v", tsRaw["defaultMode"])
+	}
+	if tsRaw["timezone"] != "local" {
+		t.Errorf("expected timestamps.timezone=local, got %v", tsRaw["timezone"])
+	}
+	if tsRaw["formatPreset"] != "iso" {
+		t.Errorf("expected timestamps.formatPreset=iso, got %v", tsRaw["formatPreset"])
+	}
 }
 
 func TestConfigRegionsEndpoint(t *testing.T) {

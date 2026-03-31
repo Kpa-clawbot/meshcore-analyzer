@@ -919,7 +919,8 @@ type ClientConfigResponse struct {
 	WsReconnectMs      interface{} `json:"wsReconnectMs"`
 	CacheInvalidateMs  interface{} `json:"cacheInvalidateMs"`
 	ExternalUrls       interface{} `json:"externalUrls"`
-	PropagationBufferMs float64    `json:"propagationBufferMs"`
+	PropagationBufferMs float64         `json:"propagationBufferMs"`
+	Timestamps          TimestampConfig `json:"timestamps"`
 }
 
 // ─── IATA Coords ───────────────────────────────────────────────────────────────

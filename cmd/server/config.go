@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config mirrors the Node.js config.json structure (read-only fields).
@@ -49,6 +51,8 @@ type Config struct {
 	PacketStore *PacketStoreConfig `json:"packetStore,omitempty"`
 
 	GeoFilter *GeoFilterConfig `json:"geo_filter,omitempty"`
+
+	Timestamps *TimestampConfig `json:"timestamps,omitempty"`
 }
 
 // PacketStoreConfig controls in-memory packet store limits.
@@ -66,8 +70,26 @@ type GeoFilterConfig struct {
 	LonMax   *float64     `json:"lonMax,omitempty"`
 }
 
+type TimestampConfig struct {
+	DefaultMode       string `json:"defaultMode"`       // "ago" | "absolute"
+	Timezone          string `json:"timezone"`          // "local" | "utc"
+	FormatPreset      string `json:"formatPreset"`      // "iso" | "iso-seconds" | "locale"
+	CustomFormat      string `json:"customFormat"`      // freeform, only used when AllowCustomFormat=true
+	AllowCustomFormat bool   `json:"allowCustomFormat"` // admin gate
+}
+
 type RetentionConfig struct {
 	NodeDays int `json:"nodeDays"`
+}
+
+func defaultTimestampConfig() TimestampConfig {
+	return TimestampConfig{
+		DefaultMode:       "ago",
+		Timezone:          "local",
+		FormatPreset:      "iso",
+		CustomFormat:      "",
+		AllowCustomFormat: false,
+	}
 }
 
 // NodeDaysOrDefault returns the configured retention.nodeDays or 7 if not set.
@@ -114,8 +136,10 @@ func LoadConfig(baseDirs ...string) (*Config, error) {
 		if err := json.Unmarshal(data, cfg); err != nil {
 			continue
 		}
+		cfg.NormalizeTimestampConfig()
 		return cfg, nil
 	}
+	cfg.NormalizeTimestampConfig()
 	return cfg, nil // defaults
 }
 
@@ -202,4 +226,51 @@ func (c *Config) PropagationBufferMs() int {
 		return c.LiveMap.PropagationBufferMs
 	}
 	return 5000
+}
+
+func (c *Config) NormalizeTimestampConfig() {
+	defaults := defaultTimestampConfig()
+	if c.Timestamps == nil {
+		log.Printf("[config] timestamps not configured — using defaults (ago/local/iso)")
+		log.Printf("[security] WARNING: timestamps section missing in config.json (using defaults)")
+		c.Timestamps = &defaults
+		return
+	}
+
+	origMode := c.Timestamps.DefaultMode
+	mode := strings.ToLower(strings.TrimSpace(origMode))
+	switch mode {
+	case "ago", "absolute":
+		c.Timestamps.DefaultMode = mode
+	default:
+		log.Printf("[config] warning: timestamps.defaultMode=%q is invalid, using %q", origMode, defaults.DefaultMode)
+		c.Timestamps.DefaultMode = defaults.DefaultMode
+	}
+
+	origTimezone := c.Timestamps.Timezone
+	timezone := strings.ToLower(strings.TrimSpace(origTimezone))
+	switch timezone {
+	case "local", "utc":
+		c.Timestamps.Timezone = timezone
+	default:
+		log.Printf("[config] warning: timestamps.timezone=%q is invalid, using %q", origTimezone, defaults.Timezone)
+		c.Timestamps.Timezone = defaults.Timezone
+	}
+
+	origPreset := c.Timestamps.FormatPreset
+	formatPreset := strings.ToLower(strings.TrimSpace(origPreset))
+	switch formatPreset {
+	case "iso", "iso-seconds", "locale":
+		c.Timestamps.FormatPreset = formatPreset
+	default:
+		log.Printf("[config] warning: timestamps.formatPreset=%q is invalid, using %q", origPreset, defaults.FormatPreset)
+		c.Timestamps.FormatPreset = defaults.FormatPreset
+	}
+}
+
+func (c *Config) GetTimestampConfig() TimestampConfig {
+	if c == nil || c.Timestamps == nil {
+		return defaultTimestampConfig()
+	}
+	return *c.Timestamps
 }

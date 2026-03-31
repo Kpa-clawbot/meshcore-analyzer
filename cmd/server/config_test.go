@@ -31,6 +31,13 @@ func TestLoadConfigValidJSON(t *testing.T) {
 		"liveMap": map[string]interface{}{
 			"propagationBufferMs": 3000,
 		},
+		"timestamps": map[string]interface{}{
+			"defaultMode":       "absolute",
+			"timezone":          "utc",
+			"formatPreset":      "iso-seconds",
+			"customFormat":      "2006-01-02 15:04:05",
+			"allowCustomFormat": true,
+		},
 	}
 	data, _ := json.Marshal(cfgData)
 	os.WriteFile(filepath.Join(dir, "config.json"), data, 0644)
@@ -47,6 +54,18 @@ func TestLoadConfigValidJSON(t *testing.T) {
 	}
 	if cfg.MapDefaults.Zoom != 12 {
 		t.Errorf("expected zoom 12, got %d", cfg.MapDefaults.Zoom)
+	}
+	if cfg.Timestamps == nil {
+		t.Fatal("expected timestamps config")
+	}
+	if cfg.Timestamps.DefaultMode != "absolute" {
+		t.Errorf("expected defaultMode absolute, got %s", cfg.Timestamps.DefaultMode)
+	}
+	if cfg.Timestamps.Timezone != "utc" {
+		t.Errorf("expected timezone utc, got %s", cfg.Timestamps.Timezone)
+	}
+	if cfg.Timestamps.FormatPreset != "iso-seconds" {
+		t.Errorf("expected formatPreset iso-seconds, got %s", cfg.Timestamps.FormatPreset)
 	}
 }
 
@@ -76,6 +95,10 @@ func TestLoadConfigNoFiles(t *testing.T) {
 	if cfg.Port != 3000 {
 		t.Errorf("expected default port 3000, got %d", cfg.Port)
 	}
+	ts := cfg.GetTimestampConfig()
+	if ts.DefaultMode != "ago" || ts.Timezone != "local" || ts.FormatPreset != "iso" {
+		t.Errorf("expected default timestamp config ago/local/iso, got %s/%s/%s", ts.DefaultMode, ts.Timezone, ts.FormatPreset)
+	}
 }
 
 func TestLoadConfigInvalidJSON(t *testing.T) {
@@ -99,6 +122,36 @@ func TestLoadConfigNoArgs(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
+	}
+}
+
+func TestLoadConfigTimestampNormalization(t *testing.T) {
+	dir := t.TempDir()
+	cfgData := map[string]interface{}{
+		"timestamps": map[string]interface{}{
+			"defaultMode":  "banana",
+			"timezone":     "mars",
+			"formatPreset": "weird",
+		},
+	}
+	data, _ := json.Marshal(cfgData)
+	os.WriteFile(filepath.Join(dir, "config.json"), data, 0644)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Timestamps == nil {
+		t.Fatal("expected timestamps to be set")
+	}
+	if cfg.Timestamps.DefaultMode != "ago" {
+		t.Errorf("expected normalized defaultMode ago, got %s", cfg.Timestamps.DefaultMode)
+	}
+	if cfg.Timestamps.Timezone != "local" {
+		t.Errorf("expected normalized timezone local, got %s", cfg.Timestamps.Timezone)
+	}
+	if cfg.Timestamps.FormatPreset != "iso" {
+		t.Errorf("expected normalized formatPreset iso, got %s", cfg.Timestamps.FormatPreset)
 	}
 }
 

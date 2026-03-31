@@ -239,6 +239,7 @@ func (s *Server) handleConfigClient(w http.ResponseWriter, r *http.Request) {
 		CacheInvalidateMs:   s.cfg.CacheInvalidMs,
 		ExternalUrls:        s.cfg.ExternalUrls,
 		PropagationBufferMs: float64(s.cfg.PropagationBufferMs()),
+		Timestamps:          s.cfg.GetTimestampConfig(),
 	})
 }
 

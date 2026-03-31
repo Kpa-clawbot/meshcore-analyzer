@@ -144,6 +144,13 @@
     "propagationBufferMs": 5000,
     "_comment": "How long (ms) to buffer incoming observations of the same packet before animating. Mesh packets propagate through multiple paths and arrive at different observers over several seconds. This window collects all observations of a single transmission so the live map can animate them simultaneously as one realistic propagation event. Set higher for wide meshes with many observers, lower for snappier animations. 5000ms captures ~95% of observations for a typical mesh."
   },
+  "timestamps": {
+    "defaultMode": "ago",
+    "timezone": "local",
+    "formatPreset": "iso",
+    "customFormat": "",
+    "allowCustomFormat": false
+  },
   "packetStore": {
     "maxMemoryMB": 1024,
     "estimatedPacketBytes": 450,
