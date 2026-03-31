@@ -319,10 +319,14 @@ func TestUpsertObserverMetaPreservesExisting(t *testing.T) {
 	battery := 3500
 	noise := -115.5
 	model := "L1"
+	firmware := "v1.2.3"
 	clientVersion := "2.4.1"
+	radio := "SX1262"
 	meta := &ObserverMeta{
 		Model:         &model,
+		Firmware:      &firmware,
 		ClientVersion: &clientVersion,
+		Radio:         &radio,
 		BatteryMv:     &battery,
 		NoiseFloor:    &noise,
 	}
@@ -337,14 +341,20 @@ func TestUpsertObserverMetaPreservesExisting(t *testing.T) {
 
 	var batteryMv int
 	var noiseFloor float64
-	var gotModel, gotClientVersion string
-	s.db.QueryRow("SELECT model, client_version, battery_mv, noise_floor FROM observers WHERE id = 'obs1'").
-		Scan(&gotModel, &gotClientVersion, &batteryMv, &noiseFloor)
+	var gotModel, gotFirmware, gotClientVersion, gotRadio string
+	s.db.QueryRow("SELECT model, firmware, client_version, radio, battery_mv, noise_floor FROM observers WHERE id = 'obs1'").
+		Scan(&gotModel, &gotFirmware, &gotClientVersion, &gotRadio, &batteryMv, &noiseFloor)
 	if gotModel != model {
 		t.Errorf("model=%s after nil-meta upsert, want %s (preserved)", gotModel, model)
 	}
+	if gotFirmware != firmware {
+		t.Errorf("firmware=%s after nil-meta upsert, want %s (preserved)", gotFirmware, firmware)
+	}
 	if gotClientVersion != clientVersion {
 		t.Errorf("client_version=%s after nil-meta upsert, want %s (preserved)", gotClientVersion, clientVersion)
+	}
+	if gotRadio != radio {
+		t.Errorf("radio=%s after nil-meta upsert, want %s (preserved)", gotRadio, radio)
 	}
 	if batteryMv != 3500 {
 		t.Errorf("battery_mv=%d after nil-meta upsert, want 3500 (preserved)", batteryMv)
@@ -417,6 +427,25 @@ func TestExtractObserverMeta(t *testing.T) {
 	}
 	if meta4 == nil || meta4.ClientVersion == nil || *meta4.ClientVersion != "3.0.0" {
 		t.Errorf("ClientVersion=%v, want 3.0.0", meta4)
+	}
+
+	// When both keys are present, explicit compatibility fields win due extraction order:
+	// firmware_version overrides firmware and clientVersion overrides client_version.
+	msg5 := map[string]interface{}{
+		"firmware":         "v1-legacy",
+		"firmware_version": "v2-canonical",
+		"client_version":   "1.0.0-legacy",
+		"clientVersion":    "2.0.0-canonical",
+	}
+	meta5 := extractObserverMeta(msg5)
+	if meta5 == nil {
+		t.Fatal("expected non-nil meta for dual-key payload")
+	}
+	if meta5.Firmware == nil || *meta5.Firmware != "v2-canonical" {
+		t.Errorf("Firmware precedence mismatch: got %v, want v2-canonical from firmware_version", meta5.Firmware)
+	}
+	if meta5.ClientVersion == nil || *meta5.ClientVersion != "2.0.0-canonical" {
+		t.Errorf("ClientVersion precedence mismatch: got %v, want 2.0.0-canonical from clientVersion", meta5.ClientVersion)
 	}
 }
 
@@ -604,7 +633,7 @@ func TestInsertTransmissionEarlierFirstSeen(t *testing.T) {
 	data2 := &PacketData{
 		RawHex:    "0A00D69F",
 		Timestamp: "2026-03-25T06:00:00Z", // earlier
-		Hash:      "firstseen12345678",     // same hash
+		Hash:      "firstseen12345678",    // same hash
 		RouteType: 2,
 	}
 	if _, err := s.InsertTransmission(data2); err != nil {
@@ -831,7 +860,7 @@ func TestInsertTransmissionDedupObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Insert same hash again with same observer (no observerID) — 
+	// Insert same hash again with same observer (no observerID) —
 	// the UNIQUE constraint on observations dedup should handle it
 	if _, err := s.InsertTransmission(data); err != nil {
 		t.Fatal(err)
