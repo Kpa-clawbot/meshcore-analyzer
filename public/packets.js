@@ -24,6 +24,8 @@
   let regionMap = {};
   const TYPE_NAMES = { 0:'Request', 1:'Response', 2:'Direct Msg', 3:'ACK', 4:'Advert', 5:'Channel Msg', 7:'Anon Req', 8:'Path', 9:'Trace', 11:'Control' };
   function typeName(t) { return TYPE_NAMES[t] ?? `Type ${t}`; }
+  let savedTimeWindowMin = Number(localStorage.getItem('meshcore-time-window'));
+  if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin < 0) savedTimeWindowMin = 15;
   let totalCount = 0;
   let expandedHashes = new Set();
   let hopNameCache = {};
@@ -224,10 +226,6 @@
       if (e.target.closest('.panel-close-btn')) closeDetailPanel();
     });
     await loadObservers();
-    // Restore saved time window before first load
-    const fTW = document.getElementById('fTimeWindow');
-    const savedTW = localStorage.getItem('meshcore-time-window');
-    if (savedTW !== null && fTW) fTW.value = savedTW;
     loadPackets();
 
     // Auto-select packet detail when arriving via hash URL
@@ -425,7 +423,8 @@
   async function loadPackets() {
     try {
       const params = new URLSearchParams();
-      const windowMin = Number(document.getElementById('fTimeWindow')?.value || 15);
+      const selectedWindow = Number(document.getElementById('fTimeWindow')?.value);
+      const windowMin = Number.isFinite(selectedWindow) ? selectedWindow : savedTimeWindowMin;
       if (windowMin > 0 && !filters.hash) {
         const since = new Date(Date.now() - windowMin * 60000).toISOString();
         params.set('since', since);
@@ -749,9 +748,10 @@
 
     // Time window dropdown — restore from localStorage and bind change
     const fTimeWindow = document.getElementById('fTimeWindow');
-    const savedWindow = localStorage.getItem('meshcore-time-window');
-    if (savedWindow !== null) fTimeWindow.value = savedWindow;
+    fTimeWindow.value = String(savedTimeWindowMin);
     fTimeWindow.addEventListener('change', () => {
+      savedTimeWindowMin = Number(fTimeWindow.value);
+      if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin < 0) savedTimeWindowMin = 15;
       localStorage.setItem('meshcore-time-window', fTimeWindow.value);
       loadPackets();
     });

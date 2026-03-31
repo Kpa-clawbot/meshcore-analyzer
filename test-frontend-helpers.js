@@ -1341,6 +1341,13 @@ console.log('\n=== compare.js: comparePacketSets ===');
     assert.ok(packetsSource.includes("if (prev) document.removeEventListener(eventName, prev);"),
       'bindDocumentHandler should remove previous handler before re-binding');
   });
+
+  test('loadPackets falls back to persisted time window before filter UI is rendered', () => {
+    assert.ok(packetsSource.includes("let savedTimeWindowMin = Number(localStorage.getItem('meshcore-time-window'));"),
+      'should initialize saved time window from localStorage');
+    assert.ok(packetsSource.includes("const windowMin = Number.isFinite(selectedWindow) ? selectedWindow : savedTimeWindowMin;"),
+      'loadPackets should use persisted time window when fTimeWindow is not yet available');
+  });
 }
 
 // ===== APP.JS: formatEngineBadge =====
