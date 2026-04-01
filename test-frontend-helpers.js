@@ -3033,6 +3033,69 @@ console.log('\n=== channels.js: formatHashHex (issue #465) ===');
   });
 }
 
+
+// ===== packets.js: memory bounds =====
+{
+  console.log('\nPackets page — memory bounds:');
+  const src = fs.readFileSync('public/packets.js', 'utf8');
+
+  test('pauseBuffer is capped at 2000 entries', () => {
+    assert.ok(src.includes('pauseBuffer.length > 2000'),
+      'pauseBuffer cap check must be present');
+    assert.ok(src.includes('pauseBuffer = pauseBuffer.slice(-2000)'),
+      'pauseBuffer must be trimmed to last 2000 entries');
+  });
+
+  test('packets array is trimmed to PACKET_LIMIT after WS update in grouped mode', () => {
+    assert.ok(src.includes('packets.length > PACKET_LIMIT'),
+      'grouped mode must check packets length against PACKET_LIMIT');
+    assert.ok(src.includes('packets.splice(PACKET_LIMIT)'),
+      'grouped mode must splice packets to PACKET_LIMIT');
+  });
+
+  test('evicted packets are removed from hashIndex', () => {
+    assert.ok(/const evicted = packets\.splice\(PACKET_LIMIT\)[\s\S]{0,200}hashIndex\.delete\(p\.hash\)/.test(src),
+      'after splice, evicted entries must be deleted from hashIndex');
+  });
+
+  test('packets array is trimmed to PACKET_LIMIT after WS update in flat mode', () => {
+    assert.ok(/packets = filtered\.concat\(packets\)[\s\S]{0,100}packets\.length = PACKET_LIMIT/.test(src),
+      'flat mode must truncate packets to PACKET_LIMIT after prepend');
+  });
+
+  test('_children is capped at 200 on WebSocket prepend', () => {
+    assert.ok(src.includes('existing._children.length > 200'),
+      '_children cap check must be present');
+    assert.ok(src.includes('existing._children.length = 200'),
+      '_children must be truncated to 200');
+  });
+
+  test('observerMap is built from observers array in loadObservers', () => {
+    assert.ok(src.includes('observerMap = new Map(observers.map(o => [o.id, o]))'),
+      'observerMap must be built as id→observer Map in loadObservers');
+  });
+
+  test('observerMap is reset in destroy', () => {
+    assert.ok(src.includes('observerMap = new Map()'),
+      'destroy must reset observerMap to empty Map');
+  });
+
+  test('WS handler debounces render via _wsRenderTimer', () => {
+    const wsBlock = src.slice(src.indexOf('wsHandler = debouncedOnWS'), src.indexOf('function destroy()'));
+    assert.ok(wsBlock.includes('_wsRenderTimer'),
+      'WS handler must debounce renders via _wsRenderTimer');
+    assert.ok(wsBlock.includes('clearTimeout(_wsRenderTimer)'),
+      'WS handler must clear pending timer before scheduling new render');
+    assert.ok(/setTimeout\(function \(\) \{ renderTableRows\(\); \}/.test(wsBlock),
+      'WS handler must schedule renderTableRows via setTimeout');
+  });
+
+  test('destroy clears _wsRenderTimer', () => {
+    const destroyBlock = src.slice(src.indexOf('function destroy()'), src.indexOf('function destroy()') + 500);
+    assert.ok(destroyBlock.includes('clearTimeout(_wsRenderTimer)'),
+      'destroy must clear _wsRenderTimer to prevent stale renders after navigation');
+  });
+}
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
