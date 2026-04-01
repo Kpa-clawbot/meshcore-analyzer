@@ -3837,10 +3837,6 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 		if tx.RawHex == "" {
 			continue
 		}
-		hops := txGetParsedPath(tx)
-		if len(hops) == 0 {
-			continue
-		}
 		if regionObs != nil {
 			match := false
 			for _, obs := range tx.Observations {
@@ -3881,6 +3877,48 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 		if hashSize > 3 {
 			continue
 		}
+
+		// Track originator from advert packets (including zero-hop adverts,
+		// keyed by pubKey so same-name nodes don't merge).
+		if tx.PayloadType != nil && *tx.PayloadType == 4 && tx.DecodedJSON != "" {
+			var d map[string]interface{}
+			if json.Unmarshal([]byte(tx.DecodedJSON), &d) == nil {
+				pk := ""
+				if v, ok := d["pubKey"].(string); ok {
+					pk = v
+				} else if v, ok := d["public_key"].(string); ok {
+					pk = v
+				}
+				if pk != "" {
+					name := ""
+					if n, ok := d["name"].(string); ok {
+						name = n
+					}
+					if name == "" {
+						if len(pk) >= 8 {
+							name = pk[:8]
+						} else {
+							name = pk
+						}
+					}
+					if byNode[pk] == nil {
+						byNode[pk] = map[string]interface{}{
+							"hashSize": hashSize, "packets": 0,
+							"lastSeen": tx.FirstSeen, "name": name,
+						}
+					}
+					byNode[pk]["packets"] = byNode[pk]["packets"].(int) + 1
+					byNode[pk]["hashSize"] = hashSize
+					byNode[pk]["lastSeen"] = tx.FirstSeen
+				}
+			}
+		}
+
+		// Distribution/hourly/uniqueHops only for packets with relay hops
+		hops := txGetParsedPath(tx)
+		if len(hops) == 0 {
+			continue
+		}
 		total++
 
 		sizeKey := strconv.Itoa(hashSize)
@@ -3911,41 +3949,6 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 				}
 			}
 			uniqueHops[hop]["count"] = uniqueHops[hop]["count"].(int) + 1
-		}
-
-		// Track originator from advert packets
-		if tx.PayloadType != nil && *tx.PayloadType == 4 && tx.DecodedJSON != "" {
-			var d map[string]interface{}
-			if json.Unmarshal([]byte(tx.DecodedJSON), &d) == nil {
-				name := ""
-				if n, ok := d["name"].(string); ok {
-					name = n
-				}
-				if name == "" {
-					if pk, ok := d["pubKey"].(string); ok && pk != "" {
-						name = pk[:8]
-					} else if pk, ok := d["public_key"].(string); ok && pk != "" {
-						name = pk[:8]
-					}
-				}
-				if name != "" {
-					if byNode[name] == nil {
-						var pubkey interface{}
-						if pk, ok := d["pubKey"].(string); ok {
-							pubkey = pk
-						} else if pk, ok := d["public_key"].(string); ok {
-							pubkey = pk
-						}
-						byNode[name] = map[string]interface{}{
-							"hashSize": hashSize, "packets": 0,
-							"lastSeen": tx.FirstSeen, "pubkey": pubkey,
-						}
-					}
-					byNode[name]["packets"] = byNode[name]["packets"].(int) + 1
-					byNode[name]["hashSize"] = hashSize
-					byNode[name]["lastSeen"] = tx.FirstSeen
-				}
-			}
 		}
 	}
 
@@ -3988,12 +3991,12 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 
 	// Multi-byte nodes
 	multiByteNodes := make([]map[string]interface{}, 0)
-	for name, data := range byNode {
+	for pk, data := range byNode {
 		if data["hashSize"].(int) > 1 {
 			multiByteNodes = append(multiByteNodes, map[string]interface{}{
-				"name": name, "hashSize": data["hashSize"],
+				"name": data["name"], "hashSize": data["hashSize"],
 				"packets": data["packets"], "lastSeen": data["lastSeen"],
-				"pubkey": data["pubkey"],
+				"pubkey": pk,
 			})
 		}
 	}
@@ -4089,25 +4092,13 @@ func (s *PacketStore) computeNodeHashSizeInfo() map[string]*hashSizeNodeInfo {
 		ni.Seq = append(ni.Seq, hs)
 	}
 
-	// Post-process: compute dominant hash size (mode) and flip-flop flag.
-	// Using the last-seen value would misreport nodes that occasionally send
-	// with pathByte=0x00 (hashSize=1) when transmitting directly with no
-	// relay hops, even though their true hash size is 2 or 3.
+	// Post-process: use latest advert hash size and compute flip-flop flag.
+	// The most recent advert reflects the node's current hash size
+	// configuration. The upstream firmware bug causing stale path bytes in
+	// flood adverts was fixed (meshcore-dev/MeshCore#2154).
 	for _, ni := range info {
-		// Dominant hash size: pick the most frequently observed size.
-		// On a tie, prefer the larger value (more specific).
-		counts := make(map[int]int, len(ni.AllSizes))
-		for _, hs := range ni.Seq {
-			counts[hs]++
-		}
-		best, bestCount := 1, 0
-		for hs, cnt := range counts {
-			if cnt > bestCount || (cnt == bestCount && hs > best) {
-				best = hs
-				bestCount = cnt
-			}
-		}
-		ni.HashSize = best
+		// Use the most recent advert's hash size (last in chronological order).
+		ni.HashSize = ni.Seq[len(ni.Seq)-1]
 
 		// Flip-flop (inconsistent) flag: need >= 3 observations,
 		// >= 2 unique sizes, and >= 2 transitions in the sequence.

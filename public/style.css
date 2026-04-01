@@ -621,7 +621,10 @@ button.ch-item.selected { background: var(--selected-bg); }
 .node-detail { padding: 4px 0; }
 .node-detail-name { font-size: 20px; font-weight: 700; margin: 12px 0 4px; }
 .node-detail-role { margin-bottom: 12px; }
-.node-detail-section { margin-bottom: 16px; }
+.node-detail-section {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; margin-bottom: 8px;
+}
 .node-detail-section h4 {
   font-size: 12px; text-transform: uppercase; letter-spacing: .5px;
   color: var(--text-muted); margin-bottom: 8px; padding-bottom: 4px;

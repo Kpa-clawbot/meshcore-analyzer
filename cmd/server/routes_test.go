@@ -2086,8 +2086,8 @@ t.Error("expected inconsistent flag to be true for flip-flop pattern")
 }
 
 func TestGetNodeHashSizeInfoDominant(t *testing.T) {
-// A node that sends mostly 2-byte adverts but occasionally 1-byte (pathByte=0x00
-// on direct sends) should report HashSize=2, not 1.
+// A node with mostly 2-byte adverts and an occasional 1-byte advert; the
+// latest advert (2-byte) determines the reported hash size.
 db := setupTestDB(t)
 seedTestData(t, db)
 store := NewPacketStore(db, nil)
@@ -2103,7 +2103,7 @@ raw1byte := "04" + "00" + "aabb" // pathByte=0x00 → hashSize=1 (direct send, n
 raw2byte := "04" + "40" + "aabb" // pathByte=0x40 → hashSize=2
 
 payloadType := 4
-// 1 packet with hashSize=1, 4 packets with hashSize=2
+// 1 packet with hashSize=1, 4 packets with hashSize=2 (latest is 2-byte)
 raws := []string{raw1byte, raw2byte, raw2byte, raw2byte, raw2byte}
 for i, raw := range raws {
 	tx := &StoreTx{
@@ -2124,8 +2124,192 @@ if ni == nil {
 	t.Fatal("expected hash info for test node")
 }
 if ni.HashSize != 2 {
-	t.Errorf("HashSize=%d, want 2 (dominant size should win over occasional 1-byte)", ni.HashSize)
+	t.Errorf("HashSize=%d, want 2 (latest advert should determine hash size)", ni.HashSize)
 }
+}
+
+func TestGetNodeHashSizeInfoLatestWins(t *testing.T) {
+	// A node reconfigured from 1-byte to 2-byte hash should show 2-byte
+	// even when it has many more historical 1-byte adverts (issue #303).
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	pk := "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'LatestWins', 'repeater')", pk)
+
+	decoded := `{"name":"LatestWins","pubKey":"` + pk + `"}`
+	raw1byte := "04" + "00" + "aabb" // pathByte=0x00 → hashSize=1
+	raw2byte := "04" + "40" + "aabb" // pathByte=0x40 → hashSize=2
+
+	payloadType := 4
+	// 4 historical 1-byte adverts, then 1 recent 2-byte advert (latest).
+	// Mode would pick 1 (majority), but latest-wins should pick 2.
+	raws := []string{raw1byte, raw1byte, raw1byte, raw1byte, raw2byte}
+	for i, raw := range raws {
+		tx := &StoreTx{
+			ID:          7000 + i,
+			RawHex:      raw,
+			Hash:        "latest" + strconv.Itoa(i),
+			FirstSeen:   "2024-01-01T0" + strconv.Itoa(i) + ":00:00Z",
+			PayloadType: &payloadType,
+			DecodedJSON: decoded,
+		}
+		store.packets = append(store.packets, tx)
+		store.byPayloadType[4] = append(store.byPayloadType[4], tx)
+	}
+
+	info := store.GetNodeHashSizeInfo()
+	ni := info[pk]
+	if ni == nil {
+		t.Fatal("expected hash info for test node")
+	}
+	if ni.HashSize != 2 {
+		t.Errorf("HashSize=%d, want 2 (latest advert should win over historical mode)", ni.HashSize)
+	}
+	if len(ni.AllSizes) != 2 {
+		t.Errorf("AllSizes count=%d, want 2", len(ni.AllSizes))
+	}
+	if !ni.AllSizes[1] || !ni.AllSizes[2] {
+		t.Error("AllSizes should contain both 1 and 2")
+	}
+}
+
+func TestGetNodeHashSizeInfoNoAdverts(t *testing.T) {
+	// A node with no ADVERT packets should not appear in hash size info.
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	pk := "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'NoAdverts', 'repeater')", pk)
+
+	// Add a non-advert packet (payload_type=2 = TXT_MSG)
+	payloadType := 2
+	tx := &StoreTx{
+		ID:          6000,
+		RawHex:      "0440aabb",
+		Hash:        "noadverts0",
+		FirstSeen:   "2024-01-01T00:00:00Z",
+		PayloadType: &payloadType,
+		DecodedJSON: `{"pubKey":"` + pk + `"}`,
+	}
+	store.packets = append(store.packets, tx)
+	store.byPayloadType[2] = append(store.byPayloadType[2], tx)
+
+	info := store.GetNodeHashSizeInfo()
+	if ni := info[pk]; ni != nil {
+		t.Errorf("expected nil hash info for node with no adverts, got HashSize=%d", ni.HashSize)
+	}
+}
+
+func TestHashAnalyticsZeroHopAdvert(t *testing.T) {
+	// A zero-hop advert (pathByte=0x00, no relay path) should contribute to
+	// distributionByRepeaters (per-node tracking) but NOT inflate total or
+	// distribution (which only count relayed packets).
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	// Capture baseline from seed data (bypass cache via computeAnalyticsHashSizes)
+	baseline := store.computeAnalyticsHashSizes("")
+	baseTotal, _ := baseline["total"].(int)
+	baseDist, _ := baseline["distribution"].(map[string]int)
+	baseDist1 := baseDist["1"]
+
+	pk := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'ZeroHop', 'repeater')", pk)
+
+	decoded := `{"name":"ZeroHop","pubKey":"` + pk + `"}`
+	// header 0x05 → routeType=1 (FLOOD), pathByte=0x00 → hashSize=1
+	raw := "05" + "00" + "aabb"
+	payloadType := 4
+
+	tx := &StoreTx{
+		ID:          8000,
+		RawHex:      raw,
+		Hash:        "zerohop0",
+		FirstSeen:   "2024-01-01T00:00:00Z",
+		PayloadType: &payloadType,
+		DecodedJSON: decoded,
+		// No PathJSON → txGetParsedPath returns nil (zero hops)
+	}
+	store.packets = append(store.packets, tx)
+	store.byPayloadType[4] = append(store.byPayloadType[4], tx)
+
+	result := store.computeAnalyticsHashSizes("")
+
+	// distributionByRepeaters should include the zero-hop advert's node
+	distByRepeaters, ok := result["distributionByRepeaters"].(map[string]int)
+	if !ok {
+		t.Fatal("distributionByRepeaters missing or wrong type")
+	}
+	if distByRepeaters["1"] < 1 {
+		t.Errorf("distributionByRepeaters[\"1\"]=%d, want >=1 (zero-hop advert should be tracked per-node)", distByRepeaters["1"])
+	}
+
+	// total and distribution must NOT have increased from the baseline
+	total, _ := result["total"].(int)
+	dist, _ := result["distribution"].(map[string]int)
+	if total != baseTotal {
+		t.Errorf("total=%d, want %d (zero-hop adverts must not inflate total)", total, baseTotal)
+	}
+	if dist["1"] != baseDist1 {
+		t.Errorf("distribution[\"1\"]=%d, want %d (zero-hop adverts must not inflate distribution)", dist["1"], baseDist1)
+	}
+}
+
+func TestAnalyticsHashSizeSameNameDifferentPubkey(t *testing.T) {
+	// Two nodes named "SameName" with different pubkeys should be counted
+	// separately in distributionByRepeaters (issue #303, byNode keying fix).
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	pk1 := "aaaa111122223333444455556666777788889999aaaabbbbccccddddeeee1111"
+	pk2 := "aaaa111122223333444455556666777788889999aaaabbbbccccddddeeee2222"
+
+	decoded1 := `{"name":"SameName","pubKey":"` + pk1 + `"}`
+	decoded2 := `{"name":"SameName","pubKey":"` + pk2 + `"}`
+
+	raw2byte := "05" + "40" + "aabb" // header routeType=1 (FLOOD), pathByte=0x40 → hashSize=2
+	payloadType := 4
+
+	for i, decoded := range []string{decoded1, decoded2} {
+		tx := &StoreTx{
+			ID:          6100 + i,
+			RawHex:      raw2byte,
+			Hash:        "samename" + strconv.Itoa(i),
+			FirstSeen:   "2024-01-01T00:00:00Z",
+			PayloadType: &payloadType,
+			DecodedJSON: decoded,
+			PathJSON:    `["AABB"]`,
+		}
+		store.packets = append(store.packets, tx)
+		store.byPayloadType[4] = append(store.byPayloadType[4], tx)
+	}
+
+	result := store.GetAnalyticsHashSizes("")
+
+	distByRepeaters, ok := result["distributionByRepeaters"].(map[string]int)
+	if !ok {
+		t.Fatal("distributionByRepeaters missing or wrong type")
+	}
+	if distByRepeaters["2"] < 2 {
+		t.Errorf("distributionByRepeaters[\"2\"]=%d, want >=2 (same-name nodes with different pubkeys should be counted separately)", distByRepeaters["2"])
+	}
 }
 
 func TestAnalyticsHashSizesNoNullArrays(t *testing.T) {
