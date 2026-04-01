@@ -368,12 +368,17 @@
     }
   }
 
-  function updateVCRClock(tsMs) {
+  function vcrFormatTime(tsMs) {
     const d = new Date(tsMs);
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    drawLcdText(`${hh}:${mm}:${ss}`, statusGreen());
+    const utc = typeof getTimestampTimezone === 'function' && getTimestampTimezone() === 'utc';
+    const hh = String(utc ? d.getUTCHours() : d.getHours()).padStart(2, '0');
+    const mm = String(utc ? d.getUTCMinutes() : d.getMinutes()).padStart(2, '0');
+    const ss = String(utc ? d.getUTCSeconds() : d.getSeconds()).padStart(2, '0');
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  function updateVCRClock(tsMs) {
+    drawLcdText(vcrFormatTime(tsMs), statusGreen());
   }
 
   function updateVCRLcd() {
@@ -1060,8 +1065,7 @@
       const rect = timelineEl.getBoundingClientRect();
       const pct = (e.clientX - rect.left) / rect.width;
       const ts = Date.now() - VCR.timelineScope + pct * VCR.timelineScope;
-      const d = new Date(ts);
-      timeTooltip.textContent = d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      timeTooltip.textContent = vcrFormatTime(ts);
       timeTooltip.style.left = (e.clientX - rect.left) + 'px';
       timeTooltip.classList.remove('hidden');
     });
@@ -1074,8 +1078,7 @@
       const rect = timelineEl.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
       const ts = Date.now() - VCR.timelineScope + pct * VCR.timelineScope;
-      const d = new Date(ts);
-      timeTooltip.textContent = d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      timeTooltip.textContent = vcrFormatTime(ts);
       timeTooltip.style.left = (touch.clientX - rect.left) + 'px';
       timeTooltip.classList.remove('hidden');
     });
@@ -1581,6 +1584,7 @@
   window._livePruneStaleNodes = pruneStaleNodes;
   window._liveNodeMarkers = function() { return nodeMarkers; };
   window._liveNodeData = function() { return nodeData; };
+  window._vcrFormatTime = vcrFormatTime;
 
   async function replayRecent() {
     try {
