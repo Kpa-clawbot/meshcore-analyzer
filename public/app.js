@@ -807,6 +807,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // User's localStorage preferences take priority over server config
     const userTheme = (() => { try { return JSON.parse(localStorage.getItem('meshcore-user-theme') || '{}'); } catch { return {}; } })();
+    window._SITE_CONFIG_ORIGINAL_HOME = JSON.parse(JSON.stringify(window.SITE_CONFIG.home || {}));
     mergeUserHomeConfig(window.SITE_CONFIG, userTheme);
 
     // Apply CSS variable overrides from theme config (skipped if user has local overrides)
