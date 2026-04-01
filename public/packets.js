@@ -40,12 +40,15 @@
   // --- Virtual scroll state ---
   const VSCROLL_ROW_HEIGHT = 36;  // estimated row height in px
   const VSCROLL_BUFFER = 30;      // extra rows above/below viewport
-  let _lastRenderedRows = [];     // cached row HTML strings from last filter pass
-  let _lastRenderedRowCounts = []; // number of <tr> elements per entry (for expanded groups)
+  let _displayPackets = [];       // filtered packets for current view
+  let _displayGrouped = false;    // whether _displayPackets is in grouped mode
+  let _rowCounts = [];            // per-entry DOM row counts (1 for flat, 1+children for expanded groups)
+  let _cumulativeOffsetsCache = null; // cached cumulative offsets, invalidated on _rowCounts change
   let _lastVisibleStart = -1;     // last rendered start index (for dirty checking)
   let _lastVisibleEnd = -1;       // last rendered end index (for dirty checking)
   let _vsScrollHandler = null;    // scroll listener reference
   let _wsRenderTimer = null;      // debounce timer for WS-triggered renders
+  let _observerFilterSet = null;  // cached Set from filters.observer, hoisted above loops (#427)
 
   function closeDetailPanel() {
     var panel = document.getElementById('pktRight');
@@ -418,8 +421,10 @@
     wsHandler = null;
     detachVScrollListener();
     clearTimeout(_wsRenderTimer);
-    _lastRenderedRows = [];
-    _lastRenderedRowCounts = [];
+    _displayPackets = [];
+    _rowCounts = [];
+    _cumulativeOffsetsCache = null;
+    _observerFilterSet = null;
     _lastVisibleStart = -1;
     _lastVisibleEnd = -1;
     if (_docActionHandler) { document.removeEventListener('click', _docActionHandler); _docActionHandler = null; }
@@ -1011,9 +1016,8 @@
     const isExpanded = expandedHashes.has(p.hash);
     let headerObserverId = p.observer_id;
     let headerPathJson = p.path_json;
-    if (filters.observer && p._children?.length) {
-      const obsIds = new Set(filters.observer.split(','));
-      const match = p._children.find(c => obsIds.has(String(c.observer_id)));
+    if (_observerFilterSet && p._children?.length) {
+      const match = p._children.find(c => _observerFilterSet.has(String(c.observer_id)));
       if (match) {
         headerObserverId = match.observer_id;
         headerPathJson = match.path_json;
@@ -1043,9 +1047,8 @@
         </tr>`;
     if (isExpanded && p._children) {
       let visibleChildren = p._children;
-      if (filters.observer) {
-        const obsSet = new Set(filters.observer.split(','));
-        visibleChildren = visibleChildren.filter(c => obsSet.has(String(c.observer_id)));
+      if (_observerFilterSet) {
+        visibleChildren = visibleChildren.filter(c => _observerFilterSet.has(String(c.observer_id)));
       }
       for (const c of visibleChildren) {
         const typeName = payloadTypeName(c.payload_type);
@@ -1076,7 +1079,7 @@
   // Build HTML for a single flat (ungrouped) packet row
   function buildFlatRowHtml(p) {
     let decoded, pathHops = [];
-    try { decoded = JSON.parse(p.decoded_json); } catch {}
+    try { decoded = JSON.parse(p.decoded_json || '{}'); } catch {}
     try { pathHops = JSON.parse(p.path_json || '[]'); } catch {}
     const region = p.observer_id ? (observers.find(o => o.id === p.observer_id)?.iata || '') : '';
     const typeName = payloadTypeName(p.payload_type);
@@ -1099,21 +1102,41 @@
       </tr>`;
   }
 
-  // Virtual scroll: render only visible rows into the tbody
+  // Compute the number of DOM <tr> rows a single entry produces.
+  // Used by both row counting and renderVisibleRows to avoid divergence (#424).
+  function _getRowCount(p) {
+    if (!_displayGrouped) return 1;
+    if (!expandedHashes.has(p.hash) || !p._children) return 1;
+    let childCount = p._children.length;
+    if (_observerFilterSet) {
+      childCount = p._children.filter(c => _observerFilterSet.has(String(c.observer_id))).length;
+    }
+    return 1 + childCount;
+  }
+
+  // Get the column count from the thead (dynamic, avoids hardcoded colspan — #426)
+  function _getColCount() {
+    const thead = document.querySelector('#pktLeft thead tr');
+    return thead ? thead.children.length : 11;
+  }
+
   // Compute cumulative DOM row offsets from per-entry row counts.
   // Returns array where cumulativeOffsets[i] = total <tr> rows before entry i.
   function _cumulativeRowOffsets() {
-    const offsets = new Array(_lastRenderedRowCounts.length + 1);
+    if (_cumulativeOffsetsCache) return _cumulativeOffsetsCache;
+    const offsets = new Array(_rowCounts.length + 1);
     offsets[0] = 0;
-    for (let i = 0; i < _lastRenderedRowCounts.length; i++) {
-      offsets[i + 1] = offsets[i] + _lastRenderedRowCounts[i];
+    for (let i = 0; i < _rowCounts.length; i++) {
+      offsets[i + 1] = offsets[i] + _rowCounts[i];
     }
+    _cumulativeOffsetsCache = offsets;
+    return offsets;
     return offsets;
   }
 
   function renderVisibleRows() {
     const tbody = document.getElementById('pktBody');
-    if (!tbody || !_lastRenderedRows.length) return;
+    if (!tbody || !_displayPackets.length) return;
 
     const scrollContainer = document.getElementById('pktLeft');
     if (!scrollContainer) return;
@@ -1122,6 +1145,7 @@
     const offsets = _cumulativeRowOffsets();
     const totalDomRows = offsets[offsets.length - 1];
     const totalHeight = totalDomRows * VSCROLL_ROW_HEIGHT;
+    const colCount = _getColCount();
 
     // Get or create spacer elements
     let topSpacer = document.getElementById('vscroll-top');
@@ -1129,12 +1153,12 @@
     if (!topSpacer) {
       topSpacer = document.createElement('tr');
       topSpacer.id = 'vscroll-top';
-      topSpacer.innerHTML = '<td colspan="11" style="padding:0;border:0"></td>';
+      topSpacer.innerHTML = '<td colspan="' + colCount + '" style="padding:0;border:0"></td>';
     }
     if (!bottomSpacer) {
       bottomSpacer = document.createElement('tr');
       bottomSpacer.id = 'vscroll-bottom';
-      bottomSpacer.innerHTML = '<td colspan="11" style="padding:0;border:0"></td>';
+      bottomSpacer.innerHTML = '<td colspan="' + colCount + '" style="padding:0;border:0"></td>';
     }
 
     // Calculate visible range based on scroll position
@@ -1149,7 +1173,7 @@
     const visibleDomCount = Math.ceil(viewportHeight / VSCROLL_ROW_HEIGHT);
 
     // Binary search for entry index containing firstDomRow
-    let lo = 0, hi = _lastRenderedRows.length;
+    let lo = 0, hi = _displayPackets.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
       if (offsets[mid + 1] <= firstDomRow) lo = mid + 1;
@@ -1159,16 +1183,16 @@
 
     // Find entry index covering last visible DOM row
     const lastDomRow = firstDomRow + visibleDomCount;
-    lo = firstEntry; hi = _lastRenderedRows.length;
+    lo = firstEntry; hi = _displayPackets.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
       if (offsets[mid + 1] <= lastDomRow) lo = mid + 1;
       else hi = mid;
     }
-    const lastEntry = Math.min(lo + 1, _lastRenderedRows.length);
+    const lastEntry = Math.min(lo + 1, _displayPackets.length);
 
     const startIdx = Math.max(0, firstEntry - VSCROLL_BUFFER);
-    const endIdx = Math.min(_lastRenderedRows.length, lastEntry + VSCROLL_BUFFER);
+    const endIdx = Math.min(_displayPackets.length, lastEntry + VSCROLL_BUFFER);
 
     // Skip DOM rebuild if visible range hasn't changed
     if (startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd) return;
@@ -1182,7 +1206,10 @@
     topSpacer.firstChild.style.height = topPad + 'px';
     bottomSpacer.firstChild.style.height = bottomPad + 'px';
 
-    const visibleHtml = _lastRenderedRows.slice(startIdx, endIdx).join('');
+    // LAZY ROW GENERATION: only build HTML for the visible slice (#422)
+    const builder = _displayGrouped ? buildGroupRowHtml : buildFlatRowHtml;
+    const visibleSlice = _displayPackets.slice(startIdx, endIdx);
+    const visibleHtml = visibleSlice.map(p => builder(p)).join('');
     tbody.innerHTML = '';
     tbody.appendChild(topSpacer);
     tbody.insertAdjacentHTML('beforeend', visibleHtml);
@@ -1264,34 +1291,28 @@
     if (countEl) countEl.textContent = `(${displayPackets.length})`;
 
     if (!displayPackets.length) {
-      _lastRenderedRows = [];
-      _lastRenderedRowCounts = [];
+      _displayPackets = [];
+      _rowCounts = [];
+      _cumulativeOffsetsCache = null;
+      _observerFilterSet = null;
       _lastVisibleStart = -1;
       _lastVisibleEnd = -1;
       detachVScrollListener();
-      tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted" style="padding:24px">' + (filters.myNodes ? 'No packets from your claimed/favorited nodes' : 'No packets found') + '</td></tr>';
+      const colCount = _getColCount();
+      tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="text-center text-muted" style="padding:24px">' + (filters.myNodes ? 'No packets from your claimed/favorited nodes' : 'No packets found') + '</td></tr>';
       return;
     }
 
-    // Build all row HTML strings but only render visible ones (virtual scroll)
-    // Track per-entry DOM row counts for correct scroll height with expanded groups
+    // Lazy virtual scroll: store display packets and row counts, but do NOT
+    // pre-generate HTML strings. HTML is built on-demand in renderVisibleRows()
+    // for only the visible slice + buffer (#422).
     _lastVisibleStart = -1;
     _lastVisibleEnd = -1;
-    if (groupByHash) {
-      _lastRenderedRows = displayPackets.map(p => buildGroupRowHtml(p));
-      _lastRenderedRowCounts = displayPackets.map(p => {
-        if (!expandedHashes.has(p.hash) || !p._children) return 1;
-        let childCount = p._children.length;
-        if (filters.observer) {
-          const obsSet = new Set(filters.observer.split(','));
-          childCount = p._children.filter(c => obsSet.has(String(c.observer_id))).length;
-        }
-        return 1 + childCount; // header + children
-      });
-    } else {
-      _lastRenderedRows = displayPackets.map(p => buildFlatRowHtml(p));
-      _lastRenderedRowCounts = displayPackets.map(() => 1);
-    }
+    _displayPackets = displayPackets;
+    _displayGrouped = groupByHash;
+    _observerFilterSet = filters.observer ? new Set(filters.observer.split(',')) : null;
+    _rowCounts = displayPackets.map(p => _getRowCount(p));
+    _cumulativeOffsetsCache = null;
 
     attachVScrollListener();
     renderVisibleRows();

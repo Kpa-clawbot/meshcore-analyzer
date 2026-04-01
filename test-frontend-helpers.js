@@ -2687,8 +2687,143 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
 
   test('handles null/empty decoded_json gracefully', () => {
     const result = filterMyNodes(testPackets, ['abc123']);
-    // Should not throw, null decoded_json packets are skipped
     assert.strictEqual(result.length, 2);
+  });
+}
+
+// ===== Packets page: virtual scroll infrastructure =====
+{
+  console.log('\nPackets page — virtual scroll:');
+  const packetsSource = fs.readFileSync('public/packets.js', 'utf8');
+
+  // --- Behavioral tests using extracted logic ---
+
+  // Extract _cumulativeRowOffsets logic for testing
+  function cumulativeRowOffsets(rowCounts) {
+    const offsets = new Array(rowCounts.length + 1);
+    offsets[0] = 0;
+    for (let i = 0; i < rowCounts.length; i++) {
+      offsets[i + 1] = offsets[i] + rowCounts[i];
+    }
+    return offsets;
+  }
+
+  // Extract _getRowCount logic for testing (#424 — single source of truth)
+  function getRowCount(p, grouped, expandedHashes, observerFilterSet) {
+    if (!grouped) return 1;
+    if (!expandedHashes.has(p.hash) || !p._children) return 1;
+    let childCount = p._children.length;
+    if (observerFilterSet) {
+      childCount = p._children.filter(c => observerFilterSet.has(String(c.observer_id))).length;
+    }
+    return 1 + childCount;
+  }
+
+  test('cumulativeRowOffsets computes correct offsets for flat rows', () => {
+    const counts = [1, 1, 1, 1, 1];
+    const offsets = cumulativeRowOffsets(counts);
+    assert.deepStrictEqual(offsets, [0, 1, 2, 3, 4, 5]);
+  });
+
+  test('cumulativeRowOffsets handles expanded groups with multiple rows', () => {
+    const counts = [1, 4, 1];
+    const offsets = cumulativeRowOffsets(counts);
+    assert.deepStrictEqual(offsets, [0, 1, 5, 6]);
+    assert.strictEqual(offsets[offsets.length - 1], 6);
+  });
+
+  test('total scroll height accounts for expanded group rows', () => {
+    const VSCROLL_ROW_HEIGHT = 36;
+    const counts = [1, 4, 1, 4, 1];
+    const offsets = cumulativeRowOffsets(counts);
+    const totalDomRows = offsets[offsets.length - 1];
+    assert.strictEqual(totalDomRows, 11);
+    assert.strictEqual(totalDomRows * VSCROLL_ROW_HEIGHT, 396);
+  });
+
+  test('scroll height with all collapsed equals entries * row height', () => {
+    const VSCROLL_ROW_HEIGHT = 36;
+    const counts = [1, 1, 1, 1, 1];
+    const offsets = cumulativeRowOffsets(counts);
+    const totalDomRows = offsets[offsets.length - 1];
+    assert.strictEqual(totalDomRows * VSCROLL_ROW_HEIGHT, 5 * VSCROLL_ROW_HEIGHT);
+  });
+
+  // --- Behavioral tests for _getRowCount (#424, #428 — test logic, not source strings) ---
+
+  test('getRowCount returns 1 for flat (ungrouped) mode', () => {
+    const p = { hash: 'abc', _children: [{observer_id: '1'}, {observer_id: '2'}] };
+    assert.strictEqual(getRowCount(p, false, new Set(), null), 1);
+  });
+
+  test('getRowCount returns 1 for collapsed group', () => {
+    const p = { hash: 'abc', _children: [{observer_id: '1'}, {observer_id: '2'}] };
+    assert.strictEqual(getRowCount(p, true, new Set(), null), 1);
+  });
+
+  test('getRowCount returns 1+children for expanded group', () => {
+    const p = { hash: 'abc', _children: [{observer_id: '1'}, {observer_id: '2'}, {observer_id: '3'}] };
+    const expanded = new Set(['abc']);
+    assert.strictEqual(getRowCount(p, true, expanded, null), 4);
+  });
+
+  test('getRowCount filters children by observer set', () => {
+    const p = { hash: 'abc', _children: [{observer_id: '1'}, {observer_id: '2'}, {observer_id: '3'}] };
+    const expanded = new Set(['abc']);
+    const obsFilter = new Set(['1', '3']);
+    assert.strictEqual(getRowCount(p, true, expanded, obsFilter), 3);
+  });
+
+  test('getRowCount returns 1 for expanded group with no _children', () => {
+    const p = { hash: 'abc' };
+    const expanded = new Set(['abc']);
+    assert.strictEqual(getRowCount(p, true, expanded, null), 1);
+  });
+
+  test('renderVisibleRows uses cumulative offsets not flat entry count', () => {
+    assert.ok(packetsSource.includes('_cumulativeRowOffsets'),
+      'renderVisibleRows should use cumulative row offsets');
+    assert.ok(!packetsSource.includes('const totalRows = _displayPackets.length'),
+      'should NOT use flat array length for total row count');
+  });
+
+  test('renderVisibleRows skips DOM rebuild when range unchanged', () => {
+    assert.ok(packetsSource.includes('startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd'),
+      'should skip rebuild when range is unchanged');
+  });
+
+  test('lazy row generation — HTML built only for visible slice', () => {
+    assert.ok(!packetsSource.includes('_lastRenderedRows'),
+      'should NOT have pre-built row HTML cache');
+    assert.ok(packetsSource.includes('_displayPackets.slice(startIdx, endIdx)'),
+      'should slice display packets for visible range');
+    assert.ok(packetsSource.includes('visibleSlice.map(p => builder(p))'),
+      'should build HTML lazily per visible packet');
+  });
+
+  test('observer filter Set is hoisted, not recreated per-packet', () => {
+    assert.ok(packetsSource.includes('_observerFilterSet = filters.observer ? new Set(filters.observer.split'),
+      'observer filter Set should be created once in renderTableRows');
+    assert.ok(packetsSource.includes('_observerFilterSet.has(String(c.observer_id))'),
+      'buildGroupRowHtml should use hoisted _observerFilterSet');
+  });
+
+  test('buildFlatRowHtml has null-safe decoded_json', () => {
+    const flatBuilderMatch = packetsSource.match(/function buildFlatRowHtml[\s\S]*?(?=\n  function )/);
+    assert.ok(flatBuilderMatch, 'buildFlatRowHtml should exist');
+    assert.ok(flatBuilderMatch[0].includes("p.decoded_json || '{}'"),
+      'buildFlatRowHtml should have null-safe decoded_json fallback');
+  });
+
+  test('destroy cleans up virtual scroll state', () => {
+    assert.ok(packetsSource.includes('detachVScrollListener'),
+      'destroy should detach virtual scroll listener');
+    assert.ok(packetsSource.includes("_displayPackets = []"),
+      'destroy should reset display packets');
+    assert.ok(packetsSource.includes("_rowCounts = []"),
+      'destroy should reset row counts');
+    assert.ok(packetsSource.includes("_lastVisibleStart = -1"),
+      'destroy should reset visible start');
   });
 }
 
