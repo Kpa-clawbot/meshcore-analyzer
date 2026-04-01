@@ -2605,3 +2605,425 @@ func TestGetChannelsNotBlockedByLargeLock(t *testing.T) {
 		t.Errorf("expected messageCount=1, got %d", msgCount)
 	}
 }
+
+// --- Tests for computeHashCollisions (Issue #416) ---
+
+func TestAnalyticsHashCollisionsEndpoint(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	// Must have top-level keys
+	if _, ok := body["inconsistent_nodes"]; !ok {
+		t.Error("missing inconsistent_nodes key")
+	}
+	if _, ok := body["by_size"]; !ok {
+		t.Error("missing by_size key")
+	}
+
+	bySize, ok := body["by_size"].(map[string]interface{})
+	if !ok {
+		t.Fatal("by_size is not a map")
+	}
+	// Must have entries for 1, 2, 3 byte sizes
+	for _, sz := range []string{"1", "2", "3"} {
+		sizeData, ok := bySize[sz].(map[string]interface{})
+		if !ok {
+			t.Errorf("by_size[%s] is not a map", sz)
+			continue
+		}
+		stats, ok := sizeData["stats"].(map[string]interface{})
+		if !ok {
+			t.Errorf("by_size[%s].stats is not a map", sz)
+			continue
+		}
+		if _, ok := stats["total_nodes"]; !ok {
+			t.Errorf("by_size[%s].stats missing total_nodes", sz)
+		}
+		if _, ok := stats["collision_count"]; !ok {
+			t.Errorf("by_size[%s].stats missing collision_count", sz)
+		}
+		// collisions must be an array, not null
+		collisions, ok := sizeData["collisions"].([]interface{})
+		if !ok {
+			t.Errorf("by_size[%s].collisions is not an array", sz)
+		}
+		_ = collisions
+	}
+}
+
+func TestHashCollisionsNoNullArrays(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// JSON must not contain "null" for arrays
+	bodyStr := w.Body.String()
+	if bodyStr == "" {
+		t.Fatal("empty response body")
+	}
+	// inconsistent_nodes should be [] not null
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if body["inconsistent_nodes"] == nil {
+		t.Error("inconsistent_nodes is null, should be empty array")
+	}
+}
+
+func TestHashCollisionsRegionParamIgnored(t *testing.T) {
+	// Issue #417: region param was accepted but ignored.
+	// After fix, the endpoint should work without region and not cache per-region.
+	_, router := setupTestServer(t)
+
+	// Request without region
+	req1 := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w1 := httptest.NewRecorder()
+	router.ServeHTTP(w1, req1)
+	if w1.Code != 200 {
+		t.Fatalf("expected 200, got %d", w1.Code)
+	}
+
+	// Request with region param (should be ignored, same result)
+	req2 := httptest.NewRequest("GET", "/api/analytics/hash-collisions?region=us-west", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	if w2.Code != 200 {
+		t.Fatalf("expected 200, got %d", w2.Code)
+	}
+
+	// Both should return identical results
+	if w1.Body.String() != w2.Body.String() {
+		t.Error("responses differ with/without region param — region should be ignored")
+	}
+}
+
+func TestHashCollisionsOneByteCells(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	bySize := body["by_size"].(map[string]interface{})
+	oneByteData := bySize["1"].(map[string]interface{})
+
+	// 1-byte data should include one_byte_cells for matrix rendering
+	cells, ok := oneByteData["one_byte_cells"].(map[string]interface{})
+	if !ok {
+		t.Fatal("1-byte data missing one_byte_cells")
+	}
+	// Should have 256 entries (00-FF)
+	if len(cells) != 256 {
+		t.Errorf("expected 256 one_byte_cells entries, got %d", len(cells))
+	}
+}
+
+func TestHashCollisionsTwoByteCells(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	bySize := body["by_size"].(map[string]interface{})
+	twoByteData := bySize["2"].(map[string]interface{})
+
+	// 2-byte data should include two_byte_cells for matrix rendering
+	cells, ok := twoByteData["two_byte_cells"].(map[string]interface{})
+	if !ok {
+		t.Fatal("2-byte data missing two_byte_cells")
+	}
+	// Should have 256 entries (00-FF first-byte groups)
+	if len(cells) != 256 {
+		t.Errorf("expected 256 two_byte_cells entries, got %d", len(cells))
+	}
+}
+
+func TestHashCollisionsThreeByteNoMatrix(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	bySize := body["by_size"].(map[string]interface{})
+	threeByteData := bySize["3"].(map[string]interface{})
+
+	// 3-byte data should NOT have one_byte_cells or two_byte_cells
+	if _, ok := threeByteData["one_byte_cells"]; ok {
+		t.Error("3-byte data should not have one_byte_cells")
+	}
+	if _, ok := threeByteData["two_byte_cells"]; ok {
+		t.Error("3-byte data should not have two_byte_cells")
+	}
+}
+
+func TestHashCollisionsClassification(t *testing.T) {
+	// Test with seed data — nodes have coordinates, so distance classification should work
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	bySize := body["by_size"].(map[string]interface{})
+
+	// Check that collision entries have required fields
+	for _, sz := range []string{"1", "2", "3"} {
+		sizeData := bySize[sz].(map[string]interface{})
+		collisions := sizeData["collisions"].([]interface{})
+		for i, c := range collisions {
+			entry := c.(map[string]interface{})
+			if _, ok := entry["prefix"]; !ok {
+				t.Errorf("by_size[%s].collisions[%d] missing prefix", sz, i)
+			}
+			if _, ok := entry["classification"]; !ok {
+				t.Errorf("by_size[%s].collisions[%d] missing classification", sz, i)
+			}
+			class := entry["classification"].(string)
+			validClasses := map[string]bool{"local": true, "regional": true, "distant": true, "incomplete": true, "unknown": true}
+			if !validClasses[class] {
+				t.Errorf("by_size[%s].collisions[%d] invalid classification: %s", sz, i, class)
+			}
+			nodes, ok := entry["nodes"].([]interface{})
+			if !ok {
+				t.Errorf("by_size[%s].collisions[%d] missing nodes array", sz, i)
+			}
+			if len(nodes) < 2 {
+				t.Errorf("by_size[%s].collisions[%d] has %d nodes, expected >=2", sz, i, len(nodes))
+			}
+		}
+	}
+}
+
+func TestHashCollisionsCacheTTL(t *testing.T) {
+	// Issue #420: collision cache should use dedicated TTL (60s), not rfCacheTTL (15s)
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	if store.collisionCacheTTL != 60*time.Second {
+		t.Errorf("expected collisionCacheTTL=60s, got %v", store.collisionCacheTTL)
+	}
+	if store.rfCacheTTL != 15*time.Second {
+		t.Errorf("expected rfCacheTTL=15s, got %v", store.rfCacheTTL)
+	}
+}
+
+func TestHashCollisionsStatsFields(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	bySize := body["by_size"].(map[string]interface{})
+
+	for _, sz := range []string{"1", "2", "3"} {
+		sizeData := bySize[sz].(map[string]interface{})
+		stats := sizeData["stats"].(map[string]interface{})
+
+		requiredFields := []string{"total_nodes", "nodes_for_byte", "using_this_size", "unique_prefixes", "collision_count", "space_size", "pct_used"}
+		for _, f := range requiredFields {
+			if _, ok := stats[f]; !ok {
+				t.Errorf("by_size[%s].stats missing field: %s", sz, f)
+			}
+		}
+	}
+}
+
+func TestHashCollisionsEmptyStore(t *testing.T) {
+	// Test with no nodes seeded
+	db := setupTestDB(t)
+	// Don't call seedTestData — empty store
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+
+	// With no nodes, inconsistent_nodes should be empty array
+	incon := body["inconsistent_nodes"].([]interface{})
+	if len(incon) != 0 {
+		t.Errorf("expected 0 inconsistent nodes, got %d", len(incon))
+	}
+
+	// All collision lists should be empty
+	bySize := body["by_size"].(map[string]interface{})
+	for _, sz := range []string{"1", "2", "3"} {
+		sizeData := bySize[sz].(map[string]interface{})
+		collisions := sizeData["collisions"].([]interface{})
+		if len(collisions) != 0 {
+			t.Errorf("by_size[%s] expected 0 collisions with empty store, got %d", sz, len(collisions))
+		}
+	}
+}
+
+func TestHashCollisionsWithCollision(t *testing.T) {
+	// Seed two nodes with the same 1-byte prefix to verify collision detection
+	db := setupTestDB(t)
+	// Don't use seedTestData — create minimal data to control hash sizes
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
+
+	// Two nodes with same first byte 'CC', no adverts so hash_size=0 (included in all buckets)
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES ('CC11223344556677', 'Node1', 'repeater', 37.5, -122.0, ?, '2026-01-01T00:00:00Z', 0)`, recent)
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES ('CC99887766554433', 'Node2', 'repeater', 37.51, -122.01, ?, '2026-01-01T00:00:00Z', 0)`, recent)
+
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	bySize := body["by_size"].(map[string]interface{})
+	oneByteData := bySize["1"].(map[string]interface{})
+	stats := oneByteData["stats"].(map[string]interface{})
+
+	collisionCount := int(stats["collision_count"].(float64))
+	if collisionCount < 1 {
+		t.Errorf("expected at least 1 collision (CC prefix), got %d", collisionCount)
+	}
+
+	// Check the collision entry
+	collisions := oneByteData["collisions"].([]interface{})
+	found := false
+	for _, c := range collisions {
+		entry := c.(map[string]interface{})
+		if entry["prefix"] == "CC" {
+			found = true
+			nodes := entry["nodes"].([]interface{})
+			if len(nodes) < 2 {
+				t.Errorf("expected >=2 nodes for AA collision, got %d", len(nodes))
+			}
+			// Both nodes have coords close together, so classification should be "local"
+			class := entry["classification"].(string)
+			if class != "local" {
+				t.Errorf("expected 'local' classification for nearby nodes, got %s", class)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected collision entry with prefix 'CC'")
+	}
+}
+
+func TestHashCollisionsShortPublicKey(t *testing.T) {
+	// Nodes with very short public keys should not crash
+	db := setupTestDB(t)
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
+
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES ('A', 'ShortKey', 'repeater', 0, 0, ?, '2026-01-01T00:00:00Z', 1)`, recent)
+
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200 even with short public key, got %d", w.Code)
+	}
+}
+
+func TestHashCollisionsMissingCoordinates(t *testing.T) {
+	// Nodes without coordinates should get "incomplete" classification
+	db := setupTestDB(t)
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
+
+	// Two nodes same prefix, no coordinates
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES ('BB11223344556677', 'NoCoords1', 'repeater', 0, 0, ?, '2026-01-01T00:00:00Z', 1)`, recent)
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES ('BB99887766554433', 'NoCoords2', 'repeater', 0, 0, ?, '2026-01-01T00:00:00Z', 1)`, recent)
+
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+
+	req := httptest.NewRequest("GET", "/api/analytics/hash-collisions", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	bySize := body["by_size"].(map[string]interface{})
+	oneByteData := bySize["1"].(map[string]interface{})
+	collisions := oneByteData["collisions"].([]interface{})
+
+	for _, c := range collisions {
+		entry := c.(map[string]interface{})
+		if entry["prefix"] == "BB" {
+			class := entry["classification"].(string)
+			if class != "incomplete" {
+				t.Errorf("expected 'incomplete' for nodes without coords, got %s", class)
+			}
+		}
+	}
+}

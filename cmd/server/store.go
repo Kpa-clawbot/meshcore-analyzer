@@ -80,11 +80,12 @@ type PacketStore struct {
 	rfCache      map[string]*cachedResult // region → cached RF result
 	topoCache    map[string]*cachedResult // region → cached topology result
 	hashCache      map[string]*cachedResult // region → cached hash-sizes result
-	collisionCache map[string]*cachedResult // region → cached hash-collisions result
+	collisionCache *cachedResult // cached hash-collisions result (no region filtering)
 	chanCache    map[string]*cachedResult // region → cached channels result
 	distCache    map[string]*cachedResult // region → cached distance result
 	subpathCache map[string]*cachedResult // params → cached subpaths result
-	rfCacheTTL   time.Duration
+	rfCacheTTL        time.Duration
+	collisionCacheTTL time.Duration
 	cacheHits    int64
 	cacheMisses  int64
 	// Short-lived cache for QueryGroupedPackets (avoids repeated full sort)
@@ -174,11 +175,12 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
 		rfCache:       make(map[string]*cachedResult),
 		topoCache:     make(map[string]*cachedResult),
 		hashCache:      make(map[string]*cachedResult),
-		collisionCache: make(map[string]*cachedResult),
+
 		chanCache:     make(map[string]*cachedResult),
 		distCache:     make(map[string]*cachedResult),
 		subpathCache:  make(map[string]*cachedResult),
-		rfCacheTTL:    15 * time.Second,
+		rfCacheTTL:         15 * time.Second,
+		collisionCacheTTL: 60 * time.Second,
 		spIndex:       make(map[string]int, 4096),
 	}
 	if cfg != nil {
@@ -628,7 +630,7 @@ func (s *PacketStore) GetPerfStoreStats() map[string]interface{} {
 // GetCacheStats returns RF cache hit/miss statistics.
 func (s *PacketStore) GetCacheStats() map[string]interface{} {
 	s.cacheMu.Lock()
-	size := len(s.rfCache) + len(s.topoCache) + len(s.hashCache) + len(s.collisionCache) + len(s.chanCache) + len(s.distCache) + len(s.subpathCache)
+	size := len(s.rfCache) + len(s.topoCache) + len(s.hashCache) + len(s.chanCache) + len(s.distCache) + len(s.subpathCache)
 	hits := s.cacheHits
 	misses := s.cacheMisses
 	s.cacheMu.Unlock()
@@ -651,7 +653,7 @@ func (s *PacketStore) GetCacheStats() map[string]interface{} {
 // GetCacheStatsTyped returns cache stats as a typed struct.
 func (s *PacketStore) GetCacheStatsTyped() CacheStats {
 	s.cacheMu.Lock()
-	size := len(s.rfCache) + len(s.topoCache) + len(s.hashCache) + len(s.collisionCache) + len(s.chanCache) + len(s.distCache) + len(s.subpathCache)
+	size := len(s.rfCache) + len(s.topoCache) + len(s.hashCache) + len(s.chanCache) + len(s.distCache) + len(s.subpathCache)
 	hits := s.cacheHits
 	misses := s.cacheMisses
 	s.cacheMu.Unlock()
@@ -694,7 +696,7 @@ func (s *PacketStore) invalidateCachesFor(inv cacheInvalidation) {
 		s.rfCache = make(map[string]*cachedResult)
 		s.topoCache = make(map[string]*cachedResult)
 		s.hashCache = make(map[string]*cachedResult)
-		s.collisionCache = make(map[string]*cachedResult)
+		s.collisionCache = nil
 		s.chanCache = make(map[string]*cachedResult)
 		s.distCache = make(map[string]*cachedResult)
 		s.subpathCache = make(map[string]*cachedResult)
@@ -714,7 +716,7 @@ func (s *PacketStore) invalidateCachesFor(inv cacheInvalidation) {
 	}
 	if inv.hasNewTransmissions {
 		s.hashCache = make(map[string]*cachedResult)
-		s.collisionCache = make(map[string]*cachedResult)
+		s.collisionCache = nil
 	}
 	if inv.hasChannelData {
 		s.chanCache = make(map[string]*cachedResult)
@@ -4179,20 +4181,20 @@ type hashSizeNodeInfo struct {
 
 // GetAnalyticsHashCollisions returns pre-computed hash collision analysis.
 // This moves the O(n²) distance computation from the frontend to the server.
-func (s *PacketStore) GetAnalyticsHashCollisions(region string) map[string]interface{} {
+func (s *PacketStore) GetAnalyticsHashCollisions() map[string]interface{} {
 	s.cacheMu.Lock()
-	if cached, ok := s.collisionCache[region]; ok && time.Now().Before(cached.expiresAt) {
+	if s.collisionCache != nil && time.Now().Before(s.collisionCache.expiresAt) {
 		s.cacheHits++
 		s.cacheMu.Unlock()
-		return cached.data
+		return s.collisionCache.data
 	}
 	s.cacheMisses++
 	s.cacheMu.Unlock()
 
-	result := s.computeHashCollisions(region)
+	result := s.computeHashCollisions()
 
 	s.cacheMu.Lock()
-	s.collisionCache[region] = &cachedResult{data: result, expiresAt: time.Now().Add(s.rfCacheTTL)}
+	s.collisionCache = &cachedResult{data: result, expiresAt: time.Now().Add(s.collisionCacheTTL)}
 	s.cacheMu.Unlock()
 
 	return result
@@ -4234,7 +4236,7 @@ type twoByteCellInfo struct {
 	CollisionCount  int                         `json:"collision_count"`
 }
 
-func (s *PacketStore) computeHashCollisions(region string) map[string]interface{} {
+func (s *PacketStore) computeHashCollisions() map[string]interface{} {
 	// Get all nodes from DB
 	nodes := s.getAllNodes()
 	hashInfo := s.GetNodeHashSizeInfo()
