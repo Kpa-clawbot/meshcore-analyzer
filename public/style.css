@@ -5,6 +5,7 @@
   --nav-bg2: #1a1a2e;
   --nav-text: #ffffff;
   --nav-text-muted: #cbd5e1;
+  --nav-active-bg: rgba(74, 158, 255, 0.15);
   --accent: #4a9eff;
   --geo-filter-color: #3b82f6;
   --status-green: #22c55e;
@@ -128,7 +129,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .nav-link.active { 
   color: var(--nav-text); 
   border-bottom-color: transparent;
-  background: rgba(74, 158, 255, 0.15); 
+  background: var(--nav-active-bg); 
   border-radius: 6px; 
   margin: 4px 0;
   padding: 10px 12px;
@@ -852,7 +853,7 @@ button.ch-item.selected { background: var(--selected-bg); }
   white-space: nowrap;
 }
 .nav-more-menu .nav-link:hover { background: var(--nav-bg2); color: var(--nav-text); }
-.nav-more-menu .nav-link.active { background: rgba(74,158,255,0.15); }
+.nav-more-menu .nav-link.active { background: var(--nav-active-bg); }
 /* Ensure nav stays above Leaflet map */
 .nav-links.open { z-index: 1100; }
 #map-wrap .leaflet-container { z-index: 1; }
@@ -874,7 +875,8 @@ button.ch-item.selected { background: var(--selected-bg); }
   .nav-more-wrap { display: flex; align-items: center; }
   .hamburger { display: none; }
   .nav-link { padding: 14px 8px; font-size: 13px; }
-  .nav-link.active { background: rgba(74,158,255,0.15); border-radius: 6px; margin: 4px 0; padding: 10px 8px; }
+  .nav-links a[data-priority="high"] { order: -1; }
+  .nav-link.active { background: var(--nav-active-bg); border-radius: 6px; margin: 4px 0; padding: 10px 8px; }
 }
 
 /* === Responsive — Hamburger nav (<768px) === */
@@ -890,7 +892,7 @@ button.ch-item.selected { background: var(--selected-bg); }
   .nav-links a:not([data-priority="high"]) { display: flex; }
   .nav-links.open { display: flex; }
   .nav-link { padding: 12px 20px; border-bottom: none; }
-  .nav-link.active { background: rgba(74,158,255,0.15); border-radius: 0; margin: 0; padding: 12px 20px; }
+  .nav-link.active { background: var(--nav-active-bg); border-radius: 0; margin: 0; padding: 12px 20px; }
   .nav-left { gap: 12px; }
   body.nav-open { overflow: hidden; }
 }

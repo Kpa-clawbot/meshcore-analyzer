@@ -571,19 +571,23 @@ window.addEventListener('DOMContentLoaded', () => {
   const navMoreBtn = document.getElementById('navMoreBtn');
   const navMoreMenu = document.getElementById('navMoreMenu');
   if (navMoreBtn && navMoreMenu) {
+    // Build More menu dynamically from non-priority nav links (DRY)
+    navMoreMenu.innerHTML = '';
+    document.querySelectorAll('.nav-links a:not([data-priority="high"])').forEach(function(link) {
+      var clone = link.cloneNode(true);
+      clone.setAttribute('role', 'menuitem');
+      clone.addEventListener('click', closeMoreMenu);
+      navMoreMenu.appendChild(clone);
+    });
     navMoreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const opening = !navMoreMenu.classList.contains('open');
       navMoreMenu.classList.toggle('open');
       navMoreBtn.setAttribute('aria-expanded', String(opening));
       if (opening) {
-        // Focus first menu item for keyboard accessibility
         var firstLink = navMoreMenu.querySelector('.nav-link');
         if (firstLink) firstLink.focus();
       }
-    });
-    navMoreMenu.querySelectorAll('.nav-link').forEach(link => {
-      link.addEventListener('click', closeMoreMenu);
     });
   }
 
