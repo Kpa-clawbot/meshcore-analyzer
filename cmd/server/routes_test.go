@@ -2209,6 +2209,65 @@ func TestGetNodeHashSizeInfoNoAdverts(t *testing.T) {
 	}
 }
 
+func TestHashAnalyticsZeroHopAdvert(t *testing.T) {
+	// A zero-hop advert (pathByte=0x00, no relay path) should contribute to
+	// distributionByRepeaters (per-node tracking) but NOT inflate total or
+	// distribution (which only count relayed packets).
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	// Capture baseline from seed data (bypass cache via computeAnalyticsHashSizes)
+	baseline := store.computeAnalyticsHashSizes("")
+	baseTotal, _ := baseline["total"].(int)
+	baseDist, _ := baseline["distribution"].(map[string]int)
+	baseDist1 := baseDist["1"]
+
+	pk := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'ZeroHop', 'repeater')", pk)
+
+	decoded := `{"name":"ZeroHop","pubKey":"` + pk + `"}`
+	// header 0x05 → routeType=1 (FLOOD), pathByte=0x00 → hashSize=1
+	raw := "05" + "00" + "aabb"
+	payloadType := 4
+
+	tx := &StoreTx{
+		ID:          8000,
+		RawHex:      raw,
+		Hash:        "zerohop0",
+		FirstSeen:   "2024-01-01T00:00:00Z",
+		PayloadType: &payloadType,
+		DecodedJSON: decoded,
+		// No PathJSON → txGetParsedPath returns nil (zero hops)
+	}
+	store.packets = append(store.packets, tx)
+	store.byPayloadType[4] = append(store.byPayloadType[4], tx)
+
+	result := store.computeAnalyticsHashSizes("")
+
+	// distributionByRepeaters should include the zero-hop advert's node
+	distByRepeaters, ok := result["distributionByRepeaters"].(map[string]int)
+	if !ok {
+		t.Fatal("distributionByRepeaters missing or wrong type")
+	}
+	if distByRepeaters["1"] < 1 {
+		t.Errorf("distributionByRepeaters[\"1\"]=%d, want >=1 (zero-hop advert should be tracked per-node)", distByRepeaters["1"])
+	}
+
+	// total and distribution must NOT have increased from the baseline
+	total, _ := result["total"].(int)
+	dist, _ := result["distribution"].(map[string]int)
+	if total != baseTotal {
+		t.Errorf("total=%d, want %d (zero-hop adverts must not inflate total)", total, baseTotal)
+	}
+	if dist["1"] != baseDist1 {
+		t.Errorf("distribution[\"1\"]=%d, want %d (zero-hop adverts must not inflate distribution)", dist["1"], baseDist1)
+	}
+}
+
 func TestAnalyticsHashSizeSameNameDifferentPubkey(t *testing.T) {
 	// Two nodes named "SameName" with different pubkeys should be counted
 	// separately in distributionByRepeaters (issue #303, byNode keying fix).
