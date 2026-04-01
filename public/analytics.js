@@ -143,13 +143,14 @@
       _analyticsData = {};
       const rqs = RegionFilter.regionQueryString();
       const sep = rqs ? '?' + rqs.slice(1) : '';
-      const [hashData, rfData, topoData, chanData] = await Promise.all([
+      const [hashData, rfData, topoData, chanData, collisionData] = await Promise.all([
         api('/analytics/hash-sizes' + sep, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/rf' + sep, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/topology' + sep, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/channels' + sep, { ttl: CLIENT_TTL.analyticsRF }),
+        api('/analytics/hash-collisions', { ttl: CLIENT_TTL.analyticsRF }),
       ]);
-      _analyticsData = { hashData, rfData, topoData, chanData };
+      _analyticsData = { hashData, rfData, topoData, chanData, collisionData };
       renderTab(_currentTab);
     } catch (e) {
       document.getElementById('analyticsContent').innerHTML =
@@ -166,7 +167,7 @@
       case 'topology': renderTopology(el, d.topoData); break;
       case 'channels': renderChannels(el, d.chanData); break;
       case 'hashsizes': renderHashSizes(el, d.hashData); break;
-      case 'collisions': await renderCollisionTab(el, d.hashData); break;
+      case 'collisions': await renderCollisionTab(el, d.hashData, d.collisionData); break;
       case 'subpaths': await renderSubpaths(el); break;
       case 'nodes': await renderNodesTab(el); break;
       case 'distance': await renderDistanceTab(el); break;
@@ -943,7 +944,7 @@
     `;
   }
 
-  async function renderCollisionTab(el, data) {
+  async function renderCollisionTab(el, data, collisionData) {
     el.innerHTML = `
       <nav id="hashIssuesToc" style="display:flex;gap:12px;margin-bottom:12px;font-size:13px;flex-wrap:wrap">
         <a href="#/analytics?tab=collisions&section=inconsistentHashSection" style="color:var(--accent)">⚠️ Inconsistent Sizes</a>
@@ -980,11 +981,9 @@
         <div id="collisionList"><div class="text-muted" style="padding:8px">Loading…</div></div>
       </div>
     `;
-    let allNodes = [];
-    try { const nd = await api('/nodes?limit=2000' + RegionFilter.regionQueryString(), { ttl: CLIENT_TTL.nodeList }); allNodes = nd.nodes || []; } catch {}
-
-    // Render inconsistent hash sizes
-    const inconsistent = allNodes.filter(n => n.hash_size_inconsistent);
+    // Use pre-computed collision data from server (no more /nodes?limit=2000 fetch)
+    const cData = collisionData || { inconsistent_nodes: [], by_size: {} };
+    const inconsistent = cData.inconsistent_nodes || [];
     const ihEl = document.getElementById('inconsistentHashList');
     if (ihEl) {
       if (!inconsistent.length) {
@@ -1013,10 +1012,7 @@
       }
     }
 
-    // Repeaters are confirmed routing nodes; null-role nodes may also route (possible conflict)
-    const repeaterNodes = allNodes.filter(n => n.role === 'repeater');
-    const nullRoleNodes = allNodes.filter(n => !n.role);
-    const routingNodes = [...repeaterNodes, ...nullRoleNodes];
+    // Repeaters and routing nodes no longer needed — collision data is server-computed
 
     let currentBytes = 1;
     function refreshHashViews(bytes) {
@@ -1037,11 +1033,11 @@
         else if (bytes === 2) matrixDesc.textContent = 'Each cell = first-byte group. Color shows worst 2-byte collision within. Click a cell to see the breakdown.';
         else matrixDesc.textContent = '3-byte prefix space is too large to visualize as a matrix — collision table is shown below.';
       }
-      renderHashMatrix(data.topHops, routingNodes, bytes, allNodes);
+      renderHashMatrixFromServer(cData.by_size[String(bytes)], bytes);
       // Hide collision risk card for 3-byte — stats are shown in the matrix panel
       const riskCard = document.getElementById('collisionRiskSection');
       if (riskCard) riskCard.style.display = bytes === 3 ? 'none' : '';
-      if (bytes !== 3) renderCollisions(data.topHops, routingNodes, bytes);
+      if (bytes !== 3) renderCollisionsFromServer(cData.by_size[String(bytes)], bytes);
     }
 
     // Wire up selector
@@ -1113,92 +1109,65 @@
     el.addEventListener('mouseleave', hideMatrixTip);
   }
 
-  // Pure data helpers — extracted for testability
+  // --- Shared helpers for hash matrix rendering ---
 
-  function buildOneBytePrefixMap(nodes) {
-    const map = {};
-    for (let i = 0; i < 256; i++) map[i.toString(16).padStart(2, '0').toUpperCase()] = [];
-    for (const n of nodes) {
-      const hex = n.public_key.slice(0, 2).toUpperCase();
-      if (map[hex]) map[hex].push(n);
-    }
-    return map;
+  function hashStatCardsHtml(totalNodes, usingCount, sizeLabel, spaceSize, usedCount, collisionCount) {
+    const pct = spaceSize > 0 && usedCount > 0 ? ((usedCount / spaceSize) * 100) : 0;
+    const pctStr = spaceSize > 65536 ? pct.toFixed(6) : spaceSize > 256 ? pct.toFixed(3) : pct.toFixed(1);
+    const spaceLabel = spaceSize >= 1e6 ? (spaceSize / 1e6).toFixed(1) + 'M' : spaceSize.toLocaleString();
+    return `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div class="analytics-stat-card" style="flex:1;min-width:110px">
+        <div class="analytics-stat-label">Nodes tracked</div>
+        <div class="analytics-stat-value">${totalNodes.toLocaleString()}</div>
+      </div>
+      <div class="analytics-stat-card" style="flex:1;min-width:110px">
+        <div class="analytics-stat-label">Using ${sizeLabel} ID</div>
+        <div class="analytics-stat-value">${usingCount.toLocaleString()}</div>
+      </div>
+      <div class="analytics-stat-card" style="flex:1;min-width:110px">
+        <div class="analytics-stat-label">Prefix space used</div>
+        <div class="analytics-stat-value" style="font-size:16px">${pctStr}%</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${usedCount > 256 ? usedCount + ' of ' : 'of '}${spaceLabel} possible</div>
+      </div>
+      <div class="analytics-stat-card" style="flex:1;min-width:110px;border-color:${collisionCount > 0 ? 'var(--status-red)' : 'var(--border)'}">
+        <div class="analytics-stat-label">Prefix collisions</div>
+        <div class="analytics-stat-value" style="color:${collisionCount > 0 ? 'var(--status-red)' : 'var(--status-green)'}">${collisionCount}</div>
+      </div>
+    </div>`;
   }
 
-  function buildTwoBytePrefixInfo(nodes) {
-    const info = {};
-    for (let i = 0; i < 256; i++) {
-      const h = i.toString(16).padStart(2, '0').toUpperCase();
-      info[h] = { groupNodes: [], twoByteMap: {}, maxCollision: 0, collisionCount: 0 };
+  function hashMatrixGridHtml(nibbles, cellSize, headerSize, cellDataFn) {
+    let html = `<div style="display:flex;gap:16px;flex-wrap:wrap"><div class="hash-matrix-scroll"><table class="hash-matrix-table" style="border-collapse:collapse;font-size:12px;font-family:monospace">`;
+    html += `<tr><td style="width:${headerSize}px"></td>`;
+    for (const n of nibbles) html += `<td style="width:${cellSize}px;text-align:center;padding:2px 0;font-weight:bold;color:var(--text-muted)">${n}</td>`;
+    html += '</tr>';
+    for (let hi = 0; hi < 16; hi++) {
+      html += `<tr><td style="text-align:right;padding-right:4px;font-weight:bold;color:var(--text-muted)">${nibbles[hi]}</td>`;
+      for (let lo = 0; lo < 16; lo++) {
+        html += cellDataFn(nibbles[hi] + nibbles[lo], cellSize);
+      }
+      html += '</tr>';
     }
-    for (const n of nodes) {
-      const firstHex = n.public_key.slice(0, 2).toUpperCase();
-      const twoHex = n.public_key.slice(0, 4).toUpperCase();
-      const entry = info[firstHex];
-      if (!entry) continue;
-      entry.groupNodes.push(n);
-      if (!entry.twoByteMap[twoHex]) entry.twoByteMap[twoHex] = [];
-      entry.twoByteMap[twoHex].push(n);
-    }
-    for (const entry of Object.values(info)) {
-      const collisions = Object.values(entry.twoByteMap).filter(v => v.length > 1);
-      entry.collisionCount = collisions.length;
-      entry.maxCollision = collisions.length ? Math.max(...collisions.map(v => v.length)) : 0;
-    }
-    return info;
+    html += '</table></div>';
+    return html;
   }
 
-  function buildCollisionHops(allNodes, bytes) {
-    const map = {};
-    for (const n of allNodes) {
-      const p = n.public_key.slice(0, bytes * 2).toUpperCase();
-      if (!map[p]) map[p] = { hex: p, count: 0, size: bytes };
-      map[p].count++;
-    }
-    return Object.values(map).filter(h => h.count > 1);
+  function hashMatrixLegendHtml(labels) {
+    return `<div style="margin-top:8px;font-size:0.8em;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      ${labels.map(l => `<span><span class="legend-swatch ${l.cls}"${l.style ? ' style="'+l.style+'"' : ''}></span> ${l.text}</span>`).join('\n')}
+    </div>`;
   }
 
-  function renderHashMatrix(topHops, allNodes, bytes, totalNodes) {
-    bytes = bytes || 1;
-    totalNodes = totalNodes || allNodes;
+  function renderHashMatrixFromServer(sizeData, bytes) {
     const el = document.getElementById('hashMatrix');
+    if (!sizeData) { el.innerHTML = '<div class="text-muted">No data</div>'; return; }
+    const stats = sizeData.stats || {};
+    const totalNodes = stats.total_nodes || 0;
 
     // 3-byte: show a summary panel instead of a matrix
     if (bytes === 3) {
-      const total = totalNodes.length;
-      const threeByteNodes = allNodes.filter(n => n.hash_size === 3).length;
-      const nodesForByte = allNodes.filter(n => n.hash_size === 3 || !n.hash_size);
-      const prefixMap = {};
-      for (const n of nodesForByte) {
-        const p = n.public_key.slice(0, 6).toUpperCase();
-        if (!prefixMap[p]) prefixMap[p] = 0;
-        prefixMap[p]++;
-      }
-      const uniquePrefixes = Object.keys(prefixMap).length;
-      const collisions = Object.values(prefixMap).filter(c => c > 1).length;
-      const spaceSize = 16777216; // 2^24
-      const pct = uniquePrefixes > 0 ? ((uniquePrefixes / spaceSize) * 100).toFixed(6) : '0';
-      el.innerHTML = `
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-          <div class="analytics-stat-card" style="flex:1;min-width:110px">
-            <div class="analytics-stat-label">Nodes tracked</div>
-            <div class="analytics-stat-value">${total.toLocaleString()}</div>
-          </div>
-          <div class="analytics-stat-card" style="flex:1;min-width:110px">
-            <div class="analytics-stat-label">Using 3-byte ID</div>
-            <div class="analytics-stat-value">${threeByteNodes.toLocaleString()}</div>
-          </div>
-          <div class="analytics-stat-card" style="flex:1;min-width:110px">
-            <div class="analytics-stat-label">Prefix space used</div>
-            <div class="analytics-stat-value" style="font-size:16px">${pct}%</div>
-            <div style="font-size:10px;color:var(--text-muted);margin-top:2px">of 16.7M possible</div>
-          </div>
-          <div class="analytics-stat-card" style="flex:1;min-width:110px;border-color:${collisions > 0 ? 'var(--status-red)' : 'var(--border)'}">
-            <div class="analytics-stat-label">Prefix collisions</div>
-            <div class="analytics-stat-value" style="color:${collisions > 0 ? 'var(--status-red)' : 'var(--status-green)'}">${collisions}</div>
-          </div>
-        </div>
-        <p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid.</p>`;
+      el.innerHTML = hashStatCardsHtml(totalNodes, stats.using_this_size || 0, '3-byte', 16777216, stats.unique_prefixes || 0, stats.collision_count || 0) +
+        `<p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid.</p>`;
       return;
     }
 
@@ -1207,41 +1176,14 @@
     const headerSize = 24;
 
     if (bytes === 1) {
-      const nodesForByte = allNodes.filter(n => n.hash_size === 1 || !n.hash_size);
-      const prefixNodes = buildOneBytePrefixMap(nodesForByte);
-      const oneByteCount = allNodes.filter(n => n.hash_size === 1).length;
-      const oneUsed = Object.values(prefixNodes).filter(v => v.length > 0).length;
-      const oneCollisions = Object.values(prefixNodes).filter(v => v.length > 1).length;
-      const onePct = ((oneUsed / 256) * 100).toFixed(1);
+      const oneByteCells = sizeData.one_byte_cells || {};
+      const oneByteCount = stats.using_this_size || 0;
+      const oneUsed = Object.values(oneByteCells).filter(v => v.length > 0).length;
+      const oneCollisions = Object.values(oneByteCells).filter(v => v.length > 1).length;
 
-      let html = `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-        <div class="analytics-stat-card" style="flex:1;min-width:110px">
-          <div class="analytics-stat-label">Nodes tracked</div>
-          <div class="analytics-stat-value">${totalNodes.length.toLocaleString()}</div>
-        </div>
-        <div class="analytics-stat-card" style="flex:1;min-width:110px">
-          <div class="analytics-stat-label">Using 1-byte ID</div>
-          <div class="analytics-stat-value">${oneByteCount.toLocaleString()}</div>
-        </div>
-        <div class="analytics-stat-card" style="flex:1;min-width:110px">
-          <div class="analytics-stat-label">Prefix space used</div>
-          <div class="analytics-stat-value" style="font-size:16px">${onePct}%</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">of 256 possible</div>
-        </div>
-        <div class="analytics-stat-card" style="flex:1;min-width:110px;border-color:${oneCollisions > 0 ? 'var(--status-red)' : 'var(--border)'}">
-          <div class="analytics-stat-label">Prefix collisions</div>
-          <div class="analytics-stat-value" style="color:${oneCollisions > 0 ? 'var(--status-red)' : 'var(--status-green)'}">${oneCollisions}</div>
-        </div>
-      </div>`;
-      html += `<div style="display:flex;gap:16px;flex-wrap:wrap"><div class="hash-matrix-scroll"><table class="hash-matrix-table" style="border-collapse:collapse;font-size:12px;font-family:monospace">`;
-      html += `<tr><td style="width:${headerSize}px"></td>`;
-      for (const n of nibbles) html += `<td style="width:${cellSize}px;text-align:center;padding:2px 0;font-weight:bold;color:var(--text-muted)">${n}</td>`;
-      html += '</tr>';
-      for (let hi = 0; hi < 16; hi++) {
-        html += `<tr><td style="text-align:right;padding-right:4px;font-weight:bold;color:var(--text-muted)">${nibbles[hi]}</td>`;
-        for (let lo = 0; lo < 16; lo++) {
-          const hex = nibbles[hi] + nibbles[lo];
-          const nodes = prefixNodes[hex] || [];
+      let html = hashStatCardsHtml(totalNodes, oneByteCount, '1-byte', 256, oneUsed, oneCollisions);
+      html += hashMatrixGridHtml(nibbles, cellSize, headerSize, (hex, cs) => {
+          const nodes = oneByteCells[hex] || [];
           const count = nodes.length;
           const repeaterCount = nodes.filter(n => n.role === 'repeater').length;
           const isCollision = count >= 2 && repeaterCount >= 2;
@@ -1259,18 +1201,15 @@
               : isPossible
                 ? `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">${count} nodes — POSSIBLE CONFLICT</div><div class="hash-matrix-tooltip-nodes">${nodes.slice(0,5).map(nodeLabel).join('')}${nodes.length>5?`<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>`:''}</div>`
                 : `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">${count} nodes — COLLISION</div><div class="hash-matrix-tooltip-nodes">${nodes.slice(0,5).map(nodeLabel).join('')}${nodes.length>5?`<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>`:''}</div>`;
-          html += `<td class="hash-cell ${cellClass}${count ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip1.replace(/"/g,'&quot;')}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;${bgStyle}border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:11px;font-weight:${count >= 2 ? '700' : '400'}">${hex}</td>`;
-        }
-        html += '</tr>';
-      }
-      html += '</table></div>';
-      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>
-      <div style="margin-top:8px;font-size:0.8em;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-        <span><span class="legend-swatch hash-cell-empty" style="border:1px solid var(--border)"></span> Available</span>
-        <span><span class="legend-swatch hash-cell-taken"></span> One node</span>
-        <span><span class="legend-swatch hash-cell-possible"></span> Possible conflict</span>
-        <span><span class="legend-swatch hash-cell-collision" style="background:rgb(220,80,30)"></span> Collision</span>
-      </div>`;
+          return `<td class="hash-cell ${cellClass}${count ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip1.replace(/"/g,'&quot;')}" style="width:${cs}px;height:${cs}px;text-align:center;${bgStyle}border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:11px;font-weight:${count >= 2 ? '700' : '400'}">${hex}</td>`;
+      });
+      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>`;
+      html += hashMatrixLegendHtml([
+        {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'Available'},
+        {cls: 'hash-cell-taken', text: 'One node'},
+        {cls: 'hash-cell-possible', text: 'Possible conflict'},
+        {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
+      ]);
       el.innerHTML = html;
 
       initMatrixTooltip(el);
@@ -1278,7 +1217,7 @@
       el.querySelectorAll('.hash-active').forEach(td => {
         td.addEventListener('click', () => {
           const hex = td.dataset.hex.toUpperCase();
-          const matches = prefixNodes[hex] || [];
+          const matches = oneByteCells[hex] || [];
           const detail = document.getElementById('hashDetail');
           if (!matches.length) { detail.innerHTML = `<strong class="mono">0x${hex}</strong><br><span class="text-muted">No known nodes</span>`; return; }
           detail.innerHTML = `<strong class="mono" style="font-size:1.1em">0x${hex}</strong> — ${matches.length} node${matches.length !== 1 ? 's' : ''}` +
@@ -1293,47 +1232,17 @@
       });
 
     } else if (bytes === 2) {
-      // 2-byte mode: 16×16 grid of first-byte groups
-      const nodesForByte = allNodes.filter(n => n.hash_size === 2 || !n.hash_size);
-      const firstByteInfo = buildTwoBytePrefixInfo(nodesForByte);
+      const twoByteCells = sizeData.two_byte_cells || {};
+      const twoByteCount = stats.using_this_size || 0;
+      const uniqueTwoBytePrefixes = stats.unique_prefixes || 0;
+      const twoCollisions = Object.values(twoByteCells).filter(v => v.collision_count > 0).length;
 
-      const twoByteCount = allNodes.filter(n => n.hash_size === 2).length;
-      const uniqueTwoBytePrefixes = new Set(nodesForByte.map(n => n.public_key.slice(0, 4).toUpperCase())).size;
-      const twoCollisions = Object.values(firstByteInfo).filter(v => v.collisionCount > 0).length;
-      const twoPct = ((uniqueTwoBytePrefixes / 65536) * 100).toFixed(3);
-
-      let html = `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
-        <div class="analytics-stat-card" style="flex:1;min-width:110px">
-          <div class="analytics-stat-label">Nodes tracked</div>
-          <div class="analytics-stat-value">${totalNodes.length.toLocaleString()}</div>
-        </div>
-        <div class="analytics-stat-card" style="flex:1;min-width:110px">
-          <div class="analytics-stat-label">Using 2-byte ID</div>
-          <div class="analytics-stat-value">${twoByteCount.toLocaleString()}</div>
-        </div>
-        <div class="analytics-stat-card" style="flex:1;min-width:110px">
-          <div class="analytics-stat-label">Prefix space used</div>
-          <div class="analytics-stat-value" style="font-size:16px">${twoPct}%</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${uniqueTwoBytePrefixes} of 65,536 possible</div>
-        </div>
-        <div class="analytics-stat-card" style="flex:1;min-width:110px;border-color:${twoCollisions > 0 ? 'var(--status-red)' : 'var(--border)'}">
-          <div class="analytics-stat-label">Prefix collisions</div>
-          <div class="analytics-stat-value" style="color:${twoCollisions > 0 ? 'var(--status-red)' : 'var(--status-green)'}">${twoCollisions}</div>
-        </div>
-      </div>`;
-      html += `<div style="display:flex;gap:16px;flex-wrap:wrap"><div class="hash-matrix-scroll"><table class="hash-matrix-table" style="border-collapse:collapse;font-size:12px;font-family:monospace">`;
-      html += `<tr><td style="width:${headerSize}px"></td>`;
-      for (const n of nibbles) html += `<td style="width:${cellSize}px;text-align:center;padding:2px 0;font-weight:bold;color:var(--text-muted)">${n}</td>`;
-      html += '</tr>';
-      for (let hi = 0; hi < 16; hi++) {
-        html += `<tr><td style="text-align:right;padding-right:4px;font-weight:bold;color:var(--text-muted)">${nibbles[hi]}</td>`;
-        for (let lo = 0; lo < 16; lo++) {
-          const hex = nibbles[hi] + nibbles[lo];
-          const info = firstByteInfo[hex] || { groupNodes: [], maxCollision: 0, collisionCount: 0 };
-          const nodeCount = info.groupNodes.length;
-          const maxCol = info.maxCollision;
-          // Classify worst overlap in group: confirmed collision (2+ repeaters) or possible (null-role involved)
-          const overlapping = Object.values(info.twoByteMap || {}).filter(v => v.length > 1);
+      let html = hashStatCardsHtml(totalNodes, twoByteCount, '2-byte', 65536, uniqueTwoBytePrefixes, twoCollisions);
+      html += hashMatrixGridHtml(nibbles, cellSize, headerSize, (hex, cs) => {
+          const info = twoByteCells[hex] || { group_nodes: [], max_collision: 0, collision_count: 0, two_byte_map: {} };
+          const nodeCount = (info.group_nodes || []).length;
+          const maxCol = info.max_collision || 0;
+          const overlapping = Object.values(info.two_byte_map || {}).filter(v => v.length > 1);
           const hasConfirmed = overlapping.some(ns => ns.filter(n => n.role === 'repeater').length >= 2);
           const hasPossible = !hasConfirmed && overlapping.some(ns => ns.length >= 2);
           let cellClass2, bgStyle2;
@@ -1344,39 +1253,37 @@
           const nodeLabel2 = m => esc(m.name||m.public_key.slice(0,8)) + (!m.role ? ' (?)' : '');
           const tip2 = nodeCount === 0
             ? `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">No nodes in this group</div>`
-            : info.collisionCount === 0
+            : (info.collision_count || 0) === 0
               ? `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">${nodeCount} node${nodeCount>1?'s':''} — no 2-byte collisions</div>`
-              : `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">${hasConfirmed ? info.collisionCount + ' collision' + (info.collisionCount>1?'s':'') : 'Possible conflict'}</div><div class="hash-matrix-tooltip-nodes">${Object.entries(info.twoByteMap).filter(([,v])=>v.length>1).slice(0,4).map(([p,ns])=>`<div style="font-size:11px;padding:1px 0"><span style="color:${hasConfirmed?'var(--status-red)':'var(--status-yellow)'};font-family:var(--mono);font-weight:700">${p}</span> — ${ns.map(nodeLabel2).join(', ')}</div>`).join('')}</div>`;
-          html += `<td class="hash-cell ${cellClass2}${nodeCount ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip2.replace(/"/g,'&quot;')}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;${bgStyle2}border:1px solid var(--border);cursor:${nodeCount ? 'pointer' : 'default'};font-size:11px;font-weight:${maxCol > 0 ? '700' : '400'}">${hex}</td>`;
-        }
-        html += '</tr>';
-      }
-      html += '</table></div>';
-      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:420px;font-size:0.85em"></div></div>
-      <div style="margin-top:8px;font-size:0.8em;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-        <span><span class="legend-swatch hash-cell-empty" style="border:1px solid var(--border)"></span> No nodes in group</span>
-        <span><span class="legend-swatch hash-cell-taken"></span> Nodes present, no collision</span>
-        <span><span class="legend-swatch hash-cell-possible"></span> Possible conflict</span>
-        <span><span class="legend-swatch hash-cell-collision" style="background:rgb(220,80,30)"></span> Collision</span>
-      </div>`;
+              : `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">${hasConfirmed ? (info.collision_count||0) + ' collision' + ((info.collision_count||0)>1?'s':'') : 'Possible conflict'}</div><div class="hash-matrix-tooltip-nodes">${Object.entries(info.two_byte_map||{}).filter(([,v])=>v.length>1).slice(0,4).map(([p,ns])=>`<div style="font-size:11px;padding:1px 0"><span style="color:${hasConfirmed?'var(--status-red)':'var(--status-yellow)'};font-family:var(--mono);font-weight:700">${p}</span> — ${ns.map(nodeLabel2).join(', ')}</div>`).join('')}</div>`;
+          return `<td class="hash-cell ${cellClass2}${nodeCount ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip2.replace(/"/g,'&quot;')}" style="width:${cs}px;height:${cs}px;text-align:center;${bgStyle2}border:1px solid var(--border);cursor:${nodeCount ? 'pointer' : 'default'};font-size:11px;font-weight:${maxCol > 0 ? '700' : '400'}">${hex}</td>`;
+      });
+      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:420px;font-size:0.85em"></div></div>`;
+      html += hashMatrixLegendHtml([
+        {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'No nodes in group'},
+        {cls: 'hash-cell-taken', text: 'Nodes present, no collision'},
+        {cls: 'hash-cell-possible', text: 'Possible conflict'},
+        {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
+      ]);
       el.innerHTML = html;
 
       el.querySelectorAll('.hash-active').forEach(td => {
         td.addEventListener('click', () => {
           const hex = td.dataset.hex.toUpperCase();
-          const info = firstByteInfo[hex];
+          const info = twoByteCells[hex];
           const detail = document.getElementById('hashDetail');
-          if (!info || !info.groupNodes.length) { detail.innerHTML = ''; return; }
-          let dhtml = `<strong class="mono" style="font-size:1.1em">0x${hex}__</strong> — ${info.groupNodes.length} node${info.groupNodes.length !== 1 ? 's' : ''} in group`;
-          if (info.collisionCount === 0) {
+          if (!info || !(info.group_nodes || []).length) { detail.innerHTML = ''; return; }
+          const groupNodes = info.group_nodes || [];
+          let dhtml = `<strong class="mono" style="font-size:1.1em">0x${hex}__</strong> — ${groupNodes.length} node${groupNodes.length !== 1 ? 's' : ''} in group`;
+          if ((info.collision_count || 0) === 0) {
             dhtml += `<div class="text-muted" style="margin-top:6px;font-size:0.85em">✅ No 2-byte collisions in this group</div>`;
-            dhtml += `<div style="margin-top:8px">${info.groupNodes.map(m => {
+            dhtml += `<div style="margin-top:8px">${groupNodes.map(m => {
               const prefix = m.public_key.slice(0,4).toUpperCase();
               return `<div style="padding:2px 0"><code class="mono" style="font-size:0.85em">${prefix}</code> <a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a></div>`;
             }).join('')}</div>`;
           } else {
             dhtml += `<div style="margin-top:8px">`;
-            for (const [twoHex, nodes] of Object.entries(info.twoByteMap).sort()) {
+            for (const [twoHex, nodes] of Object.entries(info.two_byte_map || {}).sort()) {
               const isCollision = nodes.length > 1;
               dhtml += `<div style="margin-bottom:6px;padding:4px 6px;border-radius:4px;background:${isCollision ? 'rgba(220,50,30,0.1)' : 'transparent'};border:1px solid ${isCollision ? 'rgba(220,50,30,0.3)' : 'transparent'}">`;
               dhtml += `<code class="mono" style="font-size:0.9em;font-weight:${isCollision?'700':'400'}">${twoHex}</code>${isCollision ? ' <span style="color:#dc2626;font-size:0.75em;font-weight:700">COLLISION</span>' : ''} `;
@@ -1395,106 +1302,65 @@
     }
   }
 
-  async function renderCollisions(topHops, allNodes, bytes) {
-    bytes = bytes || 1;
+  function renderCollisionsFromServer(sizeData, bytes) {
     const el = document.getElementById('collisionList');
-    const hopsForSize = topHops.filter(h => h.size === bytes);
+    if (!sizeData) { el.innerHTML = '<div class="text-muted">No data</div>'; return; }
+    const collisions = sizeData.collisions || [];
 
-    // For 2-byte and 3-byte, scan nodes directly — topHops only reliably covers 1-byte path hops
-    const hopsToCheck = bytes === 1 ? hopsForSize : buildCollisionHops(allNodes, bytes);
-
-    if (!hopsToCheck.length && bytes === 1) {
-      el.innerHTML = `<div class="text-muted" style="padding:8px">No 1-byte hops observed in recent packets.</div>`;
+    if (!collisions.length) {
+      const cleanMsg = bytes === 3
+        ? '✅ No 3-byte prefix collisions detected — all nodes have unique 3-byte prefixes.'
+        : `✅ No ${bytes}-byte collisions detected`;
+      el.innerHTML = `<div class="text-muted" style="padding:8px">${cleanMsg}</div>`;
       return;
     }
-    try {
-      const nodes = allNodes;
-      const collisions = [];
-      for (const hop of hopsToCheck) {
-        const prefix = hop.hex.toLowerCase();
-        const matches = nodes.filter(n => n.public_key.toLowerCase().startsWith(prefix));
-        if (matches.length > 1) {
-          // Calculate pairwise distances for classification
-          const withCoords = matches.filter(m => m.lat && m.lon && !(m.lat === 0 && m.lon === 0));
-          let maxDistKm = 0;
-          let classification = 'unknown';
-          if (withCoords.length >= 2) {
-            for (let i = 0; i < withCoords.length; i++) {
-              for (let j = i + 1; j < withCoords.length; j++) {
-                const dLat = (withCoords[i].lat - withCoords[j].lat) * 111;
-                const dLon = (withCoords[i].lon - withCoords[j].lon) * 85;
-                const d = Math.sqrt(dLat * dLat + dLon * dLon);
-                if (d > maxDistKm) maxDistKm = d;
-              }
-            }
-            if (maxDistKm < 50) classification = 'local';
-            else if (maxDistKm < 200) classification = 'regional';
-            else classification = 'distant';
-          } else if (withCoords.length < 2) {
-            classification = 'incomplete';
-          }
-          collisions.push({ hop: hop.hex, count: hop.count, matches, maxDistKm, classification, withCoords: withCoords.length });
+
+    const showAppearances = bytes < 3;
+    el.innerHTML = `<table class="analytics-table">
+      <thead><tr>
+        <th scope="col">Prefix</th>
+        ${showAppearances ? '<th scope="col">Appearances</th>' : ''}
+        <th scope="col">Max Distance</th>
+        <th scope="col">Assessment</th>
+        <th scope="col">Colliding Nodes</th>
+      </tr></thead>
+      <tbody>${collisions.map(c => {
+        let badge, tooltip;
+        if (c.classification === 'local') {
+          badge = '<span class="badge" style="background:var(--status-green);color:#fff" title="All nodes within 50km — likely true collision, same RF neighborhood">🏘️ Local</span>';
+          tooltip = 'Nodes close enough for direct RF — probably genuine prefix collision';
+        } else if (c.classification === 'regional') {
+          badge = '<span class="badge" style="background:var(--status-yellow);color:#fff" title="Nodes 50–200km apart — edge of LoRa range, could be atmospheric">⚡ Regional</span>';
+          tooltip = 'At edge of 915MHz range — could indicate atmospheric ducting or hilltop-to-hilltop links';
+        } else if (c.classification === 'distant') {
+          badge = '<span class="badge" style="background:var(--status-red);color:#fff" title="Nodes >200km apart — beyond typical 915MHz range">🌐 Distant</span>';
+          tooltip = 'Beyond typical LoRa range — likely internet bridging, MQTT gateway, or separate mesh networks sharing prefix';
+        } else {
+          badge = '<span class="badge" style="background:#6b7280;color:#fff">❓ Unknown</span>';
+          tooltip = 'Not enough coordinate data to classify';
         }
-      }
-      if (!collisions.length) {
-        const cleanMsg = bytes === 3
-          ? '✅ No 3-byte prefix collisions detected — all nodes have unique 3-byte prefixes.'
-          : `✅ No ${bytes}-byte collisions detected`;
-        el.innerHTML = `<div class="text-muted" style="padding:8px">${cleanMsg}</div>`;
-        return;
-      }
-
-      // Sort: local first (most likely to collide), then regional, distant, incomplete
-      const classOrder = { local: 0, regional: 1, distant: 2, incomplete: 3, unknown: 4 };
-      collisions.sort((a, b) => classOrder[a.classification] - classOrder[b.classification] || b.count - a.count);
-
-      const showAppearances = bytes < 3;
-      el.innerHTML = `<table class="analytics-table">
-        <thead><tr>
-          <th scope="col">Prefix</th>
-          ${showAppearances ? '<th scope="col">Appearances</th>' : ''}
-          <th scope="col">Max Distance</th>
-          <th scope="col">Assessment</th>
-          <th scope="col">Colliding Nodes</th>
-        </tr></thead>
-        <tbody>${collisions.map(c => {
-          let badge, tooltip;
-          if (c.classification === 'local') {
-            badge = '<span class="badge" style="background:var(--status-green);color:#fff" title="All nodes within 50km — likely true collision, same RF neighborhood">🏘️ Local</span>';
-            tooltip = 'Nodes close enough for direct RF — probably genuine prefix collision';
-          } else if (c.classification === 'regional') {
-            badge = '<span class="badge" style="background:var(--status-yellow);color:#fff" title="Nodes 50–200km apart — edge of LoRa range, could be atmospheric">⚡ Regional</span>';
-            tooltip = 'At edge of 915MHz range — could indicate atmospheric ducting or hilltop-to-hilltop links';
-          } else if (c.classification === 'distant') {
-            badge = '<span class="badge" style="background:var(--status-red);color:#fff" title="Nodes >200km apart — beyond typical 915MHz range">🌐 Distant</span>';
-            tooltip = 'Beyond typical LoRa range — likely internet bridging, MQTT gateway, or separate mesh networks sharing prefix';
-          } else {
-            badge = '<span class="badge" style="background:#6b7280;color:#fff">❓ Unknown</span>';
-            tooltip = 'Not enough coordinate data to classify';
-          }
-          const distStr = c.withCoords >= 2 ? `${Math.round(c.maxDistKm)} km` : '<span class="text-muted">—</span>';
-          return `<tr>
-            <td class="mono">${c.hop}</td>
-            ${showAppearances ? `<td>${c.count.toLocaleString()}</td>` : ''}
-            <td>${distStr}</td>
-            <td title="${tooltip}">${badge}</td>
-            <td>${c.matches.map(m => {
-              const loc = (m.lat && m.lon && !(m.lat === 0 && m.lon === 0))
-                ? ` <span class="text-muted" style="font-size:0.75em">(${m.lat.toFixed(2)}, ${m.lon.toFixed(2)})</span>`
-                : ' <span class="text-muted" style="font-size:0.75em">(no coords)</span>';
-              return `<a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a>${loc}`;
-            }).join('<br>')}</td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>
-      <div class="text-muted" style="padding:8px;font-size:0.8em">
-        <strong>🏘️ Local</strong> &lt;50km: true prefix collision, same mesh area &nbsp;
-        <strong>⚡ Regional</strong> 50–200km: edge of LoRa range, possible atmospheric propagation &nbsp;
-        <strong>🌐 Distant</strong> &gt;200km: beyond 915MHz range — internet bridge, MQTT gateway, or separate networks
-      </div>`;
-    } catch { el.innerHTML = '<div class="text-muted">Failed to load</div>'; }
+        const nodes = c.nodes || [];
+        const distStr = c.with_coords >= 2 ? `${Math.round(c.max_dist_km)} km` : '<span class="text-muted">—</span>';
+        return `<tr>
+          <td class="mono">${c.prefix}</td>
+          ${showAppearances ? `<td>${(c.appearances || 0).toLocaleString()}</td>` : ''}
+          <td>${distStr}</td>
+          <td title="${tooltip}">${badge}</td>
+          <td>${nodes.map(m => {
+            const loc = (m.lat && m.lon && !(m.lat === 0 && m.lon === 0))
+              ? ` <span class="text-muted" style="font-size:0.75em">(${m.lat.toFixed(2)}, ${m.lon.toFixed(2)})</span>`
+              : ' <span class="text-muted" style="font-size:0.75em">(no coords)</span>';
+            return `<a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a>${loc}`;
+          }).join('<br>')}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+    <div class="text-muted" style="padding:8px;font-size:0.8em">
+      <strong>🏘️ Local</strong> &lt;50km: true prefix collision, same mesh area &nbsp;
+      <strong>⚡ Regional</strong> 50–200km: edge of LoRa range, possible atmospheric propagation &nbsp;
+      <strong>🌐 Distant</strong> &gt;200km: beyond 915MHz range — internet bridge, MQTT gateway, or separate networks
+    </div>`;
   }
-
     async function renderSubpaths(el) {
     el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Analyzing route patterns…</div>';
     try {
@@ -1942,9 +1808,6 @@ function destroy() { _analyticsData = {}; _channelData = null; }
     window._analyticsSaveChannelSort = saveChannelSort;
     window._analyticsChannelTbodyHtml = channelTbodyHtml;
     window._analyticsChannelTheadHtml = channelTheadHtml;
-    window._analyticsBuildOneBytePrefixMap = buildOneBytePrefixMap;
-    window._analyticsBuildTwoBytePrefixInfo = buildTwoBytePrefixInfo;
-    window._analyticsBuildCollisionHops = buildCollisionHops;
   }
 
   registerPage('analytics', { init, destroy });

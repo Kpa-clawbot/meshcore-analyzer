@@ -136,6 +136,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/analytics/channels", s.handleAnalyticsChannels).Methods("GET")
 	r.HandleFunc("/api/analytics/distance", s.handleAnalyticsDistance).Methods("GET")
 	r.HandleFunc("/api/analytics/hash-sizes", s.handleAnalyticsHashSizes).Methods("GET")
+	r.HandleFunc("/api/analytics/hash-collisions", s.handleAnalyticsHashCollisions).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths", s.handleAnalyticsSubpaths).Methods("GET")
 	r.HandleFunc("/api/analytics/subpath-detail", s.handleAnalyticsSubpathDetail).Methods("GET")
 
@@ -1198,6 +1199,17 @@ func (s *Server) handleAnalyticsHashSizes(w http.ResponseWriter, r *http.Request
 		"hourly":                  []HashSizeHourly{},
 		"topHops":                 []HashSizeHop{},
 		"multiByteNodes":          []MultiByteNode{},
+	})
+}
+
+func (s *Server) handleAnalyticsHashCollisions(w http.ResponseWriter, r *http.Request) {
+	if s.store != nil {
+		writeJSON(w, s.store.GetAnalyticsHashCollisions())
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"inconsistent_nodes": []interface{}{},
+		"by_size":            map[string]interface{}{},
 	})
 }
 
