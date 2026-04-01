@@ -41,9 +41,10 @@
   const VSCROLL_ROW_HEIGHT = 36;  // estimated row height in px
   const VSCROLL_BUFFER = 30;      // extra rows above/below viewport
   let _lastRenderedRows = [];     // cached row HTML strings from last filter pass
+  let _lastRenderedRowCounts = []; // number of <tr> elements per entry (for expanded groups)
+  let _lastVisibleStart = -1;     // last rendered start index (for dirty checking)
+  let _lastVisibleEnd = -1;       // last rendered end index (for dirty checking)
   let _vsScrollHandler = null;    // scroll listener reference
-  let _renderRafId = null;        // RAF coalescing id
-  let _renderQueued = false;      // whether a render is pending
   let _wsRenderTimer = null;      // debounce timer for WS-triggered renders
 
   function closeDetailPanel() {
@@ -418,6 +419,9 @@
     detachVScrollListener();
     clearTimeout(_wsRenderTimer);
     _lastRenderedRows = [];
+    _lastRenderedRowCounts = [];
+    _lastVisibleStart = -1;
+    _lastVisibleEnd = -1;
     if (_docActionHandler) { document.removeEventListener('click', _docActionHandler); _docActionHandler = null; }
     if (_docMenuCloseHandler) { document.removeEventListener('click', _docMenuCloseHandler); _docMenuCloseHandler = null; }
     if (_docColMenuCloseHandler) { document.removeEventListener('click', _docColMenuCloseHandler); _docColMenuCloseHandler = null; }
@@ -1096,6 +1100,17 @@
   }
 
   // Virtual scroll: render only visible rows into the tbody
+  // Compute cumulative DOM row offsets from per-entry row counts.
+  // Returns array where cumulativeOffsets[i] = total <tr> rows before entry i.
+  function _cumulativeRowOffsets() {
+    const offsets = new Array(_lastRenderedRowCounts.length + 1);
+    offsets[0] = 0;
+    for (let i = 0; i < _lastRenderedRowCounts.length; i++) {
+      offsets[i + 1] = offsets[i] + _lastRenderedRowCounts[i];
+    }
+    return offsets;
+  }
+
   function renderVisibleRows() {
     const tbody = document.getElementById('pktBody');
     if (!tbody || !_lastRenderedRows.length) return;
@@ -1103,8 +1118,10 @@
     const scrollContainer = document.getElementById('pktLeft');
     if (!scrollContainer) return;
 
-    const totalRows = _lastRenderedRows.length;
-    const totalHeight = totalRows * VSCROLL_ROW_HEIGHT;
+    // Compute total DOM rows accounting for expanded groups
+    const offsets = _cumulativeRowOffsets();
+    const totalDomRows = offsets[offsets.length - 1];
+    const totalHeight = totalDomRows * VSCROLL_ROW_HEIGHT;
 
     // Get or create spacer elements
     let topSpacer = document.getElementById('vscroll-top');
@@ -1127,14 +1144,40 @@
     const theadHeight = 40;
     const adjustedScrollTop = Math.max(0, scrollTop - theadHeight);
 
-    const firstVisible = Math.floor(adjustedScrollTop / VSCROLL_ROW_HEIGHT);
-    const visibleCount = Math.ceil(viewportHeight / VSCROLL_ROW_HEIGHT);
-    const startIdx = Math.max(0, firstVisible - VSCROLL_BUFFER);
-    const endIdx = Math.min(totalRows, firstVisible + visibleCount + VSCROLL_BUFFER);
+    // Find the first entry whose cumulative row offset covers the scroll position
+    const firstDomRow = Math.floor(adjustedScrollTop / VSCROLL_ROW_HEIGHT);
+    const visibleDomCount = Math.ceil(viewportHeight / VSCROLL_ROW_HEIGHT);
 
-    // Build HTML for visible slice only
-    const topPad = startIdx * VSCROLL_ROW_HEIGHT;
-    const bottomPad = (totalRows - endIdx) * VSCROLL_ROW_HEIGHT;
+    // Binary search for entry index containing firstDomRow
+    let lo = 0, hi = _lastRenderedRows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] <= firstDomRow) lo = mid + 1;
+      else hi = mid;
+    }
+    const firstEntry = lo;
+
+    // Find entry index covering last visible DOM row
+    const lastDomRow = firstDomRow + visibleDomCount;
+    lo = firstEntry; hi = _lastRenderedRows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] <= lastDomRow) lo = mid + 1;
+      else hi = mid;
+    }
+    const lastEntry = Math.min(lo + 1, _lastRenderedRows.length);
+
+    const startIdx = Math.max(0, firstEntry - VSCROLL_BUFFER);
+    const endIdx = Math.min(_lastRenderedRows.length, lastEntry + VSCROLL_BUFFER);
+
+    // Skip DOM rebuild if visible range hasn't changed
+    if (startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd) return;
+    _lastVisibleStart = startIdx;
+    _lastVisibleEnd = endIdx;
+
+    // Compute padding using cumulative row counts
+    const topPad = offsets[startIdx] * VSCROLL_ROW_HEIGHT;
+    const bottomPad = (totalDomRows - offsets[endIdx]) * VSCROLL_ROW_HEIGHT;
 
     topSpacer.firstChild.style.height = topPad + 'px';
     bottomSpacer.firstChild.style.height = bottomPad + 'px';
@@ -1222,16 +1265,32 @@
 
     if (!displayPackets.length) {
       _lastRenderedRows = [];
+      _lastRenderedRowCounts = [];
+      _lastVisibleStart = -1;
+      _lastVisibleEnd = -1;
       detachVScrollListener();
       tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted" style="padding:24px">' + (filters.myNodes ? 'No packets from your claimed/favorited nodes' : 'No packets found') + '</td></tr>';
       return;
     }
 
     // Build all row HTML strings but only render visible ones (virtual scroll)
+    // Track per-entry DOM row counts for correct scroll height with expanded groups
+    _lastVisibleStart = -1;
+    _lastVisibleEnd = -1;
     if (groupByHash) {
       _lastRenderedRows = displayPackets.map(p => buildGroupRowHtml(p));
+      _lastRenderedRowCounts = displayPackets.map(p => {
+        if (!expandedHashes.has(p.hash) || !p._children) return 1;
+        let childCount = p._children.length;
+        if (filters.observer) {
+          const obsSet = new Set(filters.observer.split(','));
+          childCount = p._children.filter(c => obsSet.has(String(c.observer_id))).length;
+        }
+        return 1 + childCount; // header + children
+      });
     } else {
       _lastRenderedRows = displayPackets.map(p => buildFlatRowHtml(p));
+      _lastRenderedRowCounts = displayPackets.map(() => 1);
     }
 
     attachVScrollListener();
