@@ -37,6 +37,15 @@
   const PANEL_WIDTH_KEY = 'meshcore-panel-width';
   const PANEL_CLOSE_HTML = '<button class="panel-close-btn" title="Close detail pane (Esc)">✕</button>';
 
+  // --- Virtual scroll state ---
+  const VSCROLL_ROW_HEIGHT = 36;  // estimated row height in px
+  const VSCROLL_BUFFER = 30;      // extra rows above/below viewport
+  let _lastRenderedRows = [];     // cached row HTML strings from last filter pass
+  let _vsScrollHandler = null;    // scroll listener reference
+  let _renderRafId = null;        // RAF coalescing id
+  let _renderQueued = false;      // whether a render is pending
+  let _wsRenderTimer = null;      // debounce timer for WS-triggered renders
+
   function closeDetailPanel() {
     var panel = document.getElementById('pktRight');
     if (panel) {
@@ -396,7 +405,9 @@
           packets = filtered.concat(packets);
         }
         totalCount += filtered.length;
-        renderTableRows();
+        // Debounce WS-triggered renders to avoid rapid full rebuilds
+        clearTimeout(_wsRenderTimer);
+        _wsRenderTimer = setTimeout(function () { renderTableRows(); }, 200);
       });
     });
   }
@@ -404,6 +415,9 @@
   function destroy() {
     if (wsHandler) offWS(wsHandler);
     wsHandler = null;
+    detachVScrollListener();
+    clearTimeout(_wsRenderTimer);
+    _lastRenderedRows = [];
     if (_docActionHandler) { document.removeEventListener('click', _docActionHandler); _docActionHandler = null; }
     if (_docMenuCloseHandler) { document.removeEventListener('click', _docMenuCloseHandler); _docMenuCloseHandler = null; }
     if (_docColMenuCloseHandler) { document.removeEventListener('click', _docColMenuCloseHandler); _docColMenuCloseHandler = null; }
@@ -988,6 +1002,173 @@
     makeColumnsResizable('#pktTable', 'meshcore-pkt-col-widths');
   }
 
+  // Build HTML for a single grouped packet row
+  function buildGroupRowHtml(p) {
+    const isExpanded = expandedHashes.has(p.hash);
+    let headerObserverId = p.observer_id;
+    let headerPathJson = p.path_json;
+    if (filters.observer && p._children?.length) {
+      const obsIds = new Set(filters.observer.split(','));
+      const match = p._children.find(c => obsIds.has(String(c.observer_id)));
+      if (match) {
+        headerObserverId = match.observer_id;
+        headerPathJson = match.path_json;
+      }
+    }
+    const groupRegion = headerObserverId ? (observers.find(o => o.id === headerObserverId)?.iata || '') : '';
+    let groupPath = [];
+    try { groupPath = JSON.parse(headerPathJson || '[]'); } catch {}
+    const groupPathStr = renderPath(groupPath, headerObserverId);
+    const groupTypeName = payloadTypeName(p.payload_type);
+    const groupTypeClass = payloadTypeColor(p.payload_type);
+    const groupSize = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
+    const groupHashBytes = ((parseInt(p.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
+    const isSingle = p.count <= 1;
+    let html = `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" tabindex="0" role="row">
+          <td style="width:28px;text-align:center;cursor:pointer">${isSingle ? '' : (isExpanded ? '▼' : '▶')}</td>
+          <td class="col-region">${groupRegion ? `<span class="badge-region">${groupRegion}</span>` : '—'}</td>
+          <td class="col-time">${renderTimestampCell(p.latest)}</td>
+          <td class="mono col-hash">${truncate(p.hash || '—', 8)}</td>
+          <td class="col-size">${groupSize ? groupSize + 'B' : '—'}</td>
+          <td class="col-hashsize mono">${groupHashBytes}</td>
+          <td class="col-type">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}` : '—'}</td>
+          <td class="col-observer">${isSingle ? truncate(obsName(headerObserverId), 16) : truncate(obsName(headerObserverId), 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
+          <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
+          <td class="col-rpt">${p.observation_count > 1 ? '<span class="badge badge-obs" title="Seen ' + p.observation_count + ' times">👁 ' + p.observation_count + '</span>' : (isSingle ? '' : p.count)}</td>
+          <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(p.decoded_json || '{}'); } catch { return {}; } })())}</td>
+        </tr>`;
+    if (isExpanded && p._children) {
+      let visibleChildren = p._children;
+      if (filters.observer) {
+        const obsSet = new Set(filters.observer.split(','));
+        visibleChildren = visibleChildren.filter(c => obsSet.has(String(c.observer_id)));
+      }
+      for (const c of visibleChildren) {
+        const typeName = payloadTypeName(c.payload_type);
+        const typeClass = payloadTypeColor(c.payload_type);
+        const size = c.raw_hex ? Math.floor(c.raw_hex.length / 2) : 0;
+        const childHashBytes = ((parseInt(c.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
+        const childRegion = c.observer_id ? (observers.find(o => o.id === c.observer_id)?.iata || '') : '';
+        let childPath = [];
+        try { childPath = JSON.parse(c.path_json || '[]'); } catch {}
+        const childPathStr = renderPath(childPath, c.observer_id);
+        html += `<tr class="group-child" data-id="${c.id}" data-hash="${c.hash || ''}" data-action="select-observation" data-value="${c.id}" data-parent-hash="${p.hash}" tabindex="0" role="row">
+              <td></td><td class="col-region">${childRegion ? `<span class="badge-region">${childRegion}</span>` : '—'}</td>
+              <td class="col-time">${renderTimestampCell(c.timestamp)}</td>
+              <td class="mono col-hash">${truncate(c.hash || '', 8)}</td>
+              <td class="col-size">${size}B</td>
+              <td class="col-hashsize mono">${childHashBytes}</td>
+              <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(c.route_type)}</td>
+              <td class="col-observer">${truncate(obsName(c.observer_id), 16)}</td>
+              <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
+              <td class="col-rpt"></td>
+              <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(c.decoded_json); } catch { return {}; } })())}</td>
+            </tr>`;
+      }
+    }
+    return html;
+  }
+
+  // Build HTML for a single flat (ungrouped) packet row
+  function buildFlatRowHtml(p) {
+    let decoded, pathHops = [];
+    try { decoded = JSON.parse(p.decoded_json); } catch {}
+    try { pathHops = JSON.parse(p.path_json || '[]'); } catch {}
+    const region = p.observer_id ? (observers.find(o => o.id === p.observer_id)?.iata || '') : '';
+    const typeName = payloadTypeName(p.payload_type);
+    const typeClass = payloadTypeColor(p.payload_type);
+    const size = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
+    const hashBytes = ((parseInt(p.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
+    const pathStr = renderPath(pathHops, p.observer_id);
+    const detail = getDetailPreview(decoded);
+    return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select-hash" data-value="${p.hash || p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
+        <td></td><td class="col-region">${region ? `<span class="badge-region">${region}</span>` : '—'}</td>
+        <td class="col-time">${renderTimestampCell(p.timestamp)}</td>
+        <td class="mono col-hash">${truncate(p.hash || String(p.id), 8)}</td>
+        <td class="col-size">${size}B</td>
+        <td class="col-hashsize mono">${hashBytes}</td>
+        <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}</td>
+        <td class="col-observer">${truncate(obsName(p.observer_id), 16)}</td>
+        <td class="col-path"><span class="path-hops">${pathStr}</span></td>
+        <td class="col-rpt"></td>
+        <td class="col-details">${detail}</td>
+      </tr>`;
+  }
+
+  // Virtual scroll: render only visible rows into the tbody
+  function renderVisibleRows() {
+    const tbody = document.getElementById('pktBody');
+    if (!tbody || !_lastRenderedRows.length) return;
+
+    const scrollContainer = document.getElementById('pktLeft');
+    if (!scrollContainer) return;
+
+    const totalRows = _lastRenderedRows.length;
+    const totalHeight = totalRows * VSCROLL_ROW_HEIGHT;
+
+    // Get or create spacer elements
+    let topSpacer = document.getElementById('vscroll-top');
+    let bottomSpacer = document.getElementById('vscroll-bottom');
+    if (!topSpacer) {
+      topSpacer = document.createElement('tr');
+      topSpacer.id = 'vscroll-top';
+      topSpacer.innerHTML = '<td colspan="11" style="padding:0;border:0"></td>';
+    }
+    if (!bottomSpacer) {
+      bottomSpacer = document.createElement('tr');
+      bottomSpacer.id = 'vscroll-bottom';
+      bottomSpacer.innerHTML = '<td colspan="11" style="padding:0;border:0"></td>';
+    }
+
+    // Calculate visible range based on scroll position
+    const scrollTop = scrollContainer.scrollTop;
+    const viewportHeight = scrollContainer.clientHeight;
+    // Account for thead height (~40px)
+    const theadHeight = 40;
+    const adjustedScrollTop = Math.max(0, scrollTop - theadHeight);
+
+    const firstVisible = Math.floor(adjustedScrollTop / VSCROLL_ROW_HEIGHT);
+    const visibleCount = Math.ceil(viewportHeight / VSCROLL_ROW_HEIGHT);
+    const startIdx = Math.max(0, firstVisible - VSCROLL_BUFFER);
+    const endIdx = Math.min(totalRows, firstVisible + visibleCount + VSCROLL_BUFFER);
+
+    // Build HTML for visible slice only
+    const topPad = startIdx * VSCROLL_ROW_HEIGHT;
+    const bottomPad = (totalRows - endIdx) * VSCROLL_ROW_HEIGHT;
+
+    topSpacer.firstChild.style.height = topPad + 'px';
+    bottomSpacer.firstChild.style.height = bottomPad + 'px';
+
+    const visibleHtml = _lastRenderedRows.slice(startIdx, endIdx).join('');
+    tbody.innerHTML = '';
+    tbody.appendChild(topSpacer);
+    tbody.insertAdjacentHTML('beforeend', visibleHtml);
+    tbody.appendChild(bottomSpacer);
+  }
+
+  // Attach/detach scroll listener for virtual scrolling
+  function attachVScrollListener() {
+    const scrollContainer = document.getElementById('pktLeft');
+    if (!scrollContainer) return;
+    if (_vsScrollHandler) return; // already attached
+    let scrollRaf = null;
+    _vsScrollHandler = function () {
+      if (scrollRaf) return;
+      scrollRaf = requestAnimationFrame(function () {
+        scrollRaf = null;
+        renderVisibleRows();
+      });
+    };
+    scrollContainer.addEventListener('scroll', _vsScrollHandler, { passive: true });
+  }
+
+  function detachVScrollListener() {
+    if (!_vsScrollHandler) return;
+    const scrollContainer = document.getElementById('pktLeft');
+    if (scrollContainer) scrollContainer.removeEventListener('scroll', _vsScrollHandler);
+    _vsScrollHandler = null;
+  }
+
   async function renderTableRows() {
     const tbody = document.getElementById('pktBody');
     if (!tbody) return;
@@ -1040,108 +1221,21 @@
     if (countEl) countEl.textContent = `(${displayPackets.length})`;
 
     if (!displayPackets.length) {
+      _lastRenderedRows = [];
+      detachVScrollListener();
       tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted" style="padding:24px">' + (filters.myNodes ? 'No packets from your claimed/favorited nodes' : 'No packets found') + '</td></tr>';
       return;
     }
 
+    // Build all row HTML strings but only render visible ones (virtual scroll)
     if (groupByHash) {
-      let html = '';
-      for (const p of displayPackets) {
-        const isExpanded = expandedHashes.has(p.hash);
-        // When observer filter is active, use first matching child's data for header
-        let headerObserverId = p.observer_id;
-        let headerPathJson = p.path_json;
-        if (filters.observer && p._children?.length) {
-          const obsIds = new Set(filters.observer.split(','));
-          const match = p._children.find(c => obsIds.has(String(c.observer_id)));
-          if (match) {
-            headerObserverId = match.observer_id;
-            headerPathJson = match.path_json;
-          }
-        }
-        const groupRegion = headerObserverId ? (observers.find(o => o.id === headerObserverId)?.iata || '') : '';
-        let groupPath = [];
-        try { groupPath = JSON.parse(headerPathJson || '[]'); } catch {}
-        const groupPathStr = renderPath(groupPath, headerObserverId);
-        const groupTypeName = payloadTypeName(p.payload_type);
-        const groupTypeClass = payloadTypeColor(p.payload_type);
-        const groupSize = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
-        const groupHashBytes = ((parseInt(p.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
-        const isSingle = p.count <= 1;
-        html += `<tr class="${isSingle ? '' : 'group-header'} ${isExpanded ? 'expanded' : ''}" data-hash="${p.hash}" data-action="${isSingle ? 'select-hash' : 'toggle-select'}" data-value="${p.hash}" tabindex="0" role="row">
-          <td style="width:28px;text-align:center;cursor:pointer">${isSingle ? '' : (isExpanded ? '▼' : '▶')}</td>
-          <td class="col-region">${groupRegion ? `<span class="badge-region">${groupRegion}</span>` : '—'}</td>
-          <td class="col-time">${renderTimestampCell(p.latest)}</td>
-          <td class="mono col-hash">${truncate(p.hash || '—', 8)}</td>
-          <td class="col-size">${groupSize ? groupSize + 'B' : '—'}</td>
-          <td class="col-hashsize mono">${groupHashBytes}</td>
-          <td class="col-type">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}` : '—'}</td>
-          <td class="col-observer">${isSingle ? truncate(obsName(headerObserverId), 16) : truncate(obsName(headerObserverId), 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
-          <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
-          <td class="col-rpt">${p.observation_count > 1 ? '<span class="badge badge-obs" title="Seen ' + p.observation_count + ' times">👁 ' + p.observation_count + '</span>' : (isSingle ? '' : p.count)}</td>
-          <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(p.decoded_json || '{}'); } catch { return {}; } })())}</td>
-        </tr>`;
-        // Child rows (loaded async when expanded)
-        if (isExpanded && p._children) {
-          let visibleChildren = p._children;
-          // Filter children by selected observers
-          if (filters.observer) {
-            const obsSet = new Set(filters.observer.split(','));
-            visibleChildren = visibleChildren.filter(c => obsSet.has(String(c.observer_id)));
-          }
-          for (const c of visibleChildren) {
-            const typeName = payloadTypeName(c.payload_type);
-            const typeClass = payloadTypeColor(c.payload_type);
-            const size = c.raw_hex ? Math.floor(c.raw_hex.length / 2) : 0;
-            const childHashBytes = ((parseInt(c.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
-            const childRegion = c.observer_id ? (observers.find(o => o.id === c.observer_id)?.iata || '') : '';
-            let childPath = [];
-            try { childPath = JSON.parse(c.path_json || '[]'); } catch {}
-            const childPathStr = renderPath(childPath, c.observer_id);
-            html += `<tr class="group-child" data-id="${c.id}" data-hash="${c.hash || ''}" data-action="select-observation" data-value="${c.id}" data-parent-hash="${p.hash}" tabindex="0" role="row">
-              <td></td><td class="col-region">${childRegion ? `<span class="badge-region">${childRegion}</span>` : '—'}</td>
-              <td class="col-time">${renderTimestampCell(c.timestamp)}</td>
-              <td class="mono col-hash">${truncate(c.hash || '', 8)}</td>
-              <td class="col-size">${size}B</td>
-              <td class="col-hashsize mono">${childHashBytes}</td>
-              <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(c.route_type)}</td>
-              <td class="col-observer">${truncate(obsName(c.observer_id), 16)}</td>
-              <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
-              <td class="col-rpt"></td>
-              <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(c.decoded_json); } catch { return {}; } })())}</td>
-            </tr>`;
-          }
-        }
-      }
-      tbody.innerHTML = html;
-      return;
+      _lastRenderedRows = displayPackets.map(p => buildGroupRowHtml(p));
+    } else {
+      _lastRenderedRows = displayPackets.map(p => buildFlatRowHtml(p));
     }
 
-    tbody.innerHTML = displayPackets.map(p => {
-      let decoded, pathHops = [];
-      try { decoded = JSON.parse(p.decoded_json); } catch {}
-      try { pathHops = JSON.parse(p.path_json || '[]'); } catch {}
-
-      const region = p.observer_id ? (observers.find(o => o.id === p.observer_id)?.iata || '') : '';
-      const typeName = payloadTypeName(p.payload_type);
-      const typeClass = payloadTypeColor(p.payload_type);
-      const size = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
-      const hashBytes = ((parseInt(p.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
-      const pathStr = renderPath(pathHops, p.observer_id);      const detail = getDetailPreview(decoded);
-
-      return `<tr data-id="${p.id}" data-hash="${p.hash || ''}" data-action="select-hash" data-value="${p.hash || p.id}" tabindex="0" role="row" class="${selectedId === p.id ? 'selected' : ''}">
-        <td></td><td class="col-region">${region ? `<span class="badge-region">${region}</span>` : '—'}</td>
-        <td class="col-time">${renderTimestampCell(p.timestamp)}</td>
-        <td class="mono col-hash">${truncate(p.hash || String(p.id), 8)}</td>
-        <td class="col-size">${size}B</td>
-        <td class="col-hashsize mono">${hashBytes}</td>
-        <td class="col-type"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}</td>
-        <td class="col-observer">${truncate(obsName(p.observer_id), 16)}</td>
-        <td class="col-path"><span class="path-hops">${pathStr}</span></td>
-        <td class="col-rpt"></td>
-        <td class="col-details">${detail}</td>
-      </tr>`;
-    }).join('');
+    attachVScrollListener();
+    renderVisibleRows();
   }
 
   function getDetailPreview(decoded) {
