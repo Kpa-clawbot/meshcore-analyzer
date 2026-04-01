@@ -228,11 +228,39 @@
     loadNodes();
     // Auto-refresh when ADVERT packets arrive via WebSocket (fixes #131)
     wsHandler = debouncedOnWS(function (msgs) {
-      if (msgs.some(isAdvertMessage)) {
-        _allNodes = null;
+      const advertMsgs = msgs.filter(isAdvertMessage);
+      if (!advertMsgs.length) return;
+
+      if (!_allNodes) {
         invalidateApiCache('/nodes');
         loadNodes(true);
+        return;
       }
+
+      let needReload = false;
+      for (const m of advertMsgs) {
+        const payload = m.data && m.data.decoded && m.data.decoded.payload;
+        const pubKey = payload && (payload.pubKey || payload.public_key);
+        if (!pubKey) { needReload = true; break; }
+
+        const existing = _allNodes.find(n => n.public_key === pubKey);
+        if (existing) {
+          if (payload.name) existing.name = payload.name;
+          if (payload.lat != null) existing.lat = payload.lat;
+          if (payload.lon != null) existing.lon = payload.lon;
+          const ts = m.data.packet && (m.data.packet.timestamp || m.data.packet.first_seen);
+          if (ts) existing.last_seen = ts;
+        } else {
+          needReload = true;
+          break;
+        }
+      }
+
+      if (needReload) {
+        _allNodes = null;
+        invalidateApiCache('/nodes');
+      }
+      loadNodes(true);
     }, 5000);
   }
 
@@ -929,4 +957,6 @@
 
   // Test hooks
   window._nodesIsAdvertMessage = isAdvertMessage;
+  window._nodesGetAllNodes = function() { return _allNodes; };
+  window._nodesSetAllNodes = function(n) { _allNodes = n; };
 })();
