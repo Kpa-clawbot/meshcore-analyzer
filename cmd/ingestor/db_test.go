@@ -1457,3 +1457,117 @@ func TestExtractObserverMetaNestedNilSkipsTopLevel(t *testing.T) {
 		t.Error("nested nil should suppress top-level fallback")
 	}
 }
+
+func TestObsTimestampIndexMigration(t *testing.T) {
+	// Case 1: new DB — OpenStore should create idx_observations_timestamp as part
+	// of the observations table schema.
+	t.Run("NewDB", func(t *testing.T) {
+		s, err := OpenStore(tempDBPath(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+
+		var count int
+		err = s.db.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_observations_timestamp'",
+		).Scan(&count)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Error("idx_observations_timestamp should exist on a new DB")
+		}
+
+		var migCount int
+		err = s.db.QueryRow(
+			"SELECT COUNT(*) FROM _migrations WHERE name='obs_timestamp_index_v1'",
+		).Scan(&migCount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// On a new DB the index is created inline (not via migration), so the
+		// migration row may or may not be recorded — just verify the index exists.
+		_ = migCount
+	})
+
+	// Case 2: existing DB that has the observations table but lacks the index
+	// and lacks the _migrations entry — simulates an older installation.
+	t.Run("MigrationPath", func(t *testing.T) {
+		path := tempDBPath(t)
+
+		// Build a bare-bones DB that mimics an old installation:
+		// observations table exists but idx_observations_timestamp does NOT.
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = db.Exec(`
+			CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY);
+			CREATE TABLE IF NOT EXISTS transmissions (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				raw_hex TEXT NOT NULL,
+				hash TEXT NOT NULL UNIQUE,
+				first_seen TEXT NOT NULL,
+				route_type INTEGER,
+				payload_type INTEGER,
+				payload_version INTEGER,
+				decoded_json TEXT,
+				created_at TEXT DEFAULT (datetime('now'))
+			);
+			CREATE TABLE IF NOT EXISTS observations (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				transmission_id INTEGER NOT NULL REFERENCES transmissions(id),
+				observer_idx INTEGER,
+				direction TEXT,
+				snr REAL,
+				rssi REAL,
+				score INTEGER,
+				path_json TEXT,
+				timestamp INTEGER NOT NULL
+			);
+		`)
+		if err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+		// Confirm the index is absent before OpenStore runs.
+		var preCount int
+		db.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_observations_timestamp'",
+		).Scan(&preCount)
+		db.Close()
+		if preCount != 0 {
+			t.Fatalf("pre-condition failed: idx_observations_timestamp should not exist yet, got count=%d", preCount)
+		}
+
+		// Now open via OpenStore — the migration should add the index.
+		s, err := OpenStore(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+
+		var idxCount int
+		err = s.db.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_observations_timestamp'",
+		).Scan(&idxCount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if idxCount != 1 {
+			t.Error("idx_observations_timestamp should exist after migration on old DB")
+		}
+
+		var migCount int
+		err = s.db.QueryRow(
+			"SELECT COUNT(*) FROM _migrations WHERE name='obs_timestamp_index_v1'",
+		).Scan(&migCount)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if migCount != 1 {
+			t.Errorf("migration obs_timestamp_index_v1 should be recorded, got count=%d", migCount)
+		}
+	})
+}
