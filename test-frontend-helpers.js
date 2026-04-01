@@ -1960,6 +1960,43 @@ console.log('\n=== customize.js: initState merge behavior ===');
     assert.strictEqual(state.theme.accent, '#abcdef');
     assert.strictEqual(state.theme.navBg, '#fedcba');
   });
+
+  test('initState uses _SITE_CONFIG_ORIGINAL_HOME to bypass contaminated SITE_CONFIG.home', () => {
+    // Simulates: app.js called mergeUserHomeConfig which mutated SITE_CONFIG.home.steps = []
+    // The original server steps must still be recoverable via _SITE_CONFIG_ORIGINAL_HOME
+    const ctx = makeSandbox();
+    ctx.setTimeout = function (fn) { fn(); return 1; };
+    ctx.clearTimeout = function () {};
+    // SITE_CONFIG.home is contaminated — steps wiped by mergeUserHomeConfig at page load
+    ctx.window.SITE_CONFIG = {
+      home: {
+        heroTitle: 'Server Hero',
+        steps: []   // contaminated — user had steps:[] in localStorage at page load
+      }
+    };
+    // app.js snapshots original before mutation
+    ctx.window._SITE_CONFIG_ORIGINAL_HOME = {
+      heroTitle: 'Server Hero',
+      steps: [{ emoji: '🧪', title: 'Original Step', description: 'from server' }]
+    };
+    const ex = loadCustomizeExports(ctx);
+    ex.initState();
+    const state = ex.getState();
+    assert.strictEqual(state.home.steps.length, 1, 'should restore from snapshot, not contaminated SITE_CONFIG');
+    assert.strictEqual(state.home.steps[0].title, 'Original Step');
+  });
+
+  test('initState uses DEFAULTS.home when no SITE_CONFIG and no snapshot', () => {
+    const ctx = makeSandbox();
+    ctx.setTimeout = function (fn) { fn(); return 1; };
+    ctx.clearTimeout = function () {};
+    // No SITE_CONFIG at all — pure DEFAULTS
+    const ex = loadCustomizeExports(ctx);
+    ex.initState();
+    const state = ex.getState();
+    assert.ok(state.home.steps.length > 0, 'should use DEFAULTS.home.steps when no server config');
+    assert.strictEqual(state.home.steps[0].title, 'Join the Bay Area MeshCore Discord');
+  });
 }
 
 // ===== APP.JS: home rehydration merge =====
