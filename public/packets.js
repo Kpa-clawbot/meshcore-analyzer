@@ -43,6 +43,20 @@
   const PANEL_WIDTH_KEY = 'meshcore-panel-width';
   const PANEL_CLOSE_HTML = '<button class="panel-close-btn" title="Close detail pane (Esc)">✕</button>';
 
+  // Cached JSON parse helpers to avoid repeated parsing (issue #387)
+  function getParsedPath(p) {
+    if (p._parsedPath === undefined) {
+      try { p._parsedPath = JSON.parse(p.path_json || '[]'); } catch { p._parsedPath = []; }
+    }
+    return p._parsedPath;
+  }
+  function getParsedDecoded(p) {
+    if (p._parsedDecoded === undefined) {
+      try { p._parsedDecoded = JSON.parse(p.decoded_json || '{}'); } catch { p._parsedDecoded = {}; }
+    }
+    return p._parsedDecoded;
+  }
+
   // --- Virtual scroll state ---
   const VSCROLL_ROW_HEIGHT = 36;  // estimated row height in px
   const VSCROLL_BUFFER = 30;      // extra rows above/below viewport
@@ -320,7 +334,7 @@
           panel.appendChild(content);
           const pkt = data.packet;
           try {
-            const hops = JSON.parse(pkt.path_json || '[]');
+            const hops = getParsedPath(pkt);
             const newHops = hops.filter(h => !(h in hopNameCache));
             if (newHops.length) await resolveHops(newHops);
           } catch {}
@@ -367,7 +381,7 @@
       // Resolve any new hops, then update and re-render
       const newHops = new Set();
       for (const p of filtered) {
-        try { JSON.parse(p.path_json || '[]').forEach(h => { if (!(h in hopNameCache)) newHops.add(h); }); } catch {}
+        try { getParsedPath(p).forEach(h => { if (!(h in hopNameCache)) newHops.add(h); }); } catch {}
       }
       (newHops.size ? resolveHops([...newHops]) : Promise.resolve()).then(() => {
         if (groupByHash) {
@@ -516,7 +530,7 @@
       // Pre-resolve all path hops to node names
       const allHops = new Set();
       for (const p of packets) {
-        try { const path = JSON.parse(p.path_json || '[]'); path.forEach(h => allHops.add(h)); } catch {}
+        try { getParsedPath(p).forEach(h => allHops.add(h)); } catch {}
       }
       if (allHops.size) await resolveHops([...allHops]);
 
@@ -525,7 +539,7 @@
       for (const p of packets) {
         if (!p.observer_id) continue;
         try {
-          const path = JSON.parse(p.path_json || '[]');
+          const path = getParsedPath(p);
           const ambiguous = path.filter(h => hopNameCache[h]?.ambiguous);
           if (ambiguous.length) {
             if (!hopsByObserver[p.observer_id]) hopsByObserver[p.observer_id] = new Set();
@@ -846,7 +860,7 @@
       // Resolve any new hops from updated header paths
       const newHops = new Set();
       for (const p of packets) {
-        try { JSON.parse(p.path_json || '[]').forEach(h => { if (!(h in hopNameCache)) newHops.add(h); }); } catch {}
+        try { getParsedPath(p).forEach(h => { if (!(h in hopNameCache)) newHops.add(h); }); } catch {}
       }
       if (newHops.size) await resolveHops([...newHops]);
       renderTableRows();
@@ -1059,7 +1073,7 @@
           <td class="col-observer">${isSingle ? truncate(obsName(headerObserverId), 16) : truncate(obsName(headerObserverId), 10) + (p.observer_count > 1 ? ' +' + (p.observer_count - 1) : '')}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
           <td class="col-rpt">${p.observation_count > 1 ? '<span class="badge badge-obs" title="Seen ' + p.observation_count + ' times">👁 ' + p.observation_count + '</span>' : (isSingle ? '' : p.count)}</td>
-          <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(p.decoded_json || '{}'); } catch { return {}; } })())}</td>
+          <td class="col-details">${getDetailPreview(getParsedDecoded(p))}</td>
         </tr>`;
     if (isExpanded && p._children) {
       let visibleChildren = p._children;
@@ -1072,8 +1086,7 @@
         const size = c.raw_hex ? Math.floor(c.raw_hex.length / 2) : 0;
         const childHashBytes = ((parseInt(c.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
         const childRegion = c.observer_id ? (observerMap.get(c.observer_id)?.iata || '') : '';
-        let childPath = [];
-        try { childPath = JSON.parse(c.path_json || '[]'); } catch {}
+        const childPath = getParsedPath(c);
         const childPathStr = renderPath(childPath, c.observer_id);
         html += `<tr class="group-child" data-id="${c.id}" data-hash="${c.hash || ''}" data-action="select-observation" data-value="${c.id}" data-parent-hash="${p.hash}" tabindex="0" role="row">
               <td></td><td class="col-region">${childRegion ? `<span class="badge-region">${childRegion}</span>` : '—'}</td>
@@ -1085,7 +1098,7 @@
               <td class="col-observer">${truncate(obsName(c.observer_id), 16)}</td>
               <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
               <td class="col-rpt"></td>
-              <td class="col-details">${getDetailPreview((() => { try { return JSON.parse(c.decoded_json || '{}'); } catch { return {}; } })())}</td>
+              <td class="col-details">${getDetailPreview(getParsedDecoded(c))}</td>
             </tr>`;
       }
     }
@@ -1094,9 +1107,8 @@
 
   // Build HTML for a single flat (ungrouped) packet row
   function buildFlatRowHtml(p) {
-    let decoded, pathHops = [];
-    try { decoded = JSON.parse(p.decoded_json || '{}'); } catch {}
-    try { pathHops = JSON.parse(p.path_json || '[]') || []; } catch {}
+    const decoded = getParsedDecoded(p);
+    const pathHops = getParsedPath(p);
     const region = p.observer_id ? (observerMap.get(p.observer_id)?.iata || '') : '';
     const typeName = payloadTypeName(p.payload_type);
     const typeClass = payloadTypeColor(p.payload_type);
@@ -1330,7 +1342,6 @@
     _cumulativeOffsetsCache = null;
 
     attachVScrollListener();
-    renderVisibleRows();
   }
 
   function getDetailPreview(decoded) {
@@ -1414,7 +1425,7 @@
       // Resolve path hops for detail view
       const pkt = data.packet;
       try {
-        const hops = JSON.parse(pkt.path_json || '[]');
+        const hops = getParsedPath(pkt);
         const newHops = hops.filter(h => !(h in hopNameCache));
         if (newHops.length) await resolveHops(newHops);
       } catch {}
@@ -1432,10 +1443,8 @@
     const pkt = data.packet;
     const breakdown = data.breakdown || {};
     const ranges = breakdown.ranges || [];
-    let decoded;
-    try { decoded = JSON.parse(pkt.decoded_json); } catch { decoded = {}; }
-    let pathHops;
-    try { pathHops = JSON.parse(pkt.path_json || '[]') || []; } catch { pathHops = []; }
+    const decoded = getParsedDecoded(pkt);
+    const pathHops = getParsedPath(pkt);
 
     // Resolve sender GPS — from packet directly, or from known node in DB
     let senderLat = decoded.lat != null ? decoded.lat : (decoded.latitude || null);
@@ -1611,10 +1620,8 @@
         const replayPackets = [];
         if (obs.length > 1) {
           for (const o of obs) {
-            let oPath;
-            try { oPath = JSON.parse(o.path_json || '[]'); } catch { oPath = pathHops; }
-            let oDec;
-            try { oDec = JSON.parse(o.decoded_json || '{}'); } catch { oDec = decoded; }
+            const oPath = getParsedPath(o);
+            const oDec = getParsedDecoded(o);
             replayPackets.push({
               id: o.id, hash: pkt.hash, raw: o.raw_hex || pkt.raw_hex,
               _ts: new Date(o.timestamp).getTime(),
@@ -1916,7 +1923,7 @@
   let obsSortMode = localStorage.getItem('meshcore-obs-sort') || SORT_OBSERVER;
 
   function getPathHopCount(c) {
-    try { return JSON.parse(c.path_json || '[]').length; } catch { return 0; }
+    try { return getParsedPath(c).length; } catch { return 0; }
   }
 
   function sortGroupChildren(group) {
@@ -1989,7 +1996,7 @@
       // Resolve any new hops from children
       const childHops = new Set();
       for (const c of (group?._children || [])) {
-        try { JSON.parse(c.path_json || '[]').forEach(h => childHops.add(h)); } catch {}
+        try { getParsedPath(c).forEach(h => childHops.add(h)); } catch {}
       }
       const newHops = [...childHops].filter(h => !(h in hopNameCache));
       if (newHops.length) await resolveHops(newHops);
@@ -2053,7 +2060,7 @@
         const data = await api(`/packets/${param}`);
         if (!data?.packet) { app.innerHTML = `<div style="max-width:800px;margin:0 auto;padding:40px;text-align:center"><h2>Packet not found</h2><p>Packet ${param} doesn't exist.</p><a href="#/packets">← Back to packets</a></div>`; return; }
         const hops = [];
-        try { const ph = JSON.parse(data.packet.path_json || '[]'); hops.push(...ph); } catch {}
+        try { hops.push(...getParsedPath(data.packet)); } catch {}
         const newHops = hops.filter(h => !(h in hopNameCache));
         if (newHops.length) await resolveHops(newHops);
         const container = document.createElement('div');
