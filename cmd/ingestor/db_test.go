@@ -1442,3 +1442,18 @@ func TestExtractObserverMetaNoiseFloorFloat(t *testing.T) {
 		t.Errorf("NoiseFloor=%v, want -108.75", meta.NoiseFloor)
 	}
 }
+
+func TestExtractObserverMetaNestedNilSkipsTopLevel(t *testing.T) {
+	// JSON {"stats": {"battery_mv": null}} decodes to nil value in the map.
+	// Nested nil should suppress top-level fallback (nested wins semantics).
+	msg := map[string]interface{}{
+		"battery_mv": 3700.0,
+		"stats": map[string]interface{}{
+			"battery_mv": nil,
+		},
+	}
+	meta := extractObserverMeta(msg)
+	if meta != nil && meta.BatteryMv != nil {
+		t.Error("nested nil should suppress top-level fallback")
+	}
+}
