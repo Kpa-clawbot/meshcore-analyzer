@@ -407,7 +407,16 @@ function registerPage(name, mod) { pages[name] = mod; }
 
 let currentPage = null;
 
+function closeNav() {
+  document.querySelector('.nav-links')?.classList.remove('open');
+  document.body.classList.remove('nav-open');
+  var btn = document.getElementById('hamburger');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
 function navigate() {
+  closeNav();
+
   const hash = location.hash.replace('#/', '') || 'packets';
   const route = hash.split('?')[0];
 
@@ -533,10 +542,24 @@ window.addEventListener('DOMContentLoaded', () => {
   // --- Hamburger Menu ---
   const hamburger = document.getElementById('hamburger');
   const navLinks = document.querySelector('.nav-links');
-  hamburger.addEventListener('click', () => navLinks.classList.toggle('open'));
-  // Close menu on nav link click
+  hamburger.addEventListener('click', () => {
+    const opening = !navLinks.classList.contains('open');
+    navLinks.classList.toggle('open');
+    document.body.classList.toggle('nav-open');
+    hamburger.setAttribute('aria-expanded', String(opening));
+  });
   navLinks.querySelectorAll('.nav-link').forEach(link => {
-    link.addEventListener('click', () => navLinks.classList.remove('open'));
+    link.addEventListener('click', closeNav);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && navLinks.classList.contains('open')) closeNav();
+  });
+  document.addEventListener('click', (e) => {
+    if (navLinks.classList.contains('open') &&
+        !navLinks.contains(e.target) &&
+        !hamburger.contains(e.target)) {
+      closeNav();
+    }
   });
 
   // --- Favorites dropdown ---

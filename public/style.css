@@ -851,19 +851,24 @@ button.ch-item.selected { background: var(--selected-bg); }
   .map-controls { width: 180px; font-size: 12px; }
 }
 
-/* === Responsive — Mobile (≤640px) === */
-@media (max-width: 640px) {
-  /* Nav: hamburger + collapse */
+/* === Responsive — Hamburger nav (≤1023px) === */
+@media (max-width: 1023px) {
   .hamburger { display: inline-flex; }
   .nav-links {
     display: none; position: absolute; top: 52px; left: 0; right: 0;
     background: var(--nav-bg); flex-direction: column; padding: 8px 0;
-    box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 99;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 1100;
+    max-height: calc(100dvh - 52px); overflow-y: auto;
   }
   .nav-links.open { display: flex; }
   .nav-link { padding: 12px 20px; border-bottom: none; }
   .nav-link.active { background: rgba(74,158,255,0.15); border-radius: 0; margin: 0; padding: 12px 20px; }
   .nav-left { gap: 12px; }
+  body.nav-open { overflow: hidden; }
+}
+
+/* === Responsive — Mobile (≤640px) === */
+@media (max-width: 640px) {
   .brand-text { display: none; }
   .nav-right { gap: 4px; }
 
