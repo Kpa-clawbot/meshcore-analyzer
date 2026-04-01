@@ -520,7 +520,7 @@ cmd_setup() {
       current_ref=$(git describe --tags --exact-match 2>/dev/null || echo "")
       if [ "$current_ref" != "$latest_tag" ]; then
         info "Pinning to latest release: ${latest_tag}"
-        git checkout "$latest_tag"
+        git checkout "$latest_tag" 2>/dev/null
       else
         log "Already on latest release: ${latest_tag}"
       fi
@@ -1339,8 +1339,8 @@ cmd_update() {
     git checkout origin/master
   else
     # Specific tag requested
-    if ! git rev-parse "$version" &>/dev/null; then
-      err "Version '${version}' not found."
+    if ! git tag -l "$version" | grep -q .; then
+      err "Tag '${version}' not found."
       echo ""
       echo "   Available releases:"
       git tag -l 'v*' --sort=-v:refname | head -10 | sed 's/^/     /'
