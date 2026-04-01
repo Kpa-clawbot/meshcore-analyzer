@@ -2402,3 +2402,206 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// TestLatestSeenMaintained verifies that StoreTx.LatestSeen is populated after Load()
+// and is >= FirstSeen for packets that have observations.
+func TestLatestSeenMaintained(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if len(store.packets) == 0 {
+		t.Fatal("expected packets in store after Load")
+	}
+
+	for _, tx := range store.packets {
+		if tx.LatestSeen == "" {
+			t.Errorf("packet %s has empty LatestSeen (FirstSeen=%s)", tx.Hash, tx.FirstSeen)
+			continue
+		}
+		// LatestSeen must be >= FirstSeen (string comparison works for RFC3339/ISO8601)
+		if tx.LatestSeen < tx.FirstSeen {
+			t.Errorf("packet %s: LatestSeen %q < FirstSeen %q", tx.Hash, tx.LatestSeen, tx.FirstSeen)
+		}
+		// For packets with observations, LatestSeen must be >= all observation timestamps.
+		for _, obs := range tx.Observations {
+			if obs.Timestamp != "" && obs.Timestamp > tx.LatestSeen {
+				t.Errorf("packet %s: obs.Timestamp %q > LatestSeen %q", tx.Hash, obs.Timestamp, tx.LatestSeen)
+			}
+		}
+	}
+}
+
+// TestQueryGroupedPacketsSortedByLatest verifies that QueryGroupedPackets returns packets
+// sorted by LatestSeen DESC — i.e. the packet whose most-recent observation is newest
+// comes first, even if its first_seen is older.
+func TestQueryGroupedPacketsSortedByLatest(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	// oldFirst: first_seen is old, but observation is very recent.
+	oldFirst := now.Add(-48 * time.Hour).Format(time.RFC3339)
+	// newFirst: first_seen is recent, but observation is old.
+	newFirst := now.Add(-1 * time.Hour).Format(time.RFC3339)
+	recentEpoch := now.Add(-5 * time.Minute).Unix()
+	oldEpoch := now.Add(-72 * time.Hour).Unix()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count)
+		VALUES ('sortobs', 'Sort Observer', 'TST', ?, '2026-01-01T00:00:00Z', 1)`, now.Format(time.RFC3339))
+
+	// Packet A: old first_seen, but a very recent observation — should sort first.
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('AA01', 'sort_old_first_recent_obs', ?, 1, 2, '{"type":"TXT_MSG","text":"old first"}')`, oldFirst)
+	var idA int64
+	db.conn.QueryRow(`SELECT id FROM transmissions WHERE hash='sort_old_first_recent_obs'`).Scan(&idA)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (?, 1, 10.0, -90, '[]', ?)`, idA, recentEpoch)
+
+	// Packet B: newer first_seen, but an old observation — should sort second.
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('BB02', 'sort_new_first_old_obs', ?, 1, 2, '{"type":"TXT_MSG","text":"new first"}')`, newFirst)
+	var idB int64
+	db.conn.QueryRow(`SELECT id FROM transmissions WHERE hash='sort_new_first_old_obs'`).Scan(&idB)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (?, 1, 10.0, -90, '[]', ?)`, idB, oldEpoch)
+
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	result := store.QueryGroupedPackets(PacketQuery{Limit: 50})
+	if result.Total < 2 {
+		t.Fatalf("expected at least 2 packets, got %d", result.Total)
+	}
+
+	// Find the two test packets in the result (may be mixed with other entries).
+	firstHash := ""
+	secondHash := ""
+	for _, p := range result.Packets {
+		h, _ := p["hash"].(string)
+		if h == "sort_old_first_recent_obs" || h == "sort_new_first_old_obs" {
+			if firstHash == "" {
+				firstHash = h
+			} else {
+				secondHash = h
+				break
+			}
+		}
+	}
+
+	if firstHash != "sort_old_first_recent_obs" {
+		t.Errorf("expected sort_old_first_recent_obs to appear before sort_new_first_old_obs in sorted results; got first=%q second=%q", firstHash, secondHash)
+	}
+}
+
+// TestQueryGroupedPacketsCacheReturnsConsistentResult verifies that two rapid successive
+// calls to QueryGroupedPackets return the same total count and first packet hash.
+func TestQueryGroupedPacketsCacheReturnsConsistentResult(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	q := PacketQuery{Limit: 50}
+	r1 := store.QueryGroupedPackets(q)
+	r2 := store.QueryGroupedPackets(q)
+
+	if r1.Total != r2.Total {
+		t.Errorf("cache inconsistency: first call total=%d, second call total=%d", r1.Total, r2.Total)
+	}
+	if r1.Total == 0 {
+		t.Fatal("expected non-zero results from QueryGroupedPackets")
+	}
+	h1, _ := r1.Packets[0]["hash"].(string)
+	h2, _ := r2.Packets[0]["hash"].(string)
+	if h1 != h2 {
+		t.Errorf("cache inconsistency: first call first hash=%q, second call first hash=%q", h1, h2)
+	}
+}
+
+// TestGetChannelsCacheReturnsConsistentResult verifies that two rapid successive calls
+// to GetChannels return the same number of channels with the same names.
+func TestGetChannelsCacheReturnsConsistentResult(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	r1 := store.GetChannels("")
+	r2 := store.GetChannels("")
+
+	if len(r1) != len(r2) {
+		t.Errorf("cache inconsistency: first call len=%d, second call len=%d", len(r1), len(r2))
+	}
+	if len(r1) == 0 {
+		t.Fatal("expected at least one channel from seedTestData")
+	}
+
+	names1 := make(map[string]bool)
+	for _, ch := range r1 {
+		if n, ok := ch["name"].(string); ok {
+			names1[n] = true
+		}
+	}
+	for _, ch := range r2 {
+		if n, ok := ch["name"].(string); ok {
+			if !names1[n] {
+				t.Errorf("cache inconsistency: channel %q in second result but not first", n)
+			}
+		}
+	}
+}
+
+// TestGetChannelsNotBlockedByLargeLock verifies that GetChannels returns correct channel
+// data (count and messageCount) after observations have been added — i.e. the lock-copy
+// pattern works correctly and the JSON unmarshal outside the lock produces valid results.
+func TestGetChannelsNotBlockedByLargeLock(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	channels := store.GetChannels("")
+
+	// seedTestData inserts one GRP_TXT (payload_type=5) packet with channel "#test".
+	if len(channels) != 1 {
+		t.Fatalf("expected 1 channel, got %d", len(channels))
+	}
+
+	ch := channels[0]
+	name, ok := ch["name"].(string)
+	if !ok || name != "#test" {
+		t.Errorf("expected channel name '#test', got %v", ch["name"])
+	}
+
+	// messageCount should be 1 (one CHAN packet for #test).
+	msgCount, ok := ch["messageCount"].(int)
+	if !ok {
+		// JSON numbers may unmarshal as float64 — but GetChannels returns native Go values.
+		t.Errorf("expected messageCount to be int, got %T (%v)", ch["messageCount"], ch["messageCount"])
+	} else if msgCount != 1 {
+		t.Errorf("expected messageCount=1, got %d", msgCount)
+	}
+}
