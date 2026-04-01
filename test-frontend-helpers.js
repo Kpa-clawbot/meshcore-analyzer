@@ -966,6 +966,66 @@ console.log('\n=== live.js: pruneStaleNodes ===');
   });
 }
 
+// ===== live.js: vcrFormatTime respects UTC/local setting =====
+console.log('\n=== live.js: vcrFormatTime UTC/local ===');
+{
+  function makeLiveSandboxForVcr() {
+    const ctx = makeSandbox();
+    ctx.L = { map: () => ({ on: () => {}, setView: () => {}, addLayer: () => {}, remove: () => {} }), tileLayer: () => ({ addTo: () => {} }), layerGroup: () => ({ addTo: () => {}, clearLayers: () => {}, addLayer: () => {} }), circleMarker: () => ({ addTo: () => {}, remove: () => {}, setStyle: () => {}, getLatLng: () => ({}), on: () => {} }), Polyline: function() { return { addTo: () => {}, remove: () => {} }; }, Control: { extend: () => function() { return { addTo: () => {} }; } } };
+    ctx.Chart = function() { return { destroy: () => {}, update: () => {} }; };
+    ctx.navigator = {};
+    ctx.visualViewport = null;
+    ctx.document.documentElement = { getAttribute: () => null, setAttribute: () => {} };
+    ctx.document.body = { appendChild: () => {}, removeChild: () => {}, contains: () => false };
+    ctx.document.querySelector = () => null;
+    ctx.document.querySelectorAll = () => [];
+    ctx.document.createElementNS = () => ctx.document.createElement();
+    ctx.cancelAnimationFrame = () => {};
+    ctx.IATA_COORDS_GEO = {};
+    loadInCtx(ctx, 'public/roles.js');
+    try { loadInCtx(ctx, 'public/live.js'); } catch (e) {
+      for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    }
+    return ctx;
+  }
+
+  test('vcrFormatTime is exposed as window._vcrFormatTime', () => {
+    const ctx = makeLiveSandboxForVcr();
+    assert.strictEqual(typeof ctx.window._vcrFormatTime, 'function', '_vcrFormatTime must be exposed');
+  });
+
+  test('vcrFormatTime uses UTC hours when timezone is utc', () => {
+    const ctx = makeLiveSandboxForVcr();
+    const fn = ctx.window._vcrFormatTime;
+    assert.ok(fn, '_vcrFormatTime must be exposed');
+    // Force UTC mode
+    ctx.getTimestampTimezone = () => 'utc';
+    // Use a known timestamp: 2024-01-15 14:30:45 UTC = different local time in most zones
+    const tsMs = Date.UTC(2024, 0, 15, 14, 30, 45);
+    const result = fn(tsMs);
+    assert.strictEqual(result, '14:30:45', 'UTC mode must show UTC hours 14:30:45');
+  });
+
+  test('vcrFormatTime uses local hours when timezone is local', () => {
+    const ctx = makeLiveSandboxForVcr();
+    const fn = ctx.window._vcrFormatTime;
+    assert.ok(fn, '_vcrFormatTime must be exposed');
+    ctx.getTimestampTimezone = () => 'local';
+    const d = new Date(2024, 0, 15, 9, 5, 3); // local time
+    const expected = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0') + ':' + String(d.getSeconds()).padStart(2,'0');
+    assert.strictEqual(fn(d.getTime()), expected, 'local mode must use local hours');
+  });
+
+  test('vcrFormatTime zero-pads single-digit hours, minutes, seconds', () => {
+    const ctx = makeLiveSandboxForVcr();
+    const fn = ctx.window._vcrFormatTime;
+    assert.ok(fn, '_vcrFormatTime must be exposed');
+    ctx.getTimestampTimezone = () => 'utc';
+    const tsMs = Date.UTC(2024, 0, 15, 3, 5, 7); // 03:05:07 UTC
+    assert.strictEqual(fn(tsMs), '03:05:07');
+  });
+}
+
 // ===== NODES.JS: isAdvertMessage + auto-update logic =====
 console.log('\n=== nodes.js: isAdvertMessage ===');
 {
