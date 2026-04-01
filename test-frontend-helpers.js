@@ -1431,6 +1431,31 @@ console.log('\n=== app.js: formatEngineBadge ===');
   });
 }
 
+// ===== APP.JS: isTransportRoute + transportBadge =====
+console.log('\n=== app.js: isTransportRoute + transportBadge ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/app.js');
+  const isTransportRoute = ctx.isTransportRoute;
+  const transportBadge = ctx.transportBadge;
+
+  test('isTransportRoute(0) is true (TRANSPORT_FLOOD)', () => assert.strictEqual(isTransportRoute(0), true));
+  test('isTransportRoute(3) is true (TRANSPORT_DIRECT)', () => assert.strictEqual(isTransportRoute(3), true));
+  test('isTransportRoute(1) is false (FLOOD)', () => assert.strictEqual(isTransportRoute(1), false));
+  test('isTransportRoute(2) is false (DIRECT)', () => assert.strictEqual(isTransportRoute(2), false));
+  test('isTransportRoute(null) is false', () => assert.strictEqual(isTransportRoute(null), false));
+  test('isTransportRoute(undefined) is false', () => assert.strictEqual(isTransportRoute(undefined), false));
+
+  test('transportBadge(0) contains badge-transport class', () => {
+    const html = transportBadge(0);
+    assert.ok(html.includes('badge-transport'), 'should contain badge-transport class');
+    assert.ok(html.includes('>T<'), 'should contain T label');
+    assert.ok(html.includes('TRANSPORT_FLOOD'), 'should contain route type name in title');
+  });
+  test('transportBadge(1) returns empty string', () => assert.strictEqual(transportBadge(1), ''));
+}
+
 // ===== APP.JS: formatVersionBadge =====
 console.log('\n=== app.js: formatVersionBadge ===');
 {

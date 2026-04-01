@@ -298,6 +298,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   font-size: 10px; font-weight: 700; font-family: var(--mono);
   background: var(--nav-bg); color: var(--nav-text); letter-spacing: .5px;
 }
+/* TODO: expose --transport-badge-bg/fg in customizer THEME_CSS_MAP (tracked in future milestone) */
 .badge-transport {
   display: inline-block; padding: 1px 5px; border-radius: 4px;
   font-size: 9px; font-weight: 700; font-family: var(--mono);
