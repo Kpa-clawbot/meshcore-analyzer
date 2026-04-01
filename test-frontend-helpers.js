@@ -2522,6 +2522,84 @@ console.log('\n=== channels.js: WS batch + region snapshot integration ===');
     assert.ok(historyCalls.includes('#/channels'), 'should route back to channels root');
   });
 }
+// ===== PACKETS.JS: savedTimeWindowMin default guard =====
+console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
+{
+  // Bug #326: Number(null) = 0, which passed the old `< 0` guard,
+  // causing "All time" fetch of 50K+ packets and crashing mobile browsers.
+  // The fix changes `< 0` to `<= 0` so 0 is treated as invalid.
+
+  function simulateTimeWindowDefault(storageValue, innerWidth) {
+    const ctx = makeSandbox();
+    // Override localStorage to return the test value
+    const store = {};
+    if (storageValue !== undefined) store['meshcore-time-window'] = storageValue;
+    ctx.localStorage = {
+      getItem: k => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: k => { delete store[k]; },
+    };
+    ctx.window.localStorage = ctx.localStorage;
+    ctx.window.innerWidth = innerWidth || 1024;
+    // Evaluate just the guard logic (same as packets.js lines 27-31)
+    const code = `
+      var isMobile = window.innerWidth <= 768;
+      var PACKET_LIMIT = isMobile ? 1000 : 50000;
+      var savedTimeWindowMin = Number(localStorage.getItem('meshcore-time-window'));
+      if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin <= 0) savedTimeWindowMin = 15;
+      if (isMobile && savedTimeWindowMin > 180) savedTimeWindowMin = 15;
+    `;
+    vm.runInContext(code, ctx);
+    return { savedTimeWindowMin: ctx.savedTimeWindowMin, PACKET_LIMIT: ctx.PACKET_LIMIT, isMobile: ctx.isMobile };
+  }
+
+  test('savedTimeWindowMin defaults to 15 when localStorage returns null', () => {
+    const r = simulateTimeWindowDefault(undefined, 1024);
+    assert.strictEqual(r.savedTimeWindowMin, 15);
+  });
+
+  test('savedTimeWindowMin defaults to 15 when localStorage returns "0"', () => {
+    const r = simulateTimeWindowDefault('0', 1024);
+    assert.strictEqual(r.savedTimeWindowMin, 15);
+  });
+
+  test('savedTimeWindowMin preserves valid value (60)', () => {
+    const r = simulateTimeWindowDefault('60', 1024);
+    assert.strictEqual(r.savedTimeWindowMin, 60);
+  });
+
+  test('savedTimeWindowMin defaults to 15 for negative value', () => {
+    const r = simulateTimeWindowDefault('-5', 1024);
+    assert.strictEqual(r.savedTimeWindowMin, 15);
+  });
+
+  test('savedTimeWindowMin defaults to 15 for NaN string', () => {
+    const r = simulateTimeWindowDefault('abc', 1024);
+    assert.strictEqual(r.savedTimeWindowMin, 15);
+  });
+
+  test('PACKET_LIMIT is 1000 on mobile', () => {
+    const r = simulateTimeWindowDefault('15', 375);
+    assert.strictEqual(r.PACKET_LIMIT, 1000);
+    assert.strictEqual(r.isMobile, true);
+  });
+
+  test('PACKET_LIMIT is 50000 on desktop', () => {
+    const r = simulateTimeWindowDefault('15', 1920);
+    assert.strictEqual(r.PACKET_LIMIT, 50000);
+    assert.strictEqual(r.isMobile, false);
+  });
+
+  test('mobile caps large time window to 15', () => {
+    const r = simulateTimeWindowDefault('1440', 375);
+    assert.strictEqual(r.savedTimeWindowMin, 15, 'should cap 1440 to 15 on mobile');
+  });
+
+  test('mobile allows 180 min window', () => {
+    const r = simulateTimeWindowDefault('180', 375);
+    assert.strictEqual(r.savedTimeWindowMin, 180, 'should allow 180 on mobile');
+  });
+}
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);

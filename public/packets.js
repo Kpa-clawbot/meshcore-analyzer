@@ -24,8 +24,11 @@
   let regionMap = {};
   const TYPE_NAMES = { 0:'Request', 1:'Response', 2:'Direct Msg', 3:'ACK', 4:'Advert', 5:'Channel Msg', 7:'Anon Req', 8:'Path', 9:'Trace', 11:'Control' };
   function typeName(t) { return TYPE_NAMES[t] ?? `Type ${t}`; }
+  const isMobile = window.innerWidth <= 768;
+  const PACKET_LIMIT = isMobile ? 1000 : 50000;
   let savedTimeWindowMin = Number(localStorage.getItem('meshcore-time-window'));
-  if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin < 0) savedTimeWindowMin = 15;
+  if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin <= 0) savedTimeWindowMin = 15;
+  if (isMobile && savedTimeWindowMin > 180) savedTimeWindowMin = 15;
   let totalCount = 0;
   let expandedHashes = new Set();
   let hopNameCache = {};
@@ -429,7 +432,7 @@
         const since = new Date(Date.now() - windowMin * 60000).toISOString();
         params.set('since', since);
       }
-      params.set('limit', '50000');
+      params.set('limit', String(PACKET_LIMIT));
       const regionParam = RegionFilter.getRegionParam();
       if (regionParam) params.set('region', regionParam);
       if (filters.hash) params.set('hash', filters.hash);
@@ -568,10 +571,10 @@
             <option value="30">Last 30 min</option>
             <option value="60">Last 1 hour</option>
             <option value="180">Last 3 hours</option>
-            <option value="360">Last 6 hours</option>
-            <option value="720">Last 12 hours</option>
-            <option value="1440">Last 24 hours</option>
-            <option value="0">All time</option>
+            <option value="360"${isMobile ? ' disabled title="Disabled on mobile to prevent browser crashes"' : ''}>Last 6 hours</option>
+            <option value="720"${isMobile ? ' disabled title="Disabled on mobile to prevent browser crashes"' : ''}>Last 12 hours</option>
+            <option value="1440"${isMobile ? ' disabled title="Disabled on mobile to prevent browser crashes"' : ''}>Last 24 hours</option>
+            ${isMobile ? '' : '<option value="0">All time</option>'}
           </select>
         </div>
         <div class="filter-group">
@@ -752,7 +755,7 @@
     fTimeWindow.value = String(savedTimeWindowMin);
     fTimeWindow.addEventListener('change', () => {
       savedTimeWindowMin = Number(fTimeWindow.value);
-      if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin < 0) savedTimeWindowMin = 15;
+      if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin <= 0) savedTimeWindowMin = 15;
       localStorage.setItem('meshcore-time-window', fTimeWindow.value);
       loadPackets();
     });
