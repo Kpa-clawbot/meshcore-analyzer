@@ -4333,6 +4333,7 @@ func (s *PacketStore) computeHashCollisions(region string) map[string]interface{
 			collisions = append(collisions, collisionEntry{
 				Prefix:         prefix,
 				ByteSize:       bytes,
+				Appearances:    len(pnodes),
 				Nodes:          pnodes,
 				MaxDistKm:      maxDistKm,
 				Classification: classification,
