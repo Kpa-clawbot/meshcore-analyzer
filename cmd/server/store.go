@@ -91,6 +91,11 @@ type PacketStore struct {
 	groupedCacheKey string
 	groupedCacheExp time.Time
 	groupedCacheRes *PacketResult
+	// Short-lived cache for GetChannels (avoids repeated full scan + JSON unmarshal)
+	channelsCacheMu  sync.Mutex
+	channelsCacheKey string
+	channelsCacheExp time.Time
+	channelsCacheRes []map[string]interface{}
 	// Cached node list + prefix map (rebuilt on demand, shared across analytics)
 	nodeCache     []nodeInfo
 	nodePM        *prefixMap
@@ -1149,6 +1154,9 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		s.distCache = make(map[string]*cachedResult)
 		s.subpathCache = make(map[string]*cachedResult)
 		s.cacheMu.Unlock()
+		s.channelsCacheMu.Lock()
+		s.channelsCacheRes = nil
+		s.channelsCacheMu.Unlock()
 	}
 
 	return result, newMaxID
@@ -1368,6 +1376,9 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		s.distCache = make(map[string]*cachedResult)
 		s.subpathCache = make(map[string]*cachedResult)
 		s.cacheMu.Unlock()
+		s.channelsCacheMu.Lock()
+		s.channelsCacheRes = nil
+		s.channelsCacheMu.Unlock()
 
 		// analytics caches cleared; no per-cycle log to avoid stdout overhead
 	}
@@ -2107,14 +2118,50 @@ func hasGarbageChars(s string) bool {
 
 // GetChannels returns channel list from in-memory packets (payload_type 5, decoded type CHAN).
 func (s *PacketStore) GetChannels(region string) []map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	cacheKey := region
 
+	s.channelsCacheMu.Lock()
+	if s.channelsCacheRes != nil && s.channelsCacheKey == cacheKey && time.Now().Before(s.channelsCacheExp) {
+		res := s.channelsCacheRes
+		s.channelsCacheMu.Unlock()
+		return res
+	}
+	s.channelsCacheMu.Unlock()
+
+	type txSnapshot struct {
+		firstSeen   string
+		decodedJSON string
+		hasRegion   bool
+	}
+
+	// Copy only the fields needed — release the lock before JSON unmarshal.
+	s.mu.RLock()
 	var regionObs map[string]bool
 	if region != "" {
 		regionObs = s.resolveRegionObservers(region)
 	}
+	grpTxts := s.byPayloadType[5]
+	snapshots := make([]txSnapshot, 0, len(grpTxts))
+	for _, tx := range grpTxts {
+		inRegion := true
+		if regionObs != nil {
+			inRegion = false
+			for _, obs := range tx.Observations {
+				if regionObs[obs.ObserverID] {
+					inRegion = true
+					break
+				}
+			}
+		}
+		snapshots = append(snapshots, txSnapshot{
+			firstSeen:   tx.FirstSeen,
+			decodedJSON: tx.DecodedJSON,
+			hasRegion:   inRegion,
+		})
+	}
+	s.mu.RUnlock()
 
+	// JSON unmarshal outside the lock.
 	type chanInfo struct {
 		Hash         string
 		Name         string
@@ -2130,53 +2177,32 @@ func (s *PacketStore) GetChannels(region string) []map[string]interface{} {
 		Sender  string `json:"sender"`
 	}
 	channelMap := map[string]*chanInfo{}
-
-	grpTxts := s.byPayloadType[5]
-	for _, tx := range grpTxts {
-
-		// Region filter: check if any observation is from a regional observer
-		if regionObs != nil {
-			match := false
-			for _, obs := range tx.Observations {
-				if regionObs[obs.ObserverID] {
-					match = true
-					break
-				}
-			}
-			if !match {
-				continue
-			}
+	for _, snap := range snapshots {
+		if !snap.hasRegion {
+			continue
 		}
-
 		var decoded decodedGrp
-		if json.Unmarshal([]byte(tx.DecodedJSON), &decoded) != nil {
+		if json.Unmarshal([]byte(snap.decodedJSON), &decoded) != nil {
 			continue
 		}
 		if decoded.Type != "CHAN" {
 			continue
 		}
-		// Filter out garbage-decrypted channel names/messages (pre-#197 data still in DB)
 		if hasGarbageChars(decoded.Channel) || hasGarbageChars(decoded.Text) {
 			continue
 		}
-
 		channelName := decoded.Channel
 		if channelName == "" {
 			channelName = "unknown"
 		}
-		key := channelName
-
-		ch := channelMap[key]
+		ch := channelMap[channelName]
 		if ch == nil {
-			ch = &chanInfo{
-				Hash: key, Name: channelName,
-				LastActivity: tx.FirstSeen,
-			}
-			channelMap[key] = ch
+			ch = &chanInfo{Hash: channelName, Name: channelName, LastActivity: snap.firstSeen}
+			channelMap[channelName] = ch
 		}
 		ch.MessageCount++
-		if tx.FirstSeen >= ch.LastActivity {
-			ch.LastActivity = tx.FirstSeen
+		if snap.firstSeen >= ch.LastActivity {
+			ch.LastActivity = snap.firstSeen
 			if decoded.Text != "" {
 				idx := strings.Index(decoded.Text, ": ")
 				if idx > 0 {
@@ -2199,6 +2225,13 @@ func (s *PacketStore) GetChannels(region string) []map[string]interface{} {
 			"messageCount": ch.MessageCount, "lastActivity": ch.LastActivity,
 		})
 	}
+
+	s.channelsCacheMu.Lock()
+	s.channelsCacheRes = channels
+	s.channelsCacheKey = cacheKey
+	s.channelsCacheExp = time.Now().Add(15 * time.Second)
+	s.channelsCacheMu.Unlock()
+
 	return channels
 }
 
