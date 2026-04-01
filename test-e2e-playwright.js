@@ -363,6 +363,10 @@ async function run() {
 
   // Test 4: Packets page loads with filter
   await test('Packets page loads with filter', async () => {
+    // Ensure desktop viewport and broad time window so fixture timestamps are included.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => localStorage.setItem('meshcore-time-window', '52560000'));
     await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('table tbody tr');
     const rowsBefore = await page.$$('table tbody tr');
