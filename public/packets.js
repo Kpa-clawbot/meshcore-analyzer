@@ -1080,7 +1080,7 @@
   function buildFlatRowHtml(p) {
     let decoded, pathHops = [];
     try { decoded = JSON.parse(p.decoded_json || '{}'); } catch {}
-    try { pathHops = JSON.parse(p.path_json || '[]'); } catch {}
+    try { pathHops = JSON.parse(p.path_json || '[]') || []; } catch {}
     const region = p.observer_id ? (observers.find(o => o.id === p.observer_id)?.iata || '') : '';
     const typeName = payloadTypeName(p.payload_type);
     const typeClass = payloadTypeColor(p.payload_type);
@@ -1420,7 +1420,7 @@
     let decoded;
     try { decoded = JSON.parse(pkt.decoded_json); } catch { decoded = {}; }
     let pathHops;
-    try { pathHops = JSON.parse(pkt.path_json || '[]'); } catch { pathHops = []; }
+    try { pathHops = JSON.parse(pkt.path_json || '[]') || []; } catch { pathHops = []; }
 
     // Resolve sender GPS — from packet directly, or from known node in DB
     let senderLat = decoded.lat != null ? decoded.lat : (decoded.latitude || null);
