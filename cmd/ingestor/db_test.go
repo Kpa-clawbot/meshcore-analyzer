@@ -516,6 +516,56 @@ func TestInsertTransmissionWithObserver(t *testing.T) {
 	}
 }
 
+// #463: Verify that inserting a packet updates the observer's last_seen,
+// so low-traffic observers don't incorrectly appear offline.
+func TestInsertTransmissionUpdatesObserverLastSeen(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Insert observer with an old last_seen
+	if err := s.UpsertObserver("obs1", "Observer1", "SJC", nil); err != nil {
+		t.Fatal(err)
+	}
+	// Backdate last_seen to 2 hours ago
+	oldTime := "2026-03-24T22:00:00Z"
+	s.db.Exec("UPDATE observers SET last_seen = ? WHERE id = ?", oldTime, "obs1")
+
+	// Verify it was backdated
+	var lastSeenBefore string
+	s.db.QueryRow("SELECT last_seen FROM observers WHERE id = ?", "obs1").Scan(&lastSeenBefore)
+	if lastSeenBefore != oldTime {
+		t.Fatalf("expected last_seen=%s, got %s", oldTime, lastSeenBefore)
+	}
+
+	// Insert a packet from this observer
+	data := &PacketData{
+		RawHex:      "0A00D69F",
+		Timestamp:   "2026-03-25T01:00:00Z",
+		ObserverID:  "obs1",
+		Hash:        "lastseentest123456",
+		RouteType:   2,
+		PayloadType: 2,
+		PathJSON:    "[]",
+		DecodedJSON: `{"type":"TXT_MSG"}`,
+	}
+	if _, err := s.InsertTransmission(data); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify last_seen was updated
+	var lastSeenAfter string
+	s.db.QueryRow("SELECT last_seen FROM observers WHERE id = ?", "obs1").Scan(&lastSeenAfter)
+	if lastSeenAfter == oldTime {
+		t.Error("observer last_seen was NOT updated after packet insertion — low-traffic observers will appear offline")
+	}
+	if lastSeenAfter != "2026-03-25T01:00:00Z" {
+		t.Errorf("expected last_seen=2026-03-25T01:00:00Z, got %s", lastSeenAfter)
+	}
+}
+
 func TestEndToEndIngest(t *testing.T) {
 	s, err := OpenStore(tempDBPath(t))
 	if err != nil {
