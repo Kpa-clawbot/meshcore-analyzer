@@ -450,7 +450,8 @@
     function mergeSection(key) {
       return Object.assign({}, DEFAULTS[key], cfg[key] || {}, local[key] || {});
     }
-    var mergedHome = mergeSection('home');
+    var serverHome = window._SITE_CONFIG_ORIGINAL_HOME || cfg.home || {};
+    var mergedHome = Object.assign({}, DEFAULTS.home, serverHome, local.home || {});
     var localTsMode = localStorage.getItem('meshcore-timestamp-mode');
     var localTsTimezone = localStorage.getItem('meshcore-timestamp-timezone');
     var localTsFormat = localStorage.getItem('meshcore-timestamp-format');
@@ -1202,19 +1203,19 @@
         var tmp = state.home.steps[i];
         state.home.steps[i] = state.home.steps[j];
         state.home.steps[j] = tmp;
-        render(container);
+        render(container); autoSave();
       });
     });
     container.querySelectorAll('[data-rm-step]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         state.home.steps.splice(parseInt(btn.dataset.rmStep), 1);
-        render(container);
+        render(container); autoSave();
       });
     });
     var addStepBtn = document.getElementById('addStep');
     if (addStepBtn) addStepBtn.addEventListener('click', function () {
       state.home.steps.push({ emoji: '📌', title: '', description: '' });
-      render(container);
+      render(container); autoSave();
     });
 
     // Checklist
@@ -1227,13 +1228,13 @@
     container.querySelectorAll('[data-rm-check]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         state.home.checklist.splice(parseInt(btn.dataset.rmCheck), 1);
-        render(container);
+        render(container); autoSave();
       });
     });
     var addCheckBtn = document.getElementById('addCheck');
     if (addCheckBtn) addCheckBtn.addEventListener('click', function () {
       state.home.checklist.push({ question: '', answer: '' });
-      render(container);
+      render(container); autoSave();
     });
 
     // Footer links
@@ -1246,13 +1247,13 @@
     container.querySelectorAll('[data-rm-link]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         state.home.footerLinks.splice(parseInt(btn.dataset.rmLink), 1);
-        render(container);
+        render(container); autoSave();
       });
     });
     var addLinkBtn = document.getElementById('addLink');
     if (addLinkBtn) addLinkBtn.addEventListener('click', function () {
       state.home.footerLinks.push({ label: '', url: '' });
-      render(container);
+      render(container); autoSave();
     });
 
     // Export copy

@@ -903,14 +903,10 @@ prepare_staging_config() {
     warn "No production config at ${prod_config} — staging may use defaults."
     return
   fi
-  if [ ! -f "$staging_config" ] || [ "$prod_config" -nt "$staging_config" ]; then
-    info "Copying production config to staging..."
-    cp "$prod_config" "$staging_config"
-    sed -i 's/"siteName":\s*"[^"]*"/"siteName": "CoreScope — STAGING"/' "$staging_config"
-    log "Staging config created at ${staging_config} with STAGING site name."
-  else
-    log "Staging config is up to date."
-  fi
+  info "Copying production config to staging..."
+  cp "$prod_config" "$staging_config"
+  sed -i 's/"siteName":\s*"[^"]*"/"siteName": "CoreScope — STAGING"/' "$staging_config"
+  log "Staging config created at ${staging_config} with STAGING site name."
   # Copy Caddyfile for staging (HTTP-only on staging port)
   local staging_caddy="$STAGING_DATA/Caddyfile"
   if [ ! -f "$staging_caddy" ]; then
