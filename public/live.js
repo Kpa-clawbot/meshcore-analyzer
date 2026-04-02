@@ -10,6 +10,7 @@
   let nodeData = {};
   let packetCount = 0;
   let activeAnims = 0;
+  const MAX_CONCURRENT_ANIMS = 20;
   let nodeActivity = {};
   let recentPaths = [];
   let showGhostHops = localStorage.getItem('live-ghost-hops') !== 'false';
@@ -1847,6 +1848,7 @@
 
   function animatePath(hopPositions, typeName, color, rawHex, onHop) {
     if (!animLayer || !pathsLayer) return;
+    if (activeAnims >= MAX_CONCURRENT_ANIMS) return;
     activeAnims++;
     document.getElementById('liveAnimCount').textContent = activeAnims;
     let hopIndex = 0;
@@ -1870,12 +1872,22 @@
             radius: 3, fillColor: '#94a3b8', fillOpacity: 0.35, color: '#94a3b8', weight: 1, opacity: 0.5
           }).addTo(animLayer);
           let pulseUp = true;
-          const pulseTimer = setInterval(() => {
-            if (!animLayer || !animLayer.hasLayer(ghost)) { clearInterval(pulseTimer); return; }
-            ghost.setStyle({ fillOpacity: pulseUp ? 0.6 : 0.25, opacity: pulseUp ? 0.7 : 0.4 });
-            pulseUp = !pulseUp;
-          }, 600);
-          setTimeout(() => { clearInterval(pulseTimer); if (animLayer && animLayer.hasLayer(ghost)) animLayer.removeLayer(ghost); }, 3000);
+          let lastPulseTime = performance.now();
+          const pulseExpiry = lastPulseTime + 3000;
+          function ghostPulse(now) {
+            if (!animLayer || !animLayer.hasLayer(ghost)) return;
+            if (now >= pulseExpiry) {
+              if (animLayer && animLayer.hasLayer(ghost)) animLayer.removeLayer(ghost);
+              return;
+            }
+            if (now - lastPulseTime >= 600) {
+              lastPulseTime = now;
+              ghost.setStyle({ fillOpacity: pulseUp ? 0.6 : 0.25, opacity: pulseUp ? 0.7 : 0.4 });
+              pulseUp = !pulseUp;
+            }
+            requestAnimationFrame(ghostPulse);
+          }
+          requestAnimationFrame(ghostPulse);
         }
       } else {
         pulseNode(hp.key, hp.pos, typeName);
@@ -1919,20 +1931,30 @@
     }).addTo(animLayer);
 
     let r = 2, op = 0.9;
-    const iv = setInterval(() => {
-      r += 1.5; op -= 0.03;
-      if (op <= 0) {
-        clearInterval(iv);
+    let lastPulse = performance.now();
+    const pulseStart = lastPulse;
+    function animatePulse(now) {
+      if (now - pulseStart > 2000) {
         try { animLayer.removeLayer(ring); } catch {}
         return;
       }
-      try {
-        ring.setRadius(r);
-        ring.setStyle({ opacity: op, weight: Math.max(0.3, 3 - r * 0.04) });
-      } catch { clearInterval(iv); }
-    }, 26);
-    // Safety cleanup — never let a ring live longer than 2s
-    setTimeout(() => { clearInterval(iv); try { animLayer.removeLayer(ring); } catch {} }, 2000);
+      const elapsed = now - lastPulse;
+      if (elapsed >= 26) {
+        const ticks = Math.min(Math.floor(elapsed / 26), 4);
+        r += 1.5 * ticks; op -= 0.03 * ticks;
+        lastPulse = now;
+        if (op <= 0) {
+          try { animLayer.removeLayer(ring); } catch {}
+          return;
+        }
+        try {
+          ring.setRadius(r);
+          ring.setStyle({ opacity: op, weight: Math.max(0.3, 3 - r * 0.04) });
+        } catch { return; }
+      }
+      requestAnimationFrame(animatePulse);
+    }
+    requestAnimationFrame(animatePulse);
 
     const baseColor = marker._baseColor || '#6b7280';
     const baseSize = marker._baseSize || 6;
@@ -2245,43 +2267,56 @@
       radius: 3.5, fillColor: '#fff', fillOpacity: 1, color: color, weight: 1.5
     }).addTo(animLayer);
 
-    const interval = setInterval(() => {
-      step++;
-      const lat = from[0] + latStep * step;
-      const lon = from[1] + lonStep * step;
-      currentCoords.push([lat, lon]);
-      line.setLatLngs(currentCoords);
-      contrail.setLatLngs(currentCoords);
-      dot.setLatLng([lat, lon]);
+    let lastStep = performance.now();
+    function animateLine(now) {
+      const elapsed = now - lastStep;
+      if (elapsed >= 33) {
+        lastStep = now;
+        step++;
+        const lat = from[0] + latStep * step;
+        const lon = from[1] + lonStep * step;
+        currentCoords.push([lat, lon]);
+        line.setLatLngs(currentCoords);
+        contrail.setLatLngs(currentCoords);
+        dot.setLatLng([lat, lon]);
 
-      if (step >= steps) {
-        clearInterval(interval);
-        if (animLayer) animLayer.removeLayer(dot);
+        if (step >= steps) {
+          if (animLayer) animLayer.removeLayer(dot);
 
-        recentPaths.push({ line, glowLine: contrail, time: Date.now() });
-        while (recentPaths.length > 5) {
-          const old = recentPaths.shift();
-          if (pathsLayer) { pathsLayer.removeLayer(old.line); pathsLayer.removeLayer(old.glowLine); }
-        }
+          recentPaths.push({ line, glowLine: contrail, time: Date.now() });
+          while (recentPaths.length > 5) {
+            const old = recentPaths.shift();
+            if (pathsLayer) { pathsLayer.removeLayer(old.line); pathsLayer.removeLayer(old.glowLine); }
+          }
 
-        setTimeout(() => {
-          let fadeOp = mainOpacity;
-          const fi = setInterval(() => {
-            fadeOp -= 0.1;
-            if (fadeOp <= 0) {
-              clearInterval(fi);
-              if (pathsLayer) { pathsLayer.removeLayer(line); pathsLayer.removeLayer(contrail); }
-              recentPaths = recentPaths.filter(p => p.line !== line);
-            } else {
-              line.setStyle({ opacity: fadeOp });
-              contrail.setStyle({ opacity: fadeOp * 0.15 });
+          setTimeout(() => {
+            let fadeOp = mainOpacity;
+            let lastFade = performance.now();
+            function animateFade(now) {
+              const fadeElapsed = now - lastFade;
+              if (fadeElapsed >= 52) {
+                lastFade = now;
+                fadeOp -= 0.1;
+                if (fadeOp <= 0) {
+                  if (pathsLayer) { pathsLayer.removeLayer(line); pathsLayer.removeLayer(contrail); }
+                  recentPaths = recentPaths.filter(p => p.line !== line);
+                  return;
+                }
+                line.setStyle({ opacity: fadeOp });
+                contrail.setStyle({ opacity: fadeOp * 0.15 });
+              }
+              requestAnimationFrame(animateFade);
             }
-          }, 52);
-        }, 800);
+            requestAnimationFrame(animateFade);
+          }, 800);
 
-        if (onComplete) onComplete();
+          if (onComplete) onComplete();
+          return;
+        }
       }
-    }, 33);
+      requestAnimationFrame(animateLine);
+    }
+    requestAnimationFrame(animateLine);
   }
 
   function showHeatMap() {
