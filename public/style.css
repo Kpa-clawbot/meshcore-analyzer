@@ -387,10 +387,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   background: var(--section-bg, #eef2ff); font-weight: 700; font-size: 11px;
   text-transform: uppercase; letter-spacing: .5px; color: var(--accent);
 }
-.field-table .section-header td  { background: rgba(243,139,168,0.18); }
-.field-table .section-transport td { background: rgba(137,180,250,0.18); }
-.field-table .section-path td    { background: rgba(166,227,161,0.18); }
-.field-table .section-payload td { background: rgba(249,226,175,0.18); }
+.field-table .section-header td  { background: var(--section-header-bg); }
+.field-table .section-transport td { background: var(--section-transport-bg); }
+.field-table .section-path td    { background: var(--section-path-bg); }
+.field-table .section-payload td { background: var(--section-payload-bg); }
 
 /* === Path display === */
 .path-hops {

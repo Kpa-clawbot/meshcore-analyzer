@@ -160,9 +160,9 @@ func TestBuildBreakdown_AdvertBasic(t *testing.T) {
 	// PathByte 0x01: 1 hop, 1-byte hash
 	// PathHop: AA
 	// Payload: 100 bytes (PubKey32 + Timestamp4 + Signature64) + Flags=0x02 (repeater, no extras)
-	pubkey := repeatHex("AB", 32)
+	pubkey := strings.Repeat("AB", 32)
 	ts := "00000000" // 4 bytes
-	sig := repeatHex("CD", 64)
+	sig := strings.Repeat("CD", 64)
 	flags := "02"
 	hex := "1101AA" + pubkey + ts + sig + flags
 	b := BuildBreakdown(hex)
@@ -177,9 +177,9 @@ func TestBuildBreakdown_AdvertBasic(t *testing.T) {
 
 func TestBuildBreakdown_AdvertWithLocation(t *testing.T) {
 	// flags=0x12: hasLocation bit set
-	pubkey := repeatHex("00", 32)
+	pubkey := strings.Repeat("00", 32)
 	ts := "00000000"
-	sig := repeatHex("00", 64)
+	sig := strings.Repeat("00", 64)
 	flags := "12" // 0x10 = hasLocation
 	latBytes := "00000000"
 	lonBytes := "00000000"
@@ -191,9 +191,9 @@ func TestBuildBreakdown_AdvertWithLocation(t *testing.T) {
 
 func TestBuildBreakdown_AdvertWithName(t *testing.T) {
 	// flags=0x82: hasName bit set
-	pubkey := repeatHex("00", 32)
+	pubkey := strings.Repeat("00", 32)
 	ts := "00000000"
-	sig := repeatHex("00", 64)
+	sig := strings.Repeat("00", 64)
 	flags := "82" // 0x80 = hasName
 	name := "4E6F6465" // "Node" in hex
 	hex := "1101AA" + pubkey + ts + sig + flags + name
@@ -236,13 +236,7 @@ func assertRange(t *testing.T, ranges []HexRange, label string, wantStart, wantE
 	t.Errorf("range %q not found in %v", label, rangeLabels(ranges))
 }
 
-func repeatHex(byteHex string, n int) string {
-	s := ""
-	for i := 0; i < n; i++ {
-		s += byteHex
-	}
-	return s
-}
+
 
 // --- BuildBreakdown tests (PR #500 review feedback) ---
 
@@ -307,7 +301,7 @@ func TestBuildBreakdown_AdvertAllFlags(t *testing.T) {
 	}
 	// Verify no overlaps
 	for i := 1; i < len(bd.Ranges); i++ {
-		if bd.Ranges[i].Start <= bd.Ranges[i-1].End && bd.Ranges[i].Start < bd.Ranges[i-1].End {
+		if bd.Ranges[i].Start <= bd.Ranges[i-1].End {
 			t.Errorf("overlap: %s [%d-%d] and %s [%d-%d]",
 				bd.Ranges[i-1].Label, bd.Ranges[i-1].Start, bd.Ranges[i-1].End,
 				bd.Ranges[i].Label, bd.Ranges[i].Start, bd.Ranges[i].End)
