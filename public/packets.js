@@ -8,7 +8,7 @@
   // Resolve observer_id to friendly name from loaded observers list
   function obsName(id) {
     if (!id) return '—';
-    const o = observers.find(ob => ob.id === id);
+    const o = observerMap.get(id);
     if (!o) return id;
     return o.iata ? `${o.name} (${o.iata})` : o.name;
   }
@@ -21,6 +21,7 @@
   let packetsPaused = false;
   let pauseBuffer = [];
   let observers = [];
+  let observerMap = new Map(); // id → observer for O(1) lookups (#383)
   let regionMap = {};
   const TYPE_NAMES = { 0:'Request', 1:'Response', 2:'Direct Msg', 3:'ACK', 4:'Advert', 5:'Channel Msg', 7:'Anon Req', 8:'Path', 9:'Trace', 11:'Control' };
   function typeName(t) { return TYPE_NAMES[t] ?? `Type ${t}`; }
@@ -349,7 +350,7 @@
         if (filters.hash && p.hash !== filters.hash) return false;
         if (RegionFilter.getRegionParam()) {
           const selectedRegions = RegionFilter.getRegionParam().split(',');
-          const obs = observers.find(o => o.id === p.observer_id);
+          const obs = observerMap.get(p.observer_id);
           if (!obs || !selectedRegions.includes(obs.iata)) return false;
         }
         if (filters.node && !(p.decoded_json || '').includes(filters.node)) return false;
@@ -439,6 +440,7 @@
     hopNameCache = {};
     totalCount = 0;
     observers = [];
+    observerMap = new Map();
     directPacketId = null;
     directPacketHash = null;
     groupByHash = true;
@@ -450,6 +452,7 @@
     try {
       const data = await api('/observers', { ttl: CLIENT_TTL.observers });
       observers = data.observers || [];
+      observerMap = new Map(observers.map(o => [o.id, o]));
     } catch {}
   }
 
@@ -696,7 +699,7 @@
         obsTrigger.textContent = 'All Observers ▾';
       } else if (selectedObservers.size === 1) {
         const id = [...selectedObservers][0];
-        const o = observers.find(x => String(x.id) === id);
+        const o = observerMap.get(id) || observerMap.get(Number(id));
         obsTrigger.textContent = (o ? (o.name || o.id) : id) + ' ▾';
       } else {
         obsTrigger.textContent = selectedObservers.size + ' Observers ▾';
@@ -1023,7 +1026,7 @@
         headerPathJson = match.path_json;
       }
     }
-    const groupRegion = headerObserverId ? (observers.find(o => o.id === headerObserverId)?.iata || '') : '';
+    const groupRegion = headerObserverId ? (observerMap.get(headerObserverId)?.iata || '') : '';
     let groupPath = [];
     try { groupPath = JSON.parse(headerPathJson || '[]'); } catch {}
     const groupPathStr = renderPath(groupPath, headerObserverId);
@@ -1055,7 +1058,7 @@
         const typeClass = payloadTypeColor(c.payload_type);
         const size = c.raw_hex ? Math.floor(c.raw_hex.length / 2) : 0;
         const childHashBytes = ((parseInt(c.raw_hex?.slice(2, 4), 16) || 0) >> 6) + 1;
-        const childRegion = c.observer_id ? (observers.find(o => o.id === c.observer_id)?.iata || '') : '';
+        const childRegion = c.observer_id ? (observerMap.get(c.observer_id)?.iata || '') : '';
         let childPath = [];
         try { childPath = JSON.parse(c.path_json || '[]'); } catch {}
         const childPathStr = renderPath(childPath, c.observer_id);
@@ -1081,7 +1084,7 @@
     let decoded, pathHops = [];
     try { decoded = JSON.parse(p.decoded_json || '{}'); } catch {}
     try { pathHops = JSON.parse(p.path_json || '[]') || []; } catch {}
-    const region = p.observer_id ? (observers.find(o => o.id === p.observer_id)?.iata || '') : '';
+    const region = p.observer_id ? (observerMap.get(p.observer_id)?.iata || '') : '';
     const typeName = payloadTypeName(p.payload_type);
     const typeClass = payloadTypeColor(p.payload_type);
     const size = p.raw_hex ? Math.floor(p.raw_hex.length / 2) : 0;
