@@ -814,7 +814,7 @@
         </dl>
         <div style="margin-top:8px;clear:both;">
           <a href="#/nodes/${node.public_key}" style="color:var(--accent);font-size:12px;">View Node →</a>
-          ${node.public_key ? ` · <a href="#" onclick="event.preventDefault();window._mapSelectRefNode('${node.public_key}','${safeEsc((node.name || 'Unknown').replace(/'/g, "\\'"))}')" style="color:var(--accent);font-size:12px;">Show Neighbors</a>` : ''}
+          ${node.public_key ? ` · <a href="#" onclick="event.preventDefault();window._mapSelectRefNode('${node.public_key}','${safeEsc((node.name || 'Unknown').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c'))}')" style="color:var(--accent);font-size:12px;">Show Neighbors</a>` : ''}
         </div>
       </div>`;
   }
