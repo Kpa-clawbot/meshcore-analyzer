@@ -1676,7 +1676,7 @@
     let rows = '';
 
     // Header section
-    rows += sectionRow('Header');
+    rows += sectionRow('Header', 'section-header');
     rows += fieldRow(0, 'Header Byte', '0x' + (buf.slice(0, 2) || '??'), `Route: ${routeTypeName(pkt.route_type)}, Payload: ${payloadTypeName(pkt.payload_type)}`);
     const pathByte0 = parseInt(buf.slice(2, 4), 16);
     const hashSizeVal = isNaN(pathByte0) ? '?' : ((pathByte0 >> 6) + 1);
@@ -1686,7 +1686,7 @@
     // Transport codes
     let off = 2;
     if (pkt.route_type === 0 || pkt.route_type === 3) {
-      rows += sectionRow('Transport Codes');
+      rows += sectionRow('Transport Codes', 'section-transport');
       rows += fieldRow(off, 'Next Hop', buf.slice(off * 2, (off + 2) * 2), '');
       rows += fieldRow(off + 2, 'Last Hop', buf.slice((off + 2) * 2, (off + 4) * 2), '');
       off += 4;
@@ -1694,7 +1694,7 @@
 
     // Path
     if (pathHops.length > 0) {
-      rows += sectionRow('Path (' + pathHops.length + ' hops)');
+      rows += sectionRow('Path (' + pathHops.length + ' hops)', 'section-path');
       const pathByte = parseInt(buf.slice(2, 4), 16);
       const hashSize = (pathByte >> 6) + 1;
       for (let i = 0; i < pathHops.length; i++) {
@@ -1706,7 +1706,7 @@
     }
 
     // Payload
-    rows += sectionRow('Payload — ' + payloadTypeName(pkt.payload_type));
+    rows += sectionRow('Payload — ' + payloadTypeName(pkt.payload_type), 'section-payload');
 
     if (decoded.type === 'ADVERT') {
       rows += fieldRow(1, 'Advertised Hash Size', hashSizeVal + ' byte' + (hashSizeVal !== 1 ? 's' : ''), 'From path byte 0x' + (buf.slice(2, 4) || '??') + ' — bits 7-6 = ' + (hashSizeVal - 1));
@@ -1756,8 +1756,8 @@
     </table>`;
   }
 
-  function sectionRow(label) {
-    return `<tr class="section-row"><td colspan="4">${label}</td></tr>`;
+  function sectionRow(label, cls) {
+    return `<tr class="section-row${cls ? ' ' + cls : ''}"><td colspan="4">${label}</td></tr>`;
   }
   function fieldRow(offset, name, value, desc) {
     return `<tr><td class="mono">${offset}</td><td>${name}</td><td class="mono">${value}</td><td class="text-muted">${desc || ''}</td></tr>`;

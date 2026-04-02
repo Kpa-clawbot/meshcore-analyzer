@@ -397,6 +397,106 @@ func DecodePacket(hexString string) (*DecodedPacket, error) {
 	}, nil
 }
 
+// HexRange represents a labeled byte range for the hex breakdown visualization.
+type HexRange struct {
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+	Label string `json:"label"`
+}
+
+// Breakdown holds colored byte ranges returned by the packet detail endpoint.
+type Breakdown struct {
+	Ranges []HexRange `json:"ranges"`
+}
+
+// BuildBreakdown computes labeled byte ranges for each section of a MeshCore packet.
+// The returned ranges are consumed by createColoredHexDump() and buildHexLegend()
+// in the frontend (public/app.js).
+func BuildBreakdown(hexString string) *Breakdown {
+	hexString = strings.ReplaceAll(hexString, " ", "")
+	hexString = strings.ReplaceAll(hexString, "\n", "")
+	hexString = strings.ReplaceAll(hexString, "\r", "")
+	buf, err := hex.DecodeString(hexString)
+	if err != nil || len(buf) < 2 {
+		return &Breakdown{Ranges: []HexRange{}}
+	}
+
+	var ranges []HexRange
+	offset := 0
+
+	// Byte 0: Header
+	ranges = append(ranges, HexRange{Start: 0, End: 0, Label: "Header"})
+	offset = 1
+
+	header := decodeHeader(buf[0])
+
+	// Bytes 1-4: Transport Codes (TRANSPORT_FLOOD / TRANSPORT_DIRECT only)
+	if isTransportRoute(header.RouteType) {
+		if len(buf) < offset+4 {
+			return &Breakdown{Ranges: ranges}
+		}
+		ranges = append(ranges, HexRange{Start: offset, End: offset + 3, Label: "Transport Codes"})
+		offset += 4
+	}
+
+	if offset >= len(buf) {
+		return &Breakdown{Ranges: ranges}
+	}
+
+	// Next byte: Path Length (bits 7-6 = hashSize-1, bits 5-0 = hashCount)
+	ranges = append(ranges, HexRange{Start: offset, End: offset, Label: "Path Length"})
+	pathByte := buf[offset]
+	offset++
+
+	hashSize := int(pathByte>>6) + 1
+	hashCount := int(pathByte & 0x3F)
+	pathBytes := hashSize * hashCount
+
+	// Path hops
+	if hashCount > 0 && offset+pathBytes <= len(buf) {
+		ranges = append(ranges, HexRange{Start: offset, End: offset + pathBytes - 1, Label: "Path"})
+	}
+	offset += pathBytes
+
+	if offset >= len(buf) {
+		return &Breakdown{Ranges: ranges}
+	}
+
+	payloadStart := offset
+
+	// Payload — break ADVERT into named sub-fields; everything else is one Payload range
+	if header.PayloadType == PayloadADVERT && len(buf)-payloadStart >= 100 {
+		ranges = append(ranges, HexRange{Start: payloadStart, End: payloadStart + 31, Label: "PubKey"})
+		ranges = append(ranges, HexRange{Start: payloadStart + 32, End: payloadStart + 35, Label: "Timestamp"})
+		ranges = append(ranges, HexRange{Start: payloadStart + 36, End: payloadStart + 99, Label: "Signature"})
+
+		appStart := payloadStart + 100
+		if appStart < len(buf) {
+			ranges = append(ranges, HexRange{Start: appStart, End: appStart, Label: "Flags"})
+			appFlags := buf[appStart]
+			fOff := appStart + 1
+			if appFlags&0x10 != 0 && fOff+8 <= len(buf) {
+				ranges = append(ranges, HexRange{Start: fOff, End: fOff + 3, Label: "Latitude"})
+				ranges = append(ranges, HexRange{Start: fOff + 4, End: fOff + 7, Label: "Longitude"})
+				fOff += 8
+			}
+			if appFlags&0x20 != 0 && fOff+2 <= len(buf) {
+				fOff += 2
+			}
+			if appFlags&0x40 != 0 && fOff+2 <= len(buf) {
+				fOff += 2
+			}
+			if appFlags&0x80 != 0 && fOff < len(buf) {
+				ranges = append(ranges, HexRange{Start: fOff, End: len(buf) - 1, Label: "Name"})
+			}
+		}
+	} else {
+		ranges = append(ranges, HexRange{Start: payloadStart, End: len(buf) - 1, Label: "Payload"})
+	}
+
+	return &Breakdown{Ranges: ranges}
+}
+
 // ComputeContentHash computes the SHA-256-based content hash (first 16 hex chars).
 func ComputeContentHash(rawHex string) string {
 	buf, err := hex.DecodeString(rawHex)
