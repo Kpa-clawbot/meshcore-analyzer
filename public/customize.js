@@ -439,6 +439,7 @@
 
   // Current state
   let state = {};
+  let _serverState = null;
 
   function deepClone(o) { return JSON.parse(JSON.stringify(o)); }
 
@@ -474,6 +475,15 @@
     mergedUi.timestampCustomFormat = (localTsCustomFormat != null)
       ? localTsCustomFormat
       : (typeof mergedUi.timestampCustomFormat === 'string' ? mergedUi.timestampCustomFormat : serverTsCustomFormat);
+    _serverState = {
+      branding: Object.assign({}, DEFAULTS.branding, cfg.branding || {}),
+      theme: Object.assign({}, DEFAULTS.theme, cfg.theme || {}),
+      themeDark: Object.assign({}, DEFAULTS.themeDark, cfg.themeDark || {}),
+      nodeColors: Object.assign({}, DEFAULTS.nodeColors, cfg.nodeColors || {}),
+      typeColors: Object.assign({}, DEFAULTS.typeColors, cfg.typeColors || {}),
+      home: Object.assign({}, DEFAULTS.home, cfg.home || {}),
+      ui: { timestampMode: serverTsMode, timestampTimezone: serverTsTimezone, timestampFormat: serverTsFormat, timestampCustomFormat: serverTsCustomFormat },
+    };
     state = {
       branding: mergeSection('branding'),
       theme: mergeSection('theme'),
@@ -545,6 +555,7 @@
       try {
         var data = buildExport();
         localStorage.setItem('meshcore-user-theme', JSON.stringify(data));
+        showSaved();
         // Sync to SITE_CONFIG so live pages (home, branding) pick up changes
         if (window.SITE_CONFIG) {
           if (state.branding) window.SITE_CONFIG.branding = Object.assign(window.SITE_CONFIG.branding || {}, state.branding);
@@ -560,6 +571,46 @@
     for (var key in THEME_CSS_MAP) {
       document.documentElement.style.removeProperty(THEME_CSS_MAP[key]);
     }
+  }
+
+  function isFieldOverridden(section, key) {
+    if (!_serverState || !_serverState[section]) return false;
+    var sv = _serverState[section][key];
+    var cv = state[section] ? state[section][key] : undefined;
+    return (typeof sv === 'object' || typeof cv === 'object')
+      ? JSON.stringify(sv) !== JSON.stringify(cv)
+      : sv !== cv;
+  }
+
+  function countSectionOverrides() {
+    var n = 0;
+    for (var s = 0; s < arguments.length; s++) {
+      var sec = arguments[s];
+      if (!_serverState || !_serverState[sec]) continue;
+      for (var k in _serverState[sec]) { if (isFieldOverridden(sec, k)) n++; }
+    }
+    return n;
+  }
+
+  function overrideDot(section, key) {
+    return isFieldOverridden(section, key)
+      ? ' <span class="cust-override-dot" title="Changed from server default">⬤</span>'
+      : '';
+  }
+
+  var _savedToastTimer = null;
+  function showSaved() {
+    if (!panelEl) return;
+    var toast = panelEl.querySelector('.cust-saved-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.className = 'cust-saved-toast';
+      toast.textContent = '✓ Saved';
+      panelEl.appendChild(toast);
+    }
+    toast.classList.add('visible');
+    clearTimeout(_savedToastTimer);
+    _savedToastTimer = setTimeout(function() { toast.classList.remove('visible'); }, 1500);
   }
 
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -645,6 +696,14 @@
         padding: 12px 16px; margin-top: 16px; font-size: 13px; color: var(--text-muted); line-height: 1.6; }
       .cust-instructions code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; font-family: var(--mono); font-size: 12px; }
       .cust-section-title { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+      .cust-override-dot { color: var(--accent); font-size: 7px; vertical-align: super; margin-left: 3px; opacity: 0.85; }
+      .cust-tab-badge { display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 9px; font-weight: 700; border-radius: 10px; min-width: 14px; height: 14px; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
+      .cust-saved-toast { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: #22c55e; color: #fff; padding: 5px 18px; border-radius: 20px; font-size: 13px; font-weight: 600; pointer-events: none; opacity: 0; transition: opacity 0.25s; box-shadow: 0 2px 8px rgba(0,0,0,0.18); white-space: nowrap; z-index: 10; }
+      .cust-saved-toast.visible { opacity: 1; }
+      .cust-field-row { display: flex; align-items: center; gap: 6px; }
+      .cust-field-row input { flex: 1; }
+      .cust-field-reset { font-size: 10px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text-muted); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+      .cust-field-reset:hover { background: var(--surface-3); }
       @media (max-width: 600px) {
         .cust-overlay { left: 8px; right: 8px; width: auto; top: 56px; }
         .cust-tabs { gap: 0; }
@@ -662,27 +721,39 @@
 
   function renderTabs() {
     var tabs = [
-      { id: 'branding', label: '🏷️', title: 'Branding' },
-      { id: 'theme', label: '🎨', title: 'Theme Colors' },
-      { id: 'nodes', label: '🎯', title: 'Colors' },
-      { id: 'home', label: '🏠', title: 'Home Page' },
-      { id: 'display', label: '🖥️', title: 'Display' },
-      { id: 'export', label: '📤', title: 'Export / Save' }
+      { id: 'branding', label: '🏷️', title: 'Branding', count: countSectionOverrides('branding') },
+      { id: 'theme', label: '🎨', title: 'Theme Colors', count: countSectionOverrides('theme', 'themeDark') },
+      { id: 'nodes', label: '🎯', title: 'Colors', count: countSectionOverrides('nodeColors', 'typeColors') },
+      { id: 'home', label: '🏠', title: 'Home Page', count: countSectionOverrides('home') },
+      { id: 'display', label: '🖥️', title: 'Display', count: countSectionOverrides('ui') },
+      { id: 'export', label: '📤', title: 'Export / Save', count: 0 }
     ];
     return '<div class="cust-tabs">' +
       tabs.map(function (t) {
-        return '<button class="cust-tab' + (t.id === activeTab ? ' active' : '') + '" data-tab="' + t.id + '" title="' + t.title + '">' + t.label + ' <span class="cust-tab-text">' + t.title + '</span></button>';
+        var badge = t.count > 0 ? '<span class="cust-tab-badge">' + t.count + '</span>' : '';
+        return '<button class="cust-tab' + (t.id === activeTab ? ' active' : '') + '" data-tab="' + t.id + '" title="' + t.title + '">' + t.label + badge + ' <span class="cust-tab-text">' + t.title + '</span></button>';
       }).join('') + '</div>';
+  }
+
+  function brandingField(id, key, label, extra) {
+    var val = state.branding[key] || '';
+    var sval = (_serverState && _serverState.branding) ? (_serverState.branding[key] || '') : val;
+    var changed = val !== sval;
+    var resetBtn = changed ? '<button class="cust-field-reset" data-reset-branding="' + key + '">Reset</button>' : '';
+    var dot = changed ? overrideDot('branding', key) : '';
+    return '<div class="cust-field"><label for="' + id + '">' + label + dot + '</label>' +
+      '<div class="cust-field-row"><input type="text" id="' + id + '" data-key="branding.' + key + '" value="' + escAttr(val) + '"' + (extra || '') + '>' + resetBtn + '</div></div>';
   }
 
   function renderBranding() {
     var b = state.branding;
     var logoPreview = b.logoUrl ? '<img class="cust-preview-img" src="' + escAttr(b.logoUrl) + '" alt="Logo preview" onerror="this.style.display=\'none\'">' : '';
     return '<div class="cust-panel' + (activeTab === 'branding' ? ' active' : '') + '" data-panel="branding">' +
-      '<div class="cust-field"><label for="cust-siteName">Site Name</label><input type="text" id="cust-siteName" data-key="branding.siteName" value="' + escAttr(b.siteName) + '"></div>' +
-      '<div class="cust-field"><label for="cust-tagline">Tagline</label><input type="text" id="cust-tagline" data-key="branding.tagline" value="' + escAttr(b.tagline) + '"></div>' +
-      '<div class="cust-field"><label for="cust-logoUrl">Logo URL</label><input type="text" id="cust-logoUrl" data-key="branding.logoUrl" value="' + escAttr(b.logoUrl) + '" placeholder="https://...">' + logoPreview + '</div>' +
-      '<div class="cust-field"><label for="cust-faviconUrl">Favicon URL</label><input type="text" id="cust-faviconUrl" data-key="branding.faviconUrl" value="' + escAttr(b.faviconUrl) + '" placeholder="https://..."></div>' +
+      brandingField('cust-siteName', 'siteName', 'Site Name') +
+      brandingField('cust-tagline', 'tagline', 'Tagline') +
+      brandingField('cust-logoUrl', 'logoUrl', 'Logo URL', ' placeholder="https://..."') +
+      (b.logoUrl ? '<div style="margin:-8px 0 12px">' + logoPreview + '</div>' : '') +
+      brandingField('cust-faviconUrl', 'faviconUrl', 'Favicon URL', ' placeholder="https://..."') +
     '</div>';
   }
 
@@ -726,17 +797,20 @@
     '</div>';
   }
 
-  function renderColorRow(key, val, def, dataAttr) {
+  function renderColorRow(key, val, def, dataAttr, srvDef) {
+    var baseline = (srvDef !== undefined) ? srvDef : def;
+    var changed = val !== baseline;
     var isFont = key === 'font' || key === 'mono';
+    var dot = changed ? ' <span class="cust-override-dot" title="Changed from server default">⬤</span>' : '';
     var inputHtml = isFont
       ? '<input type="text" id="cust-' + dataAttr + '-' + key + '" data-' + dataAttr + '="' + key + '" value="' + escAttr(val) + '" style="width:160px;font-size:11px;font-family:var(--mono);padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg);color:var(--text)">'
       : '<input type="color" id="cust-' + dataAttr + '-' + key + '" data-' + dataAttr + '="' + key + '" value="' + val + '">' +
         '<span class="cust-hex" data-hex="' + key + '">' + val + '</span>';
     return '<div class="cust-color-row">' +
-      '<div><label for="cust-' + dataAttr + '-' + key + '">' + THEME_LABELS[key] + '</label>' +
+      '<div><label for="cust-' + dataAttr + '-' + key + '">' + THEME_LABELS[key] + dot + '</label>' +
       '<div class="cust-hint">' + (THEME_HINTS[key] || '') + '</div></div>' +
       inputHtml +
-      (val !== def ? '<button class="cust-reset-btn" data-reset-theme="' + key + '">Reset</button>' : '') +
+      (changed ? '<button class="cust-reset-btn" data-reset-theme="' + key + '">Reset</button>' : '') +
     '</div>';
   }
 
@@ -745,23 +819,25 @@
     var modeLabel = dark ? '🌙 Dark Mode' : '☀️ Light Mode';
     var defs = activeDefaults();
     var current = activeTheme();
+    var themeSection = dark ? 'themeDark' : 'theme';
+    var srv = (_serverState && _serverState[themeSection]) ? _serverState[themeSection] : {};
 
     var basicRows = '';
     for (var i = 0; i < BASIC_KEYS.length; i++) {
       var key = BASIC_KEYS[i];
-      basicRows += renderColorRow(key, current[key] || defs[key] || '#000000', defs[key] || '#000000', 'theme');
+      basicRows += renderColorRow(key, current[key] || defs[key] || '#000000', defs[key] || '#000000', 'theme', srv[key] || defs[key] || '#000000');
     }
 
     var advancedRows = '';
     for (var j = 0; j < ADVANCED_KEYS.length; j++) {
       var akey = ADVANCED_KEYS[j];
-      advancedRows += renderColorRow(akey, current[akey] || defs[akey] || '#000000', defs[akey] || '#000000', 'theme');
+      advancedRows += renderColorRow(akey, current[akey] || defs[akey] || '#000000', defs[akey] || '#000000', 'theme', srv[akey] || defs[akey] || '#000000');
     }
 
     var fontRows = '';
     for (var f = 0; f < FONT_KEYS.length; f++) {
       var fkey = FONT_KEYS[f];
-      fontRows += renderColorRow(fkey, current[fkey] || defs[fkey] || '', defs[fkey] || '', 'theme');
+      fontRows += renderColorRow(fkey, current[fkey] || defs[fkey] || '', defs[fkey] || '', 'theme', srv[fkey] || defs[fkey] || '');
     }
 
     return '<div class="cust-panel' + (activeTab === 'theme' ? ' active' : '') + '" data-panel="theme">' +
@@ -780,30 +856,36 @@
   }
 
   function renderNodes() {
+    var srvNode = (_serverState && _serverState.nodeColors) ? _serverState.nodeColors : {};
+    var srvType = (_serverState && _serverState.typeColors) ? _serverState.typeColors : {};
     var rows = '';
     for (var key in NODE_LABELS) {
       var val = state.nodeColors[key];
-      var def = DEFAULTS.nodeColors[key];
+      var baseline = srvNode[key] || DEFAULTS.nodeColors[key];
+      var changed = val !== baseline;
+      var dot = changed ? ' <span class="cust-override-dot" title="Changed from server default">⬤</span>' : '';
       rows += '<div class="cust-color-row">' +
-        '<div><label for="cust-node-' + key + '">' + NODE_EMOJI[key] + ' ' + NODE_LABELS[key] + '</label>' +
+        '<div><label for="cust-node-' + key + '">' + NODE_EMOJI[key] + ' ' + NODE_LABELS[key] + dot + '</label>' +
         '<div class="cust-hint">' + (NODE_HINTS[key] || '') + '</div></div>' +
         '<input type="color" id="cust-node-' + key + '" data-node="' + key + '" value="' + val + '">' +
         '<span class="cust-node-dot" style="background:' + val + '" data-dot="' + key + '"></span>' +
         '<span class="cust-hex" data-nhex="' + key + '">' + val + '</span>' +
-        (val !== def ? '<button class="cust-reset-btn" data-reset-node="' + key + '">Reset</button>' : '') +
+        (changed ? '<button class="cust-reset-btn" data-reset-node="' + key + '">Reset</button>' : '') +
       '</div>';
     }
     var typeRows = '';
     for (var tkey in TYPE_LABELS) {
       var tval = state.typeColors[tkey];
-      var tdef = DEFAULTS.typeColors[tkey];
+      var tbaseline = srvType[tkey] || DEFAULTS.typeColors[tkey];
+      var tchanged = tval !== tbaseline;
+      var tdot = tchanged ? ' <span class="cust-override-dot" title="Changed from server default">⬤</span>' : '';
       typeRows += '<div class="cust-color-row">' +
-        '<div><label for="cust-type-' + tkey + '">' + (TYPE_EMOJI[tkey] || '') + ' ' + TYPE_LABELS[tkey] + '</label>' +
+        '<div><label for="cust-type-' + tkey + '">' + (TYPE_EMOJI[tkey] || '') + ' ' + TYPE_LABELS[tkey] + tdot + '</label>' +
         '<div class="cust-hint">' + (TYPE_HINTS[tkey] || '') + '</div></div>' +
         '<input type="color" id="cust-type-' + tkey + '" data-type-color="' + tkey + '" value="' + tval + '">' +
         '<span class="cust-node-dot" style="background:' + tval + '" data-tdot="' + tkey + '"></span>' +
         '<span class="cust-hex" data-thex="' + tkey + '">' + tval + '</span>' +
-        (tval !== tdef ? '<button class="cust-reset-btn" data-reset-type="' + tkey + '">Reset</button>' : '') +
+        (tchanged ? '<button class="cust-reset-btn" data-reset-type="' + tkey + '">Reset</button>' : '') +
       '</div>';
     }
     var heatOpacity = parseFloat(localStorage.getItem('meshcore-heatmap-opacity'));
@@ -941,14 +1023,34 @@
     return out;
   }
 
+  function buildFullExport() {
+    return {
+      branding: Object.assign({}, state.branding),
+      theme: Object.assign({}, state.theme),
+      themeDark: Object.assign({}, state.themeDark),
+      nodeColors: Object.assign({}, state.nodeColors),
+      typeColors: Object.assign({}, state.typeColors),
+      home: {
+        heroTitle: state.home.heroTitle,
+        heroSubtitle: state.home.heroSubtitle,
+        steps: deepClone(state.home.steps),
+        checklist: deepClone(state.home.checklist),
+        footerLinks: deepClone(state.home.footerLinks),
+      },
+      ui: Object.assign({}, state.ui),
+    };
+  }
+
   function renderExport() {
-    var json = JSON.stringify(buildExport(), null, 2);
+    var overrideCount = countSectionOverrides('branding', 'theme', 'themeDark', 'nodeColors', 'typeColors', 'home', 'ui');
     var hasUserTheme = !!localStorage.getItem('meshcore-user-theme');
+    var json = JSON.stringify(buildFullExport(), null, 2);
     return '<div class="cust-panel' + (activeTab === 'export' ? ' active' : '') + '" data-panel="export">' +
       '<p class="cust-section-title">My Preferences</p>' +
-      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Save these colors just for you — stored in your browser, works on any instance.</p>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">' +
+        (overrideCount > 0 ? '<strong>' + overrideCount + ' setting' + (overrideCount !== 1 ? 's' : '') + '</strong> changed from server defaults. ' : 'No changes from server defaults. ') +
+        'Auto-saved to your browser.</p>' +
       '<div class="cust-export-btns" style="margin-bottom:16px">' +
-        '<button class="cust-save-user" id="custSaveUser">💾 Save as my theme</button>' +
         (hasUserTheme ? '<button class="cust-reset-user" id="custResetUser">🗑️ Reset my theme</button>' : '') +
       '</div>' +
       '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0">' +
@@ -1086,8 +1188,19 @@
       btn.addEventListener('click', function () {
         var key = btn.dataset.resetTheme;
         var themeKey = isDarkMode() ? 'themeDark' : 'theme';
-        state[themeKey][key] = activeDefaults()[key];
+        var srvVal = (_serverState && _serverState[themeKey]) ? _serverState[themeKey][key] : undefined;
+        state[themeKey][key] = srvVal !== undefined ? srvVal : activeDefaults()[key];
         applyThemePreview(); autoSave();
+        render(container);
+      });
+    });
+
+    container.querySelectorAll('[data-reset-branding]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.dataset.resetBranding;
+        var srvVal = (_serverState && _serverState.branding) ? _serverState.branding[key] : undefined;
+        state.branding[key] = srvVal !== undefined ? srvVal : (DEFAULTS.branding[key] || '');
+        autoSave();
         render(container);
       });
     });
@@ -1123,9 +1236,11 @@
     container.querySelectorAll('[data-reset-node]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var key = btn.dataset.resetNode;
-        state.nodeColors[key] = DEFAULTS.nodeColors[key];
-        if (window.ROLE_COLORS) window.ROLE_COLORS[key] = DEFAULTS.nodeColors[key];
-        if (window.ROLE_STYLE && window.ROLE_STYLE[key]) window.ROLE_STYLE[key].color = DEFAULTS.nodeColors[key];
+        var srvVal = (_serverState && _serverState.nodeColors) ? _serverState.nodeColors[key] : undefined;
+        var resetTo = srvVal !== undefined ? srvVal : DEFAULTS.nodeColors[key];
+        state.nodeColors[key] = resetTo;
+        if (window.ROLE_COLORS) window.ROLE_COLORS[key] = resetTo;
+        if (window.ROLE_STYLE && window.ROLE_STYLE[key]) window.ROLE_STYLE[key].color = resetTo;
         render(container);
       });
     });
@@ -1147,8 +1262,10 @@
     container.querySelectorAll('[data-reset-type]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var key = btn.dataset.resetType;
-        state.typeColors[key] = DEFAULTS.typeColors[key];
-        if (window.TYPE_COLORS) window.TYPE_COLORS[key] = DEFAULTS.typeColors[key];
+        var srvVal = (_serverState && _serverState.typeColors) ? _serverState.typeColors[key] : undefined;
+        var resetTo = srvVal !== undefined ? srvVal : DEFAULTS.typeColors[key];
+        state.typeColors[key] = resetTo;
+        if (window.TYPE_COLORS) window.TYPE_COLORS[key] = resetTo;
         render(container);
       });
     });
@@ -1270,25 +1387,16 @@
       }
     });
 
-    // Export download
+    // Export download — full export including all current settings
     var dlBtn = document.getElementById('custDownload');
     if (dlBtn) dlBtn.addEventListener('click', function () {
-      var json = JSON.stringify(buildExport(), null, 2);
+      var json = JSON.stringify(buildFullExport(), null, 2);
       var blob = new Blob([json], { type: 'application/json' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = 'config-theme.json';
       a.click();
       URL.revokeObjectURL(a.href);
-    });
-
-    // Save user theme to localStorage
-    var saveUserBtn = document.getElementById('custSaveUser');
-    if (saveUserBtn) saveUserBtn.addEventListener('click', function () {
-      var exportData = buildExport();
-      localStorage.setItem('meshcore-user-theme', JSON.stringify(exportData));
-      saveUserBtn.textContent = '✓ Saved!';
-      setTimeout(function () { saveUserBtn.textContent = '💾 Save as my theme'; }, 2000);
     });
 
     // Reset user theme
