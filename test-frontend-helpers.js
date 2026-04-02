@@ -2788,6 +2788,34 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   });
 }
 
+// ===== live.js: nextHop null guards =====
+console.log('\n=== live.js: nextHop null guards ===');
+{
+  const liveSource = fs.readFileSync('public/live.js', 'utf8');
+
+  test('nextHop guards animLayer null before use', () => {
+    assert.ok(liveSource.includes('if (!animLayer) return;'),
+      'nextHop must return early when animLayer is null (post-destroy)');
+  });
+
+  test('nextHop setInterval guards animLayer null', () => {
+    assert.ok(liveSource.includes('if (!animLayer || !animLayer.hasLayer(ghost))'),
+      'setInterval in nextHop must guard animLayer null');
+  });
+
+  test('nextHop setTimeout guards animLayer null', () => {
+    assert.ok(liveSource.includes('if (animLayer && animLayer.hasLayer(ghost)) animLayer.removeLayer(ghost)'),
+      'setTimeout in nextHop must guard animLayer null');
+  });
+
+  test('nextHop guards liveAnimCount element null', () => {
+    assert.ok(liveSource.includes('const countEl = document.getElementById(\'liveAnimCount\')'),
+      'nextHop must null-check liveAnimCount element');
+    assert.ok(liveSource.includes('if (countEl) countEl.textContent = activeAnims'),
+      'nextHop must conditionally update liveAnimCount');
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
