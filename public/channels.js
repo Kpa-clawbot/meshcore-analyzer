@@ -274,6 +274,9 @@
     for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
     return Math.abs(h);
   }
+  function formatHashHex(hash) {
+    return typeof hash === 'number' ? '0x' + hash.toString(16).toUpperCase().padStart(2, '0') : hash;
+  }
   function getChannelColor(hash) { return CHANNEL_COLORS[hashCode(String(hash)) % CHANNEL_COLORS.length]; }
   function getSenderColor(name) {
     const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
@@ -659,7 +662,7 @@
     });
 
     el.innerHTML = sorted.map(ch => {
-      const name = ch.name || `Channel ${ch.hash}`;
+      const name = ch.name || `Channel ${formatHashHex(ch.hash)}`;
       const color = getChannelColor(ch.hash);
       const time = ch.lastActivityMs ? formatSecondsAgo(Math.floor((Date.now() - ch.lastActivityMs) / 1000)) : '';
       const preview = ch.lastSender && ch.lastMessage
@@ -688,7 +691,7 @@
     history.replaceState(null, '', `#/channels/${encodeURIComponent(hash)}`);
     renderChannelList();
     const ch = channels.find(c => c.hash === hash);
-    const name = ch?.name || `Channel ${hash}`;
+    const name = ch?.name || `Channel ${formatHashHex(hash)}`;
     const header = document.getElementById('chHeader');
     header.querySelector('.ch-header-text').textContent = `${name} — ${ch?.messageCount || 0} messages`;
 

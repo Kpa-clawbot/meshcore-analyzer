@@ -2876,6 +2876,35 @@ console.log('\n=== live.js: nextHop null guards ===');
   });
 }
 
+// === channels.js: formatHashHex (#465) ===
+console.log('\n=== channels.js: formatHashHex (issue #465) ===');
+{
+  const chSource = fs.readFileSync('public/channels.js', 'utf8');
+
+  test('formatHashHex exists in channels.js', () => {
+    assert.ok(chSource.includes('function formatHashHex('), 'formatHashHex function must exist');
+  });
+
+  test('channel fallback name uses formatHashHex', () => {
+    assert.ok(chSource.includes('formatHashHex(ch.hash)'), 'renderChannelList must format hash as hex');
+    assert.ok(chSource.includes('formatHashHex(hash)'), 'selectChannel must format hash as hex');
+  });
+
+  test('formatHashHex produces correct hex output', () => {
+    // Extract and evaluate the function
+    const match = chSource.match(/function formatHashHex\(hash\)\s*\{[^}]+\}/);
+    assert.ok(match, 'should extract formatHashHex');
+    const ctx = vm.createContext({});
+    vm.runInContext(match[0], ctx);
+    const fmt = vm.runInContext('formatHashHex', ctx);
+    assert.strictEqual(fmt(10), '0x0A');
+    assert.strictEqual(fmt(255), '0xFF');
+    assert.strictEqual(fmt(0), '0x00');
+    assert.strictEqual(fmt(1), '0x01');
+    assert.strictEqual(fmt('LongFast'), 'LongFast');  // string hash passes through
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
