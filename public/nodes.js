@@ -959,4 +959,13 @@
   window._nodesIsAdvertMessage = isAdvertMessage;
   window._nodesGetAllNodes = function() { return _allNodes; };
   window._nodesSetAllNodes = function(n) { _allNodes = n; };
+  window._nodesToggleSort = toggleSort;
+  window._nodesSortNodes = sortNodes;
+  window._nodesSortArrow = sortArrow;
+  window._nodesGetSortState = function() { return sortState; };
+  window._nodesSetSortState = function(s) { sortState = s; };
+  window._nodesSortArrow = sortArrow;
+  window._nodesSyncClaimedToFavorites = syncClaimedToFavorites;
+  window._nodesRenderNodeTimestampHtml = renderNodeTimestampHtml;
+  window._nodesRenderNodeTimestampText = renderNodeTimestampText;
 })();

@@ -3096,6 +3096,528 @@ console.log('\n=== channels.js: formatHashHex (issue #465) ===');
       'destroy must clear _wsRenderTimer to prevent stale renders after navigation');
   });
 }
+// ===== NODES.JS: toggleSort / sortNodes / sortArrow (P0 coverage) =====
+console.log('\n=== nodes.js: toggleSort / sortNodes / sortArrow ===');
+{
+  function makeNodesSandbox() {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    ctx.registerPage = () => {};
+    ctx.RegionFilter = { init: () => {}, onChange: () => () => {}, getRegionParam: () => '', offChange: () => {} };
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.invalidateApiCache = () => {};
+    ctx.favStar = () => '';
+    ctx.bindFavStars = () => {};
+    ctx.getFavorites = () => [];
+    ctx.isFavorite = () => false;
+    ctx.connectWS = () => {};
+    ctx.HopResolver = { init: () => {}, resolve: () => ({}), ready: () => false };
+    ctx.api = () => Promise.resolve({ nodes: [], counts: {} });
+    ctx.CLIENT_TTL = { nodeList: 90000, nodeDetail: 240000, nodeHealth: 240000 };
+    ctx.initTabBar = () => {};
+    ctx.makeColumnsResizable = () => {};
+    ctx.debounce = (fn) => fn;
+    ctx.Set = Set;
+    loadInCtx(ctx, 'public/nodes.js');
+    return ctx;
+  }
+
+  // --- toggleSort ---
+  test('toggleSort switches direction on same column', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    ctx.window._nodesToggleSort('name');
+    assert.strictEqual(ctx.window._nodesGetSortState().direction, 'desc');
+  });
+
+  test('toggleSort to different column sets default direction', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    ctx.window._nodesToggleSort('last_seen');
+    const s = ctx.window._nodesGetSortState();
+    assert.strictEqual(s.column, 'last_seen');
+    assert.strictEqual(s.direction, 'desc'); // last_seen defaults desc
+  });
+
+  test('toggleSort to name column defaults asc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'last_seen', direction: 'desc' });
+    ctx.window._nodesToggleSort('name');
+    const s = ctx.window._nodesGetSortState();
+    assert.strictEqual(s.column, 'name');
+    assert.strictEqual(s.direction, 'asc');
+  });
+
+  test('toggleSort to advert_count defaults desc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    ctx.window._nodesToggleSort('advert_count');
+    assert.strictEqual(ctx.window._nodesGetSortState().direction, 'desc');
+  });
+
+  test('toggleSort to role defaults asc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'last_seen', direction: 'desc' });
+    ctx.window._nodesToggleSort('role');
+    assert.strictEqual(ctx.window._nodesGetSortState().direction, 'asc');
+  });
+
+  test('toggleSort persists to localStorage', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesToggleSort('name');
+    const stored = JSON.parse(ctx.localStorage.getItem('meshcore-nodes-sort'));
+    assert.strictEqual(stored.column, 'name');
+  });
+
+  // --- sortNodes ---
+  test('sortNodes by name asc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    const arr = [
+      { name: 'Charlie', public_key: 'c' },
+      { name: 'Alpha', public_key: 'a' },
+      { name: 'Bravo', public_key: 'b' },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'Alpha');
+    assert.strictEqual(result[1].name, 'Bravo');
+    assert.strictEqual(result[2].name, 'Charlie');
+  });
+
+  test('sortNodes by name desc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'desc' });
+    const arr = [
+      { name: 'Alpha', public_key: 'a' },
+      { name: 'Charlie', public_key: 'c' },
+      { name: 'Bravo', public_key: 'b' },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'Charlie');
+    assert.strictEqual(result[2].name, 'Alpha');
+  });
+
+  test('sortNodes by name puts unnamed last (asc)', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    const arr = [
+      { name: null, public_key: 'x' },
+      { name: 'Alpha', public_key: 'a' },
+      { name: '', public_key: 'y' },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'Alpha');
+  });
+
+  test('sortNodes by last_seen desc (most recent first)', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'last_seen', direction: 'desc' });
+    const now = Date.now();
+    const arr = [
+      { name: 'Old', last_heard: new Date(now - 100000).toISOString() },
+      { name: 'New', last_heard: new Date(now).toISOString() },
+      { name: 'Mid', last_heard: new Date(now - 50000).toISOString() },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'New');
+    assert.strictEqual(result[2].name, 'Old');
+  });
+
+  test('sortNodes by last_seen asc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'last_seen', direction: 'asc' });
+    const now = Date.now();
+    const arr = [
+      { name: 'New', last_heard: new Date(now).toISOString() },
+      { name: 'Old', last_heard: new Date(now - 100000).toISOString() },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'Old');
+    assert.strictEqual(result[1].name, 'New');
+  });
+
+  test('sortNodes by last_seen falls back to last_seen when last_heard missing', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'last_seen', direction: 'desc' });
+    const now = Date.now();
+    const arr = [
+      { name: 'A', last_seen: new Date(now - 100000).toISOString() },
+      { name: 'B', last_heard: new Date(now).toISOString() },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'B');
+  });
+
+  test('sortNodes by last_seen handles missing timestamps', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'last_seen', direction: 'desc' });
+    const arr = [
+      { name: 'NoTime' },
+      { name: 'HasTime', last_heard: new Date().toISOString() },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'HasTime');
+  });
+
+  test('sortNodes by advert_count desc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'advert_count', direction: 'desc' });
+    const arr = [
+      { name: 'Low', advert_count: 5 },
+      { name: 'High', advert_count: 100 },
+      { name: 'Mid', advert_count: 50 },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'High');
+    assert.strictEqual(result[2].name, 'Low');
+  });
+
+  test('sortNodes by advert_count asc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'advert_count', direction: 'asc' });
+    const arr = [
+      { name: 'High', advert_count: 100 },
+      { name: 'Low', advert_count: 5 },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'Low');
+  });
+
+  test('sortNodes by role asc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'role', direction: 'asc' });
+    const arr = [
+      { name: 'A', role: 'sensor' },
+      { name: 'B', role: 'companion' },
+      { name: 'C', role: 'repeater' },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].role, 'companion');
+    assert.strictEqual(result[1].role, 'repeater');
+    assert.strictEqual(result[2].role, 'sensor');
+  });
+
+  test('sortNodes by public_key asc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'public_key', direction: 'asc' });
+    const arr = [
+      { name: 'C', public_key: 'ccc' },
+      { name: 'A', public_key: 'aaa' },
+      { name: 'B', public_key: 'bbb' },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].public_key, 'aaa');
+    assert.strictEqual(result[2].public_key, 'ccc');
+  });
+
+  test('sortNodes handles unknown column gracefully', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'nonexistent', direction: 'asc' });
+    const arr = [{ name: 'A' }, { name: 'B' }];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result.length, 2); // no crash
+  });
+
+  test('sortNodes with empty array', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    const result = ctx.window._nodesSortNodes([]);
+    assert.deepStrictEqual(result, []);
+  });
+
+  test('sortNodes name case-insensitive', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    const arr = [
+      { name: 'bravo' },
+      { name: 'Alpha' },
+    ];
+    const result = ctx.window._nodesSortNodes([...arr]);
+    assert.strictEqual(result[0].name, 'Alpha');
+    assert.strictEqual(result[1].name, 'bravo');
+  });
+
+  // --- sortArrow ---
+  test('sortArrow returns arrow for active column', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    const html = ctx.window._nodesSortArrow('name');
+    assert.ok(html.includes('▲'));
+    assert.ok(html.includes('sort-arrow'));
+  });
+
+  test('sortArrow returns down arrow for desc', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'desc' });
+    const html = ctx.window._nodesSortArrow('name');
+    assert.ok(html.includes('▼'));
+  });
+
+  test('sortArrow returns empty for inactive column', () => {
+    const ctx = makeNodesSandbox();
+    ctx.window._nodesSetSortState({ column: 'name', direction: 'asc' });
+    assert.strictEqual(ctx.window._nodesSortArrow('role'), '');
+  });
+}
+
+// ===== NODES.JS: syncClaimedToFavorites =====
+console.log('\n=== nodes.js: syncClaimedToFavorites ===');
+{
+  function makeNodesSandbox2() {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    ctx.registerPage = () => {};
+    ctx.RegionFilter = { init: () => {}, onChange: () => () => {}, getRegionParam: () => '', offChange: () => {} };
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.invalidateApiCache = () => {};
+    ctx.favStar = () => '';
+    ctx.bindFavStars = () => {};
+    ctx.getFavorites = () => {
+      try { return JSON.parse(ctx.localStorage.getItem('meshcore-favorites') || '[]'); } catch { return []; }
+    };
+    ctx.isFavorite = () => false;
+    ctx.connectWS = () => {};
+    ctx.HopResolver = { init: () => {}, resolve: () => ({}), ready: () => false };
+    ctx.api = () => Promise.resolve({ nodes: [], counts: {} });
+    ctx.CLIENT_TTL = { nodeList: 90000, nodeDetail: 240000, nodeHealth: 240000 };
+    ctx.initTabBar = () => {};
+    ctx.makeColumnsResizable = () => {};
+    ctx.debounce = (fn) => fn;
+    ctx.Set = Set;
+    loadInCtx(ctx, 'public/nodes.js');
+    return ctx;
+  }
+
+  test('syncClaimedToFavorites adds claimed pubkeys to favorites', () => {
+    const ctx = makeNodesSandbox2();
+    ctx.localStorage.setItem('meshcore-my-nodes', JSON.stringify([
+      { pubkey: 'key1' }, { pubkey: 'key2' }
+    ]));
+    ctx.localStorage.setItem('meshcore-favorites', JSON.stringify(['key1']));
+    ctx.window._nodesSyncClaimedToFavorites();
+    const favs = JSON.parse(ctx.localStorage.getItem('meshcore-favorites'));
+    assert.ok(favs.includes('key1'));
+    assert.ok(favs.includes('key2'));
+    assert.strictEqual(favs.length, 2);
+  });
+
+  test('syncClaimedToFavorites no-ops when all claimed already favorited', () => {
+    const ctx = makeNodesSandbox2();
+    ctx.localStorage.setItem('meshcore-my-nodes', JSON.stringify([{ pubkey: 'key1' }]));
+    ctx.localStorage.setItem('meshcore-favorites', JSON.stringify(['key1', 'key2']));
+    ctx.window._nodesSyncClaimedToFavorites();
+    const favs = JSON.parse(ctx.localStorage.getItem('meshcore-favorites'));
+    assert.deepStrictEqual(favs, ['key1', 'key2']); // unchanged
+  });
+
+  test('syncClaimedToFavorites handles empty my-nodes', () => {
+    const ctx = makeNodesSandbox2();
+    ctx.localStorage.setItem('meshcore-my-nodes', '[]');
+    ctx.localStorage.setItem('meshcore-favorites', '["key1"]');
+    ctx.window._nodesSyncClaimedToFavorites();
+    const favs = JSON.parse(ctx.localStorage.getItem('meshcore-favorites'));
+    assert.deepStrictEqual(favs, ['key1']); // unchanged
+  });
+
+  test('syncClaimedToFavorites handles missing localStorage keys', () => {
+    const ctx = makeNodesSandbox2();
+    // No meshcore-my-nodes or meshcore-favorites set
+    ctx.window._nodesSyncClaimedToFavorites(); // should not crash
+  });
+}
+
+// ===== NODES.JS: renderNodeTimestampHtml / renderNodeTimestampText =====
+console.log('\n=== nodes.js: renderNodeTimestampHtml / renderNodeTimestampText ===');
+{
+  function makeNodesSandbox3() {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    ctx.registerPage = () => {};
+    ctx.RegionFilter = { init: () => {}, onChange: () => () => {}, getRegionParam: () => '', offChange: () => {} };
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.invalidateApiCache = () => {};
+    ctx.favStar = () => '';
+    ctx.bindFavStars = () => {};
+    ctx.getFavorites = () => [];
+    ctx.isFavorite = () => false;
+    ctx.connectWS = () => {};
+    ctx.HopResolver = { init: () => {}, resolve: () => ({}), ready: () => false };
+    ctx.api = () => Promise.resolve({ nodes: [], counts: {} });
+    ctx.CLIENT_TTL = { nodeList: 90000, nodeDetail: 240000, nodeHealth: 240000 };
+    ctx.initTabBar = () => {};
+    ctx.makeColumnsResizable = () => {};
+    ctx.debounce = (fn) => fn;
+    ctx.Set = Set;
+    loadInCtx(ctx, 'public/nodes.js');
+    return ctx;
+  }
+
+  test('renderNodeTimestampHtml returns HTML with tooltip', () => {
+    const ctx = makeNodesSandbox3();
+    const d = new Date(Date.now() - 300000).toISOString();
+    const html = ctx.window._nodesRenderNodeTimestampHtml(d);
+    assert.ok(html.includes('timestamp-text'), 'should have timestamp-text class');
+    assert.ok(html.includes('title='), 'should have tooltip');
+  });
+
+  test('renderNodeTimestampHtml marks future timestamps', () => {
+    const ctx = makeNodesSandbox3();
+    const d = new Date(Date.now() + 120000).toISOString();
+    const html = ctx.window._nodesRenderNodeTimestampHtml(d);
+    assert.ok(html.includes('timestamp-future-icon'), 'future timestamp should show warning');
+  });
+
+  test('renderNodeTimestampHtml handles null', () => {
+    const ctx = makeNodesSandbox3();
+    const html = ctx.window._nodesRenderNodeTimestampHtml(null);
+    assert.ok(html.includes('—') || html.length > 0, 'null should produce dash or safe output');
+  });
+
+  test('renderNodeTimestampText returns plain text', () => {
+    const ctx = makeNodesSandbox3();
+    const d = new Date(Date.now() - 300000).toISOString();
+    const text = ctx.window._nodesRenderNodeTimestampText(d);
+    assert.ok(!text.includes('<'), 'should be plain text, not HTML');
+    assert.ok(text.includes('5m ago') || text.includes('ago') || /^\d{4}/.test(text), 'should be a readable timestamp');
+  });
+
+  test('renderNodeTimestampText handles null', () => {
+    const ctx = makeNodesSandbox3();
+    const text = ctx.window._nodesRenderNodeTimestampText(null);
+    assert.strictEqual(text, '—');
+  });
+}
+
+// ===== NODES.JS: getStatusInfo edge cases (P0 coverage expansion) =====
+console.log('\n=== nodes.js: getStatusInfo edge cases ===');
+{
+  function makeNodesSandboxForStatus() {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    ctx.registerPage = () => {};
+    ctx.RegionFilter = { init: () => {}, onChange: () => () => {}, getRegionParam: () => '', offChange: () => {} };
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.invalidateApiCache = () => {};
+    ctx.favStar = () => '';
+    ctx.bindFavStars = () => {};
+    ctx.getFavorites = () => [];
+    ctx.isFavorite = () => false;
+    ctx.api = () => Promise.resolve({ nodes: [], counts: {} });
+    ctx.CLIENT_TTL = { nodeList: 90000, nodeDetail: 240000, nodeHealth: 240000 };
+    ctx.initTabBar = () => {};
+    ctx.makeColumnsResizable = () => {};
+    ctx.debounce = (fn) => fn;
+    ctx.Set = Set;
+
+    const nodesSource = fs.readFileSync('public/nodes.js', 'utf8');
+    const modifiedSource = nodesSource.replace(
+      /\(function \(\) \{/,
+      '(function () { window.__nodesExport = {};'
+    ).replace(
+      /function getStatusInfo/,
+      'window.__nodesExport.getStatusInfo = getStatusInfo; function getStatusInfo'
+    ).replace(
+      /function getStatusTooltip/,
+      'window.__nodesExport.getStatusTooltip = getStatusTooltip; function getStatusTooltip'
+    );
+    vm.runInContext(modifiedSource, ctx);
+    for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    return ctx;
+  }
+
+  const ctx = makeNodesSandboxForStatus();
+  const gsi = ctx.window.__nodesExport.getStatusInfo;
+  const gst = ctx.window.__nodesExport.getStatusTooltip;
+
+  test('getStatusInfo with _lastHeard prefers it over last_heard', () => {
+    const recent = new Date().toISOString();
+    const old = new Date(Date.now() - 96 * 3600000).toISOString();
+    const info = gsi({ role: 'repeater', last_heard: old, _lastHeard: recent });
+    assert.strictEqual(info.status, 'active');
+  });
+
+  test('getStatusInfo with no timestamps returns stale', () => {
+    const info = gsi({ role: 'companion' });
+    assert.strictEqual(info.status, 'stale');
+    assert.strictEqual(info.lastHeardMs, 0);
+  });
+
+  test('getStatusInfo uses last_seen as fallback', () => {
+    const recent = new Date().toISOString();
+    const info = gsi({ role: 'repeater', last_seen: recent });
+    assert.strictEqual(info.status, 'active');
+  });
+
+  test('getStatusInfo room uses infrastructure threshold (72h)', () => {
+    const d48h = new Date(Date.now() - 48 * 3600000).toISOString();
+    const info = gsi({ role: 'room', last_heard: d48h });
+    assert.strictEqual(info.status, 'active'); // 48h < 72h threshold
+  });
+
+  test('getStatusInfo room stale at 96h', () => {
+    const d96h = new Date(Date.now() - 96 * 3600000).toISOString();
+    const info = gsi({ role: 'room', last_heard: d96h });
+    assert.strictEqual(info.status, 'stale');
+  });
+
+  test('getStatusInfo sensor stale at 25h', () => {
+    const d25h = new Date(Date.now() - 25 * 3600000).toISOString();
+    const info = gsi({ role: 'sensor', last_heard: d25h });
+    assert.strictEqual(info.status, 'stale');
+  });
+
+  test('getStatusInfo returns explanation for active node', () => {
+    const info = gsi({ role: 'repeater', last_heard: new Date().toISOString() });
+    assert.ok(info.explanation.includes('Last heard'));
+  });
+
+  test('getStatusInfo returns explanation for stale companion', () => {
+    const d48h = new Date(Date.now() - 48 * 3600000).toISOString();
+    const info = gsi({ role: 'companion', last_heard: d48h });
+    assert.ok(info.explanation.includes('companions'));
+  });
+
+  test('getStatusInfo returns explanation for stale repeater', () => {
+    const d96h = new Date(Date.now() - 96 * 3600000).toISOString();
+    const info = gsi({ role: 'repeater', last_heard: d96h });
+    assert.ok(info.explanation.includes('repeaters'));
+  });
+
+  test('getStatusInfo roleColor defaults to gray for unknown role', () => {
+    const info = gsi({ role: 'unknown_role', last_heard: new Date().toISOString() });
+    assert.strictEqual(info.roleColor, '#6b7280');
+  });
+
+  // --- getStatusTooltip edge cases ---
+  test('getStatusTooltip active room mentions 72h', () => {
+    assert.ok(gst('room', 'active').includes('72h'));
+  });
+
+  test('getStatusTooltip stale room mentions offline', () => {
+    assert.ok(gst('room', 'stale').includes('offline'));
+  });
+
+  test('getStatusTooltip active sensor mentions 24h', () => {
+    assert.ok(gst('sensor', 'active').includes('24h'));
+  });
+
+  test('getStatusTooltip stale repeater mentions offline', () => {
+    assert.ok(gst('repeater', 'stale').includes('offline'));
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
