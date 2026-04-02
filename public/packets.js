@@ -1134,7 +1134,6 @@
     }
     _cumulativeOffsetsCache = offsets;
     return offsets;
-    return offsets;
   }
 
   function renderVisibleRows() {
