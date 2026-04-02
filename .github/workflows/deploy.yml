@@ -248,7 +248,7 @@ jobs:
 
       - name: Free disk space
         run: |
-          docker system prune -af --volumes 2>/dev/null || true
+          docker system prune -af 2>/dev/null || true
           docker builder prune -af 2>/dev/null || true
           df -h /
 
