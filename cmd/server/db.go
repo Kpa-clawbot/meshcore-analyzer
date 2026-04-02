@@ -698,6 +698,32 @@ func (db *DB) GetNodes(limit, offset int, role, search, before, lastHeard, sortB
 		}
 	}
 
+	if region != "" {
+		codes := normalizeRegionCodes(region)
+		if len(codes) > 0 {
+			placeholders := make([]string, len(codes))
+			regionArgs := make([]interface{}, len(codes))
+			for i, c := range codes {
+				placeholders[i] = "?"
+				regionArgs[i] = c
+			}
+			joinCond := "obs.rowid = o.observer_idx"
+			if !db.isV3 {
+				joinCond = "obs.id = o.observer_id"
+			}
+			subq := fmt.Sprintf(`public_key IN (
+				SELECT DISTINCT JSON_EXTRACT(t.decoded_json, '$.pubKey')
+				FROM transmissions t
+				JOIN observations o ON o.transmission_id = t.id
+				JOIN observers obs ON %s
+				WHERE t.payload_type = 4
+				AND UPPER(TRIM(obs.iata)) IN (%s)
+			)`, joinCond, strings.Join(placeholders, ","))
+			where = append(where, subq)
+			args = append(args, regionArgs...)
+		}
+	}
+
 	w := ""
 	if len(where) > 0 {
 		w = "WHERE " + strings.Join(where, " AND ")

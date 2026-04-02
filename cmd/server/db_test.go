@@ -1012,6 +1012,52 @@ func TestGetNodesFiltering(t *testing.T) {
 			t.Errorf("expected 1 node with offset, got %d", len(nodes))
 		}
 	})
+
+	t.Run("region filter SJC", func(t *testing.T) {
+		nodes, total, _, err := db.GetNodes(50, 0, "", "", "", "", "", "SJC")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 {
+			t.Errorf("expected 1 node for SJC region, got %d", total)
+		}
+		if len(nodes) != 1 {
+			t.Fatalf("expected 1 node, got %d", len(nodes))
+		}
+		if nodes[0]["public_key"] != "aabbccdd11223344" {
+			t.Errorf("expected TestRepeater, got %v", nodes[0]["public_key"])
+		}
+	})
+
+	t.Run("region filter SFO", func(t *testing.T) {
+		_, total, _, err := db.GetNodes(50, 0, "", "", "", "", "", "SFO")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 {
+			t.Errorf("expected 1 node for SFO region, got %d", total)
+		}
+	})
+
+	t.Run("region filter multi", func(t *testing.T) {
+		_, total, _, err := db.GetNodes(50, 0, "", "", "", "", "", "SJC,SFO")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 {
+			t.Errorf("expected 1 node for SJC,SFO region, got %d", total)
+		}
+	})
+
+	t.Run("region filter unknown", func(t *testing.T) {
+		_, total, _, err := db.GetNodes(50, 0, "", "", "", "", "", "AMS")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 0 {
+			t.Errorf("expected 0 nodes for unknown region, got %d", total)
+		}
+	})
 }
 
 func TestGetChannelMessagesDedup(t *testing.T) {
