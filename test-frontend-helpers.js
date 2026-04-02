@@ -2696,6 +2696,26 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   });
 }
 
+// ===== live.js: bufferPacket timestamp =====
+console.log('\n=== live.js: bufferPacket timestamp ===');
+{
+  const liveSource = fs.readFileSync('public/live.js', 'utf8');
+
+  test('bufferPacket uses packet timestamp not Date.now()', () => {
+    assert.ok(
+      liveSource.includes('pkt._ts = new Date(pkt.timestamp || pkt.created_at || Date.now()).getTime()'),
+      'bufferPacket must derive _ts from pkt.timestamp, not Date.now()'
+    );
+  });
+
+  test('bufferPacket does not unconditionally assign Date.now() to _ts', () => {
+    assert.ok(
+      !liveSource.match(/pkt\._ts\s*=\s*Date\.now\(\)\s*;/),
+      'bufferPacket must not stamp all packets with receive time'
+    );
+  });
+}
+
 // ===== live.js: nextHop null guards =====
 console.log('\n=== live.js: nextHop null guards ===');
 {

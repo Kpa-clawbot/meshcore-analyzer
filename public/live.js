@@ -476,7 +476,7 @@
   });
 
   function bufferPacket(pkt) {
-    pkt._ts = Date.now();
+    pkt._ts = new Date(pkt.timestamp || pkt.created_at || Date.now()).getTime();
     const entry = { ts: pkt._ts, pkt };
     VCR.buffer.push(entry);
     // Keep buffer capped at ~2000 — adjust playhead to avoid stale indices (#63)
