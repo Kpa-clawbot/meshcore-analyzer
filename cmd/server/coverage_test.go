@@ -3715,3 +3715,52 @@ func TestGetChannelMessagesAfterIngest(t *testing.T) {
 		t.Errorf("newest message should be 'brand new message', got %q", lastMsg["text"])
 	}
 }
+
+func TestIndexByNodePreCheck(t *testing.T) {
+	store := &PacketStore{
+		byNode:     make(map[string][]*StoreTx),
+		nodeHashes: make(map[string]map[string]bool),
+	}
+
+	t.Run("indexes ADVERT with pubKey", func(t *testing.T) {
+		tx := &StoreTx{Hash: "h1", DecodedJSON: `{"pubKey":"AABBCC","type":"ADVERT"}`}
+		store.indexByNode(tx)
+		if len(store.byNode["AABBCC"]) != 1 {
+			t.Errorf("expected 1 entry for pubKey AABBCC, got %d", len(store.byNode["AABBCC"]))
+		}
+	})
+
+	t.Run("indexes destPubKey", func(t *testing.T) {
+		tx := &StoreTx{Hash: "h2", DecodedJSON: `{"destPubKey":"DDEEFF","type":"MSG"}`}
+		store.indexByNode(tx)
+		if len(store.byNode["DDEEFF"]) != 1 {
+			t.Errorf("expected 1 entry for destPubKey DDEEFF, got %d", len(store.byNode["DDEEFF"]))
+		}
+	})
+
+	t.Run("skips channel message without pubKey", func(t *testing.T) {
+		beforeLen := len(store.byNode)
+		tx := &StoreTx{Hash: "h3", DecodedJSON: `{"type":"CHAN","channel":"#test","text":"hello"}`}
+		store.indexByNode(tx)
+		if len(store.byNode) != beforeLen {
+			t.Errorf("expected byNode unchanged for channel packet, got %d new entries", len(store.byNode)-beforeLen)
+		}
+	})
+
+	t.Run("skips empty DecodedJSON", func(t *testing.T) {
+		beforeLen := len(store.byNode)
+		tx := &StoreTx{Hash: "h4", DecodedJSON: ""}
+		store.indexByNode(tx)
+		if len(store.byNode) != beforeLen {
+			t.Error("expected byNode unchanged for empty DecodedJSON")
+		}
+	})
+
+	t.Run("deduplicates same hash", func(t *testing.T) {
+		tx := &StoreTx{Hash: "h1", DecodedJSON: `{"pubKey":"AABBCC","type":"ADVERT"}`}
+		store.indexByNode(tx) // second call for same hash
+		if len(store.byNode["AABBCC"]) != 1 {
+			t.Errorf("expected dedup to keep 1 entry, got %d", len(store.byNode["AABBCC"]))
+		}
+	})
+}

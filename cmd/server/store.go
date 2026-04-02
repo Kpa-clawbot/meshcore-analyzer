@@ -369,6 +369,11 @@ func (s *PacketStore) indexByNode(tx *StoreTx) {
 	if tx.DecodedJSON == "" {
 		return
 	}
+	// All three target fields ("pubKey", "destPubKey", "srcPubKey") share the
+	// common suffix "ubKey" — skip JSON parse for packets that have none of them.
+	if !strings.Contains(tx.DecodedJSON, "ubKey") {
+		return
+	}
 	var decoded map[string]interface{}
 	if json.Unmarshal([]byte(tx.DecodedJSON), &decoded) != nil {
 		return
