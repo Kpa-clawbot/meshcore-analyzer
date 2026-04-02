@@ -151,6 +151,7 @@ function makeLiveSandbox({ withAppJs = false } = {}) {
   loadInCtx(ctx, 'public/roles.js');
   if (withAppJs) loadInCtx(ctx, 'public/app.js');
   try { loadInCtx(ctx, 'public/live.js'); } catch (e) {
+    console.error('live.js load error:', e.message);
     for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
   }
   return ctx;
@@ -358,6 +359,21 @@ console.log('\n=== live.js: VCR state machine ===');
     vcrSpeedCycle();
     assert.strictEqual(VCR().speed, 1); // wraps around
   });
+
+  const vcrResumeLive = ctx.window._liveVcrResumeLive;
+  assert.ok(vcrResumeLive, '_liveVcrResumeLive must be exposed');
+
+  test('vcrResumeLive transitions from PAUSED to LIVE', () => {
+    vcrPause();
+    assert.strictEqual(VCR().mode, 'PAUSED');
+    assert.ok(VCR().frozenNow != null, 'frozenNow should be set when paused');
+    vcrResumeLive();
+    assert.strictEqual(VCR().mode, 'LIVE');
+    assert.strictEqual(VCR().frozenNow, null, 'frozenNow should be cleared');
+    assert.strictEqual(VCR().playhead, -1, 'playhead should reset to -1');
+    assert.strictEqual(VCR().speed, 1, 'speed should reset to 1');
+    assert.strictEqual(VCR().missedCount, 0, 'missedCount should be 0');
+  });
 }
 
 // ===== getFavoritePubkeys =====
@@ -421,6 +437,9 @@ console.log('\n=== live.js: getFavoritePubkeys ===');
 console.log('\n=== live.js: packetInvolvesFavorite ===');
 {
   const ctx = makeLiveSandbox();
+  // Clean localStorage to avoid leakage from prior test sections
+  ctx.localStorage.removeItem('meshcore-favorites');
+  ctx.localStorage.removeItem('meshcore-my-nodes');
   const involves = ctx.window._livePacketInvolvesFavorite;
   assert.ok(involves, '_livePacketInvolvesFavorite must be exposed');
 
@@ -460,6 +479,9 @@ console.log('\n=== live.js: packetInvolvesFavorite ===');
 console.log('\n=== live.js: isNodeFavorited ===');
 {
   const ctx = makeLiveSandbox();
+  // Clean localStorage to avoid leakage from prior test sections
+  ctx.localStorage.removeItem('meshcore-favorites');
+  ctx.localStorage.removeItem('meshcore-my-nodes');
   const isFav = ctx.window._liveIsNodeFavorited;
   assert.ok(isFav, '_liveIsNodeFavorited must be exposed');
 
@@ -531,8 +553,13 @@ console.log('\n=== live.js: resolveHopPositions ===');
     const payload = { pubKey: 'sender1', name: 'Sender', lat: 37.5, lon: -122.0 };
     // No nodes in nodeData, so hops won't resolve
     const result = resolve([], payload);
-    // With empty hops but a sender, might or might not add anchor depending on code
-    assert.ok(Array.isArray(result));
+    // With empty hops, the function still adds the sender as an anchor point.
+    assert.ok(Array.isArray(result), 'should return an array');
+    assert.strictEqual(result.length, 1, 'sender coords should produce one anchor position');
+    assert.strictEqual(result[0].pos[0], 37.5, 'anchor should use sender lat');
+    assert.strictEqual(result[0].pos[1], -122.0, 'anchor should use sender lon');
+    assert.strictEqual(result[0].name, 'Sender', 'anchor should use sender name');
+    assert.strictEqual(result[0].known, true, 'sender with coords should be marked as known');
   });
 
   test('resolves known node from nodeData', () => {
@@ -646,6 +673,19 @@ console.log('\n=== live.js: bufferPacket / VCR buffer ===');
     assert.strictEqual(VCR().missedCount, 2);
     ctx.window._liveVcrSetMode('LIVE');
   });
+
+  test('bufferPacket handles malformed packet without decoded field', () => {
+    const before = VCR().buffer.length;
+    // Packet with no decoded field at all — should not throw
+    bufferPacket({ hash: 'malformed1' });
+    assert.ok(VCR().buffer.length >= before, 'buffer should not shrink');
+  });
+
+  test('bufferPacket handles packet with null decoded', () => {
+    const before = VCR().buffer.length;
+    bufferPacket({ hash: 'malformed2', decoded: null });
+    assert.ok(VCR().buffer.length >= before, 'buffer should not shrink');
+  });
 }
 
 // ===== VCR frozenNow behavior =====
@@ -675,6 +715,11 @@ console.log('\n=== live.js: VCR frozenNow ===');
 }
 
 // ===== Source-level checks for live.js safety guards =====
+// NOTE: These src.includes() checks are intentionally brittle — they verify that specific
+// safety guards exist in the source code TODAY. They will break on whitespace/rename refactors,
+// which is an acceptable tradeoff: a failing test forces the developer to verify the guard
+// still exists in its new form. For critical guards (animation limits, null checks), prefer
+// behavioral tests where feasible (see bufferPacket and VCR sections above).
 console.log('\n=== live.js: source-level safety checks ===');
 {
   const src = fs.readFileSync('public/live.js', 'utf8');
@@ -697,6 +742,11 @@ console.log('\n=== live.js: source-level safety checks ===');
   test('pulseNode guards null animLayer/nodesLayer', () => {
     assert.ok(src.includes('if (!animLayer || !nodesLayer) return;'),
       'pulseNode must guard null layers');
+  });
+
+  test('nextHop guards null animLayer', () => {
+    assert.ok(src.includes('if (!animLayer) return;'),
+      'nextHop must guard null animLayer before drawing');
   });
 
   test('VCR buffer trim adjusts playhead', () => {
