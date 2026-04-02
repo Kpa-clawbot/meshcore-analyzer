@@ -242,11 +242,35 @@ func main() {
 }
 
 // spaHandler serves static files, falling back to index.html for SPA routes.
+// It reads index.html once at creation time and replaces the __BUST__ placeholder
+// with a Unix timestamp so browsers fetch fresh JS/CSS after each server restart.
 func spaHandler(root string, fs http.Handler) http.Handler {
+	// Pre-process index.html: replace __BUST__ with a cache-bust timestamp
+	indexPath := filepath.Join(root, "index.html")
+	rawHTML, err := os.ReadFile(indexPath)
+	if err != nil {
+		log.Printf("[static] warning: could not read index.html for cache-bust: %v", err)
+		rawHTML = []byte("<!DOCTYPE html><html><body><h1>CoreScope</h1><p>index.html not found</p></body></html>")
+	}
+	bustValue := fmt.Sprintf("%d", time.Now().Unix())
+	indexHTML := []byte(strings.ReplaceAll(string(rawHTML), "__BUST__", bustValue))
+	log.Printf("[static] cache-bust value: %s", bustValue)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve pre-processed index.html for root and /index.html
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Write(indexHTML)
+			return
+		}
+
 		path := filepath.Join(root, r.URL.Path)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			http.ServeFile(w, r, filepath.Join(root, "index.html"))
+			// SPA fallback — serve pre-processed index.html
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Write(indexHTML)
 			return
 		}
 		// Disable caching for JS/CSS/HTML

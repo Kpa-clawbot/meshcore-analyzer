@@ -33,7 +33,7 @@ public/            — Frontend (vanilla JS, one file per page) — ACTIVE, NOT 
   style.css        — Main styles, CSS variables for theming
   live.css         — Live page styles
   home.css         — Home page styles
-  index.html       — SPA shell, script/style tags with cache busters
+  index.html       — SPA shell, script/style tags with __BUST__ placeholder (auto-replaced at server startup)
 test-fixtures/     — Real data SQLite fixture from staging (used for E2E tests)
 scripts/           — Tooling (coverage collector, fixture capture, frontend instrumentation)
 ```
@@ -84,12 +84,8 @@ Every change that touches logic MUST have tests. For Go backend: `cd cmd/server 
 ### 2. No commit without browser validation
 After pushing, verify the change works in an actual browser. Use `browser profile=openclaw` against the running instance. Take a screenshot if the change is visual. If you can't validate it, say so — don't claim it works.
 
-### 3. Cache busters — ALWAYS bump them
-Every time you change a `.js` or `.css` file in `public/`, bump the cache buster in `index.html`. This has caused 7 separate production regressions. Use:
-```bash
-NEWV=$(date +%s) && sed -i "s/v=[0-9]*/v=$NEWV/g" public/index.html
-```
-Do this in the SAME commit as the code change, not as a follow-up.
+### 3. Cache busters are automatic — do NOT manually edit them
+Cache busters are injected automatically by the Go server at startup. The `__BUST__` placeholder in `index.html` is replaced with a Unix timestamp when the server reads the file. No manual bumping needed — every server restart picks up new asset versions. Do NOT replace `__BUST__` with hardcoded timestamps.
 
 ### 4. Verify API response shape before building UI
 Before writing client code that consumes an API endpoint, check what the endpoint ACTUALLY returns. Use `curl` or check the server code. Don't assume fields exist — grouped packets (`groupByHash=true`) have different fields than raw packets. This has caused multiple breakages.
@@ -351,7 +347,7 @@ One logical change per commit. Each commit is deployable. Each commit has its te
 
 | Pitfall | Times it happened | Prevention |
 |---------|-------------------|------------|
-| Forgot cache busters | 7 | Always bump in same commit |
+| Forgot cache busters | 7 | Now automatic — `__BUST__` replaced at server startup |
 | Grouped packets missing fields | 3 | curl the actual API first |
 | last_seen vs last_heard mismatch | 4 | Always use `last_heard \|\| last_seen` |
 | CSS selectors don't match SVG | 2 | Manipulate SVG in JS after generation |

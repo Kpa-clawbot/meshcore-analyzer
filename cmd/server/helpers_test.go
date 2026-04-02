@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -324,6 +325,84 @@ func TestSpaHandler(t *testing.T) {
 		cc := w.Header().Get("Cache-Control")
 		if cc != "no-cache, no-store, must-revalidate" {
 			t.Errorf("expected no-cache header for .html, got %s", cc)
+		}
+	})
+
+	t.Run("root path serves index.html", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if body != "<html>SPA</html>" {
+			t.Errorf("expected SPA index.html content, got %s", body)
+		}
+		ct := w.Header().Get("Content-Type")
+		if ct != "text/html; charset=utf-8" {
+			t.Errorf("expected text/html content type, got %s", ct)
+		}
+	})
+
+	t.Run("/index.html serves pre-processed content", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/index.html", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if body != "<html>SPA</html>" {
+			t.Errorf("expected SPA index.html content, got %s", body)
+		}
+	})
+}
+
+func TestSpaHandlerCacheBust(t *testing.T) {
+	dir := t.TempDir()
+	htmlWithBust := `<html><script src="app.js?v=__BUST__"></script><link href="style.css?v=__BUST__"></html>`
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte(htmlWithBust), 0644)
+
+	fs := http.FileServer(http.Dir(dir))
+	handler := spaHandler(dir, fs)
+
+	t.Run("__BUST__ is replaced with a Unix timestamp", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		body := w.Body.String()
+		if strings.Contains(body, "__BUST__") {
+			t.Errorf("__BUST__ placeholder was not replaced in response: %s", body)
+		}
+		// Verify it was replaced with digits (Unix timestamp)
+		if !strings.Contains(body, "v=") {
+			t.Errorf("expected v= query params in response, got: %s", body)
+		}
+	})
+
+	t.Run("SPA fallback also has busted values", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/nonexistent/route", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		body := w.Body.String()
+		if strings.Contains(body, "__BUST__") {
+			t.Errorf("__BUST__ placeholder was not replaced in SPA fallback: %s", body)
+		}
+	})
+
+	t.Run("/index.html also has busted values", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/index.html", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		body := w.Body.String()
+		if strings.Contains(body, "__BUST__") {
+			t.Errorf("__BUST__ placeholder was not replaced for /index.html: %s", body)
 		}
 	})
 }
