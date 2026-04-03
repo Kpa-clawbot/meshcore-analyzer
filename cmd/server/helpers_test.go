@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -217,6 +219,44 @@ func TestSortedCopy(t *testing.T) {
 	empty := sortedCopy([]float64{})
 	if len(empty) != 0 {
 		t.Error("expected empty slice")
+	}
+}
+
+func TestSortedCopyLarge(t *testing.T) {
+	// Regression: verify correct sort on larger input
+	rng := rand.New(rand.NewSource(42))
+	n := 1000
+	input := make([]float64, n)
+	for i := range input {
+		input[i] = rng.Float64() * 1000
+	}
+	result := sortedCopy(input)
+	if len(result) != n {
+		t.Fatalf("expected %d elements, got %d", n, len(result))
+	}
+	for i := 1; i < len(result); i++ {
+		if result[i] < result[i-1] {
+			t.Fatalf("not sorted at index %d: %v > %v", i, result[i-1], result[i])
+		}
+	}
+	// Original unchanged
+	if input[0] == result[0] && input[1] == result[1] && input[2] == result[2] {
+		// Could be coincidence but very unlikely with random data
+	}
+}
+
+func BenchmarkSortedCopy(b *testing.B) {
+	rng := rand.New(rand.NewSource(42))
+	for _, size := range []int{256, 1000, 10000} {
+		data := make([]float64, size)
+		for i := range data {
+			data[i] = rng.Float64() * 1000
+		}
+		b.Run(fmt.Sprintf("n=%d", size), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				sortedCopy(data)
+			}
+		})
 	}
 }
 

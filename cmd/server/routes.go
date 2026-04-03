@@ -1958,13 +1958,7 @@ func percentile(sorted []float64, p float64) float64 {
 func sortedCopy(arr []float64) []float64 {
 	cp := make([]float64, len(arr))
 	copy(cp, arr)
-	for i := 0; i < len(cp); i++ {
-		for j := i + 1; j < len(cp); j++ {
-			if cp[j] < cp[i] {
-				cp[i], cp[j] = cp[j], cp[i]
-			}
-		}
-	}
+	sort.Float64s(cp)
 	return cp
 }
 
