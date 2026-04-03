@@ -85,6 +85,7 @@
             <button class="tab-btn" data-tab="subpaths">Route Patterns</button>
             <button class="tab-btn" data-tab="nodes">Nodes</button>
             <button class="tab-btn" data-tab="distance">Distance</button>
+            <button class="tab-btn" data-tab="neighbor-graph">Neighbor Graph</button>
           </div>
         </div>
         <div id="analyticsContent" class="analytics-content">
@@ -171,6 +172,7 @@
       case 'subpaths': await renderSubpaths(el); break;
       case 'nodes': await renderNodesTab(el); break;
       case 'distance': await renderDistanceTab(el); break;
+      case 'neighbor-graph': await renderNeighborGraphTab(el); break;
     }
     // Auto-apply column resizing to all analytics tables
     requestAnimationFrame(() => {
@@ -1799,7 +1801,7 @@
     }
   }
 
-function destroy() { _analyticsData = {}; _channelData = null; }
+function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _ngState.animId) { cancelAnimationFrame(_ngState.animId); } _ngState = null; }
 
   // Expose for testing
   if (typeof window !== 'undefined') {
@@ -1808,6 +1810,362 @@ function destroy() { _analyticsData = {}; _channelData = null; }
     window._analyticsSaveChannelSort = saveChannelSort;
     window._analyticsChannelTbodyHtml = channelTbodyHtml;
     window._analyticsChannelTheadHtml = channelTheadHtml;
+  }
+
+  // ─── Neighbor Graph Tab ─────────────────────────────────────────────────────
+
+  let _ngState = null; // neighbor graph state
+
+  async function renderNeighborGraphTab(el) {
+    el.innerHTML = `
+      <div class="analytics-card" id="ngCard">
+        <h3>🕸️ Neighbor Graph</h3>
+        <div id="ngFilters" class="ng-filters" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+          <label style="font-size:13px">Roles:
+            <span id="ngRoleChecks" style="margin-left:4px"></span>
+          </label>
+          <label style="font-size:13px">Min Score: <input type="range" id="ngMinScore" min="0" max="100" value="10" style="width:100px;vertical-align:middle">
+            <span id="ngMinScoreVal">0.10</span>
+          </label>
+          <label style="font-size:13px">Confidence:
+            <select id="ngConfidence" style="font-size:12px;padding:2px 4px">
+              <option value="all">Show All</option>
+              <option value="high">High Only</option>
+              <option value="hide-ambiguous">Hide Ambiguous</option>
+            </select>
+          </label>
+        </div>
+        <div id="ngStats" class="stat-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px"></div>
+        <div style="position:relative;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+          <canvas id="ngCanvas" width="900" height="600" style="width:100%;height:600px;cursor:grab"></canvas>
+          <div id="ngTooltip" style="position:absolute;display:none;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:12px;pointer-events:none;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,0.2)"></div>
+        </div>
+      </div>`;
+
+    // Role checkboxes
+    const roles = ['repeater','companion','room','sensor'];
+    const rcEl = document.getElementById('ngRoleChecks');
+    roles.forEach(r => {
+      const color = (window.ROLE_COLORS || {})[r] || '#888';
+      rcEl.innerHTML += `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-role="${r}" checked> <span style="color:${esc(color)}">${esc(r)}</span></label>`;
+    });
+
+    // Load data
+    const rqs = RegionFilter.regionQueryString();
+    const sep = rqs ? '?' + rqs.slice(1) : '';
+    let graphData;
+    try {
+      graphData = await api('/analytics/neighbor-graph' + sep + (sep ? '&' : '?') + 'min_count=1&min_score=0', { ttl: CLIENT_TTL.analyticsRF });
+    } catch (e) {
+      el.innerHTML = `<div class="analytics-card"><p class="text-muted">Failed to load neighbor graph: ${esc(e.message)}</p></div>`;
+      return;
+    }
+
+    _ngState = createGraphState(graphData);
+    renderNGStats(_ngState);
+    startGraphRenderer();
+
+    // Filter listeners
+    document.getElementById('ngMinScore').addEventListener('input', function() {
+      document.getElementById('ngMinScoreVal').textContent = (this.value / 100).toFixed(2);
+      applyNGFilters();
+    });
+    document.getElementById('ngConfidence').addEventListener('change', applyNGFilters);
+    rcEl.addEventListener('change', applyNGFilters);
+  }
+
+  function createGraphState(data) {
+    const nodes = (data.nodes || []).map((n, i) => ({
+      ...n,
+      x: 450 + (Math.random() - 0.5) * 400,
+      y: 300 + (Math.random() - 0.5) * 300,
+      vx: 0, vy: 0,
+      radius: Math.max(6, Math.min(18, 6 + (n.neighbor_count || 0)))
+    }));
+    const nodeIdx = {};
+    nodes.forEach((n, i) => { nodeIdx[n.pubkey] = i; });
+    const edges = (data.edges || []).filter(e => nodeIdx[e.source] !== undefined && nodeIdx[e.target] !== undefined);
+    return {
+      allNodes: nodes, allEdges: edges,
+      nodes, edges, nodeIdx,
+      stats: data.stats || {},
+      zoom: 1, panX: 0, panY: 0,
+      dragging: null, panning: false,
+      lastMouseX: 0, lastMouseY: 0,
+      cooling: 1.0, animId: null
+    };
+  }
+
+  function applyNGFilters() {
+    if (!_ngState) return;
+    const minScore = parseInt(document.getElementById('ngMinScore').value, 10) / 100;
+    const conf = document.getElementById('ngConfidence').value;
+    const checkedRoles = new Set();
+    document.querySelectorAll('#ngRoleChecks input:checked').forEach(cb => checkedRoles.add(cb.dataset.role));
+
+    // Filter nodes by role
+    const visibleNodes = _ngState.allNodes.filter(n => {
+      const role = (n.role || 'unknown').toLowerCase();
+      return checkedRoles.has(role) || role === 'unknown' || role === 'observer';
+    });
+    const visiblePKs = new Set(visibleNodes.map(n => n.pubkey));
+
+    // Filter edges
+    _ngState.edges = _ngState.allEdges.filter(e => {
+      if (e.score < minScore) return false;
+      if (conf === 'high' && e.ambiguous) return false;
+      if (conf === 'hide-ambiguous' && e.ambiguous) return false;
+      return visiblePKs.has(e.source) && visiblePKs.has(e.target);
+    });
+
+    // Only include nodes that have at least one visible edge
+    const edgeNodes = new Set();
+    _ngState.edges.forEach(e => { edgeNodes.add(e.source); edgeNodes.add(e.target); });
+    _ngState.nodes = visibleNodes.filter(n => edgeNodes.has(n.pubkey));
+
+    // Rebuild index
+    _ngState.nodeIdx = {};
+    _ngState.nodes.forEach((n, i) => { _ngState.nodeIdx[n.pubkey] = i; });
+
+    _ngState.cooling = 1.0;
+    renderNGStats(_ngState);
+  }
+
+  function renderNGStats(st) {
+    const nodes = st.nodes, edges = st.edges;
+    const totalScore = edges.reduce((s, e) => s + e.score, 0);
+    const avgScore = edges.length ? (totalScore / edges.length) : 0;
+    const ambiguous = edges.filter(e => e.ambiguous).length;
+    const resolved = edges.length ? ((edges.length - ambiguous) / edges.length * 100) : 0;
+    const statsEl = document.getElementById('ngStats');
+    if (!statsEl) return;
+    statsEl.innerHTML = `
+      <div class="stat-card"><div class="stat-value">${nodes.length}</div><div class="stat-label">Nodes</div></div>
+      <div class="stat-card"><div class="stat-value">${edges.length}</div><div class="stat-label">Edges</div></div>
+      <div class="stat-card"><div class="stat-value">${avgScore.toFixed(2)}</div><div class="stat-label">Avg Score</div></div>
+      <div class="stat-card"><div class="stat-value">${resolved.toFixed(0)}%</div><div class="stat-label">Resolved</div></div>
+      <div class="stat-card"><div class="stat-value">${ambiguous}</div><div class="stat-label">Ambiguous</div></div>`;
+  }
+
+  function startGraphRenderer() {
+    if (!_ngState) return;
+    const canvas = document.getElementById('ngCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.scale(dpr, dpr);
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+
+    // Interaction
+    let hoverNode = null;
+
+    function canvasToGraph(cx, cy) {
+      return { x: (cx - _ngState.panX) / _ngState.zoom, y: (cy - _ngState.panY) / _ngState.zoom };
+    }
+
+    function findNode(cx, cy) {
+      const gp = canvasToGraph(cx, cy);
+      for (let i = _ngState.nodes.length - 1; i >= 0; i--) {
+        const n = _ngState.nodes[i];
+        const dx = gp.x - n.x, dy = gp.y - n.y;
+        if (dx * dx + dy * dy <= n.radius * n.radius) return n;
+      }
+      return null;
+    }
+
+    canvas.addEventListener('mousedown', function(e) {
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      const n = findNode(cx, cy);
+      if (n) {
+        _ngState.dragging = n;
+        n._pinned = true;
+        canvas.style.cursor = 'grabbing';
+      } else {
+        _ngState.panning = true;
+        canvas.style.cursor = 'grabbing';
+      }
+      _ngState.lastMouseX = e.clientX;
+      _ngState.lastMouseY = e.clientY;
+    });
+
+    canvas.addEventListener('mousemove', function(e) {
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      if (_ngState.dragging) {
+        const dx = (e.clientX - _ngState.lastMouseX) / _ngState.zoom;
+        const dy = (e.clientY - _ngState.lastMouseY) / _ngState.zoom;
+        _ngState.dragging.x += dx;
+        _ngState.dragging.y += dy;
+        _ngState.lastMouseX = e.clientX;
+        _ngState.lastMouseY = e.clientY;
+        _ngState.cooling = Math.max(_ngState.cooling, 0.3);
+      } else if (_ngState.panning) {
+        _ngState.panX += e.clientX - _ngState.lastMouseX;
+        _ngState.panY += e.clientY - _ngState.lastMouseY;
+        _ngState.lastMouseX = e.clientX;
+        _ngState.lastMouseY = e.clientY;
+      } else {
+        const n = findNode(cx, cy);
+        if (n !== hoverNode) {
+          hoverNode = n;
+          canvas.style.cursor = n ? 'pointer' : 'grab';
+          const tip = document.getElementById('ngTooltip');
+          if (n && tip) {
+            tip.style.display = 'block';
+            tip.style.left = (cx + 12) + 'px';
+            tip.style.top = (cy - 8) + 'px';
+            tip.innerHTML = `<strong>${esc(n.name || n.pubkey.slice(0, 12) + '…')}</strong><br>Role: ${esc(n.role || 'unknown')}<br>Neighbors: ${n.neighbor_count || 0}`;
+          } else if (tip) {
+            tip.style.display = 'none';
+          }
+        } else if (hoverNode) {
+          const tip = document.getElementById('ngTooltip');
+          if (tip) { tip.style.left = (cx + 12) + 'px'; tip.style.top = (cy - 8) + 'px'; }
+        }
+      }
+    });
+
+    canvas.addEventListener('mouseup', function() {
+      if (_ngState.dragging) _ngState.dragging._pinned = false;
+      _ngState.dragging = null;
+      _ngState.panning = false;
+      canvas.style.cursor = hoverNode ? 'pointer' : 'grab';
+    });
+
+    canvas.addEventListener('mouseleave', function() {
+      _ngState.dragging = null;
+      _ngState.panning = false;
+      const tip = document.getElementById('ngTooltip');
+      if (tip) tip.style.display = 'none';
+      hoverNode = null;
+    });
+
+    canvas.addEventListener('click', function(e) {
+      if (_ngState.dragging) return;
+      const rect = canvas.getBoundingClientRect();
+      const n = findNode(e.clientX - rect.left, e.clientY - rect.top);
+      if (n) location.hash = '#/nodes/' + n.pubkey;
+    });
+
+    canvas.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const newZoom = Math.max(0.1, Math.min(10, _ngState.zoom * factor));
+      // Zoom towards mouse position
+      _ngState.panX = cx - (cx - _ngState.panX) * (newZoom / _ngState.zoom);
+      _ngState.panY = cy - (cy - _ngState.panY) * (newZoom / _ngState.zoom);
+      _ngState.zoom = newZoom;
+    }, { passive: false });
+
+    // Force simulation + render loop
+    function tick() {
+      if (!document.getElementById('ngCanvas')) { _ngState.animId = null; return; }
+      const st = _ngState;
+      const nodes = st.nodes, edges = st.edges, idx = st.nodeIdx;
+
+      if (st.cooling > 0.001) {
+        // Repulsion (all pairs — use grid for large sets, brute force for small)
+        const k = 80; // repulsion constant
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            let dx = nodes[j].x - nodes[i].x;
+            let dy = nodes[j].y - nodes[i].y;
+            let d2 = dx * dx + dy * dy;
+            if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+            const f = k * k / d2;
+            const fx = dx / Math.sqrt(d2) * f;
+            const fy = dy / Math.sqrt(d2) * f;
+            nodes[i].vx -= fx; nodes[i].vy -= fy;
+            nodes[j].vx += fx; nodes[j].vy += fy;
+          }
+        }
+
+        // Attraction along edges
+        const idealLen = 120;
+        for (const e of edges) {
+          const si = idx[e.source], ti = idx[e.target];
+          if (si === undefined || ti === undefined) continue;
+          const a = nodes[si], b = nodes[ti];
+          let dx = b.x - a.x, dy = b.y - a.y;
+          const d = Math.sqrt(dx * dx + dy * dy) || 1;
+          const f = (d - idealLen) * 0.05 * (0.5 + e.score * 0.5);
+          const fx = dx / d * f, fy = dy / d * f;
+          a.vx += fx; a.vy += fy;
+          b.vx -= fx; b.vy -= fy;
+        }
+
+        // Center gravity
+        for (const n of nodes) {
+          n.vx += (W / 2 - n.x) * 0.001;
+          n.vy += (H / 2 - n.y) * 0.001;
+        }
+
+        // Apply velocities with damping
+        const damping = 0.85;
+        for (const n of nodes) {
+          if (n._pinned) { n.vx = 0; n.vy = 0; continue; }
+          n.vx *= damping * st.cooling;
+          n.vy *= damping * st.cooling;
+          const speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+          if (speed > 10) { n.vx *= 10 / speed; n.vy *= 10 / speed; }
+          n.x += n.vx;
+          n.y += n.vy;
+        }
+        st.cooling *= 0.995;
+      }
+
+      // Render
+      ctx.save();
+      ctx.clearRect(0, 0, W, H);
+      ctx.translate(st.panX, st.panY);
+      ctx.scale(st.zoom, st.zoom);
+
+      // Edges
+      for (const e of edges) {
+        const si = idx[e.source], ti = idx[e.target];
+        if (si === undefined || ti === undefined) continue;
+        const a = nodes[si], b = nodes[ti];
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = e.ambiguous ? 'rgba(255,200,0,0.4)' : 'rgba(150,150,150,0.35)';
+        ctx.lineWidth = Math.max(0.5, e.score * 4);
+        ctx.stroke();
+      }
+
+      // Nodes
+      const roleColors = window.ROLE_COLORS || {};
+      for (const n of nodes) {
+        const color = roleColors[(n.role || '').toLowerCase()] || '#6b7280';
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        if (n === hoverNode) {
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        // Label
+        const label = n.name || (n.pubkey ? n.pubkey.slice(0, 8) + '…' : '');
+        if (label && st.zoom > 0.4) {
+          ctx.fillStyle = cssVar('--text-primary') || '#e0e0e0';
+          ctx.font = '10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(label, n.x, n.y + n.radius + 12);
+        }
+      }
+
+      ctx.restore();
+      st.animId = requestAnimationFrame(tick);
+    }
+
+    _ngState.animId = requestAnimationFrame(tick);
   }
 
   registerPage('analytics', { init, destroy });
