@@ -1,8 +1,25 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"testing"
 )
+
+// hmacSHA256 computes HMAC-SHA256 for test use.
+func hmacSHA256(key, data []byte) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+// newTestContext extracts the repeated newTestStore + MQTTSource boilerplate.
+func newTestContext(t *testing.T) (*Store, MQTTSource) {
+	t.Helper()
+	return newTestStore(t), MQTTSource{Name: "test"}
+}
 
 // --- config.go: NodeDaysOrDefault (0% coverage) ---
 
@@ -76,12 +93,16 @@ func TestMoveStaleNodes(t *testing.T) {
 	}
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM inactive_nodes").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM inactive_nodes").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("inactive_nodes count=%d, want 1", count)
 	}
 
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("nodes count=%d, want 1", count)
 	}
@@ -131,8 +152,7 @@ func TestNodePassesGeoFilterAllBranches(t *testing.T) {
 // --- main.go: handleMessage channel messages (41.4% → higher) ---
 
 func TestHandleMessageChannelMessage(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	payload := []byte(`{"text":"Alice: Hello everyone","channel_idx":3,"SNR":5.0,"RSSI":-95,"score":10,"direction":"rx","sender_timestamp":1700000000}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/2", payload: payload}
@@ -140,49 +160,99 @@ func TestHandleMessageChannelMessage(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("transmissions count=%d, want 1", count)
 	}
 
+	// Verify stored transmission values
+	var decodedJSON string
+	if err := store.db.QueryRow("SELECT decoded_json FROM transmissions LIMIT 1").Scan(&decodedJSON); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(decodedJSON), &decoded); err != nil {
+		t.Fatalf("decoded_json unmarshal: %v", err)
+	}
+	if decoded["type"] != "CHAN" {
+		t.Errorf("type=%v, want CHAN", decoded["type"])
+	}
+	if decoded["text"] != "Alice: Hello everyone" {
+		t.Errorf("text=%v, want 'Alice: Hello everyone'", decoded["text"])
+	}
+	if decoded["sender"] != "Alice" {
+		t.Errorf("sender=%v, want Alice", decoded["sender"])
+	}
+	if decoded["channel"] != "ch3" {
+		t.Errorf("channel=%v, want ch3", decoded["channel"])
+	}
+
+	// Verify observation values
+	var snr, rssi *float64
+	var score *float64
+	var direction *string
+	if err := store.db.QueryRow("SELECT snr, rssi, score, direction FROM observations LIMIT 1").Scan(&snr, &rssi, &score, &direction); err != nil {
+		t.Fatal(err)
+	}
+	if snr == nil || *snr != 5.0 {
+		t.Errorf("snr=%v, want 5.0", snr)
+	}
+	if direction == nil || *direction != "rx" {
+		t.Errorf("direction=%v, want rx", direction)
+	}
+
 	// Should create sender node
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("nodes count=%d, want 1 (sender node)", count)
+	}
+
+	// Verify sender node name
+	var nodeName string
+	if err := store.db.QueryRow("SELECT name FROM nodes LIMIT 1").Scan(&nodeName); err != nil {
+		t.Fatal(err)
+	}
+	if nodeName != "Alice" {
+		t.Errorf("node name=%s, want Alice", nodeName)
 	}
 }
 
 func TestHandleMessageChannelMessageEmptyText(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: []byte(`{"text":""}`)}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Error("empty text should not insert")
 	}
 }
 
 func TestHandleMessageChannelNoSender(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: []byte(`{"text":"no sender here"}`)}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Error("no sender should mean no node")
 	}
 }
 
 func TestHandleMessageDirectMessage(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	payload := []byte(`{"text":"Bob: Hey there","sender_timestamp":1700000000,"SNR":3.0,"rssi":-100,"Score":8,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/abc123", payload: payload}
@@ -190,35 +260,68 @@ func TestHandleMessageDirectMessage(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("transmissions count=%d, want 1", count)
+	}
+
+	// Verify stored decoded values
+	var decodedJSON string
+	if err := store.db.QueryRow("SELECT decoded_json FROM transmissions LIMIT 1").Scan(&decodedJSON); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(decodedJSON), &decoded); err != nil {
+		t.Fatalf("decoded_json unmarshal: %v", err)
+	}
+	if decoded["type"] != "DM" {
+		t.Errorf("type=%v, want DM", decoded["type"])
+	}
+	if decoded["sender"] != "Bob" {
+		t.Errorf("sender=%v, want Bob", decoded["sender"])
+	}
+
+	// Verify observation score=8 and direction=tx
+	var score *float64
+	var direction *string
+	if err := store.db.QueryRow("SELECT score, direction FROM observations LIMIT 1").Scan(&score, &direction); err != nil {
+		t.Fatal(err)
+	}
+	if score == nil || *score != 8.0 {
+		t.Errorf("score=%v, want 8.0", score)
+	}
+	if direction == nil || *direction != "tx" {
+		t.Errorf("direction=%v, want tx", direction)
 	}
 }
 
 func TestHandleMessageDirectMessageEmptyText(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/direct/abc", payload: []byte(`{"text":""}`)}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Error("empty text DM should not insert")
 	}
 }
 
 func TestHandleMessageDirectNoSender(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/direct/xyz", payload: []byte(`{"text":"message with no colon"}`)}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("count=%d, want 1", count)
 	}
@@ -226,8 +329,7 @@ func TestHandleMessageDirectNoSender(t *testing.T) {
 
 // Test Score/Direction case-insensitive handling in raw packets
 func TestHandleMessageUppercaseScoreDirection(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
 	payload := []byte(`{"raw":"` + rawHex + `","Score":9.0,"Direction":"tx"}`)
@@ -237,7 +339,9 @@ func TestHandleMessageUppercaseScoreDirection(t *testing.T) {
 
 	var score *float64
 	var direction *string
-	store.db.QueryRow("SELECT score, direction FROM observations LIMIT 1").Scan(&score, &direction)
+	if err := store.db.QueryRow("SELECT score, direction FROM observations LIMIT 1").Scan(&score, &direction); err != nil {
+		t.Fatal(err)
+	}
 	if score == nil || *score != 9.0 {
 		t.Errorf("score=%v, want 9.0", score)
 	}
@@ -248,30 +352,32 @@ func TestHandleMessageUppercaseScoreDirection(t *testing.T) {
 
 // Test channel messages with lowercase snr/rssi/Score/Direction
 func TestHandleMessageChannelLowercaseFields(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	payload := []byte(`{"text":"Test: msg","snr":3.0,"rssi":-90,"Score":5,"Direction":"rx"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/0", payload: payload}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("count=%d, want 1", count)
 	}
 }
 
 func TestHandleMessageDirectLowercaseFields(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	payload := []byte(`{"text":"Test: msg","snr":2.0,"rssi":-85,"score":7,"direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/xyz", payload: payload}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("count=%d, want 1", count)
 	}
@@ -280,8 +386,7 @@ func TestHandleMessageDirectLowercaseFields(t *testing.T) {
 // --- main.go: handleMessage advert with telemetry ---
 
 func TestHandleMessageAdvertWithTelemetry(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	// Use a known ADVERT hex
 	rawHex := "120046D62DE27D4C5194D7821FC5A34A45565DCC2537B300B9AB6275255CEFB65D840CE5C169C94C9AED39E8BCB6CB6EB0335497A198B33A1A610CD3B03D8DCFC160900E5244280323EE0B44CACAB8F02B5B38B91CFA18BD067B0B5E63E94CFC85F758A8530B9240933402E0E6B8F84D5252322D52"
@@ -294,9 +399,15 @@ func TestHandleMessageAdvertWithTelemetry(t *testing.T) {
 
 	// Should have created transmission, node, and observer
 	var txCount, nodeCount, obsCount int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&txCount)
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount)
-	store.db.QueryRow("SELECT COUNT(*) FROM observers").Scan(&obsCount)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&txCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM observers").Scan(&obsCount); err != nil {
+		t.Fatal(err)
+	}
 
 	if txCount != 1 {
 		t.Errorf("transmissions=%d, want 1", txCount)
@@ -309,8 +420,7 @@ func TestHandleMessageAdvertWithTelemetry(t *testing.T) {
 // --- main.go: handleMessage geo filter on advert ---
 
 func TestHandleMessageAdvertGeoFiltered(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	rawHex := "120046D62DE27D4C5194D7821FC5A34A45565DCC2537B300B9AB6275255CEFB65D840CE5C169C94C9AED39E8BCB6CB6EB0335497A198B33A1A610CD3B03D8DCFC160900E5244280323EE0B44CACAB8F02B5B38B91CFA18BD067B0B5E63E94CFC85F758A8530B9240933402E0E6B8F84D5252322D52"
 
@@ -405,20 +515,30 @@ func TestDecodeAdvertFeat2Truncated(t *testing.T) {
 
 func TestDecodeAdvertSensorBadTelemetry(t *testing.T) {
 	buf := make([]byte, 112)
+	// Bytes 0-31: public key
 	for i := 0; i < 32; i++ {
 		buf[i] = byte(i + 1)
 	}
+	// Bytes 32-35: reserved (4 bytes)
+	// Bytes 36-99: padding (64 bytes of 0xCC)
 	for i := 36; i < 100; i++ {
 		buf[i] = 0xCC
 	}
-	// flags: sensor(4) | hasName(0x80) = 0x84
+	// Byte 100: flags — sensor(4) | hasName(0x80) = 0x84
+	//   off starts at 101 after flags byte
 	buf[100] = 0x84
+
+	// Bytes 101-102: name "S" + null terminator
+	//   Name parsing reads from off=101, finds null at 102, advances off to 103
 	copy(buf[101:], []byte("S\x00"))
 
-	// battery_mv = 0 (out of range, should be skipped)
+	// Bytes 103-104: battery_mv (uint16 LE) = 0 (out of range, should be skipped)
+	//   off=103 after name parsing
 	buf[103] = 0x00
 	buf[104] = 0x00
-	// temp = 20000 raw (200°C, out of range)
+
+	// Bytes 105-106: temperature (uint16 LE) = 0x4E20 = 20000 raw (200.00°C, out of range)
+	//   off=105 after battery
 	buf[105] = 0x20
 	buf[106] = 0x4E
 
@@ -455,11 +575,42 @@ func TestDecryptChannelMessageEmptyCiphertext(t *testing.T) {
 	}
 }
 
-func TestDecryptChannelMessageNotAligned(t *testing.T) {
-	// 15 bytes — not aligned to AES block size (16)
+func TestDecryptChannelMessageMACFailsBeforeAlignment(t *testing.T) {
+	// 15 bytes of ciphertext — not aligned to AES block size (16).
+	// However, decryptChannelMessage checks MAC before alignment, so with
+	// random ciphertext the HMAC won't match and it errors on MAC first.
 	_, err := decryptChannelMessage("00112233445566778899aabbccddee", "0011", "00112233445566778899aabbccddeeff")
 	if err == nil {
+		t.Error("should error (MAC mismatch)")
+	}
+	if err.Error() != "MAC verification failed" {
+		t.Errorf("expected MAC error, got: %v", err)
+	}
+}
+
+func TestDecryptChannelMessageNotAligned(t *testing.T) {
+	// To actually exercise the alignment branch, we need ciphertext whose
+	// HMAC-SHA256 first 2 bytes match the provided MAC, but whose length
+	// is not a multiple of 16. We craft this by computing the real MAC.
+	key := "00112233445566778899aabbccddeeff"
+	// 15 bytes of ciphertext (not aligned to 16)
+	ciphertextBytes := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f}
+	ciphertextHex := hex.EncodeToString(ciphertextBytes)
+
+	// Compute real HMAC to pass the MAC check
+	keyBytes, _ := hex.DecodeString(key)
+	channelSecret := make([]byte, 32)
+	copy(channelSecret, keyBytes)
+
+	h := hmacSHA256(channelSecret, ciphertextBytes)
+	macHex := hex.EncodeToString(h[:2])
+
+	_, err := decryptChannelMessage(ciphertextHex, macHex, key)
+	if err == nil {
 		t.Error("unaligned ciphertext should error")
+	}
+	if err.Error() != "ciphertext not aligned to AES block size" {
+		t.Errorf("expected alignment error, got: %v", err)
 	}
 }
 
@@ -494,18 +645,19 @@ func TestLogStatsDoesNotPanic(t *testing.T) {
 
 func TestComputeContentHashPathOverflow(t *testing.T) {
 	// path byte 0xFF = hashSize=4, hashCount=63 = 252 bytes needed, but only a few available
+	// payloadStart (2 + 252 = 254) > len(buf) (6), so fallback fires.
+	// rawHex is 12 chars (< 16), so fallback returns rawHex itself.
 	rawHex := "0AFF" + "AABBCCDD"
 	got := ComputeContentHash(rawHex)
-	if got == "" {
-		t.Error("should return non-empty hash even with overflowing path byte")
+	if got != rawHex {
+		t.Errorf("got=%s, want fallback=%s", got, rawHex)
 	}
 }
 
 // --- main.go: handleMessage advert that fails ValidateAdvert ---
 
 func TestHandleMessageCorruptedAdvertNoNode(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	// Build an ADVERT packet with all-zero pubkey (fails ValidateAdvert)
 	// header: 0x12 = FLOOD + ADVERT, path: 0x00
@@ -521,7 +673,9 @@ func TestHandleMessageCorruptedAdvertNoNode(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Error("all-zero pubkey advert should not create a node")
 	}
@@ -530,8 +684,7 @@ func TestHandleMessageCorruptedAdvertNoNode(t *testing.T) {
 // --- main.go: handleMessage non-advert packet (else branch) ---
 
 func TestHandleMessageNonAdvertPacket(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	// ACK packet: header 0x0E = FLOOD + ACK(0x03)
 	rawHex := "0E00DEADBEEF"
@@ -542,11 +695,26 @@ func TestHandleMessageNonAdvertPacket(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("non-advert should insert transmission, got %d", count)
 	}
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+
+	// Verify the stored packet type
+	var payloadType int
+	if err := store.db.QueryRow("SELECT payload_type FROM transmissions LIMIT 1").Scan(&payloadType); err != nil {
+		t.Fatal(err)
+	}
+	// ACK = type 3
+	if payloadType != 3 {
+		t.Errorf("payload_type=%d, want 3 (ACK)", payloadType)
+	}
+
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Error("non-advert should not create nodes")
 	}
@@ -620,7 +788,9 @@ func TestUpsertNodeDefaultTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	var lastSeen string
-	store.db.QueryRow("SELECT last_seen FROM nodes WHERE public_key = 'pk_default_ts_00000000000000000000000000000001'").Scan(&lastSeen)
+	if err := store.db.QueryRow("SELECT last_seen FROM nodes WHERE public_key = 'pk_default_ts_00000000000000000000000000000001'").Scan(&lastSeen); err != nil {
+		t.Fatal(err)
+	}
 	if lastSeen == "" {
 		t.Error("last_seen should be set")
 	}
@@ -636,7 +806,9 @@ func TestUpsertNodeWithLatLon(t *testing.T) {
 		t.Fatal(err)
 	}
 	var gotLat, gotLon float64
-	store.db.QueryRow("SELECT lat, lon FROM nodes WHERE public_key = 'pk_latlon_0000000000000000000000000000000001'").Scan(&gotLat, &gotLon)
+	if err := store.db.QueryRow("SELECT lat, lon FROM nodes WHERE public_key = 'pk_latlon_0000000000000000000000000000000001'").Scan(&gotLat, &gotLon); err != nil {
+		t.Fatal(err)
+	}
 	if gotLat != 37.0 || gotLon != -122.0 {
 		t.Errorf("lat=%f lon=%f", gotLat, gotLon)
 	}
@@ -645,12 +817,13 @@ func TestUpsertNodeWithLatLon(t *testing.T) {
 // --- decoder.go: ComputeContentHash with transport route short after transport codes ---
 
 func TestComputeContentHashTransportShortAfterCodes(t *testing.T) {
-	// Transport route (0x00), 4 bytes transport codes, but then nothing (no path byte)
+	// Transport route (0x00), 4 bytes transport codes, but then nothing (no path byte).
+	// offset after transport codes = 5, which equals len(buf), so fallback fires.
+	// rawHex is 10 chars (< 16), so fallback returns rawHex itself.
 	rawHex := "00AABBCCDD"
 	got := ComputeContentHash(rawHex)
-	// Should return a non-empty fallback hash even when data is truncated
-	if got == "" {
-		t.Error("should return non-empty hash for truncated transport packet")
+	if got != rawHex {
+		t.Errorf("got=%s, want fallback=%s", got, rawHex)
 	}
 }
 
@@ -690,8 +863,7 @@ func TestDecodeAdvertNameNoNull(t *testing.T) {
 // --- main.go: handleMessage channel with very long sender (>50 chars = no extraction) ---
 
 func TestHandleMessageChannelLongSender(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	// Colon at index > 50 — should not extract sender
 	longText := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: msg"
@@ -700,7 +872,9 @@ func TestHandleMessageChannelLongSender(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Error("long sender should not extract")
 	}
@@ -709,8 +883,7 @@ func TestHandleMessageChannelLongSender(t *testing.T) {
 // --- main.go: handleMessage DM with long sender ---
 
 func TestHandleMessageDirectLongSender(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	longText := "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB: msg"
 	payload := []byte(`{"text":"` + longText + `"}`)
@@ -718,7 +891,9 @@ func TestHandleMessageDirectLongSender(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("count=%d, want 1", count)
 	}
@@ -726,40 +901,67 @@ func TestHandleMessageDirectLongSender(t *testing.T) {
 
 // DM with uppercase Score and Direction (fallback branches)
 func TestHandleMessageDirectUppercaseScoreDirection(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	payload := []byte(`{"text":"X: hi","Score":6,"Direction":"rx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/d1", payload: payload}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("count=%d, want 1", count)
+	}
+
+	// Verify uppercase Score/Direction were picked up
+	var score *float64
+	var direction *string
+	if err := store.db.QueryRow("SELECT score, direction FROM observations LIMIT 1").Scan(&score, &direction); err != nil {
+		t.Fatal(err)
+	}
+	if score == nil || *score != 6.0 {
+		t.Errorf("score=%v, want 6.0", score)
+	}
+	if direction == nil || *direction != "rx" {
+		t.Errorf("direction=%v, want rx", direction)
 	}
 }
 
 // Channel with uppercase Score and Direction
 func TestHandleMessageChannelUppercaseScoreDirection(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	payload := []byte(`{"text":"Y: hi","Score":4,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/5", payload: payload}
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("count=%d, want 1", count)
+	}
+
+	// Verify uppercase Score/Direction were picked up
+	var score *float64
+	var direction *string
+	if err := store.db.QueryRow("SELECT score, direction FROM observations LIMIT 1").Scan(&score, &direction); err != nil {
+		t.Fatal(err)
+	}
+	if score == nil || *score != 4.0 {
+		t.Errorf("score=%v, want 4.0", score)
+	}
+	if direction == nil || *direction != "tx" {
+		t.Errorf("direction=%v, want tx", direction)
 	}
 }
 
 // Raw packet with only lowercase score (no uppercase Score present)
 func TestHandleMessageRawLowercaseScore(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
 	payload := []byte(`{"raw":"` + rawHex + `","score":3.5}`)
@@ -767,7 +969,9 @@ func TestHandleMessageRawLowercaseScore(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var score *float64
-	store.db.QueryRow("SELECT score FROM observations LIMIT 1").Scan(&score)
+	if err := store.db.QueryRow("SELECT score FROM observations LIMIT 1").Scan(&score); err != nil {
+		t.Fatal(err)
+	}
 	if score == nil || *score != 3.5 {
 		t.Errorf("score=%v, want 3.5", score)
 	}
@@ -775,8 +979,7 @@ func TestHandleMessageRawLowercaseScore(t *testing.T) {
 
 // Test handleMessage status without origin (log fallback)
 func TestHandleMessageStatusNoOrigin(t *testing.T) {
-	store := newTestStore(t)
-	source := MQTTSource{Name: "test"}
+	store, source := newTestContext(t)
 
 	msg := &mockMessage{
 		topic:   "meshcore/LAX/obs5/status",
@@ -785,9 +988,24 @@ func TestHandleMessageStatusNoOrigin(t *testing.T) {
 	handleMessage(store, "test", source, msg, nil, nil)
 
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM observers WHERE id = 'obs5'").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM observers WHERE id = 'obs5'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 1 {
 		t.Errorf("observer count=%d, want 1", count)
+	}
+
+	// Verify fallback behavior: origin is "" (no "origin" key in payload),
+	// so name should be stored as empty string, and IATA should be "LAX".
+	var name, iata string
+	if err := store.db.QueryRow("SELECT name, iata FROM observers WHERE id = 'obs5'").Scan(&name, &iata); err != nil {
+		t.Fatal(err)
+	}
+	if name != "" {
+		t.Errorf("name=%q, want empty (no origin provided)", name)
+	}
+	if iata != "LAX" {
+		t.Errorf("iata=%q, want LAX", iata)
 	}
 }
 
@@ -799,7 +1017,9 @@ func TestApplySchemaMigrationsOnFreshDB(t *testing.T) {
 
 	// Check that migrations were recorded
 	var count int
-	store.db.QueryRow("SELECT COUNT(*) FROM _migrations").Scan(&count)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM _migrations").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count < 3 {
 		t.Errorf("expected at least 3 migrations recorded, got %d", count)
 	}
@@ -865,7 +1085,9 @@ func TestMoveStaleNodesReplace(t *testing.T) {
 
 	// Should have replaced the inactive node
 	var name string
-	store.db.QueryRow("SELECT name FROM inactive_nodes WHERE public_key = ?", pk).Scan(&name)
+	if err := store.db.QueryRow("SELECT name FROM inactive_nodes WHERE public_key = ?", pk).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
 	if name != "StaleNode" {
 		t.Errorf("name=%s, want StaleNode (replaced)", name)
 	}
