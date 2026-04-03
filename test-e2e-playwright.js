@@ -639,14 +639,36 @@ async function run() {
   });
 
   await test('Analytics Neighbor Graph filter changes update stats', async () => {
-    // Change min score slider to max (should reduce edges)
-    const statsBefore = await page.$eval('#ngStats', el => el.textContent);
+    // Capture edge count before filter
+    const edgesBefore = await page.$eval('#ngStats', el => {
+      const cards = el.querySelectorAll('.stat-card');
+      for (const c of cards) {
+        if (c.textContent.toLowerCase().includes('edge')) {
+          const m = c.textContent.match(/\d+/);
+          if (m) return parseInt(m[0], 10);
+        }
+      }
+      return -1;
+    });
+    // Set min score slider to high value to reduce edges
     await page.$eval('#ngMinScore', el => { el.value = 90; el.dispatchEvent(new Event('input')); });
-    // Wait a tick for filter to apply
+    await page.waitForTimeout(300);
+    const edgesAfter = await page.$eval('#ngStats', el => {
+      const cards = el.querySelectorAll('.stat-card');
+      for (const c of cards) {
+        if (c.textContent.toLowerCase().includes('edge')) {
+          const m = c.textContent.match(/\d+/);
+          if (m) return parseInt(m[0], 10);
+        }
+      }
+      return -1;
+    });
+    assert(edgesBefore >= 0, 'Should find edge count in stats before filter');
+    assert(edgesAfter >= 0, 'Should find edge count in stats after filter');
+    assert(edgesAfter <= edgesBefore, `Raising min score should reduce (or keep) edge count: ${edgesBefore} → ${edgesAfter}`);
+    // Reset slider
+    await page.$eval('#ngMinScore', el => { el.value = 0; el.dispatchEvent(new Event('input')); });
     await page.waitForTimeout(200);
-    const statsAfter = await page.$eval('#ngStats', el => el.textContent);
-    // Stats should have updated (text may or may not differ depending on data)
-    assert(typeof statsAfter === 'string' && statsAfter.length > 0, 'Stats should still render after filter change');
   });
 
   // --- Group: Compare page ---
