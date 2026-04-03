@@ -1004,25 +1004,26 @@ console.log('\n=== live.js: pruneStaleNodes ===');
     const prune = ctx.window._livePruneStaleNodes;
     const markers = ctx.window._liveNodeMarkers();
     const data = ctx.window._liveNodeData();
+    const activity = ctx.window._liveNodeActivity();
 
     // WS-only stale node
     markers['staleNode'] = { _glowMarker: null };
     data['staleNode'] = { public_key: 'staleNode', role: 'companion', _liveSeen: Date.now() - 48 * 3600000 };
+    activity['staleNode'] = 5;
 
     // Active node
     markers['activeNode'] = { setStyle: function() {}, _glowMarker: null };
     data['activeNode'] = { public_key: 'activeNode', role: 'companion', _liveSeen: Date.now() };
+    activity['activeNode'] = 3;
 
-    // Simulate nodeActivity for both
-    // nodeActivity is module-scoped; access it indirectly via the heatmap data function
-    // We can't directly access nodeActivity, but pruneStaleNodes should clean it up
-    // We verify indirectly: after pruning, the stale node's marker and data are gone
     prune();
 
     assert.ok(!markers['staleNode'], 'stale node marker removed');
     assert.ok(!data['staleNode'], 'stale node data removed');
+    assert.ok(!activity['staleNode'], 'stale node activity removed');
     assert.ok(markers['activeNode'], 'active node marker preserved');
     assert.ok(data['activeNode'], 'active node data preserved');
+    assert.strictEqual(activity['activeNode'], 3, 'active node activity preserved');
   });
 
   test('pruneStaleNodes removes orphaned nodeActivity entries', () => {
@@ -1030,19 +1031,22 @@ console.log('\n=== live.js: pruneStaleNodes ===');
     const prune = ctx.window._livePruneStaleNodes;
     const markers = ctx.window._liveNodeMarkers();
     const data = ctx.window._liveNodeData();
+    const activity = ctx.window._liveNodeActivity();
 
-    // Add a node that exists
+    // Add an active node
     markers['existingNode'] = { setStyle: function() {}, _glowMarker: null };
     data['existingNode'] = { public_key: 'existingNode', role: 'companion', _liveSeen: Date.now() };
+    activity['existingNode'] = 2;
 
-    // We need to verify nodeActivity orphan cleanup works.
-    // Since nodeActivity is module-scoped, we can test by checking the live.js code path.
-    // The fix ensures any nodeActivity key not in nodeData gets deleted during prune.
+    // Add orphaned activity (no corresponding nodeData)
+    activity['ghostNode'] = 10;
+
     prune();
 
-    // At minimum, existing active nodes should still be present
     assert.ok(markers['existingNode'], 'existing node preserved');
     assert.ok(data['existingNode'], 'existing node data preserved');
+    assert.strictEqual(activity['existingNode'], 2, 'existing node activity preserved');
+    assert.ok(!activity['ghostNode'], 'orphaned activity entry removed');
   });
 }
 
