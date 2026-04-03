@@ -1172,12 +1172,16 @@ async function run() {
   });
 
   await test('Customizer v2: override indicator appears and disappears', async () => {
+    // Set override BEFORE page load so _renderTheme sees it during init
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => {
+      localStorage.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#ff0000' } }));
+    });
+    // Reload so customizer v2 initializes with the override in place
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('nav, .navbar, .nav, [class*="nav"]');
     const result = await page.evaluate(() => {
       if (!window._customizerV2) return { error: 'customizerV2 not loaded' };
-      // Set an override
-      localStorage.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#ff0000' } }));
       return { ok: true };
     });
     assert(!result.error, result.error || '');
@@ -1194,12 +1198,18 @@ async function run() {
     // Check for override dot
     const dots = await page.$$('.cv2-override-dot');
     assert(dots.length > 0, 'Override dot should be visible when overrides exist');
-    // Clear and verify dot disappears
-    await page.evaluate(() => {
-      localStorage.removeItem('cs-theme-overrides');
-      if (window._customizerV2) window._customizerV2.clearOverride('theme', 'accent');
-    });
+    // Clear overrides and reload to verify dots disappear
     await page.evaluate(() => localStorage.removeItem('cs-theme-overrides'));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('nav, .navbar, .nav, [class*="nav"]');
+    const btn2 = await page.$(toggleSel);
+    if (btn2) await btn2.click();
+    await page.waitForSelector('.cust-overlay', { timeout: 5000 });
+    const themeTab2 = await page.$('.cust-tab[data-tab="theme"]');
+    if (themeTab2) await themeTab2.click();
+    await page.waitForTimeout(200);
+    const dotsAfter = await page.$$('.cv2-override-dot');
+    assert(dotsAfter.length === 0, 'Override dots should disappear after clearing overrides');
   });
 
   await test('Customizer v2: presets apply through standard pipeline', async () => {
