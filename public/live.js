@@ -481,8 +481,13 @@
     }
   });
 
+  function packetTimestamp(pkt) {
+    return new Date(pkt.timestamp || pkt.created_at || Date.now()).getTime();
+  }
+  if (typeof window !== 'undefined') window._live_packetTimestamp = packetTimestamp;
+
   function bufferPacket(pkt) {
-    pkt._ts = new Date(pkt.timestamp || pkt.created_at || Date.now()).getTime();
+    pkt._ts = packetTimestamp(pkt);
     const entry = { ts: pkt._ts, pkt };
     VCR.buffer.push(entry);
     // Keep buffer capped at ~2000 — adjust playhead to avoid stale indices (#63)
