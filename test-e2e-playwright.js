@@ -1175,11 +1175,15 @@ async function run() {
     // Set override BEFORE page load so _renderTheme sees it during init
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => {
-      localStorage.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#ff0000' }, themeDark: { accent: '#ff0000' } }));
+      // Force light mode so theme tab renders 'theme' section (not 'themeDark')
+      localStorage.setItem('meshcore-theme', 'light');
+      localStorage.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#ff0000' } }));
     });
     // Reload so customizer v2 initializes with the override in place
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('nav, .navbar, .nav, [class*="nav"]');
+    // Ensure light mode is active (CI headless may default to dark)
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
     const result = await page.evaluate(() => {
       if (!window._customizerV2) return { error: 'customizerV2 not loaded' };
       return { ok: true };
