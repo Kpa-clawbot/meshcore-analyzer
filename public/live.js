@@ -2201,6 +2201,10 @@
     const startTime = performance.now();
 
     function tick(now) {
+      if (!animLayer || !pathsLayer) {
+        if (onComplete) onComplete();
+        return;
+      }
       const elapsed = now - startTime;
       const t = Math.min(1, elapsed / DURATION_MS);
       const lat = from[0] + (to[0] - from[0]) * t;
@@ -2245,6 +2249,11 @@
         // Fade out
         const fadeStart = performance.now();
         function fadeOut(now) {
+          if (!animLayer || !pathsLayer) {
+            charMarkers.length = 0;
+            if (onComplete) onComplete();
+            return;
+          }
           const ft = Math.min(1, (now - fadeStart) / 300);
           if (ft >= 1) {
             for (const cm of charMarkers) try { animLayer.removeLayer(cm.marker); } catch {}
@@ -2292,6 +2301,10 @@
 
     let lastStep = performance.now();
     function animateLine(now) {
+      if (!animLayer || !pathsLayer) {
+        if (onComplete) onComplete();
+        return;
+      }
       const elapsed = now - lastStep;
       if (elapsed >= 33) {
         const ticks = Math.min(Math.floor(elapsed / 33), 4);
@@ -2320,6 +2333,7 @@
             let fadeOp = mainOpacity;
             let lastFade = performance.now();
             function animateFade(now) {
+              if (!pathsLayer) return;
               const fadeElapsed = now - lastFade;
               if (fadeElapsed >= 52) {
                 const fadeTicks = Math.min(Math.floor(fadeElapsed / 52), 4);
