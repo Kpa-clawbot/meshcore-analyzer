@@ -4411,6 +4411,50 @@ console.log('\n=== app.js: routeTypeName/payloadTypeName edge cases ===');
   });
 }
 
+// ===== observation packet cache invalidation (issue #504) =====
+{
+  console.log('\n=== Issue #504: observation packets must not inherit parent cache ===');
+
+  const helperSource = fs.readFileSync('public/packet-helpers.js', 'utf8');
+  const ctx = vm.createContext({ window: {}, console, JSON, Array, Object });
+  vm.runInContext(helperSource, ctx);
+  const getParsedPath = ctx.window.getParsedPath;
+  const getParsedDecoded = ctx.window.getParsedDecoded;
+
+  test('observation packet gets its own path after cache invalidation', () => {
+    const parent = { path_json: '["A","B"]', decoded_json: '{"type":"GRP_TXT"}' };
+    // Prime the cache on parent
+    getParsedPath(parent);
+    getParsedDecoded(parent);
+
+    // Simulate spread + fix (like packets.js does after issue #504)
+    const obs = { ...parent, path_json: '["X","Y","Z"]', decoded_json: '{"type":"TXT_MSG"}' };
+    delete obs._parsedPath;
+    delete obs._parsedDecoded;
+
+    // getParsedPath re-parses from obs's own path_json
+    const obsPath = getParsedPath(obs);
+    assert.deepStrictEqual(obsPath, ['X', 'Y', 'Z'], 'obs gets its own path, not parent\'s');
+    const obsDecoded = getParsedDecoded(obs);
+    assert.deepStrictEqual(obsDecoded, { type: 'TXT_MSG' }, 'obs gets its own decoded, not parent\'s');
+  });
+
+  test('observation packet path differs from parent after cache invalidation', () => {
+    const parent = { path_json: '["hop1"]', decoded_json: '{"type":"REQ"}' };
+    getParsedPath(parent);
+    getParsedDecoded(parent);
+
+    const obs = { ...parent, path_json: '["hop2","hop3"]', decoded_json: '{"type":"GRP_TXT","text":"hi"}' };
+    delete obs._parsedPath;
+    delete obs._parsedDecoded;
+
+    assert.notDeepStrictEqual(getParsedPath(obs), getParsedPath(parent),
+      'observation must have different path from parent');
+    assert.notDeepStrictEqual(getParsedDecoded(obs), getParsedDecoded(parent),
+      'observation must have different decoded from parent');
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
