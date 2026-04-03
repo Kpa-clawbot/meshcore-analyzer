@@ -1342,6 +1342,7 @@
     _cumulativeOffsetsCache = null;
 
     attachVScrollListener();
+    renderVisibleRows();
   }
 
   function getDetailPreview(decoded) {
