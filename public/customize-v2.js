@@ -290,6 +290,7 @@
 
   /** @type {object|null} server defaults, set during init */
   var _serverDefaults = null;
+  var _initDone = false;
   var _saveStatus = 'saved'; // 'saved' | 'saving' | 'error'
   var _writeTimer = null;
 
@@ -578,7 +579,29 @@
           delta[sec] = _pendingOverrides[sec];
         }
       }
+      var pendingKeys = _pendingOverrides;
       _pendingOverrides = {};
+      // Spec Decision #7: don't silently prune existing overrides.
+      // Only prevent redundant NEW writes: if a value just written matches
+      // the server default, don't store it (clearOverride semantics).
+      var server = _serverDefaults || {};
+      for (var ps in pendingKeys) {
+        if (typeof pendingKeys[ps] === 'object' && pendingKeys[ps] !== null && OBJECT_SECTIONS.indexOf(ps) >= 0) {
+          var serverSec = server[ps] || {};
+          if (delta[ps]) {
+            for (var pk in pendingKeys[ps]) {
+              var ov = delta[ps][pk];
+              var sv = serverSec[pk];
+              var match = (typeof ov === 'object' || typeof sv === 'object')
+                ? JSON.stringify(ov) === JSON.stringify(sv) : ov === sv;
+              if (match) delete delta[ps][pk];
+            }
+            if (Object.keys(delta[ps]).length === 0) delete delta[ps];
+          }
+        } else if (SCALAR_SECTIONS.indexOf(ps) >= 0 && delta[ps] === server[ps]) {
+          delete delta[ps];
+        }
+      }
       writeOverrides(delta);
       _runPipeline();
       _refreshPanel();
@@ -742,17 +765,33 @@
     if (section) {
       if (!overrides[section] || !overrides[section].hasOwnProperty(key)) return false;
       var serverSection = server[section] || {};
-      return overrides[section][key] !== serverSection[key];
+      var ov = overrides[section][key];
+      var sv = serverSection[key];
+      // Deep compare for arrays/objects
+      if (typeof ov === 'object' || typeof sv === 'object') {
+        return JSON.stringify(ov) !== JSON.stringify(sv);
+      }
+      return ov !== sv;
     }
     if (!overrides.hasOwnProperty(key)) return false;
-    return overrides[key] !== server[key];
+    var ov2 = overrides[key];
+    var sv2 = server[key];
+    if (typeof ov2 === 'object' || typeof sv2 === 'object') {
+      return JSON.stringify(ov2) !== JSON.stringify(sv2);
+    }
+    return ov2 !== sv2;
   }
 
-  /** Count overridden fields in a section */
+  /** Count overridden fields in a section (only those that differ from server defaults) */
   function _countOverrides(section) {
     var overrides = _getOverrides();
     if (!overrides[section] || typeof overrides[section] !== 'object') return 0;
-    return Object.keys(overrides[section]).length;
+    var count = 0;
+    var keys = Object.keys(overrides[section]);
+    for (var i = 0; i < keys.length; i++) {
+      if (_isOverridden(section, keys[i])) count++;
+    }
+    return count;
   }
 
   function _overrideDot(section, key) {
@@ -962,11 +1001,12 @@
         '<span class="cust-hex">' + val + '</span></div>';
     }
 
+    var fallbackTC = (typeof window !== 'undefined' && window.TYPE_COLORS) || {};
     var tc = eff.typeColors || {};
     var stc = server.typeColors || {};
     var typeRows = '';
     for (var tkey in TYPE_LABELS) {
-      var tval = tc[tkey] || '#000000';
+      var tval = tc[tkey] || fallbackTC[tkey] || '#000000';
       typeRows += '<div class="cust-color-row">' +
         '<div><label>' + (TYPE_EMOJI[tkey] || '') + ' ' + TYPE_LABELS[tkey] + _overrideDot('typeColors', tkey) + '</label>' +
         '<div class="cust-hint">' + (TYPE_HINTS[tkey] || '') + '</div></div>' +
@@ -1111,6 +1151,59 @@
         _renderExport() +
       '</div>';
     _bindEvents(container);
+  }
+
+  /** Remove phantom overrides that match server defaults on startup */
+  function _cleanPhantomOverrides() {
+    var delta = readOverrides();
+    if (!delta || Object.keys(delta).length === 0) return;
+    var server = _serverDefaults || {};
+    var changed = false;
+
+    // Clean object sections
+    for (var i = 0; i < OBJECT_SECTIONS.length; i++) {
+      var sec = OBJECT_SECTIONS[i];
+      if (!delta[sec] || typeof delta[sec] !== 'object') continue;
+      var serverSec = server[sec];
+      // If server has no defaults for this section, only remove values that
+      // are clearly phantom (empty arrays/objects or undefined equivalents).
+      // Non-trivial values may be legitimate user choices.
+      if (!serverSec) {
+        var dKeys = Object.keys(delta[sec]);
+        for (var di = 0; di < dKeys.length; di++) {
+          var dv = delta[sec][dKeys[di]];
+          var isPhantom = (Array.isArray(dv) && dv.length === 0) ||
+            (typeof dv === 'object' && dv !== null && !Array.isArray(dv) && Object.keys(dv).length === 0);
+          if (isPhantom) { delete delta[sec][dKeys[di]]; changed = true; }
+        }
+        if (Object.keys(delta[sec]).length === 0) { delete delta[sec]; changed = true; }
+        continue;
+      }
+      var keys = Object.keys(delta[sec]);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j];
+        var ov = delta[sec][k];
+        var sv = serverSec[k];
+        var match = false;
+        if (typeof ov === 'object' || typeof sv === 'object') {
+          match = JSON.stringify(ov) === JSON.stringify(sv);
+        } else {
+          match = ov === sv;
+        }
+        if (match) { delete delta[sec][k]; changed = true; }
+      }
+      if (Object.keys(delta[sec]).length === 0) { delete delta[sec]; changed = true; }
+    }
+
+    // Clean scalar sections
+    for (var si = 0; si < SCALAR_SECTIONS.length; si++) {
+      var sk = SCALAR_SECTIONS[si];
+      if (delta.hasOwnProperty(sk) && delta[sk] === server[sk]) {
+        delete delta[sk]; changed = true;
+      }
+    }
+
+    if (changed) writeOverrides(delta);
   }
 
   function _refreshPanel() {
@@ -1474,6 +1567,7 @@
     // Watch dark/light mode toggle and re-apply
     new MutationObserver(function () {
       _runPipeline();
+      if (_panelEl && !_panelEl.classList.contains('hidden')) _refreshPanel();
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   });
 
@@ -1486,8 +1580,12 @@
   window._customizerV2 = {
     init: function (serverConfig) {
       _serverDefaults = serverConfig || {};
+      _cleanPhantomOverrides();
       _runPipeline();
+      _initDone = true;
     },
+    /** True after init() has been called with server config and pipeline has run */
+    get initDone() { return _initDone; },
     readOverrides: readOverrides,
     writeOverrides: writeOverrides,
     computeEffective: computeEffective,
