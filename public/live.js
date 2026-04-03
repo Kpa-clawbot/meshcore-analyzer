@@ -1957,6 +1957,7 @@
     let lastPulse = performance.now();
     const pulseStart = lastPulse;
     function animatePulse(now) {
+      if (!animLayer) return;
       if (now - pulseStart > 2000) {
         try { animLayer.removeLayer(ring); } catch {}
         return;
