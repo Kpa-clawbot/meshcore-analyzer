@@ -979,11 +979,11 @@
       });
 
       var popup = '<b>Affinity Edge</b><br>' +
-        (e.nodeAName || e.nodeA.substring(0, 8)) + ' ↔ ' + (e.nodeBName || e.nodeB.substring(0, 8)) + '<br>' +
+        escapeHtml(e.nodeAName || e.nodeA.substring(0, 8)) + ' ↔ ' + escapeHtml(e.nodeBName || e.nodeB.substring(0, 8)) + '<br>' +
         'Observations: ' + e.observationCount + '<br>' +
         'Score: ' + (e.score || 0).toFixed(3) + '<br>' +
-        'Last seen: ' + e.lastSeen + '<br>' +
-        'Observers: ' + (e.observers || []).join(', ');
+        'Last seen: ' + escapeHtml(e.lastSeen) + '<br>' +
+        'Observers: ' + escapeHtml((e.observers || []).join(', '));
       if (e.avgSnr != null) popup += '<br>Avg SNR: ' + e.avgSnr.toFixed(1) + ' dB';
 
       line.bindPopup(popup);
