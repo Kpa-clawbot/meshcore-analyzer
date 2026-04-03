@@ -488,6 +488,7 @@
       if (regionParam) params.set('region', regionParam);
       if (filters.hash) params.set('hash', filters.hash);
       if (filters.node) params.set('node', filters.node);
+      if (filters.observer) params.set('observer', filters.observer);
       params.set('groupByHash', 'true'); // always fetch grouped
 
       const data = await api('/packets?' + params.toString());
@@ -1289,7 +1290,7 @@
       const types = filters.type.split(',').map(Number);
       displayPackets = displayPackets.filter(p => types.includes(p.payload_type));
     }
-    if (filters.observer) {
+    if (filters.observer && !groupByHash) {
       const obsIds = new Set(filters.observer.split(','));
       displayPackets = displayPackets.filter(p => obsIds.has(p.observer_id));
     }

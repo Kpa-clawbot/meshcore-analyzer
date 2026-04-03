@@ -1572,32 +1572,36 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 }
 
 // transmissionsForObserver returns unique transmissions for an observer.
-func (s *PacketStore) transmissionsForObserver(observerID string, from []*StoreTx) []*StoreTx {
+func (s *PacketStore) transmissionsForObserver(observerIDs string, from []*StoreTx) []*StoreTx {
+	ids := strings.Split(observerIDs, ",")
+	idSet := make(map[string]bool, len(ids))
+	for i, id := range ids {
+		ids[i] = strings.TrimSpace(id)
+		idSet[ids[i]] = true
+	}
 	if from != nil {
 		return filterTxSlice(from, func(tx *StoreTx) bool {
 			for _, obs := range tx.Observations {
-				if obs.ObserverID == observerID {
+				if idSet[obs.ObserverID] {
 					return true
 				}
 			}
 			return false
 		})
 	}
-	// Use byObserver index
-	observations := s.byObserver[observerID]
-	if len(observations) == 0 {
-		return nil
-	}
-	seen := make(map[int]bool, len(observations))
+	// Use byObserver index: union transmissions for all IDs
+	seen := make(map[int]bool)
 	var result []*StoreTx
-	for _, obs := range observations {
-		if seen[obs.TransmissionID] {
-			continue
-		}
-		seen[obs.TransmissionID] = true
-		tx := s.byTxID[obs.TransmissionID]
-		if tx != nil {
-			result = append(result, tx)
+	for _, id := range ids {
+		for _, obs := range s.byObserver[id] {
+			if seen[obs.TransmissionID] {
+				continue
+			}
+			seen[obs.TransmissionID] = true
+			tx := s.byTxID[obs.TransmissionID]
+			if tx != nil {
+				result = append(result, tx)
+			}
 		}
 	}
 	return result
