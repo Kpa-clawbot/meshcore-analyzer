@@ -2850,7 +2850,6 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   test('buildFlatRowHtml has null-safe decoded_json', () => {
     const flatBuilderMatch = packetsSource.match(/function buildFlatRowHtml[\s\S]*?(?=\n  function )/);
     assert.ok(flatBuilderMatch, 'buildFlatRowHtml should exist');
-    // buildFlatRowHtml uses getParsedDecoded which has null-safe fallback
     assert.ok(flatBuilderMatch[0].includes('getParsedDecoded(p)'),
       'buildFlatRowHtml should use getParsedDecoded for null-safe decoded_json fallback');
   });
@@ -2858,13 +2857,11 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   test('pathHops null guard in buildFlatRowHtml (issue #451)', () => {
     const flatBuilderMatch = packetsSource.match(/function buildFlatRowHtml[\s\S]*?(?=\n  function )/);
     assert.ok(flatBuilderMatch, 'buildFlatRowHtml should exist');
-    // buildFlatRowHtml uses getParsedPath which coalesces with || [] internally
     assert.ok(flatBuilderMatch[0].includes('getParsedPath(p)'),
       'buildFlatRowHtml should use getParsedPath which guards against null');
   });
 
   test('pathHops null guard in detail pane (issue #451)', () => {
-    // The detail pane uses getParsedPath/getParsedDecoded cached helpers
     assert.ok(packetsSource.includes('getParsedPath(pkt)'),
       'detail pane should use getParsedPath for null-safe path parsing');
     assert.ok(packetsSource.includes('getParsedDecoded(pkt)'),
@@ -4244,6 +4241,173 @@ console.log('\n=== app.js: routeTypeName/payloadTypeName edge cases ===');
   test('isTransportRoute returns false for null/undefined', () => {
     assert.strictEqual(ctx.isTransportRoute(null), false);
     assert.strictEqual(ctx.isTransportRoute(undefined), false);
+  });
+}
+
+// ===== packet-helpers.js behavioral tests =====
+{
+  console.log('\n=== packet-helpers.js: getParsedPath / getParsedDecoded ===');
+
+  // Load the shared module
+  const helperSource = fs.readFileSync('public/packet-helpers.js', 'utf8');
+  const helperCtx = { window: {}, JSON, Array, Object, console, process };
+  vm.createContext(helperCtx);
+  vm.runInContext(helperSource, helperCtx);
+  const getParsedPath = helperCtx.window.getParsedPath;
+  const getParsedDecoded = helperCtx.window.getParsedDecoded;
+
+  // Helper: compare via JSON since vm context creates objects with different prototypes
+  function assertJsonEqual(actual, expected, msg) {
+    assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected), msg);
+  }
+
+  // --- getParsedPath ---
+  test('getParsedPath: valid JSON array', () => {
+    const p = { path_json: '["abc","def"]' };
+    const result = getParsedPath(p);
+    assertJsonEqual(result, ["abc", "def"]);
+  });
+
+  test('getParsedPath: null input returns empty array', () => {
+    const p = { path_json: null };
+    assertJsonEqual(getParsedPath(p), []);
+  });
+
+  test('getParsedPath: undefined input returns empty array', () => {
+    const p = {};
+    assertJsonEqual(getParsedPath(p), []);
+  });
+
+  test('getParsedPath: empty string returns empty array', () => {
+    const p = { path_json: '' };
+    assertJsonEqual(getParsedPath(p), []);
+  });
+
+  test('getParsedPath: invalid JSON returns empty array', () => {
+    const p = { path_json: '{not valid json' };
+    assertJsonEqual(getParsedPath(p), []);
+  });
+
+  test('getParsedPath: JSON null string returns empty array', () => {
+    const p = { path_json: 'null' };
+    assertJsonEqual(getParsedPath(p), []);
+  });
+
+  test('getParsedPath: caching returns same reference on second call', () => {
+    const p = { path_json: '["x"]' };
+    const first = getParsedPath(p);
+    const second = getParsedPath(p);
+    assert.strictEqual(first, second, 'cached result should be same object reference');
+  });
+
+  test('getParsedPath: pre-parsed array (non-string) returned as-is', () => {
+    const arr = ['already', 'parsed'];
+    const p = { path_json: arr };
+    assert.strictEqual(getParsedPath(p), arr);
+  });
+
+  test('getParsedPath: pre-parsed non-array object returns empty array', () => {
+    const p = { path_json: { foo: 1 } };
+    assertJsonEqual(getParsedPath(p), []);
+  });
+
+  // --- getParsedDecoded ---
+  test('getParsedDecoded: valid JSON object', () => {
+    const p = { decoded_json: '{"type":"GRP_TXT","text":"hello"}' };
+    const result = getParsedDecoded(p);
+    assertJsonEqual(result, { type: "GRP_TXT", text: "hello" });
+  });
+
+  test('getParsedDecoded: null input returns empty object', () => {
+    const p = { decoded_json: null };
+    assertJsonEqual(getParsedDecoded(p), {});
+  });
+
+  test('getParsedDecoded: undefined input returns empty object', () => {
+    const p = {};
+    assertJsonEqual(getParsedDecoded(p), {});
+  });
+
+  test('getParsedDecoded: empty string returns empty object', () => {
+    const p = { decoded_json: '' };
+    assertJsonEqual(getParsedDecoded(p), {});
+  });
+
+  test('getParsedDecoded: invalid JSON returns empty object', () => {
+    const p = { decoded_json: 'not json' };
+    assertJsonEqual(getParsedDecoded(p), {});
+  });
+
+  test('getParsedDecoded: JSON null string returns empty object', () => {
+    const p = { decoded_json: 'null' };
+    assertJsonEqual(getParsedDecoded(p), {});
+  });
+
+  test('getParsedDecoded: caching returns same reference on second call', () => {
+    const p = { decoded_json: '{"a":1}' };
+    const first = getParsedDecoded(p);
+    const second = getParsedDecoded(p);
+    assert.strictEqual(first, second, 'cached result should be same object reference');
+  });
+
+  test('getParsedDecoded: pre-parsed object (non-string) returned as-is', () => {
+    const obj = { type: 'TXT_MSG' };
+    const p = { decoded_json: obj };
+    assert.strictEqual(getParsedDecoded(p), obj);
+  });
+
+  test('getParsedDecoded: pre-parsed non-object returns empty object', () => {
+    const p = { decoded_json: 42 };
+    assertJsonEqual(getParsedDecoded(p), {});
+  });
+
+  // --- Performance: caching avoids repeated JSON.parse ---
+  test('getParsedPath: caching is faster than repeated parsing', () => {
+    const iterations = 1000;
+    const p_nocache = { path_json: '["hop1","hop2","hop3","hop4","hop5"]' };
+
+    // Measure uncached: parse fresh each time
+    const startUncached = process.hrtime.bigint();
+    for (let i = 0; i < iterations; i++) {
+      JSON.parse(p_nocache.path_json);
+    }
+    const uncachedNs = Number(process.hrtime.bigint() - startUncached);
+
+    // Measure cached: first call parses, rest hit cache
+    const p_cached = { path_json: '["hop1","hop2","hop3","hop4","hop5"]' };
+    const startCached = process.hrtime.bigint();
+    for (let i = 0; i < iterations; i++) {
+      getParsedPath(p_cached);
+    }
+    const cachedNs = Number(process.hrtime.bigint() - startCached);
+
+    console.log(`    perf: ${iterations} uncached parses = ${(uncachedNs / 1e6).toFixed(2)}ms, ` +
+                `${iterations} cached calls = ${(cachedNs / 1e6).toFixed(2)}ms ` +
+                `(${(uncachedNs / cachedNs).toFixed(1)}x speedup)`);
+    assert.ok(cachedNs < uncachedNs, 'cached path should be faster than uncached parsing');
+  });
+
+  test('getParsedDecoded: caching is faster than repeated parsing', () => {
+    const iterations = 1000;
+    const json = '{"type":"GRP_TXT","text":"hello world","sender":"node1","channel":5}';
+
+    const startUncached = process.hrtime.bigint();
+    for (let i = 0; i < iterations; i++) {
+      JSON.parse(json);
+    }
+    const uncachedNs = Number(process.hrtime.bigint() - startUncached);
+
+    const p_cached = { decoded_json: json };
+    const startCached = process.hrtime.bigint();
+    for (let i = 0; i < iterations; i++) {
+      getParsedDecoded(p_cached);
+    }
+    const cachedNs = Number(process.hrtime.bigint() - startCached);
+
+    console.log(`    perf: ${iterations} uncached parses = ${(uncachedNs / 1e6).toFixed(2)}ms, ` +
+                `${iterations} cached calls = ${(cachedNs / 1e6).toFixed(2)}ms ` +
+                `(${(uncachedNs / cachedNs).toFixed(1)}x speedup)`);
+    assert.ok(cachedNs < uncachedNs, 'cached decoded should be faster than uncached parsing');
   });
 }
 

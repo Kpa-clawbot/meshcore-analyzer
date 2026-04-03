@@ -43,19 +43,9 @@
   const PANEL_WIDTH_KEY = 'meshcore-panel-width';
   const PANEL_CLOSE_HTML = '<button class="panel-close-btn" title="Close detail pane (Esc)">✕</button>';
 
-  // Cached JSON parse helpers to avoid repeated parsing (issue #387)
-  function getParsedPath(p) {
-    if (p._parsedPath === undefined) {
-      try { p._parsedPath = JSON.parse(p.path_json || '[]') || []; } catch { p._parsedPath = []; }
-    }
-    return p._parsedPath;
-  }
-  function getParsedDecoded(p) {
-    if (p._parsedDecoded === undefined) {
-      try { p._parsedDecoded = JSON.parse(p.decoded_json || '{}') || {}; } catch { p._parsedDecoded = {}; }
-    }
-    return p._parsedDecoded;
-  }
+  // getParsedPath / getParsedDecoded are in shared packet-helpers.js (loaded before this file)
+  const getParsedPath = window.getParsedPath;
+  const getParsedDecoded = window.getParsedDecoded;
 
   // --- Virtual scroll state ---
   const VSCROLL_ROW_HEIGHT = 36;  // estimated row height in px

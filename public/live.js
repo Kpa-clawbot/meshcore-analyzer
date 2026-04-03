@@ -1,19 +1,9 @@
 (function() {
   'use strict';
 
-  // Cached JSON parse helpers to avoid repeated parsing (issue #387)
-  function getParsedPath(p) {
-    if (p._parsedPath === undefined) {
-      try { p._parsedPath = JSON.parse(p.path_json || '[]') || []; } catch { p._parsedPath = []; }
-    }
-    return p._parsedPath;
-  }
-  function getParsedDecoded(p) {
-    if (p._parsedDecoded === undefined) {
-      try { p._parsedDecoded = JSON.parse(p.decoded_json || '{}') || {}; } catch { p._parsedDecoded = {}; }
-    }
-    return p._parsedDecoded;
-  }
+  // getParsedPath / getParsedDecoded are in shared packet-helpers.js (loaded before this file)
+  var getParsedPath = window.getParsedPath;
+  var getParsedDecoded = window.getParsedDecoded;
 
   // Status color helpers (read from CSS variables for theme support)
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
