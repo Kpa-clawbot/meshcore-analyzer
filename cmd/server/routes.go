@@ -1309,6 +1309,23 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 	hops := strings.Split(hopsParam, ",")
 	resolved := map[string]*HopResolution{}
 
+	// Context for affinity-based disambiguation.
+	fromNode := r.URL.Query().Get("from_node")
+	observer := r.URL.Query().Get("observer")
+	var contextPubkeys []string
+	if fromNode != "" {
+		contextPubkeys = append(contextPubkeys, fromNode)
+	}
+	if observer != "" {
+		contextPubkeys = append(contextPubkeys, observer)
+	}
+
+	// Get the neighbor graph for affinity scoring (may be nil).
+	var graph *NeighborGraph
+	if len(contextPubkeys) > 0 {
+		graph = s.getNeighborGraph()
+	}
+
 	for _, hop := range hops {
 		if hop == "" {
 			continue
@@ -1316,7 +1333,7 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 		hopLower := strings.ToLower(hop)
 		rows, err := s.db.conn.Query("SELECT public_key, name, lat, lon FROM nodes WHERE LOWER(public_key) LIKE ?", hopLower+"%")
 		if err != nil {
-			resolved[hop] = &HopResolution{Name: nil, Candidates: []HopCandidate{}, Conflicts: []interface{}{}}
+			resolved[hop] = &HopResolution{Name: nil, Candidates: []HopCandidate{}, Conflicts: []interface{}{}, Confidence: "ambiguous"}
 			continue
 		}
 
@@ -1334,18 +1351,87 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 
 		if len(candidates) == 0 {
-			resolved[hop] = &HopResolution{Name: nil, Candidates: []HopCandidate{}, Conflicts: []interface{}{}}
+			resolved[hop] = &HopResolution{Name: nil, Candidates: []HopCandidate{}, Conflicts: []interface{}{}, Confidence: "ambiguous"}
 		} else if len(candidates) == 1 {
 			resolved[hop] = &HopResolution{
 				Name: candidates[0].Name, Pubkey: candidates[0].Pubkey,
 				Candidates: candidates, Conflicts: []interface{}{},
+				Confidence: "unique_prefix",
 			}
 		} else {
+			// Compute affinity scores for each candidate if we have context.
+			if graph != nil && len(contextPubkeys) > 0 {
+				now := time.Now()
+				for i := range candidates {
+					candPK := strings.ToLower(candidates[i].Pubkey)
+					bestScore := 0.0
+					for _, ctxPK := range contextPubkeys {
+						edges := graph.Neighbors(strings.ToLower(ctxPK))
+						for _, e := range edges {
+							if e.Ambiguous {
+								continue
+							}
+							otherPK := e.NodeA
+							if strings.EqualFold(otherPK, ctxPK) {
+								otherPK = e.NodeB
+							}
+							if strings.EqualFold(otherPK, candPK) {
+								sc := e.Score(now)
+								if sc > bestScore {
+									bestScore = sc
+								}
+							}
+						}
+					}
+					if bestScore > 0 {
+						s := bestScore
+						candidates[i].AffinityScore = &s
+					}
+				}
+			}
+
+			// Determine best candidate and confidence level.
 			ambig := true
-			resolved[hop] = &HopResolution{
+			hr := &HopResolution{
 				Name: candidates[0].Name, Pubkey: candidates[0].Pubkey,
 				Ambiguous: &ambig, Candidates: candidates, Conflicts: hopCandidatesToConflicts(candidates),
+				Confidence: "ambiguous",
 			}
+
+			// Check if affinity can resolve: find best and second-best scores.
+			var bestIdx int
+			var bestScore, secondBest float64
+			for i, c := range candidates {
+				s := 0.0
+				if c.AffinityScore != nil {
+					s = *c.AffinityScore
+				}
+				if s > bestScore {
+					secondBest = bestScore
+					bestScore = s
+					bestIdx = i
+				} else if s > secondBest {
+					secondBest = s
+				}
+			}
+
+			if bestScore > 0 {
+				confident := false
+				if secondBest == 0 {
+					confident = bestScore > 0
+				} else {
+					confident = bestScore >= affinityConfidenceRatio*secondBest
+				}
+				if confident {
+					pk := candidates[bestIdx].Pubkey
+					hr.BestCandidate = &pk
+					hr.Name = candidates[bestIdx].Name
+					hr.Pubkey = pk
+					hr.Confidence = "neighbor_affinity"
+				}
+			}
+
+			resolved[hop] = hr
 		}
 	}
 	writeJSON(w, ResolveHopsResponse{Resolved: resolved})

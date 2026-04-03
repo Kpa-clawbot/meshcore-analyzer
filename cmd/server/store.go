@@ -3304,6 +3304,130 @@ func (pm *prefixMap) resolve(hop string) *nodeInfo {
 	return &candidates[0]
 }
 
+// resolveWithContext resolves a hop prefix using the neighbor affinity graph
+// for disambiguation when multiple candidates match. It applies a 4-tier
+// priority: (1) affinity graph score, (2) geographic proximity to context
+// nodes, (3) GPS preference, (4) first match fallback.
+//
+// contextPubkeys are pubkeys of nodes that provide context for disambiguation
+// (e.g., the originator, observer, or adjacent hops in the path).
+// graph may be nil, in which case it falls back to the existing resolve().
+func (pm *prefixMap) resolveWithContext(hop string, contextPubkeys []string, graph *NeighborGraph) (*nodeInfo, string, float64) {
+	h := strings.ToLower(hop)
+	candidates := pm.m[h]
+	if len(candidates) == 0 {
+		return nil, "no_match", 0
+	}
+	if len(candidates) == 1 {
+		return &candidates[0], "unique_prefix", 1.0
+	}
+
+	// Priority 1: Affinity graph score
+	if graph != nil && len(contextPubkeys) > 0 {
+		type scored struct {
+			idx   int
+			score float64
+		}
+		now := time.Now()
+		var scores []scored
+		for i, cand := range candidates {
+			candPK := strings.ToLower(cand.PublicKey)
+			bestScore := 0.0
+			for _, ctxPK := range contextPubkeys {
+				edges := graph.Neighbors(strings.ToLower(ctxPK))
+				for _, e := range edges {
+					if e.Ambiguous {
+						continue
+					}
+					otherPK := e.NodeA
+					if strings.EqualFold(otherPK, ctxPK) {
+						otherPK = e.NodeB
+					}
+					if strings.EqualFold(otherPK, candPK) {
+						s := e.Score(now)
+						if s > bestScore {
+							bestScore = s
+						}
+					}
+				}
+			}
+			if bestScore > 0 {
+				scores = append(scores, scored{i, bestScore})
+			}
+		}
+
+		if len(scores) >= 1 {
+			// Sort descending
+			for i := 0; i < len(scores)-1; i++ {
+				for j := i + 1; j < len(scores); j++ {
+					if scores[j].score > scores[i].score {
+						scores[i], scores[j] = scores[j], scores[i]
+					}
+				}
+			}
+			best := scores[0]
+			if len(scores) == 1 || best.score >= affinityConfidenceRatio*scores[1].score {
+				return &candidates[best.idx], "neighbor_affinity", best.score
+			}
+			// Scores too close — fall through to lower-priority strategies
+		}
+	}
+
+	// Priority 2: Geographic proximity (if context pubkeys have GPS and candidates have GPS)
+	if len(contextPubkeys) > 0 && graph != nil {
+		// Find GPS positions of context nodes from the prefix map or candidates
+		// We need nodeInfo for context pubkeys — look them up
+		var contextLat, contextLon float64
+		var contextGPSCount int
+		for _, ctxPK := range contextPubkeys {
+			ctxLower := strings.ToLower(ctxPK)
+			if infos, ok := pm.m[ctxLower]; ok && len(infos) == 1 && infos[0].HasGPS {
+				contextLat += infos[0].Lat
+				contextLon += infos[0].Lon
+				contextGPSCount++
+			}
+		}
+		if contextGPSCount > 0 {
+			contextLat /= float64(contextGPSCount)
+			contextLon /= float64(contextGPSCount)
+
+			bestIdx := -1
+			bestDist := math.MaxFloat64
+			for i, cand := range candidates {
+				if !cand.HasGPS {
+					continue
+				}
+				d := geoDistApprox(contextLat, contextLon, cand.Lat, cand.Lon)
+				if d < bestDist {
+					bestDist = d
+					bestIdx = i
+				}
+			}
+			if bestIdx >= 0 {
+				return &candidates[bestIdx], "geo_proximity", 0
+			}
+		}
+	}
+
+	// Priority 3: GPS preference
+	for i := range candidates {
+		if candidates[i].HasGPS {
+			return &candidates[i], "gps_preference", 0
+		}
+	}
+
+	// Priority 4: First match fallback
+	return &candidates[0], "first_match", 0
+}
+
+// geoDistApprox returns an approximate distance between two lat/lon points
+// (equirectangular approximation, sufficient for relative comparison).
+func geoDistApprox(lat1, lon1, lat2, lon2 float64) float64 {
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLon := (lon2 - lon1) * math.Pi / 180 * math.Cos((lat1+lat2)/2*math.Pi/180)
+	return math.Sqrt(dLat*dLat + dLon*dLon)
+}
+
 func parsePathJSON(pathJSON string) []string {
 	if pathJSON == "" || pathJSON == "[]" {
 		return nil
