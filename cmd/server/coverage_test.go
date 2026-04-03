@@ -3738,6 +3738,14 @@ func TestIndexByNodePreCheck(t *testing.T) {
 		}
 	})
 
+	t.Run("indexes srcPubKey", func(t *testing.T) {
+		tx := &StoreTx{Hash: "h2b", DecodedJSON: `{"srcPubKey":"112233","type":"TXT_MSG"}`}
+		store.indexByNode(tx)
+		if len(store.byNode["112233"]) != 1 {
+			t.Errorf("expected 1 entry for srcPubKey 112233, got %d", len(store.byNode["112233"]))
+		}
+	})
+
 	t.Run("skips channel message without pubKey", func(t *testing.T) {
 		beforeLen := len(store.byNode)
 		tx := &StoreTx{Hash: "h3", DecodedJSON: `{"type":"CHAN","channel":"#test","text":"hello"}`}
