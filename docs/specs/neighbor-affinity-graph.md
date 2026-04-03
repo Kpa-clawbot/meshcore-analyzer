@@ -608,6 +608,245 @@ TestNeighborGraphAPI_RegionFilter → only edges from filtered observers
 
 ---
 
+## Integration with Existing Disambiguation
+
+The codebase currently has **three separate disambiguation mechanisms** that resolve ambiguous hash prefixes. The neighbor affinity graph must integrate with all three, serving as the highest-priority signal where sufficient data exists, while preserving existing heuristics as fallbacks.
+
+### a. Frontend `map.js` — Geographic Centroid (lines ~342–368)
+
+**Current behavior:** When drawing route lines on the map, `map.js` resolves hop prefixes to node positions. For collisions (multiple candidates match a prefix), it computes the geographic centroid of already-resolved hops and picks the candidate closest to that center:
+
+```javascript
+// Current: geo-centroid disambiguation
+const cLat = knownPos.reduce((s, p) => s + p.lat, 0) / knownPos.length;
+const cLon = knownPos.reduce((s, p) => s + p.lon, 0) / knownPos.length;
+// ... picks candidate with minimum distance to (cLat, cLon)
+```
+
+**After #482:** Use affinity scores from the `/api/resolve-hops` response as the **primary** disambiguation signal. The enhanced response includes `affinityScore` per candidate and a `bestCandidate` field when confidence is high. Fall back to the geo-centroid heuristic only when:
+- The affinity graph has no data for this prefix (cold start)
+- No candidate meets the confidence threshold (sparse observations)
+- The `bestCandidate` field is absent from the response
+
+The geo-centroid heuristic is actually a reasonable fallback for route visualization — it produces visually plausible routes even without affinity data. Keep it as the secondary strategy.
+
+### b. Backend `prefixMap.resolve()` — GPS Preference (`store.go`, lines ~3289–3305)
+
+**Current behavior:** The `resolve()` method on `prefixMap` handles prefix-to-node resolution for all server-side analytics (hop distances, subpath computation, distance analytics). When multiple candidates match a prefix, it picks the first one with GPS coordinates. No intelligence, no context awareness — just "has GPS wins":
+
+```go
+// Current: naive GPS-preference disambiguation
+for i := range candidates {
+    if candidates[i].HasGPS {
+        return &candidates[i]
+    }
+}
+return &candidates[0]
+```
+
+This produces wrong answers on collisions. If two nodes share prefix `"C0"` and both have GPS, it returns whichever was indexed first — effectively random. This corrupts hop distance calculations, subpath analysis, and every other server-side analytic that resolves hops.
+
+**After #482:** `resolve()` gains an **affinity-aware code path**. When the caller provides context (originator pubkey or observer pubkey), `resolve()` consults the neighbor graph for the best candidate:
+
+1. Look up the context node's neighbors in the `NeighborGraph`
+2. If a candidate appears as a known neighbor with sufficient confidence, return it
+3. If no affinity data exists, fall back to the existing GPS-preference heuristic
+
+This requires a new method signature — either `resolveWithContext(hop, contextPubkey)` or passing the `NeighborGraph` as a parameter. The existing `resolve(hop)` method remains as the no-context fallback for callers that lack originator/observer information.
+
+**Impact:** Fixing `resolve()` fixes analytics accuracy across the board — hop distances, subpath computation, distance analytics, and any future feature that resolves hop prefixes server-side.
+
+### c. API `handleResolveHops` — Candidate List (`routes.go`, lines ~1297–1346)
+
+**Current behavior:** The `/api/resolve-hops` endpoint accepts a comma-separated list of hop prefixes, queries the database for matching nodes, and returns all candidates. When multiple candidates match, it sets `ambiguous: true` and returns the full candidate list. The client decides which candidate to use:
+
+```go
+// Current: returns all candidates, client decides
+ambig := true
+resolved[hop] = &HopResolution{
+    Name: candidates[0].Name, Pubkey: candidates[0].Pubkey,
+    Ambiguous: &ambig, Candidates: candidates,
+}
+```
+
+**After #482:** Enhance the response with affinity data:
+
+1. Add `affinityScore` (float, 0.0–1.0) to each `HopCandidate` in the response, computed from the neighbor graph using the `from_node`/`observer` context if provided in the request
+2. Add `bestCandidate` field (string, pubkey) to the `HopResolution` when the top candidate's affinity score exceeds the confidence threshold (Jaccard ≥ 3× runner-up AND ≥ 3 observations)
+3. Add `confidence` field (string: `unique_prefix` | `neighbor_affinity` | `geo_proximity` | `ambiguous`) indicating how the resolution was determined
+4. The client can still override — `bestCandidate` is a recommendation, not a mandate
+
+### Disambiguation Priority
+
+When resolving an ambiguous prefix, apply these strategies in order (highest priority first):
+
+| Priority | Strategy | Source | When it wins |
+|----------|----------|--------|-------------|
+| 1 | **Affinity graph score** | `NeighborGraph` | Score above confidence threshold (Jaccard ≥ 3× runner-up, ≥ 3 observations) |
+| 2 | **Geographic proximity** | Geo-centroid of resolved hops | Affinity data insufficient; candidate positions available |
+| 3 | **GPS preference** | Node has coordinates vs. doesn't | No affinity data, no geo context; at least one candidate has GPS |
+| 4 | **First match** | Index order | No signal at all — current naive fallback (effectively random) |
+
+The first strategy that produces a confident answer wins. Lower-priority strategies are only consulted when higher-priority ones lack data or confidence.
+
+---
+
+## Playwright E2E Tests
+
+End-to-end tests using Playwright that verify the full user-visible behavior of the neighbor affinity feature. These tests run against a local server with the `test-fixtures/` SQLite database and exercise both the UI and the API surface.
+
+**Test file:** `test-e2e-playwright.js` (extend existing Playwright test suite)
+
+### a. Show Neighbors — Happy Path
+
+```
+Test: "Show Neighbors displays neighbor markers on map"
+
+Steps:
+  1. Navigate to the map page
+  2. Click on a node marker with known neighbors (e.g., a repeater with stable topology)
+  3. Click "Show Neighbors" in the node popup/side pane
+  4. Assert: neighbor markers appear on the map (highlighted or differently styled)
+  5. Assert: neighbor count badge/label matches the expected number of neighbors
+  6. Assert: the selected node's marker is visually distinguished (reference node styling)
+
+Validates: /api/nodes/{pubkey}/neighbors returns data, frontend renders it correctly
+```
+
+### b. Show Neighbors — Hash Collision Disambiguation
+
+```
+Test: "Show Neighbors resolves correct node on hash collision"
+
+Setup:
+  - Requires two nodes sharing the same 1-byte prefix in test fixtures
+  - Node A (prefix "C0", pubkey c0dedad4...) has known neighbors R1, R2, R3
+  - Node B (prefix "C0", pubkey c0f1a2b3...) has different neighbors R4, R5
+
+Steps:
+  1. Navigate to Node A's detail page (by full pubkey, not prefix)
+  2. Click "Show Neighbors"
+  3. Assert: R1, R2, R3 appear as neighbors on the map
+  4. Assert: R4, R5 do NOT appear (they are Node B's neighbors)
+  5. Navigate to Node B's detail page
+  6. Click "Show Neighbors"
+  7. Assert: R4, R5 appear as neighbors
+  8. Assert: R1, R2, R3 do NOT appear
+
+This is THE critical test — if this passes, #484 is fixed. The affinity graph
+correctly disambiguates which "C0" node the path hops refer to.
+
+Validates: Server-side disambiguation via neighbor affinity, not client-side prefix matching
+```
+
+### c. Neighbor API Response Shape
+
+```
+Test: "Neighbor API returns correct response structure"
+
+Steps:
+  1. GET /api/nodes/{known_pubkey}/neighbors
+  2. Assert: response has "node" field matching the requested pubkey
+  3. Assert: response has "neighbors" array
+  4. Assert: each neighbor has fields: pubkey, prefix, name, role, count, score,
+     first_seen, last_seen, avg_snr, observers, ambiguous
+  5. Assert: "total_observations" is a positive integer
+  6. For neighbors with ambiguous=true:
+     a. Assert: "candidates" array is present and non-empty
+     b. Assert: each candidate has "pubkey", "name", "role"
+     c. Assert: each candidate has "affinityScore" (number or null)
+
+Validates: API contract matches spec, affinityScore field is present on candidates
+```
+
+### d. Neighbor Graph — Empty Path (Zero-Hop ADVERT)
+
+```
+Test: "Zero-hop ADVERT shows observer as neighbor"
+
+Setup:
+  - Test fixtures contain a node X that has ADVERTs with empty path (path_json="[]"),
+    received directly by observer O with no repeaters
+
+Steps:
+  1. GET /api/nodes/{X_pubkey}/neighbors
+  2. Assert: response includes observer O in the neighbors array
+  3. Assert: the edge between X and O has ambiguous=false (both pubkeys are fully known)
+
+Validates: Empty path handling — direct ADVERT creates originator↔observer edge
+```
+
+### e. Resolve Hops with Affinity Scores
+
+```
+Test: "Resolve hops returns affinity scores for colliding prefixes"
+
+Setup:
+  - Two nodes share prefix "C0" in test fixtures
+
+Steps:
+  1. GET /api/resolve-hops?hops=C0&from_node={known_originator}&observer={known_observer}
+  2. Assert: response resolved["C0"] has candidates array
+  3. Assert: each candidate has "affinityScore" field (number or null)
+  4. Assert: when confidence threshold is met, "bestCandidate" field is present
+     with a valid pubkey
+  5. Assert: "confidence" field is one of: "unique_prefix", "neighbor_affinity",
+     "ambiguous"
+
+Validates: Enhanced /api/resolve-hops response with affinity data
+```
+
+### f. Route Visualization with Disambiguation
+
+```
+Test: "Route line uses affinity-resolved positions for colliding hops"
+
+Steps:
+  1. Navigate to packets page
+  2. Find a multi-hop packet where at least one hop prefix has a hash collision
+  3. Open packet detail
+  4. Click "Show Route" on the map
+  5. Assert: route polyline is drawn on the map
+  6. Assert: route passes through the affinity-resolved candidate's position,
+     not the other collision candidate's position
+  7. Verify by checking the polyline's latlng coordinates against the expected
+     node positions
+
+Validates: Frontend uses affinity scores (from enhanced /api/resolve-hops) instead
+of falling back to geo-centroid for route disambiguation
+```
+
+### g. Cold Start Graceful Degradation
+
+```
+Test: "Empty packet store returns graceful results, not errors"
+
+Setup:
+  - Start server with empty/fresh SQLite database (no packets ingested)
+
+Steps:
+  1. GET /api/nodes/{any_pubkey}/neighbors
+     - Assert: 200 status (not 500)
+     - Assert: response has "neighbors": [] (empty array)
+     - Assert: response has "total_observations": 0
+
+  2. GET /api/resolve-hops?hops=C0
+     - Assert: 200 status
+     - Assert: resolved["C0"] uses existing behavior (GPS preference fallback)
+     - Assert: no "affinityScore" or "bestCandidate" fields (no affinity data)
+     - Assert: candidates array still populated from node registry
+
+  3. GET /api/analytics/neighbor-graph
+     - Assert: 200 status
+     - Assert: "edges": [] (empty)
+     - Assert: "stats.total_edges": 0
+
+Validates: All affinity endpoints degrade gracefully on cold start — no crashes,
+no misleading data, existing functionality preserved
+```
+
+---
+
 ## What's NOT in scope
 
 - **Full mesh topology visualization** — this spec covers first-hop neighbors only, not multi-hop routing topology
