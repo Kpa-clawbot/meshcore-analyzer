@@ -617,7 +617,7 @@ func (db *DB) buildTransmissionWhere(q PacketQuery) ([]string, []interface{}) {
 			where = append(where, "EXISTS (SELECT 1 FROM observations oi WHERE oi.transmission_id = t.id AND oi.observer_id IN ("+placeholders+"))")
 		}
 		for _, id := range ids {
-			args = append(args, id)
+			args = append(args, strings.TrimSpace(id))
 		}
 	}
 	if q.Region != "" {

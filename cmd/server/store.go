@@ -1575,8 +1575,9 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 func (s *PacketStore) transmissionsForObserver(observerIDs string, from []*StoreTx) []*StoreTx {
 	ids := strings.Split(observerIDs, ",")
 	idSet := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		idSet[id] = true
+	for i, id := range ids {
+		ids[i] = strings.TrimSpace(id)
+		idSet[ids[i]] = true
 	}
 	if from != nil {
 		return filterTxSlice(from, func(tx *StoreTx) bool {
