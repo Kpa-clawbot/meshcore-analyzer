@@ -495,11 +495,65 @@ This directly fixes #484.
 
 ### Node detail page enhancement
 
-Add a "Neighbors" section to the node detail view showing:
-- Table of known neighbors with columns: Name, Role, Observations, Last Seen, SNR, Score
-- Rows sorted by score descending
-- Ambiguous entries shown with a ⚠️ icon and candidate list on hover
-- Each neighbor name links to its detail page
+#### Section placement
+
+Insert as a new `node-full-card` section **between "Heard By (N observers)" and "Paths Through This Node"** in the existing node detail layout. Rationale: neighbors are closely related to observers (both represent "who sees this node") and naturally lead into the paths section.
+
+#### Section header
+
+- `<h4>Neighbors (N)</h4>` where N is the neighbor count from the API response
+- **Loading state:** `<span class="spinner"></span> Loading neighbors…`
+- **Empty state:** `<div class="text-muted">No neighbor data available yet. Neighbor relationships are built from observed packet paths over time.</div>`
+- **Error state:** `<div class="text-muted">Could not load neighbor data</div>`
+
+#### Neighbors table
+
+| Column | Content |
+|--------|---------|
+| **Neighbor** | Name linked to `#/nodes/{pubkey}`, or `{prefix}… (unknown)` for unresolved prefixes |
+| **Role** | Role badge (colored pill, same style as node list — uses existing `ROLE_COLORS` / `ROLE_STYLE`) |
+| **Score** | Affinity score (number). Tooltip on hover shows raw observation count + Jaccard similarity value |
+| **Observations** | Total observation count for this edge |
+| **Last Seen** | Timestamp rendered via existing `renderNodeTimestampHtml()` helper |
+| **Confidence** | Visual indicator (see below) |
+
+**Confidence indicators:**
+
+| Indicator | Label | Criteria |
+|-----------|-------|----------|
+| 🟢 | HIGH | Auto-resolved, score ratio ≥ 3×, ≥ 3 observations |
+| 🟡 | MEDIUM | 2+ observations but ratio < 3× |
+| 🔴 | LOW | Single observation |
+| ⚠️ | AMBIGUOUS | Multiple candidates, couldn't resolve |
+
+**Sorting:** Rows sorted by score descending.
+
+**Ambiguous entries:** Show ⚠️ icon in the Confidence column. Clicking the row expands an inline sub-table showing all candidates with their individual affinity scores and Jaccard values.
+
+#### Interaction
+
+- **Click neighbor name** → navigate to that node's detail page (`#/nodes/{pubkey}`)
+- **"Show on Map" button** (small, right-aligned per row) → highlights this neighbor on the node detail map with a line drawn between the two nodes showing the edge
+- **Distance badge** — if both the current node and the neighbor have GPS coordinates, display a small badge showing the distance between them (e.g., `2.3 km`)
+
+#### Condensed view (right panel in split view)
+
+When a node is selected in the LEFT panel (node list), the RIGHT panel shows the condensed detail view. In condensed mode:
+
+- Show **top 5 neighbors only** (by score descending)
+- Display a `"View all N neighbors →"` link at the bottom that navigates to the full detail page
+- Same table format as above, just truncated
+
+#### Deep linking
+
+Support `?section=node-neighbors` URL parameter to auto-scroll to the neighbors section when the page loads. This matches the existing pattern used by `?section=node-packets`.
+
+#### Data fetching
+
+- Call `GET /api/nodes/{pubkey}/neighbors` when the node detail view is rendered
+- Show the spinner loading state while the request is in flight
+- **Cache** the response for the lifetime of the detail view — do not re-fetch on tab switches within the same node
+- On fetch error, display the error state message described above
 
 ### Analytics integration
 
