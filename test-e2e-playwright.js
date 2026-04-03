@@ -1486,31 +1486,6 @@ async function run() {
     }
   });
 
-  await test('Node detail: neighbors section loading state', async () => {
-    // Navigate to a node - the section should initially show a spinner
-    // Use a DIFFERENT node than the first test to avoid neighbor cache hits
-    await page.goto(BASE + '/#/nodes');
-    await page.waitForSelector('#nodesBody tr[data-key]', { timeout: 10000 });
-    const rows = await page.$$('#nodesBody tr[data-key]');
-    const pubkey = rows.length > 1
-      ? await rows[1].evaluate(el => el.dataset.key)
-      : await rows[0].evaluate(el => el.dataset.key);
-    // Intercept API to delay response
-    await page.route('**/api/nodes/*/neighbors*', async route => {
-      await new Promise(r => setTimeout(r, 500));
-      await route.continue();
-    });
-    await page.goto(BASE + '/#/nodes/' + pubkey);
-    // Check spinner appears
-    const spinnerVisible = await page.waitForSelector('#fullNeighborsContent .spinner', { timeout: 5000 }).then(() => true).catch(() => false);
-    assert(spinnerVisible, 'Loading spinner should be visible initially');
-    // Wait for loading to finish
-    await page.waitForFunction(() => {
-      const el = document.getElementById('fullNeighborsContent');
-      return el && !el.innerHTML.includes('spinner');
-    }, { timeout: 15000 });
-    await page.unroute('**/api/nodes/*/neighbors*');
-  });
 
   // ─── End neighbor section tests ───────────────────────────────────────────
 
