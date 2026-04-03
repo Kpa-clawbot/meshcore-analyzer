@@ -1650,6 +1650,7 @@
           }
           delete nodeMarkers[key];
           delete nodeData[key];
+          delete nodeActivity[key];
           pruned = true;
         }
       } else if (marker && marker._staleDimmed) {
@@ -1664,6 +1665,10 @@
       var _el2 = document.getElementById('liveNodeCount');
       if (_el2) _el2.textContent = Object.keys(nodeMarkers).length;
       if (window.HopResolver) HopResolver.init(Object.values(nodeData));
+    }
+    // Prune orphaned nodeActivity entries (nodes removed above or never tracked)
+    for (var aKey in nodeActivity) {
+      if (!(aKey in nodeData)) delete nodeActivity[aKey];
     }
   }
 
