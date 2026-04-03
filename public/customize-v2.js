@@ -738,10 +738,14 @@
   /** Check if a specific field is overridden (differs from server default) */
   function _isOverridden(section, key) {
     var overrides = _getOverrides();
+    var server = _getServer();
     if (section) {
-      return !!(overrides[section] && overrides[section].hasOwnProperty(key));
+      if (!overrides[section] || !overrides[section].hasOwnProperty(key)) return false;
+      var serverSection = server[section] || {};
+      return overrides[section][key] !== serverSection[key];
     }
-    return overrides.hasOwnProperty(key);
+    if (!overrides.hasOwnProperty(key)) return false;
+    return overrides[key] !== server[key];
   }
 
   /** Count overridden fields in a section */
@@ -1493,6 +1497,7 @@
     validateShape: validateShape,
     applyCSS: applyCSS,
     isValidColor: isValidColor,
+    isOverridden: _isOverridden,
     THEME_CSS_MAP: THEME_CSS_MAP
   };
 })();

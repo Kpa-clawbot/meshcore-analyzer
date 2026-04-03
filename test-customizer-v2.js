@@ -53,6 +53,7 @@ function makeSandbox() {
     parseInt, parseFloat, isNaN, Infinity, NaN, undefined,
     MutationObserver: class { observe() {} },
     HashChangeEvent: class {},
+    CustomEvent: class CustomEvent { constructor(type, opts) { this.type = type; this.detail = opts && opts.detail; } },
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
   };
   ctx.window.localStorage = localStorage;
@@ -363,6 +364,43 @@ test('matches all keys from old app.js varMap', () => {
   for (const key of expectedKeys) {
     assert(key in api.THEME_CSS_MAP, `Missing key: ${key}`);
   }
+});
+
+// ── _isOverridden tests ──
+console.log('\n_isOverridden (value comparison):');
+
+test('returns false when no overrides exist', () => {
+  const { api } = loadCustomizer();
+  api.init({ theme: { accent: '#aaa' } });
+  assert.strictEqual(api.isOverridden('theme', 'accent'), false);
+});
+
+test('returns false when override matches server default', () => {
+  const { api, ls } = loadCustomizer();
+  ls.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#aaa' } }));
+  api.init({ theme: { accent: '#aaa' } });
+  assert.strictEqual(api.isOverridden('theme', 'accent'), false);
+});
+
+test('returns true when override differs from server default', () => {
+  const { api, ls } = loadCustomizer();
+  ls.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#bbb' } }));
+  api.init({ theme: { accent: '#aaa' } });
+  assert.strictEqual(api.isOverridden('theme', 'accent'), true);
+});
+
+test('returns false for key not in overrides', () => {
+  const { api, ls } = loadCustomizer();
+  ls.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#bbb' } }));
+  api.init({ theme: { accent: '#aaa', border: '#ccc' } });
+  assert.strictEqual(api.isOverridden('theme', 'border'), false);
+});
+
+test('returns true when server has no default for overridden key', () => {
+  const { api, ls } = loadCustomizer();
+  ls.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#bbb' } }));
+  api.init({});
+  assert.strictEqual(api.isOverridden('theme', 'accent'), true);
 });
 
 // ── Summary ──
