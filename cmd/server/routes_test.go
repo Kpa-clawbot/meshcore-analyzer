@@ -2256,6 +2256,46 @@ func TestGetNodeHashSizeInfoOnlyDirectZeroHopIgnored(t *testing.T) {
 	}
 }
 
+func TestGetNodeHashSizeInfoDirectNonZeroHopCounted(t *testing.T) {
+	// A DIRECT advert with non-zero hop count should NOT be skipped —
+	// only zero-hop DIRECT adverts misreport hash size.
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	pk := "ffff111122223333444455556666777788889999aaaabbbbccccddddeeee5555"
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'DirNonZero', 'repeater')", pk)
+
+	decoded := `{"name":"DirNonZero","pubKey":"` + pk + `"}`
+	// DIRECT advert (route type 2 = 0x02 in bits 0-1), path byte 0x41:
+	//   upper 2 bits = 01 → hash_size = 2, lower 6 bits = 0x01 → hop count 1 (non-zero)
+	rawDirectNonZero := "12" + "41" + "aabb" // header=0x12 (ADVERT|DIRECT), path=0x41
+	payloadType := 4
+
+	tx := &StoreTx{
+		ID:          9170,
+		RawHex:      rawDirectNonZero,
+		Hash:        "dirnonzero0",
+		FirstSeen:   "2024-01-01T00:00:00Z",
+		PayloadType: &payloadType,
+		DecodedJSON: decoded,
+	}
+	store.packets = append(store.packets, tx)
+	store.byPayloadType[4] = append(store.byPayloadType[4], tx)
+
+	info := store.GetNodeHashSizeInfo()
+	ni := info[pk]
+	if ni == nil {
+		t.Fatal("expected hash info for DIRECT non-zero-hop node — it should NOT be skipped")
+	}
+	if ni.HashSize != 2 {
+		t.Errorf("HashSize=%d, want 2 (DIRECT with hop count > 0 should be counted)", ni.HashSize)
+	}
+}
+
 func TestGetNodeHashSizeInfoNoAdverts(t *testing.T) {
 	// A node with no ADVERT packets should not appear in hash size info.
 	db := setupTestDB(t)
