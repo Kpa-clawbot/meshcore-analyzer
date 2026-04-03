@@ -4126,7 +4126,17 @@ console.log('\n=== app.js: routeTypeName/payloadTypeName edge cases ===');
     assertJsonEqual(getParsedPath(p), []);
   });
 
+  test('getParsedPath: cached null _parsedPath returns empty array (#538)', () => {
+    const p = { path_json: '["a"]', _parsedPath: null };
+    assertJsonEqual(getParsedPath(p), []);
+  });
+
   // --- getParsedDecoded ---
+  test('getParsedDecoded: cached null _parsedDecoded returns empty object (#538)', () => {
+    const p = { decoded_json: '{"x":1}', _parsedDecoded: null };
+    assertJsonEqual(getParsedDecoded(p), {});
+  });
+
   test('getParsedDecoded: valid JSON object', () => {
     const p = { decoded_json: '{"type":"GRP_TXT","text":"hello"}' };
     const result = getParsedDecoded(p);

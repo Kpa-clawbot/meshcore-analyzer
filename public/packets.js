@@ -1100,8 +1100,8 @@
 
   // Build HTML for a single flat (ungrouped) packet row
   function buildFlatRowHtml(p) {
-    const decoded = getParsedDecoded(p);
-    const pathHops = getParsedPath(p);
+    const decoded = getParsedDecoded(p) || {};
+    const pathHops = getParsedPath(p) || [];
     const region = p.observer_id ? (observerMap.get(p.observer_id)?.iata || '') : '';
     const typeName = payloadTypeName(p.payload_type);
     const typeClass = payloadTypeColor(p.payload_type);
@@ -1437,8 +1437,8 @@
     const pkt = data.packet;
     const breakdown = data.breakdown || {};
     const ranges = breakdown.ranges || [];
-    const decoded = getParsedDecoded(pkt);
-    const pathHops = getParsedPath(pkt);
+    const decoded = getParsedDecoded(pkt) || {};
+    const pathHops = getParsedPath(pkt) || [];
 
     // Resolve sender GPS — from packet directly, or from known node in DB
     let senderLat = decoded.lat != null ? decoded.lat : (decoded.latitude || null);

@@ -10,7 +10,7 @@
  */
 
 window.getParsedPath = function getParsedPath(p) {
-  if (p._parsedPath !== undefined) return p._parsedPath;
+  if (p._parsedPath !== undefined) return p._parsedPath || [];
   var raw = p.path_json;
   if (typeof raw !== 'string') {
     p._parsedPath = Array.isArray(raw) ? raw : [];
@@ -32,7 +32,7 @@ window.clearParsedCache = function clearParsedCache(p) {
 };
 
 window.getParsedDecoded = function getParsedDecoded(p) {
-  if (p._parsedDecoded !== undefined) return p._parsedDecoded;
+  if (p._parsedDecoded !== undefined) return p._parsedDecoded || {};
   var raw = p.decoded_json;
   if (typeof raw !== 'string') {
     p._parsedDecoded = (raw && typeof raw === 'object') ? raw : {};
