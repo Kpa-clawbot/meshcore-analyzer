@@ -4518,10 +4518,16 @@ func (s *PacketStore) computeHashCollisions(region string) map[string]interface{
 	// Compute collisions for each byte size (1, 2, 3)
 	collisionsBySize := make(map[string]interface{})
 	for _, bytes := range []int{1, 2, 3} {
-		// Filter nodes relevant to this byte size
+		// Filter nodes relevant to this byte size.
+		// - Exclude hash_size==0 nodes: no adverts seen, so actual hash
+		//   size is unknown. Including them in every bucket inflates
+		//   collision counts.
+		// - Exclude companions: they are mobile/temporary and don't form
+		//   the mesh backbone, so collisions with them aren't meaningful.
+		// (Fixes #441)
 		var nodesForByte []collisionNode
 		for _, cn := range allCNodes {
-			if cn.HashSize == bytes || cn.HashSize == 0 {
+			if cn.HashSize == bytes && cn.Role != "companion" {
 				nodesForByte = append(nodesForByte, cn)
 			}
 		}

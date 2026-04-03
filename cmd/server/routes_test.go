@@ -3059,11 +3059,11 @@ func TestHashCollisionsWithCollision(t *testing.T) {
 	now := time.Now().UTC()
 	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
 
-	// Two nodes with same first byte 'CC', no adverts so hash_size=0 (included in all buckets)
+	// Two repeater nodes with same first byte 'CC' and hash_size=1
 	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
-		VALUES ('CC11223344556677', 'Node1', 'repeater', 37.5, -122.0, ?, '2026-01-01T00:00:00Z', 0)`, recent)
+		VALUES ('CC11223344556677', 'Node1', 'repeater', 37.5, -122.0, ?, '2026-01-01T00:00:00Z', 5)`, recent)
 	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
-		VALUES ('CC99887766554433', 'Node2', 'repeater', 37.51, -122.01, ?, '2026-01-01T00:00:00Z', 0)`, recent)
+		VALUES ('CC99887766554433', 'Node2', 'repeater', 37.51, -122.01, ?, '2026-01-01T00:00:00Z', 5)`, recent)
 
 	cfg := &Config{Port: 3000}
 	hub := NewHub()
@@ -3072,6 +3072,14 @@ func TestHashCollisionsWithCollision(t *testing.T) {
 	if err := store.Load(); err != nil {
 		t.Fatalf("store.Load failed: %v", err)
 	}
+	// Inject hash_size=1 for both nodes so they appear in the 1-byte bucket
+	store.hashSizeInfoMu.Lock()
+	store.hashSizeInfoCache = map[string]*hashSizeNodeInfo{
+		"CC11223344556677": {HashSize: 1, AllSizes: map[int]bool{1: true}},
+		"CC99887766554433": {HashSize: 1, AllSizes: map[int]bool{1: true}},
+	}
+	store.hashSizeInfoAt = time.Now()
+	store.hashSizeInfoMu.Unlock()
 	srv.store = store
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
@@ -3184,5 +3192,80 @@ func TestHashCollisionsMissingCoordinates(t *testing.T) {
 				t.Errorf("expected 'incomplete' for nodes without coords, got %s", class)
 			}
 		}
+	}
+}
+
+// TestHashCollisionsExcludesZeroHashAndCompanions verifies that nodes with
+// hash_size==0 and companion nodes are excluded from collision buckets. (#441)
+func TestHashCollisionsExcludesZeroHashAndCompanions(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Insert 3 nodes sharing the same 1-byte prefix "AA":
+	//   1. repeater with hash_size=1 → should be counted
+	//   2. repeater with hash_size=0 (unknown) → should be excluded
+	//   3. companion with hash_size=1 → should be excluded
+	now := time.Now().Format("2006-01-02 15:04:05")
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, last_seen) VALUES
+		('aa11223344556677', 'Repeater1', 'repeater', ?),
+		('aa99887766554433', 'UnknownNode', 'repeater', ?),
+		('aadeadbeefcafe01', 'Companion1', 'companion', ?)`, now, now, now)
+
+	// We also need a second repeater with hash_size=1 and same prefix to
+	// confirm that genuine collisions ARE still detected.
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, last_seen) VALUES
+		('aa00112233445566', 'Repeater2', 'repeater', ?)`, now)
+
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	store.Load()
+	srv.store = store
+
+	// Inject hash size info directly into the cache
+	store.hashSizeInfoMu.Lock()
+	store.hashSizeInfoCache = map[string]*hashSizeNodeInfo{
+		"aa11223344556677": {HashSize: 1, AllSizes: map[int]bool{1: true}},
+		"aa00112233445566": {HashSize: 1, AllSizes: map[int]bool{1: true}},
+		"aa99887766554433": {HashSize: 0, AllSizes: map[int]bool{}},       // unknown
+		"aadeadbeefcafe01": {HashSize: 1, AllSizes: map[int]bool{1: true}}, // companion
+	}
+	store.hashSizeInfoAt = time.Now()
+	store.hashSizeInfoMu.Unlock()
+
+	result := store.computeHashCollisions("")
+
+	bySize, ok := result["by_size"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing by_size")
+	}
+
+	size1, ok := bySize["1"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing by_size[1]")
+	}
+
+	stats, ok := size1["stats"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing stats")
+	}
+
+	// Only Repeater1 and Repeater2 should be in nodesForByte (hash_size=1, role=repeater).
+	// UnknownNode (hash_size=0) and Companion1 (role=companion) must be excluded.
+	nodesForByte := stats["nodes_for_byte"]
+	if nodesForByte != 2 {
+		t.Errorf("expected nodes_for_byte=2 (only repeaters with hash_size=1), got %v", nodesForByte)
+	}
+
+	// They share prefix "AA", so there should be exactly 1 collision entry.
+	collisions, ok := size1["collisions"].([]collisionEntry)
+	if !ok {
+		t.Fatalf("collisions is not []collisionEntry")
+	}
+	if len(collisions) != 1 {
+		t.Errorf("expected 1 collision entry, got %d", len(collisions))
+	}
+	if len(collisions) == 1 && len(collisions[0].Nodes) != 2 {
+		t.Errorf("expected 2 nodes in collision, got %d", len(collisions[0].Nodes))
 	}
 }
