@@ -2148,57 +2148,7 @@ console.log('\n=== customize.js: initState merge behavior ===');
   });
 }
 
-// ===== APP.JS: home rehydration merge =====
-console.log('\n=== app.js: home rehydration merge ===');
-{
-  test('mergeUserHomeConfig layers local home overrides on server home', () => {
-    const ctx = makeSandbox();
-    loadInCtx(ctx, 'public/roles.js');
-    loadInCtx(ctx, 'public/app.js');
-    const merged = ctx.mergeUserHomeConfig(
-      {
-        home: {
-          heroTitle: 'Server Hero',
-          heroSubtitle: 'Server Subtitle',
-          steps: [{ title: 'Server Step' }],
-          footerLinks: [{ label: 'Server Link' }]
-        }
-      },
-      {
-        home: {
-          heroSubtitle: 'Local Subtitle',
-          checklist: [{ question: 'Local Q', answer: 'Local A' }]
-        }
-      }
-    );
-    assert.strictEqual(merged.home.heroTitle, 'Server Hero');
-    assert.strictEqual(merged.home.heroSubtitle, 'Local Subtitle');
-    assert.strictEqual(merged.home.steps[0].title, 'Server Step');
-    assert.strictEqual(merged.home.footerLinks[0].label, 'Server Link');
-    assert.strictEqual(merged.home.checklist[0].question, 'Local Q');
-  });
-
-  test('mergeUserHomeConfig handles refresh-style localStorage payload', () => {
-    const ctx = makeSandbox();
-    loadInCtx(ctx, 'public/roles.js');
-    loadInCtx(ctx, 'public/app.js');
-    ctx.localStorage.setItem('meshcore-user-theme', JSON.stringify({
-      home: { heroTitle: 'Local Hero' }
-    }));
-    const cfg = {
-      home: {
-        heroTitle: 'Server Hero',
-        heroSubtitle: 'Server Subtitle',
-        steps: [{ title: 'Server Step' }]
-      }
-    };
-    const userTheme = JSON.parse(ctx.localStorage.getItem('meshcore-user-theme') || '{}');
-    const merged = ctx.mergeUserHomeConfig(cfg, userTheme);
-    assert.strictEqual(merged.home.heroTitle, 'Local Hero');
-    assert.strictEqual(merged.home.heroSubtitle, 'Server Subtitle');
-    assert.strictEqual(merged.home.steps[0].title, 'Server Step');
-  });
-}
+// ===== APP.JS: home rehydration merge (mergeUserHomeConfig removed — dead code) =====
 
 // ===== CHANNELS.JS: WS Region Filter helper =====
 console.log('\n=== channels.js: shouldProcessWSMessageForRegion ===');
@@ -4098,40 +4048,7 @@ console.log('\n=== app.js: debounce ===');
   });
 }
 
-// ===== APP.JS: mergeUserHomeConfig edge cases =====
-console.log('\n=== app.js: mergeUserHomeConfig edge cases ===');
-{
-  const ctx = makeSandbox();
-  loadInCtx(ctx, 'public/roles.js');
-  loadInCtx(ctx, 'public/app.js');
-  const merge = ctx.mergeUserHomeConfig;
-
-  test('returns siteConfig when userTheme is null', () => {
-    const cfg = { home: { heroTitle: 'Test' } };
-    assert.strictEqual(merge(cfg, null), cfg);
-  });
-
-  test('returns siteConfig when userTheme has no home', () => {
-    const cfg = { home: { heroTitle: 'Test' } };
-    assert.strictEqual(merge(cfg, { theme: {} }), cfg);
-  });
-
-  test('returns siteConfig when siteConfig is null', () => {
-    assert.strictEqual(merge(null, { home: { heroTitle: 'X' } }), null);
-  });
-
-  test('creates home on siteConfig when missing', () => {
-    const cfg = {};
-    merge(cfg, { home: { heroTitle: 'New' } });
-    assert.strictEqual(cfg.home.heroTitle, 'New');
-  });
-
-  test('userTheme.home non-object is ignored', () => {
-    const cfg = { home: { heroTitle: 'Test' } };
-    assert.strictEqual(merge(cfg, { home: 'string' }), cfg);
-    assert.strictEqual(cfg.home.heroTitle, 'Test');
-  });
-}
+// ===== APP.JS: mergeUserHomeConfig removed (dead code) =====
 
 // ===== APP.JS: formatAbsoluteTimestamp with custom format =====
 console.log('\n=== app.js: formatAbsoluteTimestamp (custom format) ===');

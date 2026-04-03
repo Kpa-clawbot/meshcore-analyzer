@@ -136,13 +136,6 @@ function getTimestampCustomFormat() {
 function pad2(v) { return String(v).padStart(2, '0'); }
 function pad3(v) { return String(v).padStart(3, '0'); }
 
-function mergeUserHomeConfig(siteConfig, userTheme) {
-  if (!siteConfig || !userTheme || !userTheme.home || typeof userTheme.home !== 'object') return siteConfig;
-  const serverHome = (siteConfig.home && typeof siteConfig.home === 'object') ? siteConfig.home : {};
-  siteConfig.home = Object.assign({}, serverHome, userTheme.home);
-  return siteConfig;
-}
-
 function formatIsoLike(d, timezone, includeMs) {
   const useUtc = timezone === 'utc';
   const year = useUtc ? d.getUTCFullYear() : d.getFullYear();

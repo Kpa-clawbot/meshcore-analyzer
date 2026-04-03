@@ -20,6 +20,7 @@
       accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', textMuted: '#5b6370', border: '#e2e5ea',
       surface1: '#ffffff', surface2: '#ffffff', cardBg: '#ffffff', contentBg: '#f4f5f7',
       detailBg: '#ffffff', inputBg: '#ffffff', rowStripe: '#f9fafb', rowHover: '#eef2ff', selectedBg: '#dbeafe',
+      surface3: '#ffffff', sectionBg: '#eef2ff',
       font: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       mono: '"SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace',
     },
@@ -29,6 +30,7 @@
       accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', textMuted: '#a8b8cc', border: '#334155',
       surface1: '#1a1a2e', surface2: '#232340', cardBg: '#1a1a2e', contentBg: '#0f0f23',
       detailBg: '#232340', inputBg: '#1e1e34', rowStripe: '#1e1e34', rowHover: '#2d2d50', selectedBg: '#1e3a5f',
+      surface3: '#2d2d50', sectionBg: '#1e1e34',
       font: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       mono: '"SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace',
     },
@@ -98,6 +100,8 @@
     rowStripe: '--row-stripe',
     rowHover: '--row-hover',
     selectedBg: '--selected-bg',
+    surface3: '--surface-3',
+    sectionBg: '--section-bg',
     font: '--font',
     mono: '--mono',
   };
@@ -105,7 +109,7 @@
   /* ── Theme Presets ── */
   const THEME_COLOR_KEYS = ['accent', 'navBg', 'navText', 'background', 'text', 'statusGreen', 'statusYellow', 'statusRed',
     'accentHover', 'navBg2', 'navTextMuted', 'textMuted', 'border', 'surface1', 'surface2', 'cardBg', 'contentBg',
-    'detailBg', 'inputBg', 'rowStripe', 'rowHover', 'selectedBg'];
+    'detailBg', 'inputBg', 'rowStripe', 'rowHover', 'selectedBg', 'surface3', 'sectionBg'];
 
   const PRESETS = {
     default: {
@@ -441,6 +445,228 @@
   let state = {};
 
   function deepClone(o) { return JSON.parse(JSON.stringify(o)); }
+
+  /* ── Spec-required core functions ── */
+
+  var STORAGE_KEY = 'cs-theme-overrides';
+
+  var VALID_TIMESTAMP_MODES = ['ago', 'absolute'];
+  var VALID_TIMESTAMP_TIMEZONES = ['local', 'utc'];
+  var VALID_TIMESTAMP_FORMATS = ['iso', 'iso-seconds', 'locale'];
+  var VALID_SECTIONS = ['branding', 'theme', 'themeDark', 'nodeColors', 'typeColors', 'home', 'timestamps', 'ui'];
+  var VALID_SCALARS = ['heatmapOpacity', 'liveHeatmapOpacity'];
+  var COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+
+  function readOverrides() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return {};
+      var parsed = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+      return parsed;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function validateShape(delta) {
+    if (typeof delta !== 'object' || delta === null || Array.isArray(delta)) return { valid: false, warnings: ['Delta must be a plain object'] };
+    var warnings = [];
+    for (var key in delta) {
+      if (VALID_SECTIONS.indexOf(key) === -1 && VALID_SCALARS.indexOf(key) === -1) {
+        warnings.push('Unknown top-level key: ' + key);
+        continue;
+      }
+      if (VALID_SCALARS.indexOf(key) !== -1) {
+        var v = delta[key];
+        if (typeof v !== 'number' || v < 0 || v > 1) {
+          return { valid: false, warnings: ['Out-of-range opacity value for ' + key + ': ' + v] };
+        }
+        continue;
+      }
+      if (typeof delta[key] !== 'object' || delta[key] === null || Array.isArray(delta[key])) {
+        return { valid: false, warnings: ['Section ' + key + ' must be an object'] };
+      }
+      // Validate colors in theme/themeDark
+      if (key === 'theme' || key === 'themeDark') {
+        var section = delta[key];
+        for (var sk in section) {
+          if (sk === 'font' || sk === 'mono') continue; // font values aren't colors
+          if (typeof section[sk] === 'string' && !COLOR_RE.test(section[sk])) {
+            return { valid: false, warnings: ['Invalid color value for ' + key + '.' + sk + ': ' + section[sk]] };
+          }
+        }
+      }
+      // Validate timestamp enums
+      if (key === 'timestamps' || key === 'ui') {
+        var ts = delta[key];
+        if (ts.defaultMode && VALID_TIMESTAMP_MODES.indexOf(ts.defaultMode) === -1 &&
+            ts.timestampMode && VALID_TIMESTAMP_MODES.indexOf(ts.timestampMode) === -1) {
+          return { valid: false, warnings: ['Invalid timestamp mode'] };
+        }
+        if (ts.timezone && VALID_TIMESTAMP_TIMEZONES.indexOf(ts.timezone) === -1 &&
+            ts.timestampTimezone && VALID_TIMESTAMP_TIMEZONES.indexOf(ts.timestampTimezone) === -1) {
+          return { valid: false, warnings: ['Invalid timestamp timezone'] };
+        }
+        if (ts.formatPreset && VALID_TIMESTAMP_FORMATS.indexOf(ts.formatPreset) === -1 &&
+            ts.timestampFormat && VALID_TIMESTAMP_FORMATS.indexOf(ts.timestampFormat) === -1) {
+          return { valid: false, warnings: ['Invalid timestamp format'] };
+        }
+      }
+    }
+    return { valid: true, warnings: warnings };
+  }
+
+  function writeOverrides(delta) {
+    var validation = validateShape(delta);
+    if (!validation.valid) {
+      console.warn('[customize] writeOverrides rejected:', validation.warnings.join(', '));
+      return false;
+    }
+    if (validation.warnings.length) {
+      validation.warnings.forEach(function(w) { console.warn('[customize] writeOverrides warning:', w); });
+    }
+    // Remove key if delta is empty
+    if (Object.keys(delta).length === 0) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      return true;
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(delta));
+      return true;
+    } catch (e) {
+      console.warn('[customize] writeOverrides: storage error (QuotaExceeded?):', e.message);
+      return false;
+    }
+  }
+
+  function computeEffective(serverDefaults, overrides) {
+    var effective = deepClone(serverDefaults);
+    if (!overrides || typeof overrides !== 'object') return effective;
+    for (var key in overrides) {
+      if (VALID_SCALARS.indexOf(key) !== -1) {
+        // Top-level scalars: direct replace
+        effective[key] = overrides[key];
+      } else if (key === 'home' && overrides.home) {
+        // Arrays in home are fully replaced, not merged
+        if (!effective.home) effective.home = {};
+        for (var hk in overrides.home) {
+          effective.home[hk] = Array.isArray(overrides.home[hk])
+            ? deepClone(overrides.home[hk])
+            : overrides.home[hk];
+        }
+      } else if (typeof overrides[key] === 'object' && overrides[key] !== null && !Array.isArray(overrides[key])) {
+        // Object sections: shallow merge
+        if (!effective[key] || typeof effective[key] !== 'object') effective[key] = {};
+        for (var sk in overrides[key]) {
+          effective[key][sk] = overrides[key][sk];
+        }
+      }
+    }
+    return effective;
+  }
+
+  var LEGACY_KEYS = [
+    'meshcore-user-theme',
+    'meshcore-timestamp-mode',
+    'meshcore-timestamp-timezone',
+    'meshcore-timestamp-format',
+    'meshcore-timestamp-custom-format',
+    'meshcore-heatmap-opacity',
+    'meshcore-live-heatmap-opacity'
+  ];
+
+  function migrateOldKeys() {
+    // Skip if new key already exists
+    if (localStorage.getItem(STORAGE_KEY) !== null) return null;
+    var hasAny = false;
+    for (var i = 0; i < LEGACY_KEYS.length; i++) {
+      if (localStorage.getItem(LEGACY_KEYS[i]) !== null) { hasAny = true; break; }
+    }
+    if (!hasAny) return null;
+
+    var delta = {};
+
+    // Migrate meshcore-user-theme
+    try {
+      var raw = localStorage.getItem('meshcore-user-theme');
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+          // Only migrate known sections
+          var knownSections = ['branding', 'theme', 'themeDark', 'nodeColors', 'typeColors', 'home', 'ui'];
+          for (var j = 0; j < knownSections.length; j++) {
+            var sk = knownSections[j];
+            if (parsed[sk] && typeof parsed[sk] === 'object') delta[sk] = parsed[sk];
+          }
+        }
+      }
+    } catch (e) { /* invalid JSON, skip */ }
+
+    // Migrate individual timestamp keys
+    var tsMode = localStorage.getItem('meshcore-timestamp-mode');
+    var tsTimezone = localStorage.getItem('meshcore-timestamp-timezone');
+    var tsFormat = localStorage.getItem('meshcore-timestamp-format');
+    var tsCustomFormat = localStorage.getItem('meshcore-timestamp-custom-format');
+    if (tsMode || tsTimezone || tsFormat || tsCustomFormat) {
+      if (!delta.ui) delta.ui = {};
+      if (tsMode) delta.ui.timestampMode = tsMode;
+      if (tsTimezone) delta.ui.timestampTimezone = tsTimezone;
+      if (tsFormat) delta.ui.timestampFormat = tsFormat;
+      if (tsCustomFormat) delta.ui.timestampCustomFormat = tsCustomFormat;
+    }
+
+    // Migrate heatmap opacities
+    var heatmap = localStorage.getItem('meshcore-heatmap-opacity');
+    if (heatmap !== null) { var hv = parseFloat(heatmap); if (!isNaN(hv)) delta.heatmapOpacity = hv; }
+    var liveHeatmap = localStorage.getItem('meshcore-live-heatmap-opacity');
+    if (liveHeatmap !== null) { var lhv = parseFloat(liveHeatmap); if (!isNaN(lhv)) delta.liveHeatmapOpacity = lhv; }
+
+    // Write new format and remove legacy keys
+    if (Object.keys(delta).length > 0) {
+      writeOverrides(delta);
+    }
+    for (var k = 0; k < LEGACY_KEYS.length; k++) {
+      localStorage.removeItem(LEGACY_KEYS[k]);
+    }
+    return delta;
+  }
+
+  // Pending overrides accumulator for debounce race prevention
+  var _pendingOverrides = {};
+  var _setOverrideTimer = null;
+
+  function setOverride(section, key, value) {
+    if (!_pendingOverrides[section]) _pendingOverrides[section] = {};
+    _pendingOverrides[section][key] = value;
+    if (_setOverrideTimer) clearTimeout(_setOverrideTimer);
+    _setOverrideTimer = setTimeout(function () {
+      _setOverrideTimer = null;
+      var current = readOverrides();
+      for (var sec in _pendingOverrides) {
+        if (!current[sec]) current[sec] = {};
+        for (var k in _pendingOverrides[sec]) {
+          current[sec][k] = _pendingOverrides[sec][k];
+        }
+      }
+      _pendingOverrides = {};
+      writeOverrides(current);
+    }, 300);
+  }
+
+  function clearOverride(section, key) {
+    var current = readOverrides();
+    if (current[section]) {
+      delete current[section][key];
+      if (Object.keys(current[section]).length === 0) delete current[section];
+    }
+    // Also clear from pending
+    if (_pendingOverrides[section]) {
+      delete _pendingOverrides[section][key];
+      if (Object.keys(_pendingOverrides[section]).length === 0) delete _pendingOverrides[section];
+    }
+    writeOverrides(current);
+  }
 
   function initState() {
     const cfg = window.SITE_CONFIG || {};
@@ -1462,4 +1688,17 @@
       if (state.theme) applyThemePreview();
     }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   });
+
+  // Expose core functions for testing
+  window._customizerV2 = {
+    readOverrides: readOverrides,
+    writeOverrides: writeOverrides,
+    computeEffective: computeEffective,
+    migrateOldKeys: migrateOldKeys,
+    validateShape: validateShape,
+    setOverride: setOverride,
+    clearOverride: clearOverride,
+    DEFAULTS: DEFAULTS,
+    THEME_CSS_MAP: THEME_CSS_MAP
+  };
 })();
