@@ -334,7 +334,7 @@ func (s *Server) buildResolutions(graph *NeighborGraph, nodeMap map[string]nodeI
 			if len(candidates) > 1 && candidates[1].Jaccard > 0 {
 				dr.Ratio = math.Round(candidates[0].Jaccard/candidates[1].Jaccard*10) / 10
 			} else if candidates[0].Jaccard > 0 {
-				dr.Ratio = math.Inf(1)
+				dr.Ratio = 999.0 // effectively infinite — JSON doesn't support Infinity
 			}
 		} else {
 			dr.Confidence = "AMBIGUOUS"

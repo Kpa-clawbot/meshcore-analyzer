@@ -442,8 +442,8 @@ func (g *NeighborGraph) disambiguate() {
 				if secondBest.jaccard > 0 {
 					ratio = best.jaccard / secondBest.jaccard
 				}
-				g.logFn(e.Prefix, fmt.Sprintf("scores too close (%d vs %d, ratio %.1f×) → ambiguous",
-					e.Count, e.Count, ratio))
+				g.logFn(e.Prefix, fmt.Sprintf("scores too close (Jaccard %.2f vs %.2f, ratio %.1f×) → ambiguous, returning %d candidates",
+					best.jaccard, secondBest.jaccard, ratio, len(e.Candidates)))
 			}
 		}
 	}

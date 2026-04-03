@@ -589,7 +589,7 @@
                 html += '<b>Prefix: ' + escapeHtml(r.prefix) + '</b> → ';
                 if (r.method === 'auto-resolved') {
                   html += '<span style="color:var(--status-green)">✅ ' + escapeHtml(r.chosenName || r.chosen || '?') + '</span>';
-                  html += ' (Jaccard=' + r.chosenJaccard.toFixed(2) + ', ratio=' + (isFinite(r.ratio) ? r.ratio.toFixed(1) + '×' : '∞') + ')';
+                  html += ' (Jaccard=' + r.chosenJaccard.toFixed(2) + ', ratio=' + ((isFinite(r.ratio) && r.ratio < 100) ? r.ratio.toFixed(1) + '×' : '∞') + ')';
                 } else {
                   html += '<span style="color:var(--status-yellow)">⚠️ Ambiguous</span>';
                   if (r.ratio) html += ' (ratio=' + r.ratio.toFixed(1) + '×, threshold=' + r.thresholdApplied + '×)';
