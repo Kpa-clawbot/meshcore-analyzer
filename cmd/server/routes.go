@@ -1326,6 +1326,14 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 		graph = s.getNeighborGraph()
 	}
 
+	// Get the server's prefix map for resolveWithContext.
+	var pm *prefixMap
+	if s.store != nil {
+		s.store.mu.RLock()
+		_, pm = s.store.getCachedNodesAndPM()
+		s.store.mu.RUnlock()
+	}
+
 	for _, hop := range hops {
 		if hop == "" {
 			continue
@@ -1351,7 +1359,7 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 
 		if len(candidates) == 0 {
-			resolved[hop] = &HopResolution{Name: nil, Candidates: []HopCandidate{}, Conflicts: []interface{}{}, Confidence: "ambiguous"}
+			resolved[hop] = &HopResolution{Name: nil, Candidates: []HopCandidate{}, Conflicts: []interface{}{}, Confidence: "no_match"}
 		} else if len(candidates) == 1 {
 			resolved[hop] = &HopResolution{
 				Name: candidates[0].Name, Pubkey: candidates[0].Pubkey,
@@ -1390,7 +1398,13 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Determine best candidate and confidence level.
+			// Use resolveWithContext for 4-tier disambiguation.
+			var best *nodeInfo
+			var confidence string
+			if pm != nil {
+				best, confidence, _ = pm.resolveWithContext(hopLower, contextPubkeys, graph)
+			}
+
 			ambig := true
 			hr := &HopResolution{
 				Name: candidates[0].Name, Pubkey: candidates[0].Pubkey,
@@ -1398,37 +1412,17 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 				Confidence: "ambiguous",
 			}
 
-			// Check if affinity can resolve: find best and second-best scores.
-			var bestIdx int
-			var bestScore, secondBest float64
-			for i, c := range candidates {
-				s := 0.0
-				if c.AffinityScore != nil {
-					s = *c.AffinityScore
-				}
-				if s > bestScore {
-					secondBest = bestScore
-					bestScore = s
-					bestIdx = i
-				} else if s > secondBest {
-					secondBest = s
-				}
+			// Use the resolved node as the default (best-effort pick).
+			if best != nil {
+				hr.Name = best.Name
+				hr.Pubkey = best.PublicKey
 			}
 
-			if bestScore > 0 {
-				confident := false
-				if secondBest == 0 {
-					confident = bestScore > 0
-				} else {
-					confident = bestScore >= affinityConfidenceRatio*secondBest
-				}
-				if confident {
-					pk := candidates[bestIdx].Pubkey
-					hr.BestCandidate = &pk
-					hr.Name = candidates[bestIdx].Name
-					hr.Pubkey = pk
-					hr.Confidence = "neighbor_affinity"
-				}
+			// Only promote to bestCandidate when affinity is confident.
+			if confidence == "neighbor_affinity" && best != nil {
+				pk := best.PublicKey
+				hr.BestCandidate = &pk
+				hr.Confidence = "neighbor_affinity"
 			}
 
 			resolved[hop] = hr

@@ -5,8 +5,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"github.com/gorilla/mux"
 )
 
 // ─── resolveWithContext unit tests ─────────────────────────────────────────────
@@ -229,6 +227,11 @@ func TestResolveHopsAPI_WithAffinityContext(t *testing.T) {
 	srv.db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, lat, lon) VALUES (?, ?, ?, ?)",
 		"c0c0c0c0c0", "Context", 37.1, -122.1)
 
+	// Invalidate node cache so the PM includes newly inserted nodes.
+	srv.store.cacheMu.Lock()
+	srv.store.nodeCacheTime = time.Time{}
+	srv.store.cacheMu.Unlock()
+
 	// Build graph with strong affinity
 	graph := NewNeighborGraph()
 	for i := 0; i < 100; i++ {
@@ -300,12 +303,3 @@ func TestResolveHopsAPI_ResponseShape(t *testing.T) {
 }
 
 // ─── Helpers used only in this test file ───────────────────────────────────────
-
-func serveResolveHops(srv *Server, url string) *httptest.ResponseRecorder {
-	router := mux.NewRouter()
-	srv.RegisterRoutes(router)
-	req := httptest.NewRequest("GET", url, nil)
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-	return rr
-}

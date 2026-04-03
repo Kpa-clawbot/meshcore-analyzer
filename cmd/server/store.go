@@ -3374,7 +3374,7 @@ func (pm *prefixMap) resolveWithContext(hop string, contextPubkeys []string, gra
 	}
 
 	// Priority 2: Geographic proximity (if context pubkeys have GPS and candidates have GPS)
-	if len(contextPubkeys) > 0 && graph != nil {
+	if len(contextPubkeys) > 0 {
 		// Find GPS positions of context nodes from the prefix map or candidates
 		// We need nodeInfo for context pubkeys — look them up
 		var contextLat, contextLon float64
