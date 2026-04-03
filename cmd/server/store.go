@@ -43,6 +43,8 @@ type StoreTx struct {
 	// Cached parsed fields (set once, read many)
 	parsedPath []string // cached parsePathJSON result
 	pathParsed bool     // whether parsedPath has been set
+	// Dedup map: "observerID|pathJSON" → true for O(1) duplicate checks
+	obsKeys map[string]bool
 }
 
 // StoreObs is a lean in-memory observation (no duplication of transmission fields).
@@ -253,6 +255,7 @@ func (s *PacketStore) Load() error {
 				RouteType:   nullIntPtr(routeType),
 				PayloadType: nullIntPtr(payloadType),
 				DecodedJSON: nullStrVal(decodedJSON),
+				obsKeys:     make(map[string]bool),
 			}
 			s.byHash[hashStr] = tx
 			s.packets = append(s.packets, tx)
@@ -269,15 +272,9 @@ func (s *PacketStore) Load() error {
 			obsIDStr := nullStrVal(observerID)
 			obsPJ := nullStrVal(pathJSON)
 
-			// Dedup: skip if same observer + same path already loaded
-			isDupe := false
-			for _, existing := range tx.Observations {
-				if existing.ObserverID == obsIDStr && existing.PathJSON == obsPJ {
-					isDupe = true
-					break
-				}
-			}
-			if isDupe {
+			// Dedup: skip if same observer + same path already loaded (O(1) map lookup)
+			dk := obsIDStr + "|" + obsPJ
+			if tx.obsKeys[dk] {
 				continue
 			}
 
@@ -295,6 +292,7 @@ func (s *PacketStore) Load() error {
 			}
 
 			tx.Observations = append(tx.Observations, obs)
+			tx.obsKeys[dk] = true
 			tx.ObservationCount++
 			if obs.Timestamp > tx.LatestSeen {
 				tx.LatestSeen = obs.Timestamp
@@ -1061,6 +1059,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				RouteType:   r.routeType,
 				PayloadType: r.payloadType,
 				DecodedJSON: r.decodedJSON,
+				obsKeys:     make(map[string]bool),
 			}
 			s.byHash[r.hash] = tx
 			s.packets = append(s.packets, tx) // oldest-first; new items go to tail
@@ -1081,15 +1080,12 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 
 		if r.obsID != nil {
 			oid := *r.obsID
-			// Dedup
-			isDupe := false
-			for _, existing := range tx.Observations {
-				if existing.ObserverID == r.observerID && existing.PathJSON == r.pathJSON {
-					isDupe = true
-					break
-				}
+			// Dedup (O(1) map lookup)
+			dk := r.observerID + "|" + r.pathJSON
+			if tx.obsKeys == nil {
+				tx.obsKeys = make(map[string]bool)
 			}
-			if isDupe {
+			if tx.obsKeys[dk] {
 				continue
 			}
 
@@ -1106,6 +1102,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				Timestamp:      normalizeTimestamp(r.obsTS),
 			}
 			tx.Observations = append(tx.Observations, obs)
+			tx.obsKeys[dk] = true
 			tx.ObservationCount++
 			if obs.Timestamp > tx.LatestSeen {
 				tx.LatestSeen = obs.Timestamp
@@ -1326,15 +1323,12 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			continue // transmission not yet in store
 		}
 
-		// Dedup by observer + path
-		isDupe := false
-		for _, existing := range tx.Observations {
-			if existing.ObserverID == r.observerID && existing.PathJSON == r.pathJSON {
-				isDupe = true
-				break
-			}
+		// Dedup by observer + path (O(1) map lookup)
+		dk := r.observerID + "|" + r.pathJSON
+		if tx.obsKeys == nil {
+			tx.obsKeys = make(map[string]bool)
 		}
-		if isDupe {
+		if tx.obsKeys[dk] {
 			continue
 		}
 
@@ -1351,6 +1345,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			Timestamp:      normalizeTimestamp(r.timestamp),
 		}
 		tx.Observations = append(tx.Observations, obs)
+		tx.obsKeys[dk] = true
 		tx.ObservationCount++
 		if obs.Timestamp > tx.LatestSeen {
 			tx.LatestSeen = obs.Timestamp
