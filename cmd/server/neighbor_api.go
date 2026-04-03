@@ -55,12 +55,13 @@ type GraphNode struct {
 }
 
 type GraphEdge struct {
-	Source    string   `json:"source"`
-	Target   string   `json:"target"`
-	Weight   int      `json:"weight"`
-	Score    float64  `json:"score"`
-	AvgSNR   *float64 `json:"avg_snr"`
-	Ambiguous bool    `json:"ambiguous"`
+	Source        string   `json:"source"`
+	Target        string   `json:"target"`
+	Weight        int      `json:"weight"`
+	Score         float64  `json:"score"`
+	Bidirectional bool     `json:"bidirectional"`
+	AvgSNR        *float64 `json:"avg_snr"`
+	Ambiguous     bool     `json:"ambiguous"`
 }
 
 type GraphStats struct {
@@ -146,7 +147,8 @@ func (s *Server) handleNodeNeighbors(w http.ResponseWriter, r *http.Request) {
 			Observers: observerList(e.Observers),
 		}
 
-		if avg := e.AvgSNR(); avg != 0 {
+		if e.SNRCount > 0 {
+			avg := e.AvgSNR()
 			entry.AvgSNR = &avg
 		}
 
@@ -206,6 +208,7 @@ func (s *Server) handleNeighborGraph(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	region := r.URL.Query().Get("region")
+	roleFilter := strings.ToLower(r.URL.Query().Get("role"))
 
 	graph := s.getNeighborGraph()
 	allEdges := graph.AllEdges()
@@ -228,6 +231,17 @@ func (s *Server) handleNeighborGraph(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Role filter: at least one endpoint must match the role.
+		if roleFilter != "" && nodeMap != nil {
+			aInfo, aOK := nodeMap[strings.ToLower(e.NodeA)]
+			bInfo, bOK := nodeMap[strings.ToLower(e.NodeB)]
+			aMatch := aOK && strings.EqualFold(aInfo.Role, roleFilter)
+			bMatch := bOK && strings.EqualFold(bInfo.Role, roleFilter)
+			if !aMatch && !bMatch {
+				continue
+			}
+		}
+
 		// Region filter: at least one observer must be in the region.
 		if regionObs != nil {
 			match := false
@@ -243,13 +257,15 @@ func (s *Server) handleNeighborGraph(w http.ResponseWriter, r *http.Request) {
 		}
 
 		ge := GraphEdge{
-			Source:    e.NodeA,
-			Target:   e.NodeB,
-			Weight:   e.Count,
-			Score:    score,
-			Ambiguous: e.Ambiguous,
+			Source:        e.NodeA,
+			Target:        e.NodeB,
+			Weight:        e.Count,
+			Score:         score,
+			Bidirectional: true,
+			Ambiguous:     e.Ambiguous,
 		}
-		if avg := e.AvgSNR(); avg != 0 {
+		if e.SNRCount > 0 {
+			avg := e.AvgSNR()
 			ge.AvgSNR = &avg
 		}
 
