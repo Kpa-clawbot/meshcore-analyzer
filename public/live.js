@@ -153,7 +153,9 @@
       .then(r => r.json())
       .then(data => {
         const pkts = data.packets || [];
-        const replayEntries = expandToBufferEntries(pkts);
+        return expandToBufferEntriesAsync(pkts);
+      })
+      .then(function(replayEntries) {
         if (replayEntries.length === 0) {
           vcrSetMode('PAUSED');
           return;
@@ -212,8 +214,10 @@
         // Prepend to buffer (avoid duplicates by ID)
         const existingIds = new Set(VCR.buffer.map(b => b.pkt.id).filter(Boolean));
         const filtered = pkts.filter(p => !existingIds.has(p.id));
-        const newEntries = expandToBufferEntries(filtered);
-        VCR.buffer = [...newEntries, ...VCR.buffer];
+        return expandToBufferEntriesAsync(filtered);
+      })
+      .then(function(newEntries) {
+        VCR.buffer = [].concat(newEntries, VCR.buffer);
         VCR.playhead = 0;
         VCR.speed = 1;
         vcrSetMode('REPLAY');
@@ -280,9 +284,10 @@
       .then(data => {
         const pkts = data.packets || [];
         if (pkts.length === 0) return false;
-        const newEntries = expandToBufferEntries(pkts);
-        VCR.buffer = VCR.buffer.concat(newEntries);
-        return true;
+        return expandToBufferEntriesAsync(pkts).then(function(newEntries) {
+          VCR.buffer = VCR.buffer.concat(newEntries);
+          return true;
+        });
       })
       .catch(() => false);
   }
@@ -449,11 +454,53 @@
   }
 
   // Expand a DB packet (with optional observations[]) into VCR buffer entries
+  /**
+   * Process packets into buffer entries in chunks to avoid blocking the main thread.
+   * Returns a Promise that resolves with the entries array.
+   * Each chunk processes CHUNK_SIZE packets, then yields to the event loop via setTimeout(0).
+   */
+  var VCR_CHUNK_SIZE = 200;
+  function expandToBufferEntriesAsync(pkts) {
+    return new Promise(function(resolve) {
+      var entries = [];
+      var i = 0;
+      function processChunk() {
+        var end = Math.min(i + VCR_CHUNK_SIZE, pkts.length);
+        for (; i < end; i++) {
+          var p = pkts[i];
+          if (p.observations && p.observations.length > 0) {
+            for (var j = 0; j < p.observations.length; j++) {
+              var obs = p.observations[j];
+              entries.push({
+                ts: new Date(obs.timestamp || p.timestamp || p.created_at).getTime(),
+                pkt: dbPacketToLive(Object.assign({}, p, obs, { hash: p.hash, raw_hex: p.raw_hex, decoded_json: p.decoded_json }))
+              });
+            }
+          } else {
+            entries.push({
+              ts: new Date(p.timestamp || p.created_at).getTime(),
+              pkt: dbPacketToLive(p)
+            });
+          }
+        }
+        if (i < pkts.length) {
+          setTimeout(processChunk, 0);
+        } else {
+          resolve(entries);
+        }
+      }
+      processChunk();
+    });
+  }
+
+  // Synchronous version kept for small datasets and backward compat (tests)
   function expandToBufferEntries(pkts) {
-    const entries = [];
-    for (const p of pkts) {
+    var entries = [];
+    for (var k = 0; k < pkts.length; k++) {
+      var p = pkts[k];
       if (p.observations && p.observations.length > 0) {
-        for (const obs of p.observations) {
+        for (var j = 0; j < p.observations.length; j++) {
+          var obs = p.observations[j];
           entries.push({
             ts: new Date(obs.timestamp || p.timestamp || p.created_at).getTime(),
             pkt: dbPacketToLive(Object.assign({}, p, obs, { hash: p.hash, raw_hex: p.raw_hex, decoded_json: p.decoded_json }))
@@ -1597,6 +1644,7 @@
   window._vcrFormatTime = vcrFormatTime;
   window._liveDbPacketToLive = dbPacketToLive;
   window._liveExpandToBufferEntries = expandToBufferEntries;
+  window._liveExpandToBufferEntriesAsync = expandToBufferEntriesAsync;
   window._liveSEG_MAP = SEG_MAP;
   window._liveBufferPacket = bufferPacket;
   window._liveVCR = function() { return VCR; };

@@ -272,6 +272,48 @@ console.log('\n=== live.js: expandToBufferEntries ===');
   });
 }
 
+// ===== expandToBufferEntriesAsync (chunked, non-blocking) =====
+console.log('\n=== live.js: expandToBufferEntriesAsync ===');
+{
+  // Build a sandbox with packet-helpers loaded so expandToBufferEntries can call dbPacketToLive
+  const ctx = makeSandbox();
+  addLiveGlobals(ctx);
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/packet-helpers.js');
+  try { loadInCtx(ctx, 'public/live.js'); } catch (e) {
+    for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+  }
+  const expandSync = ctx.window._liveExpandToBufferEntries;
+  const expandAsync = ctx.window._liveExpandToBufferEntriesAsync;
+  assert.ok(expandAsync, '_liveExpandToBufferEntriesAsync must be exposed');
+
+  const pkts = [];
+  for (let i = 0; i < 500; i++) {
+    pkts.push({
+      id: i, hash: 'h' + i, timestamp: new Date(1700000000000 + i * 1000).toISOString(),
+      decoded_json: '{"type":"GRP_TXT"}', path_json: '[]',
+      observations: [
+        { timestamp: new Date(1700000000000 + i * 1000 + 100).toISOString(), snr: 5, observer_name: 'O1' },
+        { timestamp: new Date(1700000000000 + i * 1000 + 200).toISOString(), snr: 8, observer_name: 'O2' },
+      ],
+    });
+  }
+
+  test('sync expand handles 500 packets (1000 entries) correctly', () => {
+    const result = expandSync(pkts);
+    assert.strictEqual(result.length, 1000, '500 packets * 2 observations = 1000 entries');
+    assert.strictEqual(result[0].pkt.hash, 'h0');
+    assert.strictEqual(result[999].pkt.hash, 'h499');
+  });
+
+  test('VCR_CHUNK_SIZE is defined and async function yields via setTimeout', () => {
+    const src = fs.readFileSync(__dirname + '/public/live.js', 'utf8');
+    assert.ok(src.includes('VCR_CHUNK_SIZE'), 'VCR_CHUNK_SIZE constant must exist');
+    assert.ok(src.includes('expandToBufferEntriesAsync'), 'async version must exist');
+    assert.ok(src.includes('setTimeout(processChunk, 0)'), 'must yield via setTimeout between chunks');
+  });
+}
+
 // ===== SEG_MAP (7-segment display) =====
 console.log('\n=== live.js: SEG_MAP ===');
 {
