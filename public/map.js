@@ -807,7 +807,15 @@
     if (cb) cb.checked = true;
     renderMarkers();
   }
-  // Expose for popup onclick and testing
+  // Event delegation for Show Neighbors links (avoids inline onclick / global function timing issues)
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest('[data-show-neighbors]');
+    if (link) {
+      e.preventDefault();
+      selectReferenceNode(link.dataset.pubkey, link.dataset.name);
+    }
+  });
+  // Expose for testing
   window._mapSelectRefNode = selectReferenceNode;
   window._mapGetNeighborPubkeys = function() { return neighborPubkeys ? Array.from(neighborPubkeys) : []; };
 
@@ -838,7 +846,7 @@
         </dl>
         <div style="margin-top:8px;clear:both;">
           <a href="#/nodes/${node.public_key}" style="color:var(--accent);font-size:12px;">View Node →</a>
-          ${node.public_key ? ` · <a href="#" onclick="event.preventDefault();window._mapSelectRefNode('${safeEsc(node.public_key.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c'))}','${safeEsc((node.name || 'Unknown').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/</g, '\\x3c'))}')" style="color:var(--accent);font-size:12px;">Show Neighbors</a>` : ''}
+          ${node.public_key ? ` · <a href="#" data-show-neighbors data-pubkey="${escapeHtml(node.public_key)}" data-name="${escapeHtml(node.name || 'Unknown')}" style="color:var(--accent);font-size:12px;">Show Neighbors</a>` : ''}
         </div>
       </div>`;
   }
