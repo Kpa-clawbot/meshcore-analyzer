@@ -1072,14 +1072,168 @@ A summary widget added to the existing dashboard/stats page, providing at-a-glan
 
 ---
 
-## Implementation Order
+## Milestones
 
-1. **Graph builder** — `neighbor_graph.go` with `NeighborGraph` struct, `BuildFromStore()`, scoring functions. Must handle ADVERT vs non-ADVERT distinction and extract both originator and observer edges.
-2. **Unit tests** — `neighbor_graph_test.go` covering all cases above
-3. **API endpoints** — `/api/nodes/{pubkey}/neighbors` and `/api/analytics/neighbor-graph` in `routes.go`
-4. **API tests** — route-level tests
-5. **Frontend: Show Neighbors fix** — replace client-side path walking with `/neighbors` API call in `map.js`
-6. **Frontend: Node detail neighbors section** — add neighbor table to node detail view
-7. **Frontend: Analytics graph** (later milestone) — force-directed visualization
+Each milestone is a self-contained unit that can be implemented, polished (pr-polish), tested, and merged before moving to the next.
 
-Milestones 1–5 fix #484 and deliver the core value. Milestones 6–7 are polish.
+| Milestone | What | Fixes | Dependencies |
+|-----------|------|-------|-------------|
+| 1 | Graph builder core | — | None |
+| 2 | Neighbors API | — | M1 |
+| 3 | Show Neighbors fix | #484 | M2 |
+| 4 | Enhanced hop resolution | — | M2 |
+| 5 | Node detail neighbors | — | M2 |
+| 6 | Debugging tools | — | M2 + M5 |
+| 7 | Analytics graph viz | — | M2 |
+
+> **Note:** Milestones 3, 4, 5 can run in parallel after M2 merges.
+
+---
+
+### Milestone 1: Graph Builder Core
+
+**Scope:** `neighbor_graph.go` — the `NeighborGraph` data structure and `BuildFromStore()` algorithm
+
+- Extract edges from packet store: `originator ↔ path[0]` for ADVERTs, `observer ↔ path[last]` for all packets
+- Affinity scoring with time decay
+- Jaccard normalization for disambiguation
+- Confidence threshold (3× ratio, ≥3 observations)
+- Transitivity poisoning guard
+- Cache management (60s TTL, rebuild from store)
+
+**Tests:** `neighbor_graph_test.go` — all unit tests from the spec: single-hop, multi-hop, zero-hop, collision candidates, Jaccard scoring, confidence thresholds, equal scores → ambiguous, observer self-edge guard, orphan prefixes, time decay
+
+**Files:** `cmd/server/neighbor_graph.go`, `cmd/server/neighbor_graph_test.go`
+
+**User-visible:** Nothing yet (backend only)
+
+**Dependencies:** None
+
+**PR title:** `feat: neighbor affinity graph builder (#482) — milestone 1`
+
+---
+
+### Milestone 2: Neighbors API
+
+**Scope:** Two new API endpoints
+
+- `GET /api/nodes/{pubkey}/neighbors` — per-node neighbor list with scores
+- `GET /api/analytics/neighbor-graph` — full graph summary with stats
+- Wire graph into server startup and cache refresh
+
+**Tests:** API-level tests (Go httptest), Playwright test (c) from spec — API response shape validation
+
+**Files:** `cmd/server/routes.go`, `cmd/server/routes_test.go` (or `cmd/server/neighbor_api_test.go`)
+
+**User-visible:** API available (can be tested via curl/browser dev tools)
+
+**Dependencies:** Milestone 1 merged
+
+**PR title:** `feat: neighbor affinity API endpoints (#482) — milestone 2`
+
+---
+
+### Milestone 3: Show Neighbors Fix (#484)
+
+**Scope:** Replace broken client-side path walking in `map.js` with server-side `/neighbors` API call
+
+- Replace `selectReferenceNode()` path-walking code
+- Use affinity-resolved neighbors from API
+- Fall back to geo-centroid for unresolved prefixes
+
+**Tests:** Playwright tests (a) happy path and (b) hash collision disambiguation — THE critical test that proves #484 is fixed
+
+**Files:** `public/map.js`
+
+**User-visible:** "Show Neighbors" works correctly even with hash collisions
+
+**Dependencies:** Milestone 2 merged
+
+**PR title:** `fix: Show Neighbors uses affinity API for collision disambiguation (#484) — milestone 3`
+
+---
+
+### Milestone 4: Enhanced Hop Resolution
+
+**Scope:** Upgrade `prefixMap.resolve()` and `handleResolveHops` with affinity awareness
+
+- `resolveWithContext()` in store.go — affinity first, geo fallback, GPS fallback
+- `handleResolveHops` adds `affinityScore` and `bestCandidate` to response
+- 4-tier disambiguation priority
+
+**Tests:** Go unit tests for `resolveWithContext`, Playwright test (e) resolve-hops with affinity scores, test (f) route visualization
+
+**Files:** `cmd/server/store.go`, `cmd/server/routes.go`
+
+**User-visible:** All hop resolution across the app benefits from affinity (analytics, route display, subpaths)
+
+**Dependencies:** Milestone 2 merged
+
+**PR title:** `feat: affinity-aware hop resolution (#482) — milestone 4`
+
+---
+
+### Milestone 5: Node Detail Neighbors Section
+
+**Scope:** Add "Neighbors" section to the node detail page
+
+- Placed between "Heard By" and "Paths" sections
+- Table with Name, Role, Score, Observations, Last Seen, Confidence columns
+- Confidence indicators (🟢🟡🔴⚠️)
+- Click-to-navigate, "Show on Map" per row
+- Condensed view (top 5) in right panel, full view on detail page
+- Deep link support (`?section=node-neighbors`)
+- Empty state, loading state, error state
+
+**Tests:** Playwright tests — verify section appears, table has correct columns, click navigation works, empty state shows message
+
+**Files:** `public/nodes.js`
+
+**User-visible:** Every node detail page shows its neighbors
+
+**Dependencies:** Milestone 2 merged
+
+**PR title:** `feat: neighbors section in node detail page (#482) — milestone 5`
+
+---
+
+### Milestone 6: Observability & Debugging
+
+**Scope:** Debug tools for the affinity system
+
+- `/api/debug/affinity` endpoint with graph state dump, per-prefix resolution log
+- Debug overlay on map (toggle-able layer showing affinity edges)
+- Per-node debug panel (expandable "Affinity Debug" in node detail)
+- Structured server-side logging (gated by `debugAffinity` config)
+- Dashboard stats widget
+
+**Tests:** API test for debug endpoint, Playwright test for debug overlay toggle
+
+**Files:** `cmd/server/routes.go`, `public/map.js`, `public/nodes.js`
+
+**User-visible:** Admins can diagnose disambiguation decisions
+
+**Dependencies:** Milestones 2 + 5 merged
+
+**PR title:** `feat: affinity debugging tools (#482) — milestone 6`
+
+---
+
+### Milestone 7: Analytics Graph Visualization (Future)
+
+**Scope:** Force-directed neighbor graph in the Analytics section
+
+- Interactive graph visualization using canvas or SVG
+- Node coloring by role, edge thickness by score
+- Click node to navigate to detail page
+- Filter by region, role, confidence level
+
+**Tests:** Playwright — graph renders, nodes clickable, filter works
+
+**Files:** `public/analytics.js` (or new file)
+
+**User-visible:** Visual network topology in Analytics
+
+**Dependencies:** Milestone 2 merged
+
+**PR title:** `feat: neighbor graph visualization (#482) — milestone 7`
