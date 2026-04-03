@@ -757,6 +757,33 @@ console.log('\n=== packets.js: page registration ===');
   });
 }
 
+console.log('\n=== packets.js: _invalidateRowCounts / _refreshRowCountsIfDirty (#410) ===');
+{
+  const ctx = loadPacketsSandbox();
+  const api = ctx._packetsTestAPI;
+
+  test('_invalidateRowCounts and _refreshRowCountsIfDirty are exported', () => {
+    assert(typeof api._invalidateRowCounts === 'function');
+    assert(typeof api._refreshRowCountsIfDirty === 'function');
+  });
+
+  test('_invalidateRowCounts does not throw', () => {
+    api._invalidateRowCounts();
+  });
+
+  test('_refreshRowCountsIfDirty does not throw when no display packets', () => {
+    api._invalidateRowCounts();
+    api._refreshRowCountsIfDirty();
+  });
+
+  test('_cumulativeRowOffsets returns valid offsets after invalidation cycle', () => {
+    // Even with no display packets, should return valid array
+    const offsets = api._cumulativeRowOffsets();
+    assert(Array.isArray(offsets));
+    assert(offsets[0] === 0);
+  });
+}
+
 // ===== SUMMARY =====
 console.log(`\n${'='.repeat(40)}`);
 console.log(`packets.js tests: ${passed} passed, ${failed} failed`);

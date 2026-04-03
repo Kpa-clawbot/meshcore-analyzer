@@ -53,6 +53,7 @@
   let _displayPackets = [];       // filtered packets for current view
   let _displayGrouped = false;    // whether _displayPackets is in grouped mode
   let _rowCounts = [];            // per-entry DOM row counts (1 for flat, 1+children for expanded groups)
+  let _rowCountsDirty = false;    // set when _rowCounts may be stale (e.g. WS added children) (#410)
   let _cumulativeOffsetsCache = null; // cached cumulative offsets, invalidated on _rowCounts change
   let _lastVisibleStart = -1;     // last rendered start index (for dirty checking)
   let _lastVisibleEnd = -1;       // last rendered end index (for dirty checking)
@@ -396,6 +397,9 @@
                 existing._children.unshift(p);
                 if (existing._children.length > 200) existing._children.length = 200;
                 sortGroupChildren(existing);
+                // Invalidate row counts — child count changed, so virtual scroll
+                // heights are stale until next renderTableRows() (#410)
+                _invalidateRowCounts();
               }
             } else {
               // New group
@@ -442,6 +446,7 @@
     clearTimeout(_wsRenderTimer);
     _displayPackets = [];
     _rowCounts = [];
+    _rowCountsDirty = false;
     _cumulativeOffsetsCache = null;
     _observerFilterSet = null;
     _lastVisibleStart = -1;
@@ -1123,6 +1128,21 @@
       </tr>`;
   }
 
+  // Mark _rowCounts as stale so renderVisibleRows() recomputes them lazily.
+  // Called when expanded group children change outside renderTableRows() (#410).
+  function _invalidateRowCounts() {
+    _rowCountsDirty = true;
+    _cumulativeOffsetsCache = null;
+  }
+
+  // Recompute _rowCounts from _displayPackets if they've been invalidated.
+  function _refreshRowCountsIfDirty() {
+    if (!_rowCountsDirty || !_displayPackets.length) return;
+    _rowCounts = _displayPackets.map(function(p) { return _getRowCount(p); });
+    _cumulativeOffsetsCache = null;
+    _rowCountsDirty = false;
+  }
+
   // Compute the number of DOM <tr> rows a single entry produces.
   // Used by both row counting and renderVisibleRows to avoid divergence (#424).
   function _getRowCount(p) {
@@ -1160,6 +1180,9 @@
 
     const scrollContainer = document.getElementById('pktLeft');
     if (!scrollContainer) return;
+
+    // Recompute row counts if they were invalidated (e.g. WS added children) (#410)
+    _refreshRowCountsIfDirty();
 
     // Compute total DOM rows accounting for expanded groups
     const offsets = _cumulativeRowOffsets();
@@ -1317,6 +1340,7 @@
     if (!displayPackets.length) {
       _displayPackets = [];
       _rowCounts = [];
+      _rowCountsDirty = false;
       _cumulativeOffsetsCache = null;
       _observerFilterSet = null;
       _lastVisibleStart = -1;
@@ -1336,6 +1360,7 @@
     _displayGrouped = groupByHash;
     _observerFilterSet = filters.observer ? new Set(filters.observer.split(',')) : null;
     _rowCounts = displayPackets.map(p => _getRowCount(p));
+    _rowCountsDirty = false;
     _cumulativeOffsetsCache = null;
 
     attachVScrollListener();
@@ -2044,6 +2069,8 @@
       renderPath,
       _getRowCount,
       _cumulativeRowOffsets,
+      _invalidateRowCounts,
+      _refreshRowCountsIfDirty,
       buildGroupRowHtml,
       buildFlatRowHtml,
     };
