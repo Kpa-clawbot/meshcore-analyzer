@@ -630,6 +630,15 @@ button.ch-item.selected { background: var(--selected-bg); }
   background: var(--card-bg); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px; margin-bottom: 8px;
 }
+/* Bug 7 fix: neighbor table text inherits accent color — force readable text */
+.node-detail-section .data-table td,
+.node-full-card .data-table td {
+  color: var(--text);
+}
+.node-detail-section .data-table td a,
+.node-full-card .data-table td a {
+  color: var(--accent);
+}
 .node-detail-section h4 {
   font-size: 12px; text-transform: uppercase; letter-spacing: .5px;
   color: var(--text-muted); margin-bottom: 8px; padding-bottom: 4px;
