@@ -188,7 +188,10 @@
   }
 
   function renderNeighborRows(neighbors, limit) {
-    var items = limit ? neighbors.slice(0, limit) : neighbors;
+    var sorted = neighbors.slice().sort(function(a, b) {
+      return (b.score || b.affinity || 0) - (a.score || a.affinity || 0);
+    });
+    var items = limit ? sorted.slice(0, limit) : sorted;
     return items.map(function(nb) {
       var conf = getConfidenceIndicator(nb);
       var name = nb.name || (nb.prefix + '… (unknown)');
