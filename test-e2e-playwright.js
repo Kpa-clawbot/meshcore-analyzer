@@ -1308,8 +1308,6 @@ async function run() {
     await page.evaluate(() => localStorage.removeItem('cs-theme-overrides'));
   });
 
-<<<<<<< HEAD
-  // --- Group: Show Neighbors (#484 fix) ---
 
   await test('Show Neighbors populates neighborPubkeys from affinity API', async () => {
     const testPubkey = 'aabbccdd11223344556677889900aabbccddeeff00112233445566778899001122';
