@@ -459,6 +459,59 @@ test('setOverride prunes value matching server default', () => {
   assert.ok(!delta.theme || !delta.theme.accent, 'matching value should be pruned after setOverride');
 });
 
+// ── Fix #2: _cleanPhantomOverrides when server has no section ──
+
+test('phantom overrides cleaned when server has NO home section', () => {
+  const { api, ls } = loadCustomizer();
+  // Server has theme but NO home — the common deployment case
+  const server = { theme: { accent: '#4a9eff' } };
+  ls.setItem('cs-theme-overrides', JSON.stringify({ home: { checklist: [], steps: [] } }));
+  api.init(server);
+  const delta = JSON.parse(ls.getItem('cs-theme-overrides') || '{}');
+  assert.ok(!delta.home, 'phantom home override should be removed when server has no home section');
+});
+
+test('phantom overrides cleaned when server section is undefined — empty arrays removed', () => {
+  const { api, ls } = loadCustomizer();
+  const server = { theme: { accent: '#4a9eff' }, nodeColors: { repeater: '#dc2626' } };
+  // timestamps has actual values (not phantom), home has empty arrays (phantom)
+  ls.setItem('cs-theme-overrides', JSON.stringify({
+    timestamps: { defaultMode: 'ago', timezone: 'local' },
+    home: { checklist: [], steps: [] }
+  }));
+  api.init(server);
+  const delta = JSON.parse(ls.getItem('cs-theme-overrides') || '{}');
+  assert.ok(!delta.home, 'phantom home with empty arrays should be removed');
+  // timestamps has non-empty values — preserved even without server section
+  assert.ok(delta.timestamps, 'timestamps with actual values should be preserved');
+  assert.strictEqual(delta.timestamps.defaultMode, 'ago');
+});
+
+// ── Fix #4: setOverride with value matching server default is NOT stored ──
+
+test('setOverride with value matching server default is not stored', () => {
+  const { api, ls } = loadCustomizer();
+  const server = { theme: { accent: '#4a9eff', border: '#e2e5ea' } };
+  api.init(server);
+  // Set override to same value as server default
+  api.setOverride('theme', 'accent', '#4a9eff');
+  const delta = JSON.parse(ls.getItem('cs-theme-overrides') || '{}');
+  assert.ok(!delta.theme || !delta.theme.accent, 'value matching server default should not be stored');
+});
+
+test('existing user overrides are NOT pruned by setOverride on other keys', () => {
+  const { api, ls } = loadCustomizer();
+  const server = { theme: { accent: '#4a9eff', border: '#e2e5ea' } };
+  // User previously chose a custom accent (different from server default)
+  ls.setItem('cs-theme-overrides', JSON.stringify({ theme: { accent: '#ff0000' } }));
+  api.init(server);
+  // Now user changes border — accent should be preserved
+  api.setOverride('theme', 'border', '#00ff00');
+  const delta = JSON.parse(ls.getItem('cs-theme-overrides') || '{}');
+  assert.strictEqual(delta.theme.accent, '#ff0000', 'pre-existing custom override should be preserved');
+  assert.strictEqual(delta.theme.border, '#00ff00', 'new non-matching override should be stored');
+});
+
 // ── Summary ──
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);

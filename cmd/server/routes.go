@@ -282,6 +282,26 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 		"accentHover": "#6db3ff",
 		"navBg":       "#0f0f23",
 		"navBg2":      "#1a1a2e",
+		"navText":     "#ffffff",
+		"navTextMuted": "#cbd5e1",
+		"background":  "#f4f5f7",
+		"text":        "#1a1a2e",
+		"textMuted":   "#5b6370",
+		"border":      "#e2e5ea",
+		"surface1":    "#ffffff",
+		"surface2":    "#ffffff",
+		"surface3":    "#ffffff",
+		"sectionBg":   "#eef2ff",
+		"cardBg":      "#ffffff",
+		"contentBg":   "#f4f5f7",
+		"detailBg":    "#ffffff",
+		"inputBg":     "#ffffff",
+		"rowStripe":   "#f9fafb",
+		"rowHover":    "#eef2ff",
+		"selectedBg":  "#dbeafe",
+		"statusGreen": "#22c55e",
+		"statusYellow": "#eab308",
+		"statusRed":   "#ef4444",
 	}, s.cfg.Theme, theme.Theme)
 
 	nodeColors := mergeMap(map[string]interface{}{
@@ -315,6 +335,8 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 		"statusGreen": "#22c55e",
 		"statusYellow": "#eab308",
 		"statusRed":   "#ef4444",
+		"surface3":    "#2d2d50",
+		"sectionBg":   "#1e1e34",
 	}, s.cfg.ThemeDark, theme.ThemeDark)
 	typeColors := mergeMap(map[string]interface{}{
 		"ADVERT":   "#22c55e",

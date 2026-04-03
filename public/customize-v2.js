@@ -578,20 +578,25 @@
           delta[sec] = _pendingOverrides[sec];
         }
       }
+      var pendingKeys = _pendingOverrides;
       _pendingOverrides = {};
-      // Prune values that match server defaults (fix phantom overrides)
+      // Spec Decision #7: don't silently prune existing overrides.
+      // Only prevent redundant NEW writes: if a value just written matches
+      // the server default, don't store it (clearOverride semantics).
       var server = _serverDefaults || {};
-      for (var ps in delta) {
-        if (typeof delta[ps] === 'object' && delta[ps] !== null && OBJECT_SECTIONS.indexOf(ps) >= 0) {
+      for (var ps in pendingKeys) {
+        if (typeof pendingKeys[ps] === 'object' && pendingKeys[ps] !== null && OBJECT_SECTIONS.indexOf(ps) >= 0) {
           var serverSec = server[ps] || {};
-          for (var pk in delta[ps]) {
-            var ov = delta[ps][pk];
-            var sv = serverSec[pk];
-            var match = (typeof ov === 'object' || typeof sv === 'object')
-              ? JSON.stringify(ov) === JSON.stringify(sv) : ov === sv;
-            if (match) delete delta[ps][pk];
+          if (delta[ps]) {
+            for (var pk in pendingKeys[ps]) {
+              var ov = delta[ps][pk];
+              var sv = serverSec[pk];
+              var match = (typeof ov === 'object' || typeof sv === 'object')
+                ? JSON.stringify(ov) === JSON.stringify(sv) : ov === sv;
+              if (match) delete delta[ps][pk];
+            }
+            if (Object.keys(delta[ps]).length === 0) delete delta[ps];
           }
-          if (Object.keys(delta[ps]).length === 0) delete delta[ps];
         } else if (SCALAR_SECTIONS.indexOf(ps) >= 0 && delta[ps] === server[ps]) {
           delete delta[ps];
         }
@@ -1158,7 +1163,21 @@
     for (var i = 0; i < OBJECT_SECTIONS.length; i++) {
       var sec = OBJECT_SECTIONS[i];
       if (!delta[sec] || typeof delta[sec] !== 'object') continue;
-      var serverSec = server[sec] || {};
+      var serverSec = server[sec];
+      // If server has no defaults for this section, only remove values that
+      // are clearly phantom (empty arrays/objects or undefined equivalents).
+      // Non-trivial values may be legitimate user choices.
+      if (!serverSec) {
+        var dKeys = Object.keys(delta[sec]);
+        for (var di = 0; di < dKeys.length; di++) {
+          var dv = delta[sec][dKeys[di]];
+          var isPhantom = (Array.isArray(dv) && dv.length === 0) ||
+            (typeof dv === 'object' && dv !== null && !Array.isArray(dv) && Object.keys(dv).length === 0);
+          if (isPhantom) { delete delta[sec][dKeys[di]]; changed = true; }
+        }
+        if (Object.keys(delta[sec]).length === 0) { delete delta[sec]; changed = true; }
+        continue;
+      }
       var keys = Object.keys(delta[sec]);
       for (var j = 0; j < keys.length; j++) {
         var k = keys[j];
