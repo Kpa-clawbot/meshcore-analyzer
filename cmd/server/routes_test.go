@@ -2179,81 +2179,81 @@ func TestGetNodeHashSizeInfoLatestWins(t *testing.T) {
 }
 
 func TestGetNodeHashSizeInfoIgnoreDirectZeroHop(t *testing.T) {
-db := setupTestDB(t)
-seedTestData(t, db)
-store := NewPacketStore(db, nil)
-if err := store.Load(); err != nil {
-	t.Fatalf("store.Load failed: %v", err)
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+
+	pk := "dddd111122223333444455556666777788889999aaaabbbbccccddddeeee3333"
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'DirIgnore', 'repeater')", pk)
+
+	decoded := `{"name":"DirIgnore","pubKey":"` + pk + `"}`
+	rawFlood2B := "11" + "40" + "aabb" // FLOOD advert, hashSize=2
+	rawDirect0 := "12" + "00" + "aabb" // DIRECT advert, zero-hop (should be ignored)
+
+	payloadType := 4
+	raws := []string{rawFlood2B, rawDirect0, rawFlood2B, rawDirect0, rawFlood2B}
+	for i, raw := range raws {
+		tx := &StoreTx{
+			ID:          9150 + i,
+			RawHex:      raw,
+			Hash:        "dirignore" + strconv.Itoa(i),
+			FirstSeen:   "2024-01-01T0" + strconv.Itoa(i) + ":00:00Z",
+			PayloadType: &payloadType,
+			DecodedJSON: decoded,
+		}
+		store.packets = append(store.packets, tx)
+		store.byPayloadType[4] = append(store.byPayloadType[4], tx)
+	}
+
+	info := store.GetNodeHashSizeInfo()
+	ni := info[pk]
+	if ni == nil {
+		t.Fatal("expected hash info for test node")
+	}
+	if ni.HashSize != 2 {
+		t.Errorf("HashSize=%d, want 2 (direct zero-hop adverts should be ignored)", ni.HashSize)
+	}
+	if ni.Inconsistent {
+		t.Error("expected hash_size_inconsistent=false when direct zero-hop adverts are ignored")
+	}
+	if len(ni.AllSizes) != 1 || !ni.AllSizes[2] {
+		t.Errorf("expected only 2-byte size in AllSizes, got %#v", ni.AllSizes)
+	}
 }
 
-pk := "dddd111122223333444455556666777788889999aaaabbbbccccddddeeee3333"
-db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'DirIgnore', 'repeater')", pk)
+func TestGetNodeHashSizeInfoOnlyDirectZeroHopIgnored(t *testing.T) {
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
 
-decoded := `{"name":"DirIgnore","pubKey":"` + pk + `"}`
-rawFlood2B := "11" + "40" + "aabb" // FLOOD advert, hashSize=2
-rawDirect0 := "12" + "00" + "aabb" // DIRECT advert, zero-hop (should be ignored)
+	pk := "eeee111122223333444455556666777788889999aaaabbbbccccddddeeee4444"
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'OnlyDirect', 'repeater')", pk)
 
-payloadType := 4
-raws := []string{rawFlood2B, rawDirect0, rawFlood2B, rawDirect0, rawFlood2B}
-for i, raw := range raws {
+	decoded := `{"name":"OnlyDirect","pubKey":"` + pk + `"}`
+	rawDirect0 := "12" + "00" + "aabb"
+	payloadType := 4
+
 	tx := &StoreTx{
-		ID:          9150 + i,
-		RawHex:      raw,
-		Hash:        "dirignore" + strconv.Itoa(i),
-		FirstSeen:   "2024-01-01T0" + strconv.Itoa(i) + ":00:00Z",
+		ID:          9160,
+		RawHex:      rawDirect0,
+		Hash:        "onlydirect0",
+		FirstSeen:   "2024-01-01T00:00:00Z",
 		PayloadType: &payloadType,
 		DecodedJSON: decoded,
 	}
 	store.packets = append(store.packets, tx)
 	store.byPayloadType[4] = append(store.byPayloadType[4], tx)
-}
 
-info := store.GetNodeHashSizeInfo()
-ni := info[pk]
-if ni == nil {
-	t.Fatal("expected hash info for test node")
-}
-if ni.HashSize != 2 {
-	t.Errorf("HashSize=%d, want 2 (direct zero-hop adverts should be ignored)", ni.HashSize)
-}
-if ni.Inconsistent {
-	t.Error("expected hash_size_inconsistent=false when direct zero-hop adverts are ignored")
-}
-if len(ni.AllSizes) != 1 || !ni.AllSizes[2] {
-	t.Errorf("expected only 2-byte size in AllSizes, got %#v", ni.AllSizes)
-}
-}
-
-func TestGetNodeHashSizeInfoOnlyDirectZeroHopIgnored(t *testing.T) {
-db := setupTestDB(t)
-seedTestData(t, db)
-store := NewPacketStore(db, nil)
-if err := store.Load(); err != nil {
-	t.Fatalf("store.Load failed: %v", err)
-}
-
-pk := "eeee111122223333444455556666777788889999aaaabbbbccccddddeeee4444"
-db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'OnlyDirect', 'repeater')", pk)
-
-decoded := `{"name":"OnlyDirect","pubKey":"` + pk + `"}`
-rawDirect0 := "12" + "00" + "aabb"
-payloadType := 4
-
-tx := &StoreTx{
-	ID:          9160,
-	RawHex:      rawDirect0,
-	Hash:        "onlydirect0",
-	FirstSeen:   "2024-01-01T00:00:00Z",
-	PayloadType: &payloadType,
-	DecodedJSON: decoded,
-}
-store.packets = append(store.packets, tx)
-store.byPayloadType[4] = append(store.byPayloadType[4], tx)
-
-info := store.GetNodeHashSizeInfo()
-if ni := info[pk]; ni != nil {
-	t.Errorf("expected nil hash info for direct zero-hop only node, got HashSize=%d", ni.HashSize)
-}
+	info := store.GetNodeHashSizeInfo()
+	if ni := info[pk]; ni != nil {
+		t.Errorf("expected nil hash info for direct zero-hop only node, got HashSize=%d", ni.HashSize)
+	}
 }
 
 func TestGetNodeHashSizeInfoNoAdverts(t *testing.T) {
