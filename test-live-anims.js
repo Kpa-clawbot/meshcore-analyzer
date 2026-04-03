@@ -75,4 +75,54 @@ test('no setInterval remains in animation hot path', () => {
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
-process.exit(failed > 0 ? 1 : 0);
+if (failed > 0) process.exit(1);
+
+/* === Null-guard coverage for rAF callbacks === */
+const src2 = fs.readFileSync('public/live.js', 'utf8');
+let p2 = 0, f2 = 0;
+function test2(name, fn) {
+  try { fn(); p2++; console.log(`  ✅ ${name}`); }
+  catch (e) { f2++; console.log(`  ❌ ${name}: ${e.message}`); }
+}
+
+console.log('\n=== Null guards on rAF animation callbacks ===');
+
+test2('animatePath tick() has null guard', () => {
+  // tick is inside animatePath, after "function tick(now)"
+  const tickStart = src2.indexOf('function tick(now)');
+  const tickBody = src2.substring(tickStart, tickStart + 200);
+  assert.ok(tickBody.includes('!animLayer || !pathsLayer'), 'tick() missing animLayer/pathsLayer null guard');
+});
+
+test2('animatePath fadeOut() has null guard', () => {
+  const fadeOutStart = src2.indexOf('function fadeOut(now)');
+  const fadeOutBody = src2.substring(fadeOutStart, fadeOutStart + 200);
+  assert.ok(fadeOutBody.includes('!animLayer || !pathsLayer'), 'fadeOut() missing animLayer/pathsLayer null guard');
+});
+
+test2('drawAnimatedLine animateLine() has null guard', () => {
+  const lineStart = src2.indexOf('function animateLine(now)');
+  const lineBody = src2.substring(lineStart, lineStart + 200);
+  assert.ok(lineBody.includes('!animLayer || !pathsLayer'), 'animateLine() missing animLayer/pathsLayer null guard');
+});
+
+test2('drawAnimatedLine animateFade() has null guard', () => {
+  const fadeStart = src2.indexOf('function animateFade(now)');
+  const fadeBody = src2.substring(fadeStart, fadeStart + 200);
+  assert.ok(fadeBody.includes('!pathsLayer'), 'animateFade() missing pathsLayer null guard');
+});
+
+test2('pulseNode animatePulse() has null guard', () => {
+  const pulseStart = src2.indexOf('function animatePulse(now)');
+  const pulseBody = src2.substring(pulseStart, pulseStart + 200);
+  assert.ok(pulseBody.includes('!animLayer'), 'animatePulse() missing animLayer null guard');
+});
+
+test2('ghostPulse has null guard', () => {
+  const ghostStart = src2.indexOf('function ghostPulse(now)');
+  const ghostBody = src2.substring(ghostStart, ghostStart + 200);
+  assert.ok(ghostBody.includes('!animLayer'), 'ghostPulse() missing animLayer null guard');
+});
+
+console.log(`\n${p2} passed, ${f2} failed\n`);
+if (f2 > 0) process.exit(1);
