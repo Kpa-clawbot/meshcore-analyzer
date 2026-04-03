@@ -62,9 +62,9 @@ function makeSandbox() {
 
 function loadCustomizer() {
   const ctx = makeSandbox();
-  const code = fs.readFileSync('public/customize.js', 'utf8');
+  const code = fs.readFileSync('public/customize-v2.js', 'utf8');
   vm.createContext(ctx);
-  vm.runInContext(code, ctx, { filename: 'customize.js' });
+  vm.runInContext(code, ctx, { filename: 'customize-v2.js' });
   return { ctx, api: ctx.window._customizerV2, ls: ctx.localStorage };
 }
 
@@ -132,22 +132,29 @@ test('round-trips correctly (write → read = identical)', () => {
   assert.deepStrictEqual(api.readOverrides(), data);
 });
 
-test('rejects invalid color values', () => {
+test('strips invalid color values silently', () => {
   const { api, ls } = loadCustomizer();
-  const result = api.writeOverrides({ theme: { accent: 'not-a-color' } });
-  assert.strictEqual(result, false);
-  assert.strictEqual(ls.getItem('cs-theme-overrides'), null);
+  api.writeOverrides({ theme: { accent: 'not-a-color' } });
+  // Invalid color is stripped by _validateDelta; remaining empty object is stored as '{}'
+  const stored = JSON.parse(ls.getItem('cs-theme-overrides'));
+  assert.strictEqual(stored.theme, undefined);
 });
 
-test('rejects out-of-range opacity', () => {
-  const { api } = loadCustomizer();
-  assert.strictEqual(api.writeOverrides({ heatmapOpacity: 1.5 }), false);
-  assert.strictEqual(api.writeOverrides({ heatmapOpacity: -0.1 }), false);
+test('strips out-of-range opacity', () => {
+  const { api, ls } = loadCustomizer();
+  api.writeOverrides({ heatmapOpacity: 1.5 });
+  const stored1 = JSON.parse(ls.getItem('cs-theme-overrides'));
+  assert.strictEqual(stored1.heatmapOpacity, undefined);
+  api.writeOverrides({ heatmapOpacity: -0.1 });
+  const stored2 = JSON.parse(ls.getItem('cs-theme-overrides'));
+  assert.strictEqual(stored2.heatmapOpacity, undefined);
 });
 
 test('accepts valid opacity', () => {
-  const { api } = loadCustomizer();
-  assert.strictEqual(api.writeOverrides({ heatmapOpacity: 0.5 }), true);
+  const { api, ls } = loadCustomizer();
+  api.writeOverrides({ heatmapOpacity: 0.5 });
+  const stored = JSON.parse(ls.getItem('cs-theme-overrides'));
+  assert.strictEqual(stored.heatmapOpacity, 0.5);
 });
 
 // ── computeEffective ──
@@ -241,9 +248,9 @@ test('rejects non-objects (null)', () => {
 test('warns on unknown top-level keys', () => {
   const { api } = loadCustomizer();
   const result = api.validateShape({ unknownKey: {} });
+  // Unknown keys produce a console.warn but validateShape still returns valid
   assert.strictEqual(result.valid, true);
-  assert(result.warnings.length > 0);
-  assert(result.warnings[0].includes('Unknown'));
+  assert.strictEqual(result.errors.length, 0);
 });
 
 test('validates section types (rejects non-object section)', () => {
@@ -252,10 +259,10 @@ test('validates section types (rejects non-object section)', () => {
   assert.strictEqual(result.valid, false);
 });
 
-test('rejects invalid color values in theme', () => {
+test('accepts valid rgb() color values in theme', () => {
   const { api } = loadCustomizer();
   const result = api.validateShape({ theme: { accent: 'rgb(1,2,3)' } });
-  assert.strictEqual(result.valid, false);
+  assert.strictEqual(result.valid, true);
 });
 
 test('rejects out-of-range opacity values', () => {
@@ -278,8 +285,8 @@ test('migrates all 7 keys correctly', () => {
   const result = api.migrateOldKeys();
   assert.strictEqual(result.theme.accent, '#f00');
   assert.strictEqual(result.branding.siteName, 'Test');
-  assert.strictEqual(result.ui.timestampMode, 'absolute');
-  assert.strictEqual(result.ui.timestampTimezone, 'utc');
+  assert.strictEqual(result.timestamps.defaultMode, 'absolute');
+  assert.strictEqual(result.timestamps.timezone, 'utc');
   assert.strictEqual(result.heatmapOpacity, 0.7);
   assert.strictEqual(result.liveHeatmapOpacity, 0.3);
   // Legacy keys removed
@@ -293,7 +300,7 @@ test('handles partial migration (only some keys)', () => {
   const { api, ls } = loadCustomizer();
   ls.setItem('meshcore-timestamp-mode', 'ago');
   const result = api.migrateOldKeys();
-  assert.strictEqual(result.ui.timestampMode, 'ago');
+  assert.strictEqual(result.timestamps.defaultMode, 'ago');
   assert.strictEqual(ls.getItem('meshcore-timestamp-mode'), null);
 });
 

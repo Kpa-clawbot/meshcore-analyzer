@@ -1492,6 +1492,7 @@
     migrateOldKeys: migrateOldKeys,
     validateShape: validateShape,
     applyCSS: applyCSS,
-    isValidColor: isValidColor
+    isValidColor: isValidColor,
+    THEME_CSS_MAP: THEME_CSS_MAP
   };
 })();
