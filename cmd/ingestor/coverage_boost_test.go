@@ -439,7 +439,9 @@ func TestHandleMessageAdvertGeoFiltered(t *testing.T) {
 
 	// Geo-filtered adverts should not create nodes
 	var nodeCount int
-	store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount)
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&nodeCount); err != nil {
+		t.Fatal(err)
+	}
 	if nodeCount != 0 {
 		t.Errorf("nodes=%d, want 0 (geo-filtered advert should not create node)", nodeCount)
 	}
@@ -1070,7 +1072,9 @@ func TestMoveStaleNodesReplace(t *testing.T) {
 
 	pk := "stale_node_replace_0000000000000000000000000001"
 	// Insert into inactive_nodes first
-	store.db.Exec("INSERT INTO inactive_nodes (public_key, name, role, last_seen, first_seen) VALUES (?, 'Old', 'companion', '2019-01-01T00:00:00Z', '2019-01-01T00:00:00Z')", pk)
+	if _, err := store.db.Exec("INSERT INTO inactive_nodes (public_key, name, role, last_seen, first_seen) VALUES (?, 'Old', 'companion', '2019-01-01T00:00:00Z', '2019-01-01T00:00:00Z')", pk); err != nil {
+		t.Fatal(err)
+	}
 
 	// Insert same node in nodes with old last_seen
 	store.UpsertNode(pk, "StaleNode", "repeater", nil, nil, "2020-01-01T00:00:00Z")
