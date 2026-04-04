@@ -265,5 +265,33 @@ window.HopResolver = (function() {
     return affinityMap[pubkeyA][pubkeyB] || 0;
   }
 
-  return { init: init, resolve: resolve, ready: ready, haversineKm: haversineKm, setAffinity: setAffinity, getAffinity: getAffinity };
+  /**
+   * Resolve hops using server-provided resolved_path (full pubkeys).
+   * Returns the same format as resolve() — { [hop]: { name, pubkey, ... } }.
+   * resolved_path is an array aligned with path_json: each element is a
+   * 64-char lowercase hex pubkey or null. Skips entries that are null.
+   */
+  function resolveFromServer(hops, resolvedPath) {
+    if (!hops || !resolvedPath || hops.length !== resolvedPath.length) return {};
+    var result = {};
+    for (var i = 0; i < hops.length; i++) {
+      var hop = hops[i];
+      var pubkey = resolvedPath[i];
+      if (!pubkey) continue; // null = unresolved, leave for client-side fallback
+      // Find the node by pubkey to get its name
+      var node = null;
+      for (var j = 0; j < nodesList.length; j++) {
+        if (nodesList[j].public_key === pubkey) { node = nodesList[j]; break; }
+      }
+      result[hop] = {
+        name: node ? node.name : pubkey.slice(0, 8),
+        pubkey: pubkey,
+        candidates: node ? [{ name: node.name, pubkey: pubkey, lat: node.lat, lon: node.lon }] : [],
+        conflicts: []
+      };
+    }
+    return result;
+  }
+
+  return { init: init, resolve: resolve, resolveFromServer: resolveFromServer, ready: ready, haversineKm: haversineKm, setAffinity: setAffinity, getAffinity: getAffinity };
 })();

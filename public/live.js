@@ -457,6 +457,7 @@
       id: pkt.id, hash: pkt.hash,
       raw: pkt.raw_hex,
       path_json: pkt.path_json,
+      resolved_path: pkt.resolved_path,
       _ts: new Date(pkt.timestamp || pkt.created_at).getTime(),
       decoded: { header: { payloadTypeName: typeName }, payload: raw, path: { hops } },
       snr: pkt.snr, rssi: pkt.rssi, observer: pkt.observer_name
@@ -1861,7 +1862,7 @@
       var pathKey = hops.join(',');
       if (seenPathKeys.has(pathKey)) continue;
       seenPathKeys.add(pathKey);
-      var hopPositions = resolveHopPositions(hops, qp);
+      var hopPositions = resolveHopPositions(hops, qp, window.getResolvedPath ? getResolvedPath(qpkt) : null);
       if (hopPositions.length >= 2) {
         allPaths.push({ hopPositions: hopPositions, raw: qpkt.raw || first.raw });
       } else if (hopPositions.length === 1) {
@@ -1898,15 +1899,27 @@
     }
   }
 
-  function resolveHopPositions(hops, payload) {
-    // Delegate to shared HopResolver (from hop-resolver.js) instead of reimplementing
-    const originLat = payload.lat != null && !(payload.lat === 0 && payload.lon === 0) ? payload.lat : null;
-    const originLon = payload.lon != null && !(payload.lon === 0 && payload.lon === 0) ? payload.lon : null;
+  function resolveHopPositions(hops, payload, resolvedPath) {
+    // Prefer server-side resolved_path when available
+    var resolvedMap;
+    if (resolvedPath && resolvedPath.length === hops.length && window.HopResolver && HopResolver.ready()) {
+      resolvedMap = HopResolver.resolveFromServer(hops, resolvedPath);
+      // Fill in any null entries from client-side fallback
+      var nullHops = hops.filter(function(h, i) { return !resolvedPath[i] && !resolvedMap[h]; });
+      if (nullHops.length) {
+        var fallback = HopResolver.resolve(nullHops, null, null, null, null, null);
+        for (var k in fallback) resolvedMap[k] = fallback[k];
+      }
+    } else {
+      // Delegate to shared HopResolver (from hop-resolver.js) instead of reimplementing
+      const originLat = payload.lat != null && !(payload.lat === 0 && payload.lon === 0) ? payload.lat : null;
+      const originLon = payload.lon != null && !(payload.lon === 0 && payload.lon === 0) ? payload.lon : null;
 
-    // Use HopResolver if available and initialized, otherwise fall back to simple lookup
-    const resolvedMap = (window.HopResolver && HopResolver.ready())
-      ? HopResolver.resolve(hops, originLat, originLon, null, null, null)
-      : {};
+      // Use HopResolver if available and initialized, otherwise fall back to simple lookup
+      resolvedMap = (window.HopResolver && HopResolver.ready())
+        ? HopResolver.resolve(hops, originLat, originLon, null, null, null)
+        : {};
+    }
 
     // Convert HopResolver's map format to the array format live.js expects: {key, pos, name, known}
     const raw = hops.map(hop => {

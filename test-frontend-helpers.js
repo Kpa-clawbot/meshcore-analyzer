@@ -564,6 +564,93 @@ console.log('\n=== hop-resolver.js ===');
   });
 }
 
+// ===== resolveFromServer (hop-resolver.js, M4 #555) =====
+console.log('\n=== resolveFromServer (hop-resolver.js) ===');
+{
+  const ctx = makeSandbox();
+  ctx.IATA_COORDS_GEO = {};
+  loadInCtx(ctx, 'public/hop-resolver.js');
+  const HR = ctx.window.HopResolver;
+
+  test('resolveFromServer works without init (uses pubkey prefix as name)', () => {
+    const pk = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+    const result = HR.resolveFromServer(['AB'], [pk]);
+    assert.strictEqual(result['AB'].name, pk.slice(0, 8));
+    assert.strictEqual(result['AB'].pubkey, pk);
+  });
+
+  test('resolveFromServer with matching node', () => {
+    const pubkey = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+    HR.init([{ public_key: pubkey, name: 'NodeA', lat: 37.3, lon: -122.0 }]);
+    const result = HR.resolveFromServer(['AB'], [pubkey]);
+    assert.strictEqual(result['AB'].name, 'NodeA');
+    assert.strictEqual(result['AB'].pubkey, pubkey);
+    assert.ok(!result['AB'].ambiguous);
+  });
+
+  test('resolveFromServer with null entry skips it', () => {
+    const pubkey = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
+    HR.init([{ public_key: pubkey, name: 'NodeA', lat: 37.3, lon: -122.0 }]);
+    const result = HR.resolveFromServer(['AB', 'CD'], [pubkey, null]);
+    assert.strictEqual(result['AB'].name, 'NodeA');
+    assert.ok(!('CD' in result)); // null entries are skipped
+  });
+
+  test('resolveFromServer with unknown pubkey uses prefix', () => {
+    HR.init([{ public_key: 'aaaa0000', name: 'Other' }]);
+    const unknownPk = '1111111111111111111111111111111111111111111111111111111111111111';
+    const result = HR.resolveFromServer(['AB'], [unknownPk]);
+    assert.strictEqual(result['AB'].name, unknownPk.slice(0, 8));
+    assert.strictEqual(result['AB'].pubkey, unknownPk);
+  });
+
+  test('resolveFromServer mismatched lengths returns empty', () => {
+    HR.init([{ public_key: 'abcdef1234567890', name: 'NodeA' }]);
+    const result = HR.resolveFromServer(['AB', 'CD'], ['abcdef1234567890']);
+    assert.strictEqual(Object.keys(result).length, 0);
+  });
+}
+
+// ===== getResolvedPath (packet-helpers.js, M4 #555) =====
+console.log('\n=== getResolvedPath (packet-helpers.js) ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/packet-helpers.js');
+  const getResolvedPath = ctx.window.getResolvedPath;
+
+  test('getResolvedPath returns null when absent', () => {
+    assert.strictEqual(getResolvedPath({}), null);
+  });
+
+  test('getResolvedPath parses JSON string', () => {
+    const pkt = { resolved_path: '["aabb","ccdd",null]' };
+    const result = getResolvedPath(pkt);
+    assert.deepStrictEqual(result, ['aabb', 'ccdd', null]);
+  });
+
+  test('getResolvedPath returns array as-is', () => {
+    const arr = ['aabb', null];
+    const pkt = { resolved_path: arr };
+    assert.strictEqual(getResolvedPath(pkt), arr);
+  });
+
+  test('getResolvedPath caches result', () => {
+    const pkt = { resolved_path: '["aabb"]' };
+    const r1 = getResolvedPath(pkt);
+    const r2 = getResolvedPath(pkt);
+    assert.strictEqual(r1, r2); // same reference
+  });
+
+  test('clearParsedCache clears resolved path cache', () => {
+    const clearParsedCache = ctx.window.clearParsedCache;
+    const pkt = { resolved_path: '["aabb"]' };
+    getResolvedPath(pkt);
+    assert.ok(pkt._parsedResolvedPath !== undefined);
+    clearParsedCache(pkt);
+    assert.strictEqual(pkt._parsedResolvedPath, undefined);
+  });
+}
+
 // ===== haversineKm exposed from HopResolver (issue #433) =====
 console.log('\n=== haversineKm (hop-resolver.js) ===');
 {
