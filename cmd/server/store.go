@@ -89,6 +89,8 @@ type PacketStore struct {
 	byHash        map[string]*StoreTx        // hash → *StoreTx
 	byTxID        map[int]*StoreTx           // transmission_id → *StoreTx
 	byObsID       map[int]*StoreObs          // observation_id → *StoreObs
+	maxTxID       int                        // highest transmission_id in store
+	maxObsID      int                        // highest observation_id in store
 	byObserver    map[string][]*StoreObs     // observer_id → observations
 	byNode        map[string][]*StoreTx      // pubkey → transmissions
 	nodeHashes    map[string]map[string]bool // pubkey → Set<hash>
@@ -305,6 +307,9 @@ func (s *PacketStore) Load() error {
 			s.byHash[hashStr] = tx
 			s.packets = append(s.packets, tx)
 			s.byTxID[txID] = tx
+			if txID > s.maxTxID {
+				s.maxTxID = txID
+			}
 			s.indexByNode(tx)
 			if tx.PayloadType != nil {
 				pt := *tx.PayloadType
@@ -346,6 +351,9 @@ func (s *PacketStore) Load() error {
 			}
 
 			s.byObsID[oid] = obs
+			if oid > s.maxObsID {
+				s.maxObsID = oid
+			}
 
 			if obsIDStr != "" {
 				s.byObserver[obsIDStr] = append(s.byObserver[obsIDStr], obs)
@@ -1154,6 +1162,9 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			s.byHash[r.hash] = tx
 			s.packets = append(s.packets, tx) // oldest-first; new items go to tail
 			s.byTxID[r.txID] = tx
+			if r.txID > s.maxTxID {
+				s.maxTxID = r.txID
+			}
 			s.indexByNode(tx)
 			if tx.PayloadType != nil {
 				pt := *tx.PayloadType
@@ -1206,6 +1217,9 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				tx.LatestSeen = obs.Timestamp
 			}
 			s.byObsID[oid] = obs
+			if oid > s.maxObsID {
+				s.maxObsID = oid
+			}
 			if r.observerID != "" {
 				s.byObserver[r.observerID] = append(s.byObserver[r.observerID], obs)
 			}
@@ -1498,6 +1512,9 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			tx.LatestSeen = obs.Timestamp
 		}
 		s.byObsID[r.obsID] = obs
+		if r.obsID > s.maxObsID {
+			s.maxObsID = r.obsID
+		}
 		if r.observerID != "" {
 			s.byObserver[r.observerID] = append(s.byObserver[r.observerID], obs)
 		}
@@ -1641,28 +1658,14 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 func (s *PacketStore) MaxTransmissionID() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	maxID := 0
-	for id := range s.byTxID {
-		if id > maxID {
-			maxID = id
-		}
-	}
-	return maxID
+	return s.maxTxID
 }
 
 // MaxObservationID returns the highest observation ID in the store.
 func (s *PacketStore) MaxObservationID() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	maxID := 0
-	for id := range s.byObsID {
-		if id > maxID {
-			maxID = id
-		}
-	}
-	return maxID
+	return s.maxObsID
 }
 
 // --- Internal filter/query helpers ---

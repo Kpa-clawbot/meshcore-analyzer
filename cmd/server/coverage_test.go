@@ -428,6 +428,49 @@ func TestMaxTransmissionID(t *testing.T) {
 	})
 }
 
+// --- MaxTransmissionID incremental tracking ---
+
+func TestMaxTransmissionIDIncremental(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	maxTx := store.MaxTransmissionID()
+	maxObs := store.MaxObservationID()
+
+	if maxTx <= 0 {
+		t.Fatalf("expected maxTx > 0 after Load, got %d", maxTx)
+	}
+	if maxObs <= 0 {
+		t.Fatalf("expected maxObs > 0 after Load, got %d", maxObs)
+	}
+
+	// Verify incremental field matches brute-force iteration
+	store.mu.RLock()
+	bruteMaxTx := 0
+	for id := range store.byTxID {
+		if id > bruteMaxTx {
+			bruteMaxTx = id
+		}
+	}
+	bruteMaxObs := 0
+	for id := range store.byObsID {
+		if id > bruteMaxObs {
+			bruteMaxObs = id
+		}
+	}
+	store.mu.RUnlock()
+
+	if maxTx != bruteMaxTx {
+		t.Errorf("maxTxID mismatch: incremental=%d brute=%d", maxTx, bruteMaxTx)
+	}
+	if maxObs != bruteMaxObs {
+		t.Errorf("maxObsID mismatch: incremental=%d brute=%d", maxObs, bruteMaxObs)
+	}
+}
+
 // --- Route handler DB fallback (no store) ---
 
 func TestHandleBulkHealthNoStore(t *testing.T) {
