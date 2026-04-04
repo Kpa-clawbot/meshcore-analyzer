@@ -1398,12 +1398,8 @@
     el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Analyzing route patterns…</div>';
     try {
       const rq = RegionFilter.regionQueryString();
-      const [d2, d3, d4, d5] = await Promise.all([
-        api('/analytics/subpaths?minLen=2&maxLen=2&limit=50' + rq, { ttl: CLIENT_TTL.analyticsRF }),
-        api('/analytics/subpaths?minLen=3&maxLen=3&limit=30' + rq, { ttl: CLIENT_TTL.analyticsRF }),
-        api('/analytics/subpaths?minLen=4&maxLen=4&limit=20' + rq, { ttl: CLIENT_TTL.analyticsRF }),
-        api('/analytics/subpaths?minLen=5&maxLen=8&limit=15' + rq, { ttl: CLIENT_TTL.analyticsRF })
-      ]);
+      const bulk = await api('/analytics/subpaths-bulk?groups=2-2:50,3-3:30,4-4:20,5-8:15' + rq, { ttl: CLIENT_TTL.analyticsRF });
+      const [d2, d3, d4, d5] = bulk.results;
 
       function renderTable(data, title) {
         if (!data.subpaths.length) return `<h4>${title}</h4><div class="text-muted">No data</div>`;

@@ -145,6 +145,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/analytics/hash-sizes", s.handleAnalyticsHashSizes).Methods("GET")
 	r.HandleFunc("/api/analytics/hash-collisions", s.handleAnalyticsHashCollisions).Methods("GET")
 	r.HandleFunc("/api/analytics/subpaths", s.handleAnalyticsSubpaths).Methods("GET")
+	r.HandleFunc("/api/analytics/subpaths-bulk", s.handleAnalyticsSubpathsBulk).Methods("GET")
 	r.HandleFunc("/api/analytics/subpath-detail", s.handleAnalyticsSubpathDetail).Methods("GET")
 	r.HandleFunc("/api/analytics/neighbor-graph", s.handleNeighborGraph).Methods("GET")
 
@@ -1348,6 +1349,57 @@ func (s *Server) handleAnalyticsSubpaths(w http.ResponseWriter, r *http.Request)
 		Subpaths:   []SubpathResp{},
 		TotalPaths: 0,
 	})
+}
+
+// handleAnalyticsSubpathsBulk returns multiple length-range buckets in a single
+// response, avoiding repeated scans of the same packet data. Query format:
+//   ?groups=2-2:50,3-3:30,4-4:20,5-8:15   (minLen-maxLen:limit per group)
+func (s *Server) handleAnalyticsSubpathsBulk(w http.ResponseWriter, r *http.Request) {
+	region := r.URL.Query().Get("region")
+	groupsParam := r.URL.Query().Get("groups")
+	if groupsParam == "" {
+		writeJSON(w, ErrorResp{Error: "groups parameter required (e.g. groups=2-2:50,3-3:30)"})
+		return
+	}
+
+	var groups []subpathGroup
+	for _, g := range strings.Split(groupsParam, ",") {
+		parts := strings.SplitN(g, ":", 2)
+		if len(parts) != 2 {
+			writeJSON(w, ErrorResp{Error: "invalid group format: " + g})
+			return
+		}
+		rangeParts := strings.SplitN(parts[0], "-", 2)
+		if len(rangeParts) != 2 {
+			writeJSON(w, ErrorResp{Error: "invalid range format: " + parts[0]})
+			return
+		}
+		mn, err1 := strconv.Atoi(rangeParts[0])
+		mx, err2 := strconv.Atoi(rangeParts[1])
+		lim, err3 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil || err3 != nil || mn < 2 || mx < mn || lim < 1 {
+			writeJSON(w, ErrorResp{Error: "invalid group: " + g})
+			return
+		}
+		groups = append(groups, subpathGroup{mn, mx, lim})
+	}
+
+	if s.store == nil {
+		results := make([]map[string]interface{}, len(groups))
+		for i := range groups {
+			results[i] = map[string]interface{}{"subpaths": []interface{}{}, "totalPaths": 0}
+		}
+		writeJSON(w, map[string]interface{}{"results": results})
+		return
+	}
+
+	results := s.store.GetAnalyticsSubpathsBulk(region, groups)
+	writeJSON(w, map[string]interface{}{"results": results})
+}
+
+// subpathGroup defines a length-range + limit for the bulk subpaths endpoint.
+type subpathGroup struct {
+	MinLen, MaxLen, Limit int
 }
 
 func (s *Server) handleAnalyticsSubpathDetail(w http.ResponseWriter, r *http.Request) {

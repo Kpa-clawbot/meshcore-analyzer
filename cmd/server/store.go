@@ -5919,6 +5919,111 @@ func (s *PacketStore) GetAnalyticsSubpaths(region string, minLen, maxLen, limit 
 	return result
 }
 
+// GetAnalyticsSubpathsBulk returns multiple length-range buckets from a single
+// scan of the subpath index, avoiding repeated iterations.
+func (s *PacketStore) GetAnalyticsSubpathsBulk(region string, groups []subpathGroup) []map[string]interface{} {
+	// For region queries or when there are few groups, fall back to individual calls
+	// which benefit from per-key caching.
+	if region != "" {
+		results := make([]map[string]interface{}, len(groups))
+		for i, g := range groups {
+			results[i] = s.GetAnalyticsSubpaths(region, g.MinLen, g.MaxLen, g.Limit)
+		}
+		return results
+	}
+
+	// Check if all groups are cached.
+	allCached := true
+	cachedResults := make([]map[string]interface{}, len(groups))
+	s.cacheMu.Lock()
+	for i, g := range groups {
+		cacheKey := fmt.Sprintf("|%d|%d|%d", g.MinLen, g.MaxLen, g.Limit)
+		if cached, ok := s.subpathCache[cacheKey]; ok && time.Now().Before(cached.expiresAt) {
+			cachedResults[i] = cached.data
+		} else {
+			allCached = false
+			break
+		}
+	}
+	if allCached {
+		s.cacheHits += int64(len(groups))
+		s.cacheMu.Unlock()
+		return cachedResults
+	}
+	s.cacheMu.Unlock()
+
+	// Single scan: bucket by hop length into per-group accumulators.
+	s.mu.RLock()
+	_, pm := s.getCachedNodesAndPM()
+	hopCache := make(map[string]*nodeInfo)
+	resolveHop := func(hop string) string {
+		if cached, ok := hopCache[hop]; ok {
+			if cached != nil {
+				return cached.Name
+			}
+			return hop
+		}
+		r, _, _ := pm.resolveWithContext(hop, nil, s.graph)
+		hopCache[hop] = r
+		if r != nil {
+			return r.Name
+		}
+		return hop
+	}
+
+	perGroup := make([]map[string]*subpathAccum, len(groups))
+	for i := range groups {
+		perGroup[i] = make(map[string]*subpathAccum)
+	}
+
+	for rawKey, count := range s.spIndex {
+		hops := strings.Split(rawKey, ",")
+		hopLen := len(hops)
+
+		// Resolve hop names once, reuse across groups.
+		var named []string
+		var namedKey string
+		resolved := false
+
+		for gi, g := range groups {
+			if hopLen < g.MinLen || hopLen > g.MaxLen {
+				continue
+			}
+			if !resolved {
+				named = make([]string, hopLen)
+				for i, h := range hops {
+					named[i] = resolveHop(h)
+				}
+				namedKey = strings.Join(named, " → ")
+				resolved = true
+			}
+			entry := perGroup[gi][namedKey]
+			if entry == nil {
+				entry = &subpathAccum{raw: rawKey}
+				perGroup[gi][namedKey] = entry
+			}
+			entry.count += count
+		}
+	}
+	totalPaths := s.spTotalPaths
+	s.mu.RUnlock()
+
+	results := make([]map[string]interface{}, len(groups))
+	for i, g := range groups {
+		results[i] = s.rankSubpaths(perGroup[i], totalPaths, g.Limit)
+	}
+
+	// Cache individual results for future single-key lookups too.
+	s.cacheMu.Lock()
+	for i, g := range groups {
+		cacheKey := fmt.Sprintf("|%d|%d|%d", g.MinLen, g.MaxLen, g.Limit)
+		s.subpathCache[cacheKey] = &cachedResult{data: results[i], expiresAt: time.Now().Add(s.rfCacheTTL)}
+	}
+	s.cacheMu.Unlock()
+
+	return results
+}
+
 // subpathAccum holds a running count for a single named subpath.
 type subpathAccum struct {
 	count int

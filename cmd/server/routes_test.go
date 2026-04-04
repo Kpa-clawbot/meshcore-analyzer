@@ -1105,6 +1105,63 @@ func TestAnalyticsSubpaths(t *testing.T) {
 	}
 }
 
+func TestAnalyticsSubpathsBulk(t *testing.T) {
+	_, router := setupTestServer(t)
+
+	// Valid request with multiple groups.
+	req := httptest.NewRequest("GET", "/api/analytics/subpaths-bulk?groups=2-2:50,3-3:30,5-8:15", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	results, ok := body["results"].([]interface{})
+	if !ok {
+		t.Fatal("expected results array")
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 result groups, got %d", len(results))
+	}
+	// Each result should have subpaths and totalPaths.
+	for i, r := range results {
+		rm, ok := r.(map[string]interface{})
+		if !ok {
+			t.Fatalf("result %d not a map", i)
+		}
+		if _, ok := rm["subpaths"]; !ok {
+			t.Errorf("result %d missing subpaths", i)
+		}
+		if _, ok := rm["totalPaths"]; !ok {
+			t.Errorf("result %d missing totalPaths", i)
+		}
+	}
+
+	// Missing groups param → error.
+	req2 := httptest.NewRequest("GET", "/api/analytics/subpaths-bulk", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	if w2.Code != 200 {
+		t.Fatalf("expected 200 with error body, got %d", w2.Code)
+	}
+	var errBody map[string]interface{}
+	json.Unmarshal(w2.Body.Bytes(), &errBody)
+	if _, ok := errBody["error"]; !ok {
+		t.Error("expected error field for missing groups param")
+	}
+
+	// Invalid group format.
+	req3 := httptest.NewRequest("GET", "/api/analytics/subpaths-bulk?groups=bad", nil)
+	w3 := httptest.NewRecorder()
+	router.ServeHTTP(w3, req3)
+	var errBody3 map[string]interface{}
+	json.Unmarshal(w3.Body.Bytes(), &errBody3)
+	if _, ok := errBody3["error"]; !ok {
+		t.Error("expected error for invalid group format")
+	}
+}
+
 func TestAnalyticsSubpathDetailWithHops(t *testing.T) {
 	_, router := setupTestServer(t)
 	req := httptest.NewRequest("GET", "/api/analytics/subpath-detail?hops=aa,bb", nil)
