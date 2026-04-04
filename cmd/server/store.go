@@ -117,6 +117,8 @@ type PacketStore struct {
 	// computed during Load() and incrementally updated on ingest.
 	distHops  []distHopRecord
 	distPaths []distPathRecord
+	distDirty bool      // set when paths change; cleared after rebuild
+	distLast  time.Time // last time distance index was rebuilt
 
 	// Cached GetNodeHashSizeInfo result — recomputed at most once every 15s
 	hashSizeInfoMu    sync.Mutex
@@ -329,6 +331,7 @@ func (s *PacketStore) Load() error {
 
 	// Precompute distance analytics (hop distances, path totals)
 	s.buildDistanceIndex()
+	s.distLast = time.Now()
 
 	s.loaded = true
 	elapsed := time.Since(t0)
@@ -1470,12 +1473,18 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		}
 	}
 
-	// Rebuild distance index if any paths changed (distances depend on path hops)
+	// Mark distance index dirty if any paths changed (rebuild is debounced)
 	for txID, tx := range updatedTxs {
 		if tx.PathJSON != oldPaths[txID] {
-			s.buildDistanceIndex()
+			s.distDirty = true
 			break
 		}
+	}
+	// Rebuild at most every 30s to avoid hot-looping on busy meshes
+	if s.distDirty && time.Since(s.distLast) > 30*time.Second {
+		s.buildDistanceIndex()
+		s.distDirty = false
+		s.distLast = time.Now()
 	}
 
 	if len(updatedTxs) > 0 {
