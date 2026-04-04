@@ -690,6 +690,40 @@
   }
 
   /**
+   * Create, update, or remove the offset indicator (dashed line + dot at true GPS position)
+   * for a deconflicted marker. Shared by _renderMarkersInner and _repositionMarkers.
+   * @param {Object} m - marker data object with latLng, adjustedLatLng, offset, _leafletLine, _leafletDot
+   * @param {L.LayerGroup} layer - layer group to add/remove indicators from
+   */
+  function _updateOffsetIndicator(m, layer) {
+    var pos = m.adjustedLatLng || m.latLng;
+    var redColor = getComputedStyle(document.documentElement).getPropertyValue('--status-red').trim() || '#ef4444';
+
+    if (m.offset > 10) {
+      // Line from true position to adjusted position
+      if (m._leafletLine) {
+        m._leafletLine.setLatLngs([m.latLng, pos]);
+      } else {
+        m._leafletLine = L.polyline([m.latLng, pos], {
+          color: redColor, weight: 2, dashArray: '6,4', opacity: 0.85
+        });
+        layer.addLayer(m._leafletLine);
+      }
+      // Dot at true GPS position
+      if (!m._leafletDot) {
+        m._leafletDot = L.circleMarker(m.latLng, {
+          radius: 3, fillColor: redColor, fillOpacity: 0.9, stroke: true, color: '#fff', weight: 1
+        });
+        layer.addLayer(m._leafletDot);
+      }
+    } else {
+      // No offset — remove indicator if it existed
+      if (m._leafletLine) { layer.removeLayer(m._leafletLine); m._leafletLine = null; }
+      if (m._leafletDot) { layer.removeLayer(m._leafletDot); m._leafletDot = null; }
+    }
+  }
+
+  /**
    * Reposition existing markers by re-running deconfliction at the current zoom.
    * Avoids clearing and rebuilding all markers — eliminates flicker on zoom/resize.
    */
@@ -700,8 +734,6 @@
     // Re-run deconfliction with current zoom pixel coordinates
     deconflictLabels(_currentMarkerData, map);
 
-    var redColor = getComputedStyle(document.documentElement).getPropertyValue('--status-red').trim() || '#ef4444';
-
     for (var i = 0; i < _currentMarkerData.length; i++) {
       var m = _currentMarkerData[i];
       var pos = m.adjustedLatLng || m.latLng;
@@ -709,27 +741,7 @@
       // Update marker position
       if (m._leafletMarker) m._leafletMarker.setLatLng(pos);
 
-      // Handle offset indicator line + dot
-      if (m.offset > 10) {
-        if (m._leafletLine) {
-          m._leafletLine.setLatLngs([m.latLng, pos]);
-        } else {
-          m._leafletLine = L.polyline([m.latLng, pos], {
-            color: redColor, weight: 2, dashArray: '6,4', opacity: 0.85
-          });
-          markerLayer.addLayer(m._leafletLine);
-        }
-        if (!m._leafletDot) {
-          m._leafletDot = L.circleMarker(m.latLng, {
-            radius: 3, fillColor: redColor, fillOpacity: 0.9, stroke: true, color: '#fff', weight: 1
-          });
-          markerLayer.addLayer(m._leafletDot);
-        }
-      } else {
-        // No offset — remove indicator if it existed
-        if (m._leafletLine) { markerLayer.removeLayer(m._leafletLine); m._leafletLine = null; }
-        if (m._leafletDot) { markerLayer.removeLayer(m._leafletDot); m._leafletDot = null; }
-      }
+      _updateOffsetIndicator(m, markerLayer);
     }
   }
 
@@ -809,19 +821,7 @@
       m._leafletLine = null;
       m._leafletDot = null;
 
-      if (m.offset > 10) {
-        const line = L.polyline([m.latLng, pos], {
-          color: getComputedStyle(document.documentElement).getPropertyValue('--status-red').trim() || '#ef4444', weight: 2, dashArray: '6,4', opacity: 0.85
-        });
-        markerLayer.addLayer(line);
-        m._leafletLine = line;
-        // Small dot at true GPS position
-        const dot = L.circleMarker(m.latLng, {
-          radius: 3, fillColor: getComputedStyle(document.documentElement).getPropertyValue('--status-red').trim() || '#ef4444', fillOpacity: 0.9, stroke: true, color: '#fff', weight: 1
-        });
-        markerLayer.addLayer(dot);
-        m._leafletDot = dot;
-      }
+      _updateOffsetIndicator(m, markerLayer);
     }
   }
 
