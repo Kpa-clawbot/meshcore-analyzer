@@ -3923,6 +3923,35 @@ func TestResolveRegionObserversCaching(t *testing.T) {
 	}
 }
 
+func TestResolveRegionObserversCacheMissNewRegion(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	store := &PacketStore{db: db}
+
+	// Populate cache with SJC.
+	obs1 := store.resolveRegionObservers("SJC")
+	if obs1 == nil || len(obs1) == 0 {
+		t.Fatal("expected observer IDs for SJC on first call")
+	}
+
+	// Cache is now valid. Request a different region that exists in DB.
+	// Before the fix, this would return nil from the map lookup instead of
+	// fetching from DB, silently returning "no observers" for up to 30s.
+	obs2 := store.resolveRegionObservers("LAX")
+	// LAX may or may not have data in the test DB, but the key point is:
+	// a non-existent region should be fetched (not just nil-returned).
+	// Verify the region key was cached (even if empty).
+	store.regionObsMu.Lock()
+	_, cached := store.regionObsCache["LAX"]
+	store.regionObsMu.Unlock()
+	if !cached {
+		t.Error("LAX should be cached after resolveRegionObservers call, even if empty")
+	}
+	_ = obs2
+}
+
 func TestIndexByNodePreCheck(t *testing.T) {
 	store := &PacketStore{
 		byNode:     make(map[string][]*StoreTx),

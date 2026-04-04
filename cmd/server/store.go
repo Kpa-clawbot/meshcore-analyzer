@@ -1824,7 +1824,10 @@ func (s *PacketStore) resolveRegionObservers(region string) map[string]bool {
 	defer s.regionObsMu.Unlock()
 
 	if s.regionObsCache != nil && time.Since(s.regionObsCacheTime) < 30*time.Second {
-		return s.regionObsCache[region]
+		if m, ok := s.regionObsCache[region]; ok {
+			return m
+		}
+		return s.fetchAndCacheRegionObs(region)
 	}
 	// Cache expired — rebuild.
 	s.regionObsCache = make(map[string]map[string]bool)
