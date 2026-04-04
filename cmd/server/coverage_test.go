@@ -3913,3 +3913,45 @@ func TestBuildTransmissionWhereMultiObserver(t *testing.T) {
 		}
 	})
 }
+
+// --- Distance index rebuild debounce (#557) ---
+
+func TestDistanceRebuildDebounce(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	// After Load(), distLast is set to now — so distDirty should be false
+	if store.distDirty {
+		t.Fatal("distDirty should be false after Load()")
+	}
+
+	// Insert a new observation with a different path to trigger distDirty
+	maxObsID := db.GetMaxObservationID()
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, 2, 5.0, -100, '["xx","yy","zz"]', ?)`, time.Now().Unix())
+
+	store.IngestNewObservations(maxObsID, 500)
+
+	// distDirty should be true (30s hasn't elapsed since Load)
+	if !store.distDirty {
+		t.Fatal("distDirty should be true after path change within 30s window")
+	}
+
+	// Now simulate 30s having elapsed by backdating distLast
+	store.distLast = time.Now().Add(-31 * time.Second)
+
+	// Insert another observation to trigger another ingest cycle
+	maxObsID = db.GetMaxObservationID()
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, 2, 7.0, -95, '["aa","bb","cc","dd"]', ?)`, time.Now().Unix())
+
+	store.IngestNewObservations(maxObsID, 500)
+
+	// After 30s elapsed, distDirty should be cleared (rebuild happened)
+	if store.distDirty {
+		t.Fatal("distDirty should be false after rebuild (30s elapsed)")
+	}
+}
