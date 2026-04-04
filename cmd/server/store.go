@@ -526,7 +526,7 @@ func (s *PacketStore) QueryPackets(q PacketQuery) *PacketResult {
 	packets := make([]map[string]interface{}, 0, pageSize)
 	if q.Order == "ASC" {
 		for _, tx := range results[start : start+pageSize] {
-			packets = append(packets, txToMap(tx))
+			packets = append(packets, txToMap(tx, q.ExpandObservations))
 		}
 	} else {
 		// DESC: newest items are at the tail; page 0 = last pageSize items reversed
@@ -536,7 +536,7 @@ func (s *PacketStore) QueryPackets(q PacketQuery) *PacketResult {
 			startIdx = 0
 		}
 		for i := endIdx - 1; i >= startIdx; i-- {
-			packets = append(packets, txToMap(results[i]))
+			packets = append(packets, txToMap(results[i], q.ExpandObservations))
 		}
 	}
 	return &PacketResult{Packets: packets, Total: total}
@@ -920,7 +920,7 @@ func (s *PacketStore) GetTransmissionByID(id int) map[string]interface{} {
 	if tx == nil {
 		return nil
 	}
-	return txToMap(tx)
+	return txToMap(tx, true)
 }
 
 // GetPacketByHash returns a transmission by content hash.
@@ -932,7 +932,7 @@ func (s *PacketStore) GetPacketByHash(hash string) map[string]interface{} {
 	if tx == nil {
 		return nil
 	}
-	return txToMap(tx)
+	return txToMap(tx, true)
 }
 
 // GetPacketByID returns an observation (enriched with transmission fields) by observation ID.
@@ -1903,7 +1903,7 @@ func (s *PacketStore) enrichObs(obs *StoreObs) map[string]interface{} {
 // --- Conversion helpers ---
 
 // txToMap converts a StoreTx to the map shape matching scanTransmissionRow output.
-func txToMap(tx *StoreTx) map[string]interface{} {
+func txToMap(tx *StoreTx, includeObservations ...bool) map[string]interface{} {
 	m := map[string]interface{}{
 		"id":                tx.ID,
 		"raw_hex":           strOrNil(tx.RawHex),
@@ -1930,25 +1930,27 @@ func txToMap(tx *StoreTx) map[string]interface{} {
 	} else {
 		m["_parsedPath"] = nil
 	}
-	// Include observations for expand=observations support (stripped by handler when not requested)
-	obs := make([]map[string]interface{}, 0, len(tx.Observations))
-	for _, o := range tx.Observations {
-		om := map[string]interface{}{
-			"id":            o.ID,
-			"observer_id":   strOrNil(o.ObserverID),
-			"observer_name": strOrNil(o.ObserverName),
-			"snr":           floatPtrOrNil(o.SNR),
-			"rssi":          floatPtrOrNil(o.RSSI),
-			"path_json":     strOrNil(o.PathJSON),
-			"timestamp":     strOrNil(o.Timestamp),
-			"direction":     strOrNil(o.Direction),
+	// Only build observation sub-maps when caller requests them (avoids allocations that get stripped)
+	if len(includeObservations) > 0 && includeObservations[0] {
+		obs := make([]map[string]interface{}, 0, len(tx.Observations))
+		for _, o := range tx.Observations {
+			om := map[string]interface{}{
+				"id":            o.ID,
+				"observer_id":   strOrNil(o.ObserverID),
+				"observer_name": strOrNil(o.ObserverName),
+				"snr":           floatPtrOrNil(o.SNR),
+				"rssi":          floatPtrOrNil(o.RSSI),
+				"path_json":     strOrNil(o.PathJSON),
+				"timestamp":     strOrNil(o.Timestamp),
+				"direction":     strOrNil(o.Direction),
+			}
+			if o.ResolvedPath != nil {
+				om["resolved_path"] = o.ResolvedPath
+			}
+			obs = append(obs, om)
 		}
-		if o.ResolvedPath != nil {
-			om["resolved_path"] = o.ResolvedPath
-		}
-		obs = append(obs, om)
+		m["observations"] = obs
 	}
-	m["observations"] = obs
 	return m
 }
 

@@ -377,7 +377,8 @@ type PacketQuery struct {
 	Until    string
 	Region   string
 	Node     string
-	Order    string // ASC or DESC
+	Order               string // ASC or DESC
+	ExpandObservations  bool   // when true, include observation sub-maps in txToMap output
 }
 
 // PacketResult wraps paginated packet list.

@@ -2034,6 +2034,48 @@ func TestTxToMap(t *testing.T) {
 	}
 }
 
+func TestTxToMapLazyObservations(t *testing.T) {
+	snr := 10.5
+	rssi := -90.0
+	tx := &StoreTx{
+		ID:   1,
+		Hash: "abc",
+		Observations: []*StoreObs{
+			{ID: 10, ObserverID: "obs1", ObserverName: "O1", SNR: &snr, RSSI: &rssi, Timestamp: "2025-01-01"},
+			{ID: 11, ObserverID: "obs2", ObserverName: "O2", SNR: &snr, RSSI: &rssi, Timestamp: "2025-01-02"},
+		},
+	}
+
+	// Without flag: no observations key
+	m := txToMap(tx)
+	if _, ok := m["observations"]; ok {
+		t.Error("txToMap without includeObservations should not include observations key")
+	}
+
+	// With false: no observations key
+	m = txToMap(tx, false)
+	if _, ok := m["observations"]; ok {
+		t.Error("txToMap(tx, false) should not include observations key")
+	}
+
+	// With true: observations included
+	m = txToMap(tx, true)
+	obs, ok := m["observations"]
+	if !ok {
+		t.Fatal("txToMap(tx, true) should include observations key")
+	}
+	obsList, ok := obs.([]map[string]interface{})
+	if !ok {
+		t.Fatal("observations should be []map[string]interface{}")
+	}
+	if len(obsList) != 2 {
+		t.Errorf("expected 2 observations, got %d", len(obsList))
+	}
+	if obsList[0]["observer_id"] != "obs1" {
+		t.Errorf("expected observer_id obs1, got %v", obsList[0]["observer_id"])
+	}
+}
+
 // --- filterTxSlice ---
 
 func TestFilterTxSlice(t *testing.T) {

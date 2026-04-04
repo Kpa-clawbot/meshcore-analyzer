@@ -720,7 +720,8 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 		Until:    r.URL.Query().Get("until"),
 		Region:   r.URL.Query().Get("region"),
 		Node:     r.URL.Query().Get("node"),
-		Order:    "DESC",
+		Order:              "DESC",
+		ExpandObservations: r.URL.Query().Get("expand") == "observations",
 	}
 	if r.URL.Query().Get("order") == "asc" {
 		q.Order = "ASC"
@@ -760,13 +761,6 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
-	}
-
-	// Strip observations from default response
-	if r.URL.Query().Get("expand") != "observations" {
-		for _, p := range result.Packets {
-			delete(p, "observations")
-		}
 	}
 
 	writeJSON(w, result)
