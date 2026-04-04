@@ -310,21 +310,28 @@ func unmarshalResolvedPath(s string) []*string {
 
 // backfillResolvedPaths resolves paths for all observations that have NULL resolved_path.
 func backfillResolvedPaths(store *PacketStore, dbPath string) int {
-	store.mu.RLock()
-	pm := store.nodePM
-	graph := store.graph
-	// Collect observations needing resolution
+	// Collect pending observations and snapshot immutable fields under read lock.
 	type obsRef struct {
 		obsID      int
 		pathJSON   string
 		observerID string
-		tx         *StoreTx
+		txJSON     string // snapshot of DecodedJSON for extractFromNode
+		payloadType *int
 	}
+	store.mu.RLock()
+	pm := store.nodePM
+	graph := store.graph
 	var pending []obsRef
 	for _, tx := range store.packets {
 		for _, obs := range tx.Observations {
 			if obs.ResolvedPath == nil && obs.PathJSON != "" && obs.PathJSON != "[]" {
-				pending = append(pending, obsRef{obs.ID, obs.PathJSON, obs.ObserverID, tx})
+				pending = append(pending, obsRef{
+					obsID:       obs.ID,
+					pathJSON:    obs.PathJSON,
+					observerID:  obs.ObserverID,
+					txJSON:      tx.DecodedJSON,
+					payloadType: tx.PayloadType,
+				})
 			}
 		}
 	}
@@ -334,6 +341,30 @@ func backfillResolvedPaths(store *PacketStore, dbPath string) int {
 		return 0
 	}
 
+	// Resolve paths outside the lock — resolvePathForObs only reads pm and graph.
+	type resolved struct {
+		obsID  int
+		rp     []*string
+		rpJSON string
+	}
+	var results []resolved
+	for _, ref := range pending {
+		// Build a minimal StoreTx for extractFromNode (only needs DecodedJSON + PayloadType).
+		fakeTx := &StoreTx{DecodedJSON: ref.txJSON, PayloadType: ref.payloadType}
+		rp := resolvePathForObs(ref.pathJSON, ref.observerID, fakeTx, pm, graph)
+		if len(rp) > 0 {
+			rpJSON := marshalResolvedPath(rp)
+			if rpJSON != "" {
+				results = append(results, resolved{ref.obsID, rp, rpJSON})
+			}
+		}
+	}
+
+	if len(results) == 0 {
+		return 0
+	}
+
+	// Persist to SQLite (no lock needed — separate RW connection).
 	rw, err := openRW(dbPath)
 	if err != nil {
 		log.Printf("[store] backfill: open rw error: %v", err)
@@ -355,28 +386,26 @@ func backfillResolvedPaths(store *PacketStore, dbPath string) int {
 	}
 	defer stmt.Close()
 
-	count := 0
-	store.mu.Lock()
-	for _, ref := range pending {
-		rp := resolvePathForObs(ref.pathJSON, ref.observerID, ref.tx, pm, graph)
-		if len(rp) > 0 {
-			rpJSON := marshalResolvedPath(rp)
-			if rpJSON != "" {
-				stmt.Exec(rpJSON, ref.obsID)
-				// Update in-memory
-				if obs, ok := store.byObsID[ref.obsID]; ok {
-					obs.ResolvedPath = rp
-				}
-				count++
-			}
-		}
+	for _, r := range results {
+		stmt.Exec(r.rpJSON, r.obsID)
 	}
-	store.mu.Unlock()
 
 	if err := sqlTx.Commit(); err != nil {
 		log.Printf("[store] backfill: commit error: %v", err)
 		return 0
 	}
+
+	// Update in-memory state under write lock.
+	store.mu.Lock()
+	count := 0
+	for _, r := range results {
+		if obs, ok := store.byObsID[r.obsID]; ok {
+			obs.ResolvedPath = r.rp
+			count++
+		}
+	}
+	store.mu.Unlock()
+
 	return count
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -451,24 +450,4 @@ func TestResolvedPathOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestNeighborPersistFileCompiles(t *testing.T) {
-	// This test exists just to ensure neighbor_persist.go compiles
-	// and its symbols are accessible. The real tests are above.
-	_ = openRW
-	_ = ensureNeighborEdgesTable
-	_ = ensureResolvedPathColumn
-	_ = loadNeighborEdgesFromDB
-	_ = persistEdge
-	_ = resolvePathForObs
-	_ = marshalResolvedPath
-	_ = unmarshalResolvedPath
-	_ = backfillResolvedPaths
-	_ = buildAndPersistEdges
-	_ = neighborEdgesTableExists
-}
 
-// Remove temp files
-func init() {
-	// Ensure temp dirs are cleaned up
-	os.MkdirAll(os.TempDir(), 0755)
-}
