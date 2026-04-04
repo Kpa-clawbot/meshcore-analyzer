@@ -1993,7 +1993,7 @@ func addTxToSubpathIndexFull(idx map[string]int, txIdx map[string][]*StoreTx, tx
 	maxL := min(8, len(hops))
 	for l := 2; l <= maxL; l++ {
 		for start := 0; start <= len(hops)-l; start++ {
-			key := strings.Join(hops[start:start+l], ",")
+			key := strings.ToLower(strings.Join(hops[start:start+l], ","))
 			idx[key]++
 			if txIdx != nil {
 				txIdx[key] = append(txIdx[key], tx)
@@ -2020,7 +2020,7 @@ func removeTxFromSubpathIndexFull(idx map[string]int, txIdx map[string][]*StoreT
 	maxL := min(8, len(hops))
 	for l := 2; l <= maxL; l++ {
 		for start := 0; start <= len(hops)-l; start++ {
-			key := strings.Join(hops[start:start+l], ",")
+			key := strings.ToLower(strings.Join(hops[start:start+l], ","))
 			idx[key]--
 			if idx[key] <= 0 {
 				delete(idx, key)
@@ -5974,8 +5974,8 @@ func (s *PacketStore) GetSubpathDetail(rawHops []string) map[string]interface{} 
 		nodes[i] = entry
 	}
 
-	// Build the subpath key the same way the index does (comma-joined raw hops)
-	spKey := strings.Join(rawHops, ",")
+	// Build the subpath key the same way the index does (lowercase, comma-joined)
+	spKey := strings.ToLower(strings.Join(rawHops, ","))
 
 	// Direct lookup instead of scanning all packets
 	matchedTxs := s.spTxIndex[spKey]

@@ -2236,6 +2236,40 @@ func TestSubpathTxIndexPopulated(t *testing.T) {
 	}
 }
 
+func TestSubpathDetailMixedCaseHops(t *testing.T) {
+	db := setupRichTestDB(t)
+	defer db.Close()
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	// Query with lowercase hops to establish baseline
+	lower := store.GetSubpathDetail([]string{"eeff", "0011"})
+	if lower == nil {
+		t.Fatal("expected non-nil detail for lowercase subpath")
+	}
+	lowerMatches, _ := lower["totalMatches"].(int)
+	if lowerMatches == 0 {
+		t.Fatal("expected >0 matches for lowercase subpath")
+	}
+
+	// Query with mixed-case hops — must return the same results (case-insensitive)
+	mixed := store.GetSubpathDetail([]string{"EEFF", "0011"})
+	if mixed == nil {
+		t.Fatal("expected non-nil detail for mixed-case subpath")
+	}
+	mixedMatches, _ := mixed["totalMatches"].(int)
+	if mixedMatches != lowerMatches {
+		t.Errorf("mixed-case totalMatches = %d, want %d (same as lowercase)", mixedMatches, lowerMatches)
+	}
+
+	// All-uppercase should also match
+	upper := store.GetSubpathDetail([]string{"EEFF", "0011"})
+	upperMatches, _ := upper["totalMatches"].(int)
+	if upperMatches != lowerMatches {
+		t.Errorf("uppercase totalMatches = %d, want %d", upperMatches, lowerMatches)
+	}
+}
+
 func TestStoreGetAnalyticsRFCacheHit(t *testing.T) {
 	db := setupRichTestDB(t)
 	defer db.Close()
