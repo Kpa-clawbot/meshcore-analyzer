@@ -1002,29 +1002,28 @@ func (s *PacketStore) QueryMultiNodePackets(pubkeys []string, limit, offset int,
 		resolved[i] = s.db.resolveNodePubkey(pk)
 	}
 
+	// Use byNode index instead of scanning all packets (O(indexed) vs O(all×pubkeys×json)).
+	hashSet := make(map[string]bool)
 	var filtered []*StoreTx
-	for _, tx := range s.packets {
-		if tx.DecodedJSON == "" {
-			continue
-		}
-		match := false
-		for _, pk := range resolved {
-			if strings.Contains(tx.DecodedJSON, pk) {
-				match = true
-				break
+	for _, pk := range resolved {
+		for _, tx := range s.byNode[pk] {
+			if hashSet[tx.Hash] {
+				continue
 			}
+			if since != "" && tx.FirstSeen < since {
+				continue
+			}
+			if until != "" && tx.FirstSeen > until {
+				continue
+			}
+			hashSet[tx.Hash] = true
+			filtered = append(filtered, tx)
 		}
-		if !match {
-			continue
-		}
-		if since != "" && tx.FirstSeen < since {
-			continue
-		}
-		if until != "" && tx.FirstSeen > until {
-			continue
-		}
-		filtered = append(filtered, tx)
 	}
+	// Sort oldest-first to match pagination expectations (same as s.packets order).
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].FirstSeen < filtered[j].FirstSeen
+	})
 
 	total := len(filtered)
 
