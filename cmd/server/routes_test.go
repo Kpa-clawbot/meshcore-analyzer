@@ -2190,12 +2190,13 @@ func TestGetNodeHashSizeInfoLatestWins(t *testing.T) {
 	// 4 historical 1-byte adverts, then 1 recent 2-byte advert (latest).
 	// Mode would pick 1 (majority), but latest-wins should pick 2.
 	raws := []string{raw1byte, raw1byte, raw1byte, raw1byte, raw2byte}
+	baseTime := time.Now().UTC().Add(-1 * time.Hour)
 	for i, raw := range raws {
 		tx := &StoreTx{
 			ID:          7000 + i,
 			RawHex:      raw,
 			Hash:        "latest" + strconv.Itoa(i),
-			FirstSeen:   time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+			FirstSeen:   baseTime.Add(time.Duration(i) * time.Minute).Format("2006-01-02T15:04:05.000Z"),
 			PayloadType: &payloadType,
 			DecodedJSON: decoded,
 		}
@@ -2236,12 +2237,13 @@ func TestGetNodeHashSizeInfoIgnoreDirectZeroHop(t *testing.T) {
 
 	payloadType := 4
 	raws := []string{rawFlood2B, rawDirect0, rawFlood2B, rawDirect0, rawFlood2B}
+	baseTime2 := time.Now().UTC().Add(-1 * time.Hour)
 	for i, raw := range raws {
 		tx := &StoreTx{
 			ID:          9150 + i,
 			RawHex:      raw,
 			Hash:        "dirignore" + strconv.Itoa(i),
-			FirstSeen:   time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+			FirstSeen:   baseTime2.Add(time.Duration(i) * time.Minute).Format("2006-01-02T15:04:05.000Z"),
 			PayloadType: &payloadType,
 			DecodedJSON: decoded,
 		}
