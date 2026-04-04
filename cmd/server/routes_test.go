@@ -3277,3 +3277,93 @@ func TestHashCollisionsOnlyRepeaters(t *testing.T) {
 		t.Errorf("expected 2 nodes in collision, got %d", len(collisions[0].Nodes))
 	}
 }
+
+func TestNodePathsEndpointUsesIndex(t *testing.T) {
+	srv, router := setupTestServer(t)
+
+	// Verify byPathHop index was built during Load
+	srv.store.mu.RLock()
+	hopKeys := len(srv.store.byPathHop)
+	srv.store.mu.RUnlock()
+	if hopKeys == 0 {
+		t.Fatal("byPathHop index is empty after Load")
+	}
+
+	// Query paths for TestRepeater (pubkey aabbccdd11223344, prefix "aa")
+	// Should find transmissions with hop "aa" in path
+	req := httptest.NewRequest("GET", "/api/nodes/aabbccdd11223344/paths", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Paths              []json.RawMessage `json:"paths"`
+		TotalTransmissions int               `json:"totalTransmissions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+
+	// Transmission 1 has path ["aa","bb"] which contains "aa" matching prefix of aabbccdd11223344
+	if resp.TotalTransmissions == 0 {
+		t.Error("expected at least 1 transmission matching node paths")
+	}
+	if len(resp.Paths) == 0 {
+		t.Error("expected at least 1 path group")
+	}
+}
+
+func TestPathHopIndexIncrementalUpdate(t *testing.T) {
+	// Test that addTxToPathHopIndex and removeTxFromPathHopIndex work correctly
+	idx := make(map[string][]*StoreTx)
+
+	pk1 := "fullpubkey1"
+	tx1 := &StoreTx{
+		ID:       1,
+		PathJSON: `["ab","cd"]`,
+		ResolvedPath: []*string{&pk1, nil},
+	}
+
+	addTxToPathHopIndex(idx, tx1)
+
+	// Should be indexed under "ab", "cd", and "fullpubkey1"
+	if len(idx["ab"]) != 1 {
+		t.Errorf("expected 1 entry for 'ab', got %d", len(idx["ab"]))
+	}
+	if len(idx["cd"]) != 1 {
+		t.Errorf("expected 1 entry for 'cd', got %d", len(idx["cd"]))
+	}
+	if len(idx["fullpubkey1"]) != 1 {
+		t.Errorf("expected 1 entry for resolved pubkey, got %d", len(idx["fullpubkey1"]))
+	}
+
+	// Add another tx with overlapping hop
+	tx2 := &StoreTx{
+		ID:       2,
+		PathJSON: `["ab","ef"]`,
+	}
+	addTxToPathHopIndex(idx, tx2)
+
+	if len(idx["ab"]) != 2 {
+		t.Errorf("expected 2 entries for 'ab', got %d", len(idx["ab"]))
+	}
+	if len(idx["ef"]) != 1 {
+		t.Errorf("expected 1 entry for 'ef', got %d", len(idx["ef"]))
+	}
+
+	// Remove tx1
+	removeTxFromPathHopIndex(idx, tx1)
+
+	if len(idx["ab"]) != 1 {
+		t.Errorf("expected 1 entry for 'ab' after removal, got %d", len(idx["ab"]))
+	}
+	if _, ok := idx["cd"]; ok {
+		t.Error("expected 'cd' key to be deleted after removal")
+	}
+	if _, ok := idx["fullpubkey1"]; ok {
+		t.Error("expected resolved pubkey key to be deleted after removal")
+	}
+}

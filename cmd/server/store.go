@@ -92,6 +92,7 @@ type PacketStore struct {
 	byObserver    map[string][]*StoreObs     // observer_id → observations
 	byNode        map[string][]*StoreTx      // pubkey → transmissions
 	nodeHashes    map[string]map[string]bool // pubkey → Set<hash>
+	byPathHop     map[string][]*StoreTx      // lowercase hop/pubkey → transmissions with that hop in path
 	byPayloadType map[int][]*StoreTx         // payload_type → transmissions
 	loaded        bool
 	totalObs      int
@@ -206,6 +207,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
 		byObsID:       make(map[int]*StoreObs, 65536),
 		byObserver:    make(map[string][]*StoreObs),
 		byNode:        make(map[string][]*StoreTx),
+		byPathHop:     make(map[string][]*StoreTx),
 		nodeHashes:    make(map[string]map[string]bool),
 		byPayloadType: make(map[int][]*StoreTx),
 		rfCache:       make(map[string]*cachedResult),
@@ -362,6 +364,9 @@ func (s *PacketStore) Load() error {
 
 	// Build precomputed subpath index for O(1) analytics queries
 	s.buildSubpathIndex()
+
+	// Build path-hop index for O(1) node path lookups
+	s.buildPathHopIndex()
 
 	// Precompute distance analytics (hop distances, path totals)
 	s.buildDistanceIndex()
@@ -672,6 +677,7 @@ func (s *PacketStore) GetPerfStoreStats() map[string]interface{} {
 	obsIdx := len(s.byObsID)
 	observerIdx := len(s.byObserver)
 	nodeIdx := len(s.byNode)
+	pathHopIdx := len(s.byPathHop)
 	ptIdx := len(s.byPayloadType)
 
 	// Distinct advert pubkey count — precomputed incrementally (see trackAdvertPubkey).
@@ -699,6 +705,7 @@ func (s *PacketStore) GetPerfStoreStats() map[string]interface{} {
 			"byObsID":          obsIdx,
 			"byObserver":       observerIdx,
 			"byNode":           nodeIdx,
+			"byPathHop":        pathHopIdx,
 			"byPayloadType":    ptIdx,
 			"advertByObserver": advertByObsCount,
 		},
@@ -1223,6 +1230,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		if addTxToSubpathIndex(s.spIndex, tx) {
 			s.spTotalPaths++
 		}
+		addTxToPathHopIndex(s.byPathHop, tx)
 	}
 
 	// Incrementally update precomputed distance index with new transmissions
@@ -1548,8 +1556,10 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 	// Re-pick best observation for updated transmissions and update subpath index
 	// if the path changed.
 	oldPaths := make(map[int]string, len(updatedTxs))
+	oldResolvedPaths := make(map[int][]*string, len(updatedTxs))
 	for txID, tx := range updatedTxs {
 		oldPaths[txID] = tx.PathJSON
+		oldResolvedPaths[txID] = tx.ResolvedPath
 	}
 	for _, tx := range updatedTxs {
 		pickBestObservation(tx)
@@ -1567,11 +1577,22 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 				}
 				tx.parsedPath, tx.pathParsed = saved, savedFlag
 			}
+			// Remove old path-hop index entries using old hops + old resolved path.
+			if len(oldHops) > 0 {
+				saved, savedFlag := tx.parsedPath, tx.pathParsed
+				savedRP := tx.ResolvedPath
+				tx.parsedPath, tx.pathParsed = oldHops, true
+				tx.ResolvedPath = oldResolvedPaths[txID]
+				removeTxFromPathHopIndex(s.byPathHop, tx)
+				tx.parsedPath, tx.pathParsed = saved, savedFlag
+				tx.ResolvedPath = savedRP
+			}
 			// pickBestObservation already set pathParsed=false so
 			// addTxToSubpathIndex will re-parse the new path.
 			if addTxToSubpathIndex(s.spIndex, tx) {
 				s.spTotalPaths++
 			}
+			addTxToPathHopIndex(s.byPathHop, tx)
 		}
 	}
 
@@ -2003,6 +2024,78 @@ func (s *PacketStore) buildSubpathIndex() {
 		len(s.spIndex), s.spTotalPaths)
 }
 
+// buildPathHopIndex scans all packets and populates byPathHop.
+// Must be called with s.mu held.
+func (s *PacketStore) buildPathHopIndex() {
+	s.byPathHop = make(map[string][]*StoreTx, 4096)
+	for _, tx := range s.packets {
+		addTxToPathHopIndex(s.byPathHop, tx)
+	}
+	log.Printf("[store] Built path-hop index: %d unique keys", len(s.byPathHop))
+}
+
+// addTxToPathHopIndex indexes a transmission under each unique hop key
+// (raw lowercase hop + resolved full pubkey from ResolvedPath).
+func addTxToPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
+	hops := txGetParsedPath(tx)
+	if len(hops) == 0 {
+		return
+	}
+	seen := make(map[string]bool, len(hops)*2)
+	for i, hop := range hops {
+		key := strings.ToLower(hop)
+		if !seen[key] {
+			seen[key] = true
+			idx[key] = append(idx[key], tx)
+		}
+		// Also index by resolved pubkey if available
+		if tx.ResolvedPath != nil && i < len(tx.ResolvedPath) && tx.ResolvedPath[i] != nil {
+			pk := *tx.ResolvedPath[i]
+			if !seen[pk] {
+				seen[pk] = true
+				idx[pk] = append(idx[pk], tx)
+			}
+		}
+	}
+}
+
+// removeTxFromPathHopIndex removes a transmission from all its path-hop index entries.
+func removeTxFromPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
+	hops := txGetParsedPath(tx)
+	if len(hops) == 0 {
+		return
+	}
+	seen := make(map[string]bool, len(hops)*2)
+	for i, hop := range hops {
+		key := strings.ToLower(hop)
+		if !seen[key] {
+			seen[key] = true
+			removeTxFromSlice(idx, key, tx)
+		}
+		if tx.ResolvedPath != nil && i < len(tx.ResolvedPath) && tx.ResolvedPath[i] != nil {
+			pk := *tx.ResolvedPath[i]
+			if !seen[pk] {
+				seen[pk] = true
+				removeTxFromSlice(idx, pk, tx)
+			}
+		}
+	}
+}
+
+// removeTxFromSlice removes tx from idx[key] by ID, deleting the key if empty.
+func removeTxFromSlice(idx map[string][]*StoreTx, key string, tx *StoreTx) {
+	list := idx[key]
+	for i, t := range list {
+		if t.ID == tx.ID {
+			idx[key] = append(list[:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(idx[key]) == 0 {
+		delete(idx, key)
+	}
+}
+
 // buildDistanceIndex precomputes haversine distances for all packets.
 // Must be called with s.mu held (Lock).
 func (s *PacketStore) buildDistanceIndex() {
@@ -2179,6 +2272,8 @@ func (s *PacketStore) EvictStale() int {
 
 		// Remove from subpath index
 		removeTxFromSubpathIndex(s.spIndex, tx)
+		// Remove from path-hop index
+		removeTxFromPathHopIndex(s.byPathHop, tx)
 	}
 
 	// Remove from distance indexes — filter out records referencing evicted txs

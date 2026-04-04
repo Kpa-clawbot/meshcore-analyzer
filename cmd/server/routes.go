@@ -1065,16 +1065,44 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prefix1 := strings.ToLower(pubkey)
-	if len(prefix1) > 2 {
-		prefix1 = prefix1[:2]
-	}
-	prefix2 := strings.ToLower(pubkey)
+	// Use the precomputed byPathHop index instead of scanning all packets.
+	// Look up by full pubkey (resolved hops) and by short prefixes (raw hops).
+	lowerPK := strings.ToLower(pubkey)
+	prefix2 := lowerPK
 	if len(prefix2) > 4 {
 		prefix2 = prefix2[:4]
 	}
+	prefix1 := lowerPK
+	if len(prefix1) > 2 {
+		prefix1 = prefix1[:2]
+	}
+
 	s.store.mu.RLock()
 	_, pm := s.store.getCachedNodesAndPM()
+
+	// Collect candidate transmissions from the index, deduplicating by tx ID.
+	seen := make(map[int]bool)
+	var candidates []*StoreTx
+	addCandidates := func(key string) {
+		for _, tx := range s.store.byPathHop[key] {
+			if !seen[tx.ID] {
+				seen[tx.ID] = true
+				candidates = append(candidates, tx)
+			}
+		}
+	}
+	addCandidates(lowerPK) // full pubkey match (from resolved_path)
+	addCandidates(prefix1) // 2-char raw hop match
+	addCandidates(prefix2) // 4-char raw hop match
+	// Also check any raw hops that start with prefix2 (longer prefixes).
+	// Raw hops are typically 2 chars, so iterate only keys with HasPrefix
+	// on the small set of index keys rather than all packets.
+	for key := range s.store.byPathHop {
+		if len(key) > 4 && len(key) < len(lowerPK) && strings.HasPrefix(key, prefix2) {
+			addCandidates(key)
+		}
+	}
+
 	type pathAgg struct {
 		Hops       []PathHopResp
 		Count      int
@@ -1092,24 +1120,9 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 		hopCache[hop] = r
 		return r
 	}
-	for _, tx := range s.store.packets {
-		hops := txGetParsedPath(tx)
-		if len(hops) == 0 {
-			continue
-		}
-		found := false
-		for _, hop := range hops {
-			hl := strings.ToLower(hop)
-			if hl == prefix1 || hl == prefix2 || strings.HasPrefix(hl, prefix2) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			continue
-		}
-
+	for _, tx := range candidates {
 		totalTransmissions++
+		hops := txGetParsedPath(tx)
 		resolvedHops := make([]PathHopResp, len(hops))
 		sigParts := make([]string, len(hops))
 		for i, hop := range hops {
