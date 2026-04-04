@@ -372,13 +372,25 @@
     }, 5000);
   }
 
+  /**
+   * Fetch node detail + health data in parallel.
+   * Both selectNode() and loadFullNode() need the same data —
+   * this shared helper avoids duplicating the fetch logic (fixes #391).
+   */
+  async function fetchNodeDetail(pubkey) {
+    const [nodeData, healthData] = await Promise.all([
+      api('/nodes/' + encodeURIComponent(pubkey), { ttl: CLIENT_TTL.nodeDetail }),
+      api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: CLIENT_TTL.nodeDetail }).catch(() => null)
+    ]);
+    nodeData.healthData = healthData;
+    return nodeData;
+  }
+
   async function loadFullNode(pubkey) {
     const body = document.getElementById('nodeFullBody');
     try {
-      const [nodeData, healthData] = await Promise.all([
-        api('/nodes/' + encodeURIComponent(pubkey), { ttl: CLIENT_TTL.nodeDetail }),
-        api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: CLIENT_TTL.nodeDetail }).catch(() => null)
-      ]);
+      const nodeData = await fetchNodeDetail(pubkey);
+      const healthData = nodeData.healthData;
       const n = nodeData.node;
       const adverts = (nodeData.recentAdverts || []).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       const title = document.querySelector('.node-full-title');
@@ -963,11 +975,7 @@
     panel.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading…</div>';
 
     try {
-      const [data, healthData] = await Promise.all([
-        api('/nodes/' + encodeURIComponent(pubkey), { ttl: CLIENT_TTL.nodeDetail }),
-        api('/nodes/' + encodeURIComponent(pubkey) + '/health', { ttl: CLIENT_TTL.nodeDetail }).catch(() => null)
-      ]);
-      data.healthData = healthData;
+      const data = await fetchNodeDetail(pubkey);
       renderDetail(panel, data);
     } catch (e) {
       panel.innerHTML = `<div class="text-muted">Error: ${e.message}</div>`;
