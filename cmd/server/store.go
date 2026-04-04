@@ -5552,24 +5552,24 @@ func (s *PacketStore) GetNodeAnalytics(pubkey string, days int) (*NodeAnalyticsR
 	for _, tx := range indexed {
 		hashSet[tx.Hash] = true
 	}
-	var allPkts []*StoreTx
+	var packets []*StoreTx
 	if name != "" {
 		for _, tx := range s.packets {
+			if tx.FirstSeen <= fromISO {
+				continue // Skip old packets early before expensive string matching
+			}
 			if hashSet[tx.Hash] {
-				allPkts = append(allPkts, tx)
+				packets = append(packets, tx)
 			} else if tx.DecodedJSON != "" && (strings.Contains(tx.DecodedJSON, name) || strings.Contains(tx.DecodedJSON, pubkey)) {
-				allPkts = append(allPkts, tx)
+				packets = append(packets, tx)
 			}
 		}
 	} else {
-		allPkts = indexed
-	}
-
-	// Filter by time range
-	var packets []*StoreTx
-	for _, p := range allPkts {
-		if p.FirstSeen > fromISO {
-			packets = append(packets, p)
+		// Filter indexed packets by time range
+		for _, p := range indexed {
+			if p.FirstSeen > fromISO {
+				packets = append(packets, p)
+			}
 		}
 	}
 
