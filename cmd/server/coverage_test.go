@@ -3887,6 +3887,42 @@ func TestGetChannelMessagesAfterIngest(t *testing.T) {
 	}
 }
 
+// --- resolveRegionObservers caching ---
+
+func TestResolveRegionObserversCaching(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	store := &PacketStore{db: db}
+
+	// First call should populate cache.
+	obs1 := store.resolveRegionObservers("SJC")
+	if obs1 == nil || len(obs1) == 0 {
+		t.Fatal("expected observer IDs for SJC on first call")
+	}
+
+	// Second call should return cached result (same pointer).
+	obs2 := store.resolveRegionObservers("SJC")
+	if len(obs2) != len(obs1) {
+		t.Errorf("cached result differs: got %d, want %d", len(obs2), len(obs1))
+	}
+
+	// Non-existent region should return nil even from cache.
+	obs3 := store.resolveRegionObservers("NONEXIST")
+	if obs3 != nil {
+		t.Errorf("expected nil for NONEXIST, got %v", obs3)
+	}
+
+	// Verify cache fields are set.
+	if store.regionObsCache == nil {
+		t.Error("regionObsCache should be non-nil after calls")
+	}
+	if store.regionObsCacheTime.IsZero() {
+		t.Error("regionObsCacheTime should be set")
+	}
+}
+
 func TestIndexByNodePreCheck(t *testing.T) {
 	store := &PacketStore{
 		byNode:     make(map[string][]*StoreTx),

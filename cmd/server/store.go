@@ -127,6 +127,10 @@ type PacketStore struct {
 	channelsCacheKey string
 	channelsCacheExp time.Time
 	channelsCacheRes []map[string]interface{}
+	// Cached region → observer ID mapping (30s TTL, avoids repeated DB queries)
+	regionObsMu        sync.Mutex
+	regionObsCache     map[string]map[string]bool
+	regionObsCacheTime time.Time
 	// Cached node list + prefix map (rebuilt on demand, shared across analytics)
 	nodeCache     []nodeInfo
 	nodePM        *prefixMap
@@ -1813,15 +1817,39 @@ func (s *PacketStore) transmissionsForObserver(observerIDs string, from []*Store
 }
 
 // resolveRegionObservers returns a set of observer IDs for a given IATA region.
+// Results are cached for 30 seconds to avoid repeated DB queries.
+// Uses its own mutex (regionObsMu) so callers holding s.mu won't deadlock.
 func (s *PacketStore) resolveRegionObservers(region string) map[string]bool {
+	s.regionObsMu.Lock()
+	defer s.regionObsMu.Unlock()
+
+	if s.regionObsCache != nil && time.Since(s.regionObsCacheTime) < 30*time.Second {
+		return s.regionObsCache[region]
+	}
+	// Cache expired — rebuild.
+	s.regionObsCache = make(map[string]map[string]bool)
+	s.regionObsCacheTime = time.Now()
+
+	// Fetch for the requested region and cache it.
+	return s.fetchAndCacheRegionObs(region)
+}
+
+// fetchAndCacheRegionObs fetches observer IDs for a region from the DB and stores in cache.
+// Caller must hold regionObsMu.
+func (s *PacketStore) fetchAndCacheRegionObs(region string) map[string]bool {
+	if m, ok := s.regionObsCache[region]; ok {
+		return m
+	}
 	ids, err := s.db.GetObserverIdsForRegion(region)
 	if err != nil || len(ids) == 0 {
+		s.regionObsCache[region] = nil
 		return nil
 	}
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = true
 	}
+	s.regionObsCache[region] = m
 	return m
 }
 
