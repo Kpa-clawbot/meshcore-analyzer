@@ -524,7 +524,11 @@
       if (filters.hash) params.set('hash', filters.hash);
       if (filters.node) params.set('node', filters.node);
       if (filters.observer) params.set('observer', filters.observer);
-      params.set('groupByHash', 'true'); // always fetch grouped
+      if (groupByHash) {
+        params.set('groupByHash', 'true');
+      } else {
+        params.set('expand', 'observations');
+      }
 
       const data = await api('/packets?' + params.toString());
       packets = data.packets || [];
@@ -532,20 +536,14 @@
       for (const p of packets) { if (p.hash) hashIndex.set(p.hash, p); }
       totalCount = data.total || packets.length;
 
-      // When ungrouped, fetch observations for all multi-obs packets and flatten
+      // When ungrouped, flatten observations inline (single API call, no N+1)
       if (!groupByHash) {
-        const multiObs = packets.filter(p => (p.observation_count || p.count || 1) > 1);
-        await Promise.all(multiObs.map(async (p) => {
-          try {
-            const d = await api(`/packets/${p.hash}`);
-            if (d?.observations) p._children = d.observations.map(o => clearParsedCache({...d.packet, ...o, _isObservation: true}));
-          } catch {}
-        }));
-        // Flatten: replace grouped packets with individual observations
         const flat = [];
         for (const p of packets) {
-          if (p._children && p._children.length > 1) {
-            for (const c of p._children) flat.push(c);
+          if (p.observations && p.observations.length > 1) {
+            for (const o of p.observations) {
+              flat.push(clearParsedCache({...p, ...o, _isObservation: true, observations: undefined}));
+            }
           } else {
             flat.push(p);
           }
