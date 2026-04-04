@@ -1610,13 +1610,15 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 
 	// Check if any paths changed (used for distance update and cache invalidation).
 	hasPathChanges := false
+	var changedTxs []*StoreTx
 	for txID, tx := range updatedTxs {
 		if tx.PathJSON != oldPaths[txID] {
 			hasPathChanges = true
-			// Incremental distance index update: remove old records, add new ones.
-			s.removeTxFromDistanceIndex(tx)
-			s.addTxToDistanceIndex(tx)
+			changedTxs = append(changedTxs, tx)
 		}
+	}
+	if len(changedTxs) > 0 {
+		s.updateDistanceIndexForTxs(changedTxs)
 	}
 
 	if len(updatedTxs) > 0 {
@@ -2114,49 +2116,44 @@ func removeTxFromSlice(idx map[string][]*StoreTx, key string, tx *StoreTx) {
 	}
 }
 
-// removeTxFromDistanceIndex removes all distance records associated with a
-// specific transmission. Returns true if any records were removed.
-func (s *PacketStore) removeTxFromDistanceIndex(tx *StoreTx) bool {
-	removed := false
-	// Remove hop records for this tx.
+// updateDistanceIndexForTxs removes old distance records for the given
+// transmissions and recomputes them. Builds lookup maps once, amortising the
+// cost across all changed txs in a single ingest cycle. Must be called with
+// s.mu held.
+func (s *PacketStore) updateDistanceIndexForTxs(txs []*StoreTx) {
+	// Remove old records for all changed txs first.
+	removeSet := make(map[*StoreTx]bool, len(txs))
+	for _, tx := range txs {
+		removeSet[tx] = true
+	}
 	n := 0
 	for _, r := range s.distHops {
-		if r.tx != tx {
+		if !removeSet[r.tx] {
 			s.distHops[n] = r
 			n++
-		} else {
-			removed = true
 		}
 	}
 	s.distHops = s.distHops[:n]
-	// Remove path records for this tx.
 	n = 0
 	for _, r := range s.distPaths {
-		if r.tx != tx {
+		if !removeSet[r.tx] {
 			s.distPaths[n] = r
 			n++
-		} else {
-			removed = true
 		}
 	}
 	s.distPaths = s.distPaths[:n]
-	return removed
-}
 
-// addTxToDistanceIndex computes and appends distance records for a single
-// transmission. Must be called with s.mu held.
-func (s *PacketStore) addTxToDistanceIndex(tx *StoreTx) {
+	// Build lookup maps once.
 	allNodes, pm := s.getCachedNodesAndPM()
 	nodeByPk := make(map[string]*nodeInfo, len(allNodes))
 	repeaterSet := make(map[string]bool)
 	for i := range allNodes {
-		n := &allNodes[i]
-		nodeByPk[n.PublicKey] = n
-		if strings.Contains(strings.ToLower(n.Role), "repeater") {
-			repeaterSet[n.PublicKey] = true
+		nd := &allNodes[i]
+		nodeByPk[nd.PublicKey] = nd
+		if strings.Contains(strings.ToLower(nd.Role), "repeater") {
+			repeaterSet[nd.PublicKey] = true
 		}
 	}
-
 	hopCache := make(map[string]*nodeInfo)
 	resolveHop := func(hop string) *nodeInfo {
 		if cached, ok := hopCache[hop]; ok {
@@ -2167,12 +2164,15 @@ func (s *PacketStore) addTxToDistanceIndex(tx *StoreTx) {
 		return r
 	}
 
-	txHops, txPath := computeDistancesForTx(tx, nodeByPk, repeaterSet, resolveHop)
-	if len(txHops) > 0 {
-		s.distHops = append(s.distHops, txHops...)
-	}
-	if txPath != nil {
-		s.distPaths = append(s.distPaths, *txPath)
+	// Recompute distance records for each changed tx.
+	for _, tx := range txs {
+		txHops, txPath := computeDistancesForTx(tx, nodeByPk, repeaterSet, resolveHop)
+		if len(txHops) > 0 {
+			s.distHops = append(s.distHops, txHops...)
+		}
+		if txPath != nil {
+			s.distPaths = append(s.distPaths, *txPath)
+		}
 	}
 }
 
