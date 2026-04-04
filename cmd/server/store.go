@@ -1527,7 +1527,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		dk := r.observerID + "|" + r.pathJSON
 		if tx.obsKeys == nil {
 			tx.obsKeys = make(map[string]bool)
-				tx.observerSet = make(map[string]bool)
+			tx.observerSet = make(map[string]bool)
 		}
 		if tx.obsKeys[dk] {
 			continue
@@ -1555,10 +1555,10 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 
 		tx.Observations = append(tx.Observations, obs)
 		tx.obsKeys[dk] = true
-			if obs.ObserverID != "" && !tx.observerSet[obs.ObserverID] {
-				tx.observerSet[obs.ObserverID] = true
-				tx.UniqueObserverCount++
-			}
+		if obs.ObserverID != "" && !tx.observerSet[obs.ObserverID] {
+			tx.observerSet[obs.ObserverID] = true
+			tx.UniqueObserverCount++
+		}
 		tx.ObservationCount++
 		newObs = append(newObs, obs)
 		if obs.Timestamp > tx.LatestSeen {
