@@ -77,10 +77,6 @@ func (tx *StoreTx) ParsedDecoded() map[string]interface{} {
 	return tx.parsedDecoded
 }
 
-// distRebuildInterval is the minimum time between distance index rebuilds
-// to avoid hot-looping on busy meshes.
-const distRebuildInterval = 30 * time.Second
-
 // PacketStore holds all transmissions in memory with indexes for fast queries.
 type PacketStore struct {
 	mu            sync.RWMutex
@@ -141,8 +137,6 @@ type PacketStore struct {
 	// computed during Load() and incrementally updated on ingest.
 	distHops  []distHopRecord
 	distPaths []distPathRecord
-	distDirty bool      // set when paths change; cleared after rebuild
-	distLast  time.Time // last time distance index was rebuilt
 
 	// Cached GetNodeHashSizeInfo result — recomputed at most once every 15s
 	hashSizeInfoMu    sync.Mutex
@@ -380,7 +374,6 @@ func (s *PacketStore) Load() error {
 
 	// Precompute distance analytics (hop distances, path totals)
 	s.buildDistanceIndex()
-	s.distLast = time.Now()
 
 	s.loaded = true
 	elapsed := time.Since(t0)
@@ -1615,23 +1608,15 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		}
 	}
 
-	// Check if any paths changed (used for both distance rebuild and cache invalidation).
+	// Check if any paths changed (used for distance update and cache invalidation).
 	hasPathChanges := false
 	for txID, tx := range updatedTxs {
 		if tx.PathJSON != oldPaths[txID] {
 			hasPathChanges = true
-			break
+			// Incremental distance index update: remove old records, add new ones.
+			s.removeTxFromDistanceIndex(tx)
+			s.addTxToDistanceIndex(tx)
 		}
-	}
-
-	// Mark distance index dirty if any paths changed (rebuild is debounced)
-	if hasPathChanges {
-		s.distDirty = true
-	}
-	if s.distDirty && time.Since(s.distLast) > distRebuildInterval {
-		s.buildDistanceIndex()
-		s.distDirty = false
-		s.distLast = time.Now()
 	}
 
 	if len(updatedTxs) > 0 {
@@ -2126,6 +2111,68 @@ func removeTxFromSlice(idx map[string][]*StoreTx, key string, tx *StoreTx) {
 	}
 	if len(idx[key]) == 0 {
 		delete(idx, key)
+	}
+}
+
+// removeTxFromDistanceIndex removes all distance records associated with a
+// specific transmission. Returns true if any records were removed.
+func (s *PacketStore) removeTxFromDistanceIndex(tx *StoreTx) bool {
+	removed := false
+	// Remove hop records for this tx.
+	n := 0
+	for _, r := range s.distHops {
+		if r.tx != tx {
+			s.distHops[n] = r
+			n++
+		} else {
+			removed = true
+		}
+	}
+	s.distHops = s.distHops[:n]
+	// Remove path records for this tx.
+	n = 0
+	for _, r := range s.distPaths {
+		if r.tx != tx {
+			s.distPaths[n] = r
+			n++
+		} else {
+			removed = true
+		}
+	}
+	s.distPaths = s.distPaths[:n]
+	return removed
+}
+
+// addTxToDistanceIndex computes and appends distance records for a single
+// transmission. Must be called with s.mu held.
+func (s *PacketStore) addTxToDistanceIndex(tx *StoreTx) {
+	allNodes, pm := s.getCachedNodesAndPM()
+	nodeByPk := make(map[string]*nodeInfo, len(allNodes))
+	repeaterSet := make(map[string]bool)
+	for i := range allNodes {
+		n := &allNodes[i]
+		nodeByPk[n.PublicKey] = n
+		if strings.Contains(strings.ToLower(n.Role), "repeater") {
+			repeaterSet[n.PublicKey] = true
+		}
+	}
+
+	hopCache := make(map[string]*nodeInfo)
+	resolveHop := func(hop string) *nodeInfo {
+		if cached, ok := hopCache[hop]; ok {
+			return cached
+		}
+		r, _, _ := pm.resolveWithContext(hop, nil, s.graph)
+		hopCache[hop] = r
+		return r
+	}
+
+	txHops, txPath := computeDistancesForTx(tx, nodeByPk, repeaterSet, resolveHop)
+	if len(txHops) > 0 {
+		s.distHops = append(s.distHops, txHops...)
+	}
+	if txPath != nil {
+		s.distPaths = append(s.distPaths, *txPath)
 	}
 }
 

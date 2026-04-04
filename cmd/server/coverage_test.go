@@ -4085,44 +4085,51 @@ func TestBuildTransmissionWhereMultiObserver(t *testing.T) {
 	})
 }
 
-// --- Distance index rebuild debounce (#557) ---
+// --- Distance index incremental update (#365, replaces debounce #557) ---
 
-func TestDistanceRebuildDebounce(t *testing.T) {
+func TestDistanceIncrementalUpdate(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	seedTestData(t, db)
 	store := NewPacketStore(db, nil)
 	store.Load()
 
-	// After Load(), distLast is set to now — so distDirty should be false
-	if store.distDirty {
-		t.Fatal("distDirty should be false after Load()")
-	}
+	// Record initial distance index size.
+	initialHops := len(store.distHops)
+	initialPaths := len(store.distPaths)
 
-	// Insert a new observation with a different path to trigger distDirty
+	// Insert a new observation with a different path to trigger an incremental update.
 	maxObsID := db.GetMaxObservationID()
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 		VALUES (1, 2, 5.0, -100, '["xx","yy","zz"]', ?)`, time.Now().Unix())
 
 	store.IngestNewObservations(maxObsID, 500)
 
-	// distDirty should be true (30s hasn't elapsed since Load)
-	if !store.distDirty {
-		t.Fatal("distDirty should be true after path change within 30s window")
-	}
+	// Distance index should have been updated incrementally (sizes may differ
+	// if the new path resolves differently, but should not panic or corrupt).
+	_ = len(store.distHops)
+	_ = len(store.distPaths)
 
-	// Now simulate 30s having elapsed by backdating distLast
-	store.distLast = time.Now().Add(-31 * time.Second)
-
-	// Insert another observation to trigger another ingest cycle
+	// Insert another observation with yet another path.
 	maxObsID = db.GetMaxObservationID()
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 		VALUES (1, 2, 7.0, -95, '["aa","bb","cc","dd"]', ?)`, time.Now().Unix())
 
 	store.IngestNewObservations(maxObsID, 500)
 
-	// After 30s elapsed, distDirty should be cleared (rebuild happened)
-	if store.distDirty {
-		t.Fatal("distDirty should be false after rebuild (30s elapsed)")
+	// Verify the index is still coherent (no duplicates for the same tx).
+	txSeen := make(map[int]int)
+	for _, r := range store.distPaths {
+		if r.tx != nil {
+			txSeen[r.tx.ID]++
+		}
 	}
+	for txID, count := range txSeen {
+		if count > 1 {
+			t.Errorf("distPaths has %d entries for tx %d (expected at most 1)", count, txID)
+		}
+	}
+
+	t.Logf("Distance index: %d→%d hops, %d→%d paths (incremental)",
+		initialHops, len(store.distHops), initialPaths, len(store.distPaths))
 }
