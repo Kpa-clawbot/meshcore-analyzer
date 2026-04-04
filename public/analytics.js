@@ -2546,7 +2546,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
           <div class="text-muted" style="font-size:0.85em;margin-top:6px">${available.toLocaleString()} of ${totalSpace.toLocaleString()} ${b}-byte prefixes are available.</div>
           <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button id="ptRegenBtn" style="padding:5px 14px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.9em">Try another</button>
-            <a href="https://meshcore.co.uk/keygen.html" target="_blank" rel="noopener noreferrer"
+            <a href="https://agessaman.github.io/meshcore-web-keygen/?prefix=${prefix}" target="_blank" rel="noopener noreferrer"
               style="padding:5px 14px;background:var(--bg);color:var(--accent);border:1px solid var(--border);border-radius:4px;text-decoration:none;font-size:0.9em">
               Generate key with this prefix →
             </a>
