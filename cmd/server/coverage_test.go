@@ -770,6 +770,57 @@ func TestPrefixMapResolve(t *testing.T) {
 	})
 }
 
+func TestPrefixMapCap(t *testing.T) {
+	// 16-char pubkey — longer than maxPrefixLen
+	nodes := []nodeInfo{
+		{PublicKey: "aabbccdd11223344", Name: "LongKey"},
+		{PublicKey: "eeff0011", Name: "ShortKey"}, // exactly 8 chars
+	}
+	pm := buildPrefixMap(nodes)
+
+	t.Run("short prefixes still work", func(t *testing.T) {
+		n := pm.resolve("aabb")
+		if n == nil || n.Name != "LongKey" {
+			t.Errorf("expected LongKey for short prefix, got %v", n)
+		}
+	})
+
+	t.Run("full pubkey exact match works", func(t *testing.T) {
+		n := pm.resolve("aabbccdd11223344")
+		if n == nil || n.Name != "LongKey" {
+			t.Errorf("expected LongKey for full key, got %v", n)
+		}
+	})
+
+	t.Run("intermediate prefix beyond cap returns nil", func(t *testing.T) {
+		// 10-char prefix — beyond maxPrefixLen but not full key
+		n := pm.resolve("aabbccdd11")
+		if n != nil {
+			t.Errorf("expected nil for intermediate prefix beyond cap, got %v", n.Name)
+		}
+	})
+
+	t.Run("short key within cap has all prefixes", func(t *testing.T) {
+		for l := 2; l <= 8; l++ {
+			pfx := "eeff0011"[:l]
+			n := pm.resolve(pfx)
+			if n == nil || n.Name != "ShortKey" {
+				t.Errorf("prefix %q: expected ShortKey, got %v", pfx, n)
+			}
+		}
+	})
+
+	t.Run("map size is capped", func(t *testing.T) {
+		// LongKey: 7 prefix entries (2..8) + 1 full key = 8
+		// ShortKey: 7 prefix entries (2..8), no full key entry (len == maxPrefixLen) = 7
+		// Some prefixes overlap (shared "ee" etc.) — entries share slices, but map keys are unique
+		// Just verify it's much less than uncapped (which would be 7+15+6 = ~22 for 2 nodes)
+		if len(pm.m) > 20 {
+			t.Errorf("expected capped map size, got %d entries", len(pm.m))
+		}
+	})
+}
+
 // --- pathLen ---
 
 func TestPathLen(t *testing.T) {

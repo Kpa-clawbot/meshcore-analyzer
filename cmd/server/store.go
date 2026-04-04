@@ -3445,13 +3445,26 @@ type prefixMap struct {
 	m map[string][]nodeInfo
 }
 
+// maxPrefixLen caps prefix map entries. MeshCore path hops use 2–6 char
+// prefixes; 8 gives comfortable headroom while cutting map size from ~31×N
+// entries to ~7×N (+ 1 full-key entry per node for exact-match lookups).
+const maxPrefixLen = 8
+
 func buildPrefixMap(nodes []nodeInfo) *prefixMap {
-	pm := &prefixMap{m: make(map[string][]nodeInfo, len(nodes)*10)}
+	pm := &prefixMap{m: make(map[string][]nodeInfo, len(nodes)*(maxPrefixLen+1))}
 	for _, n := range nodes {
 		pk := strings.ToLower(n.PublicKey)
-		for l := 2; l <= len(pk); l++ {
+		cap := maxPrefixLen
+		if cap > len(pk) {
+			cap = len(pk)
+		}
+		for l := 2; l <= cap; l++ {
 			pfx := pk[:l]
 			pm.m[pfx] = append(pm.m[pfx], n)
+		}
+		// Always add full pubkey so exact-match lookups work.
+		if len(pk) > maxPrefixLen {
+			pm.m[pk] = append(pm.m[pk], n)
 		}
 	}
 	return pm
