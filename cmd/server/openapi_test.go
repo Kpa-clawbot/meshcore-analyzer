@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -107,10 +108,10 @@ func TestSwaggerUIEndpoint(t *testing.T) {
 	if len(body) < 100 {
 		t.Error("response too short for Swagger UI HTML")
 	}
-	if !contains(body, "swagger-ui") {
+	if !strings.Contains(body, "swagger-ui") {
 		t.Error("response doesn't contain swagger-ui reference")
 	}
-	if !contains(body, "/api/spec") {
+	if !strings.Contains(body, "/api/spec") {
 		t.Error("response doesn't point to /api/spec")
 	}
 }
@@ -138,15 +139,4 @@ func TestExtractPathParams(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
 
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
