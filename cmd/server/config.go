@@ -62,6 +62,34 @@ type Config struct {
 	NeighborGraph *NeighborGraphConfig `json:"neighborGraph,omitempty"`
 }
 
+// weakAPIKeys is the blocklist of known default/example API keys that must be rejected.
+var weakAPIKeys = map[string]bool{
+	"your-secret-api-key-here": true,
+	"change-me":                true,
+	"example":                  true,
+	"test":                     true,
+	"password":                 true,
+	"admin":                    true,
+	"apikey":                   true,
+	"api-key":                  true,
+	"secret":                   true,
+	"default":                  true,
+}
+
+// IsWeakAPIKey returns true if the key is in the blocklist or shorter than 16 characters.
+func IsWeakAPIKey(key string) bool {
+	if key == "" {
+		return false // empty is handled separately (endpoints disabled)
+	}
+	if weakAPIKeys[strings.ToLower(key)] {
+		return true
+	}
+	if len(key) < 16 {
+		return true
+	}
+	return false
+}
+
 // ResolvedPathConfig controls async backfill behavior.
 type ResolvedPathConfig struct {
 	BackfillHours int `json:"backfillHours"` // how far back (hours) to scan for NULL resolved_path (default 24)

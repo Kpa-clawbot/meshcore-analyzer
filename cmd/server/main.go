@@ -104,6 +104,8 @@ func main() {
 	}
 	if cfg.APIKey == "" {
 		log.Printf("[security] WARNING: no apiKey configured — write endpoints are BLOCKED (set apiKey in config.json to enable them)")
+	} else if IsWeakAPIKey(cfg.APIKey) {
+		log.Printf("[security] WARNING: API key is weak or a known default — write endpoints are vulnerable")
 	}
 
 	// Resolve DB path

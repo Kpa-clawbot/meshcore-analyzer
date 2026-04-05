@@ -238,8 +238,13 @@ func (s *Server) requireAPIKey(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "write endpoints disabled — set apiKey in config.json")
 			return
 		}
-		if r.Header.Get("X-API-Key") != s.cfg.APIKey {
+		key := r.Header.Get("X-API-Key")
+		if key != s.cfg.APIKey {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if IsWeakAPIKey(key) {
+			writeError(w, http.StatusForbidden, "API key rejected — configured key is a known default or too weak")
 			return
 		}
 		next.ServeHTTP(w, r)

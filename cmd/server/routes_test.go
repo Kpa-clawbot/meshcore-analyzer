@@ -47,7 +47,7 @@ func setupTestServerWithAPIKey(t *testing.T, apiKey string) (*Server, *mux.Route
 }
 
 func TestWriteEndpointsRequireAPIKey(t *testing.T) {
-	_, router := setupTestServerWithAPIKey(t, "test-secret")
+	_, router := setupTestServerWithAPIKey(t, "test-secret-key-strong-enough")
 
 	t.Run("missing key returns 401", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/perf/reset", nil)
@@ -65,7 +65,7 @@ func TestWriteEndpointsRequireAPIKey(t *testing.T) {
 
 	t.Run("wrong key returns 401", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/perf/reset", nil)
-		req.Header.Set("X-API-Key", "wrong-secret")
+		req.Header.Set("X-API-Key", "wrong-secret-key-strong-enough")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
@@ -75,7 +75,7 @@ func TestWriteEndpointsRequireAPIKey(t *testing.T) {
 
 	t.Run("correct key passes", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/perf/reset", nil)
-		req.Header.Set("X-API-Key", "test-secret")
+		req.Header.Set("X-API-Key", "test-secret-key-strong-enough")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
