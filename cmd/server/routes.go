@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -239,7 +240,7 @@ func (s *Server) requireAPIKey(next http.Handler) http.Handler {
 			return
 		}
 		key := r.Header.Get("X-API-Key")
-		if key != s.cfg.APIKey {
+		if !constantTimeEqual(key, s.cfg.APIKey) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -2314,4 +2315,9 @@ func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
 	writeJSON(w, map[string]interface{}{"deleted": n, "days": days})
+}
+
+// constantTimeEqual compares two strings in constant time to prevent timing attacks.
+func constantTimeEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
