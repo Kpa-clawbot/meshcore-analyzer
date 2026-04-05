@@ -1239,6 +1239,7 @@
   }
 
   function renderVisibleRows() {
+    const _rvr_t0 = performance.now();
     const tbody = document.getElementById('pktBody');
     if (!tbody || !_displayPackets.length) return;
 
@@ -1302,7 +1303,10 @@
     const endIdx = Math.min(_displayPackets.length, lastEntry + VSCROLL_BUFFER);
 
     // Skip DOM rebuild if visible range hasn't changed
-    if (startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd) return;
+    if (startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd) {
+      if (window.__PERF_LOG_RENDER) console.log('[perf] renderVisibleRows: skip (no change) %.2fms', performance.now() - _rvr_t0);
+      return;
+    }
 
     const prevStart = _lastVisibleStart;
     const prevEnd = _lastVisibleEnd;
@@ -1327,16 +1331,22 @@
       tbody.appendChild(topSpacer);
       tbody.insertAdjacentHTML('beforeend', visibleHtml);
       tbody.appendChild(bottomSpacer);
+      if (window.__PERF_LOG_RENDER) console.log('[perf] renderVisibleRows: full rebuild %d entries, %.2fms', endIdx - startIdx, performance.now() - _rvr_t0);
       return;
     }
 
-    // Incremental update: remove rows that scrolled out at the top
-    for (let i = prevStart; i < startIdx && i < prevEnd; i++) {
-      tbody.querySelectorAll('[data-entry-idx="' + i + '"]').forEach(r => r.remove());
+    // Incremental update: remove rows that scrolled out at the top (positional)
+    const headRowCount = offsets[Math.min(startIdx, prevEnd)] - offsets[prevStart];
+    for (let r = 0; r < headRowCount; r++) {
+      const row = topSpacer.nextElementSibling;
+      if (row && row !== bottomSpacer) row.remove();
     }
-    // Remove rows that scrolled out at the bottom
-    for (let i = Math.max(endIdx, prevStart); i < prevEnd; i++) {
-      tbody.querySelectorAll('[data-entry-idx="' + i + '"]').forEach(r => r.remove());
+    // Remove rows that scrolled out at the bottom (positional)
+    const tailFrom = Math.max(endIdx, prevStart);
+    const tailRowCount = offsets[prevEnd] - offsets[tailFrom];
+    for (let r = 0; r < tailRowCount; r++) {
+      const row = bottomSpacer.previousElementSibling;
+      if (row && row !== topSpacer) row.remove();
     }
     // Prepend rows that scrolled into view at the top
     if (startIdx < prevStart) {
@@ -1354,6 +1364,7 @@
       }
       bottomSpacer.insertAdjacentHTML('beforebegin', html);
     }
+    if (window.__PERF_LOG_RENDER) console.log('[perf] renderVisibleRows: incremental head=%d tail=%d, %.2fms', headRowCount, tailRowCount, performance.now() - _rvr_t0);
   }
 
   // Attach/detach scroll listener for virtual scrolling
