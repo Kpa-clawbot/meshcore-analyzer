@@ -49,6 +49,6 @@ jobs:
           build-args: |
             APP_VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+            BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           cache-from: type=gha
           cache-to: type=gha,mode=max
