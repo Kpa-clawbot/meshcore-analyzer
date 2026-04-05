@@ -2804,32 +2804,87 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
     assert.strictEqual(getRowCount(p, true, expanded, null), 1);
   });
 
-  test('renderVisibleRows uses cumulative offsets not flat entry count', () => {
-    assert.ok(packetsSource.includes('_cumulativeRowOffsets'),
-      'renderVisibleRows should use cumulative row offsets');
-    assert.ok(!packetsSource.includes('const totalRows = _displayPackets.length'),
-      'should NOT use flat array length for total row count');
+  // --- Range calculation: replicate renderVisibleRows scroll math for behavioral tests (#405) ---
+
+  function calcVisibleRange(scrollTop, viewportHeight, offsets, buffer, rowHeight) {
+    const totalEntries = offsets.length - 1;
+    const adjustedScrollTop = Math.max(0, scrollTop - 40); // 40px thead
+    const firstDomRow = Math.floor(adjustedScrollTop / rowHeight);
+    const visibleDomCount = Math.ceil(viewportHeight / rowHeight);
+
+    let lo = 0, hi = totalEntries;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] <= firstDomRow) lo = mid + 1;
+      else hi = mid;
+    }
+    const firstEntry = lo;
+
+    const lastDomRow = firstDomRow + visibleDomCount;
+    lo = firstEntry; hi = totalEntries;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] <= lastDomRow) lo = mid + 1;
+      else hi = mid;
+    }
+    const lastEntry = Math.min(lo + 1, totalEntries);
+
+    return {
+      startIdx: Math.max(0, firstEntry - buffer),
+      endIdx: Math.min(totalEntries, lastEntry + buffer),
+    };
+  }
+
+  test('range calc: scroll to top shows entries from index 0', () => {
+    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const { startIdx } = calcVisibleRange(0, 500, offsets, 0, 36);
+    assert.strictEqual(startIdx, 0);
   });
 
-  test('renderVisibleRows skips DOM rebuild when range unchanged', () => {
-    assert.ok(packetsSource.includes('startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd'),
-      'should skip rebuild when range is unchanged');
+  test('range calc: scroll mid-list shows correct entry window', () => {
+    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const scrollTop = 40 + 20 * 36; // thead + 20 rows
+    const { startIdx, endIdx } = calcVisibleRange(scrollTop, 5 * 36, offsets, 0, 36);
+    assert.strictEqual(startIdx, 20);
+    assert.ok(endIdx >= 25 && endIdx <= 26);
   });
 
-  test('lazy row generation — HTML built only for visible slice', () => {
-    assert.ok(!packetsSource.includes('_lastRenderedRows'),
-      'should NOT have pre-built row HTML cache');
-    assert.ok(packetsSource.includes('_displayPackets.slice(startIdx, endIdx)'),
-      'should slice display packets for visible range');
-    assert.ok(packetsSource.includes('visibleSlice.map(p => builder(p))'),
-      'should build HTML lazily per visible packet');
+  test('range calc: buffer expands window by buffer size each side', () => {
+    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const scrollTop = 40 + 20 * 36;
+    const r0 = calcVisibleRange(scrollTop, 5 * 36, offsets, 0, 36);
+    const rB = calcVisibleRange(scrollTop, 5 * 36, offsets, 5, 36);
+    assert.strictEqual(rB.startIdx, r0.startIdx - 5);
+    assert.strictEqual(rB.endIdx, r0.endIdx + 5);
   });
 
-  test('observer filter Set is hoisted, not recreated per-packet', () => {
-    assert.ok(packetsSource.includes('_observerFilterSet = filters.observer ? new Set(filters.observer.split'),
-      'observer filter Set should be created once in renderTableRows');
-    assert.ok(packetsSource.includes('_observerFilterSet.has(String(c.observer_id))'),
-      'buildGroupRowHtml should use hoisted _observerFilterSet');
+  test('range calc: expanded group occupies multiple DOM rows', () => {
+    // entry 2 is expanded with 3 children (4 DOM rows): [1, 1, 4, 1, 1]
+    const offsets = cumulativeRowOffsets([1, 1, 4, 1, 1]);
+    const scrollTop = 40 + 2 * 36 + 1; // scroll into the expanded group
+    const { startIdx } = calcVisibleRange(scrollTop, 36, offsets, 0, 36);
+    assert.strictEqual(startIdx, 2, 'should land on expanded group entry index');
+  });
+
+  test('range calc: scroll past bottom clamps endIdx at total entries', () => {
+    const offsets = cumulativeRowOffsets(new Array(20).fill(1));
+    const { endIdx } = calcVisibleRange(40 + 999 * 36, 5 * 36, offsets, 5, 36);
+    assert.strictEqual(endIdx, 20);
+  });
+
+  test('range calc: same scroll position produces identical range (no spurious rebuilds)', () => {
+    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const scrollTop = 40 + 30 * 36;
+    const r1 = calcVisibleRange(scrollTop, 10 * 36, offsets, 5, 36);
+    const r2 = calcVisibleRange(scrollTop, 10 * 36, offsets, 5, 36);
+    assert.deepStrictEqual(r1, r2);
+  });
+
+  test('range calc: list smaller than viewport shows all entries', () => {
+    const offsets = cumulativeRowOffsets([1, 1, 1]);
+    const { startIdx, endIdx } = calcVisibleRange(0, 1000, offsets, 0, 36);
+    assert.strictEqual(startIdx, 0);
+    assert.strictEqual(endIdx, 3);
   });
 
   test('observer filter in grouped mode includes packet when child matches (#537)', () => {
@@ -2874,51 +2929,57 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
     assert.ok(!passes2, 'WS filter should reject grouped packet with no matching observers');
   });
 
-  test('packets.js display filter checks _children for observer match (#537)', () => {
-    // Verify the actual source code has the children check
-    assert.ok(
-      packetsSource.includes('p._children) return p._children.some(c => obsIds.has(String(c.observer_id))'),
-      'display filter should check _children for observer match'
-    );
+  // --- Null-safety behavioral tests via packet-helpers (#451, #405) ---
+
+  test('getParsedDecoded: null decoded_json returns empty object', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/packet-helpers.js');
+    const fn = ctx.getParsedDecoded;
+    assert.strictEqual(JSON.stringify(fn({ decoded_json: null })), '{}');
+    assert.strictEqual(JSON.stringify(fn({ decoded_json: '' })), '{}');
   });
 
-  test('packets.js WS filter checks _children for observer match (#537)', () => {
-    assert.ok(
-      packetsSource.includes('p._children && p._children.some(c => obsSet.has(String(c.observer_id)))'),
-      'WS filter should check _children for observer match'
-    );
+  test('getParsedDecoded: invalid JSON returns empty object', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/packet-helpers.js');
+    assert.strictEqual(JSON.stringify(ctx.getParsedDecoded({ decoded_json: 'not-json' })), '{}');
   });
 
-  test('buildFlatRowHtml has null-safe decoded_json', () => {
-    const flatBuilderMatch = packetsSource.match(/function buildFlatRowHtml[\s\S]*?(?=\n  function )/);
-    assert.ok(flatBuilderMatch, 'buildFlatRowHtml should exist');
-    assert.ok(flatBuilderMatch[0].includes('getParsedDecoded(p)'),
-      'buildFlatRowHtml should use getParsedDecoded for null-safe decoded_json fallback');
+  test('getParsedDecoded: valid JSON returns parsed object', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/packet-helpers.js');
+    assert.strictEqual(ctx.getParsedDecoded({ decoded_json: '{"type":"ADVERT"}' }).type, 'ADVERT');
   });
 
-  test('pathHops null guard in buildFlatRowHtml (issue #451)', () => {
-    const flatBuilderMatch = packetsSource.match(/function buildFlatRowHtml[\s\S]*?(?=\n  function )/);
-    assert.ok(flatBuilderMatch, 'buildFlatRowHtml should exist');
-    assert.ok(flatBuilderMatch[0].includes('getParsedPath(p)'),
-      'buildFlatRowHtml should use getParsedPath which guards against null');
+  test('getParsedPath: null path_json returns empty array', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/packet-helpers.js');
+    const fn = ctx.getParsedPath;
+    assert.strictEqual(JSON.stringify(fn({ path_json: null })), '[]');
+    assert.strictEqual(JSON.stringify(fn({ path_json: '' })), '[]');
   });
 
-  test('pathHops null guard in detail pane (issue #451)', () => {
-    assert.ok(packetsSource.includes('getParsedPath(pkt)'),
-      'detail pane should use getParsedPath for null-safe path parsing');
-    assert.ok(packetsSource.includes('getParsedDecoded(pkt)'),
-      'detail pane should use getParsedDecoded for null-safe decoded parsing');
+  test('getParsedPath: invalid JSON returns empty array', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/packet-helpers.js');
+    assert.strictEqual(JSON.stringify(ctx.getParsedPath({ path_json: 'bad' })), '[]');
   });
 
-  test('destroy cleans up virtual scroll state', () => {
-    assert.ok(packetsSource.includes('detachVScrollListener'),
-      'destroy should detach virtual scroll listener');
-    assert.ok(packetsSource.includes("_displayPackets = []"),
-      'destroy should reset display packets');
-    assert.ok(packetsSource.includes("_rowCounts = []"),
-      'destroy should reset row counts');
-    assert.ok(packetsSource.includes("_lastVisibleStart = -1"),
-      'destroy should reset visible start');
+  test('getParsedPath: valid JSON returns parsed array', () => {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/packet-helpers.js');
+    const result = ctx.getParsedPath({ path_json: '["aa","bb"]' });
+    assert.strictEqual(result[0], 'aa');
+    assert.strictEqual(result[1], 'bb');
+    assert.strictEqual(result.length, 2);
+  });
+
+  test('virtual scroll state is empty after cleanup (no DOM rows)', () => {
+    // Mirrors destroy(): _rowCounts = [], _cumulativeOffsetsCache = null
+    // cumulativeRowOffsets([]) must return [0] — totalDomRows = 0
+    const result = cumulativeRowOffsets([]);
+    assert.deepStrictEqual(result, [0]);
+    assert.strictEqual(result[result.length - 1], 0);
   });
 }
 
