@@ -37,7 +37,6 @@ CoreScope runs well on Raspberry Pi 4/5 (ARM64). The Go server uses ~300 MB RAM 
 docker run -d --name corescope \
   -p 80:80 \
   -v corescope-data:/app/data \
-  -e DISABLE_CADDY=true \
   ghcr.io/kpa-clawbot/corescope:latest
 ```
 
@@ -65,7 +64,6 @@ docker compose up -d
 |----------|---------|-------------|
 | `HTTP_PORT` | `80` | Host port for the web UI |
 | `DATA_DIR` | `./data` | Host path for persistent data |
-| `DISABLE_CADDY` | `false` | Set `true` when behind a reverse proxy |
 | `DISABLE_MOSQUITTO` | `false` | Set `true` to use an external MQTT broker |
 
 ### Image tags
@@ -112,7 +110,6 @@ CoreScope uses a layered configuration system (highest priority wins):
 | `MQTT_BROKER` | `mqtt://localhost:1883` | MQTT broker URL (overrides config file) |
 | `MQTT_TOPIC` | `meshcore/#` | MQTT topic subscription pattern |
 | `DB_PATH` | `data/meshcore.db` | SQLite database path |
-| `DISABLE_CADDY` | `false` | Skip the internal Caddy reverse proxy |
 | `DISABLE_MOSQUITTO` | `false` | Skip the internal Mosquitto broker |
 
 ### config.json
@@ -151,7 +148,6 @@ The built-in Mosquitto broker listens on port 1883 inside the container. Point y
 docker run -d --name corescope \
   -p 80:80 -p 1883:1883 \
   -v corescope-data:/app/data \
-  -e DISABLE_CADDY=true \
   ghcr.io/kpa-clawbot/corescope:latest
 ```
 
@@ -217,7 +213,7 @@ MeshCore gateways typically publish to `meshcore/<gateway>/<region>/packets`. Th
 
 ### Option 1: External reverse proxy (recommended)
 
-Run CoreScope with `DISABLE_CADDY=true` and place nginx, Traefik, or Cloudflare Tunnel in front:
+Run CoreScope behind nginx, Traefik, or Cloudflare Tunnel for TLS termination:
 
 ```nginx
 # nginx example
@@ -283,14 +279,17 @@ Docker reports `healthy` or `unhealthy` automatically. The check runs every 30 s
 curl -f http://localhost/api/stats
 ```
 
-Returns JSON with packet counts, node counts, and uptime:
+Returns JSON with packet counts, node counts, and version info:
 
 ```json
 {
   "totalPackets": 56234,
-  "activeNodes": 142,
-  "uptimeSeconds": 86400,
-  "mqttConnected": true
+  "totalNodes": 142,
+  "totalObservers": 12,
+  "packetsLastHour": 830,
+  "packetsLast24h": 19644,
+  "engine": "go",
+  "version": "v3.4.1"
 }
 ```
 

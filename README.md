@@ -82,7 +82,6 @@ No build step required — just run:
 docker run -d --name corescope \
   -p 80:80 \
   -v corescope-data:/app/data \
-  -e DISABLE_CADDY=true \
   ghcr.io/kpa-clawbot/corescope:latest
 ```
 
