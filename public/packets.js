@@ -63,7 +63,9 @@
   const getParsedDecoded = window.getParsedDecoded;
 
   // --- Virtual scroll state ---
-  const VSCROLL_ROW_HEIGHT = 36;  // estimated row height in px
+  let VSCROLL_ROW_HEIGHT = 36;    // measured dynamically on first render; fallback 36px
+  let _vscrollRowHeightMeasured = false;
+  let _vscrollTheadHeight = 40;   // measured dynamically on first render; fallback 40px
   const VSCROLL_BUFFER = 30;      // extra rows above/below viewport
   let _displayPackets = [];       // filtered packets for current view
   let _displayGrouped = false;    // whether _displayPackets is in grouped mode
@@ -1277,8 +1279,10 @@
     // Calculate visible range based on scroll position
     const scrollTop = scrollContainer.scrollTop;
     const viewportHeight = scrollContainer.clientHeight;
-    // Account for thead height (~40px)
-    const theadHeight = 40;
+    // Account for thead height (measured dynamically)
+    const theadEl = scrollContainer.querySelector('thead');
+    if (theadEl) _vscrollTheadHeight = theadEl.offsetHeight || _vscrollTheadHeight;
+    const theadHeight = _vscrollTheadHeight;
     const adjustedScrollTop = Math.max(0, scrollTop - theadHeight);
 
     // Find the first entry whose cumulative row offset covers the scroll position
@@ -1336,6 +1340,14 @@
       tbody.appendChild(topSpacer);
       tbody.insertAdjacentHTML('beforeend', visibleHtml);
       tbody.appendChild(bottomSpacer);
+      // Measure actual row height from first rendered data row (#407)
+      if (!_vscrollRowHeightMeasured) {
+        const firstRow = topSpacer.nextElementSibling;
+        if (firstRow && firstRow !== bottomSpacer) {
+          const h = firstRow.offsetHeight;
+          if (h > 0) { VSCROLL_ROW_HEIGHT = h; _vscrollRowHeightMeasured = true; }
+        }
+      }
       if (window.__PERF_LOG_RENDER) console.log('[perf] renderVisibleRows: full rebuild %d entries, %.2fms', endIdx - startIdx, performance.now() - _rvr_t0);
       return;
     }
