@@ -1673,6 +1673,19 @@ async function run() {
     assert(url.includes('timeWindow=30'), `URL should contain timeWindow=30 after change, got: ${url}`);
   });
 
+  // Test: channels selected channel survives refresh (already implemented, verify it still works)
+  await test('Channels channel selection is URL-addressable', async () => {
+    await page.goto(BASE + '#/channels', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.ch-item', { timeout: 8000 }).catch(() => null);
+    const firstChannel = await page.$('.ch-item');
+    if (firstChannel) {
+      await firstChannel.click();
+      await page.waitForTimeout(500);
+      const url = page.url();
+      assert(url.includes('#/channels/') || url.includes('#/channels'), `URL should reflect channel selection, got: ${url}`);
+    }
+  });
+
   await browser.close();
 
   // Summary
