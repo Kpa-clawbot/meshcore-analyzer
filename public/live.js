@@ -762,7 +762,7 @@
           <button class="feed-hide-btn" id="nodeDetailClose" title="Close">✕</button>
           <div id="nodeDetailContent"></div>
         </div>
-        <button class="legend-toggle-btn hidden" id="legendToggleBtn" aria-label="Show legend" title="Show legend">🎨</button>
+        <button class="legend-toggle-btn" id="legendToggleBtn" aria-label="Show legend" title="Show legend">🎨</button>
         <div class="live-overlay live-legend" id="liveLegend" role="region" aria-label="Map legend">
           <h3 class="legend-title">PACKET TYPES</h3>
           <ul class="legend-list">
@@ -1043,10 +1043,17 @@
     const legendEl = document.getElementById('liveLegend');
     const legendToggleBtn = document.getElementById('legendToggleBtn');
     if (legendToggleBtn && legendEl) {
+      // Restore legend collapsed state from localStorage (#279)
+      if (localStorage.getItem('live-legend-hidden') === 'true') {
+        legendEl.classList.add('hidden');
+        legendToggleBtn.setAttribute('aria-label', 'Show legend');
+        legendToggleBtn.textContent = '🎨';
+      }
       legendToggleBtn.addEventListener('click', () => {
-        const isVisible = legendEl.classList.toggle('legend-mobile-visible');
-        legendToggleBtn.setAttribute('aria-label', isVisible ? 'Hide legend' : 'Show legend');
-        legendToggleBtn.textContent = isVisible ? '✕' : '🎨';
+        const nowHidden = legendEl.classList.toggle('hidden');
+        legendToggleBtn.setAttribute('aria-label', nowHidden ? 'Show legend' : 'Hide legend');
+        legendToggleBtn.textContent = nowHidden ? '🎨' : '✕';
+        localStorage.setItem('live-legend-hidden', String(nowHidden));
       });
     }
 

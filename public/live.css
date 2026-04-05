@@ -201,6 +201,15 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+/* Collapsible legend (#279) */
+.live-legend.hidden {
+  opacity: 0;
+  transform: translateX(100%);
+  pointer-events: none;
+  visibility: hidden;
 }
 
 .legend-title {
@@ -270,6 +279,16 @@
 }
 .live-page .leaflet-control-zoom a:hover {
   background: rgba(59, 130, 246, 0.2) !important;
+}
+
+/* ---- Medium breakpoint (#279) ---- */
+@media (max-width: 768px) {
+  .live-feed { width: 280px; max-height: 200px; }
+  .live-node-detail { width: 260px; }
+  .live-legend { font-size: 10px; padding: 8px 10px; }
+  .live-header { gap: 8px; padding: 6px 12px; }
+  .live-stat-pill { font-size: 11px; padding: 2px 8px; }
+  .live-toggles { font-size: 10px; gap: 6px; }
 }
 
 /* ---- Responsive ---- */
@@ -702,9 +721,8 @@
   border: 0;
 }
 
-/* Legend toggle button for mobile (#60) */
+/* Legend toggle button — visible at all sizes (#60, #279) */
 .legend-toggle-btn {
-  display: none;
   position: absolute;
   bottom: 82px;
   right: 12px;
@@ -720,6 +738,7 @@
   transition: all 0.2s;
 }
 .legend-toggle-btn:hover { color: var(--text); border-color: rgba(59,130,246,0.4); }
+.legend-toggle-btn.hidden { display: none; }
 
 /* Feed resize handle (#27) */
 .feed-resize-handle {
