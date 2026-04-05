@@ -75,7 +75,7 @@
           <h2>📊 Mesh Analytics</h2>
           <p class="text-muted">Deep dive into your mesh network data</p>
           <div id="analyticsRegionFilter" class="region-filter-container"></div>
-          <div class="analytics-tabs" id="analyticsTabs">
+          <div class="analytics-tabs" id="analyticsTabs" role="tablist" aria-label="Analytics tabs">
             <button class="tab-btn active" data-tab="overview">Overview</button>
             <button class="tab-btn" data-tab="rf">RF / Signal</button>
             <button class="tab-btn" data-tab="topology">Topology</button>
@@ -90,7 +90,7 @@
             <button class="tab-btn" data-tab="prefix-tool">Prefix Tool</button>
           </div>
         </div>
-        <div id="analyticsContent" class="analytics-content">
+        <div id="analyticsContent" class="analytics-content" aria-live="polite">
           <div class="text-center text-muted" style="padding:40px">Loading analytics…</div>
         </div>
       </div>`;

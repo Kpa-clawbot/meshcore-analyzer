@@ -2165,3 +2165,77 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   width: 100%;
 }
 .cc-picker-clear:hover { color: var(--text-primary, #e0e0e0); border-color: var(--text-primary, #e0e0e0); }
+
+/* === #630 — Mobile Accessibility Fixes === */
+
+/* #630-1: Touch targets — minimum 44px on touch devices */
+@media (pointer: coarse) {
+  .filter-bar .btn,
+  .filter-group .btn,
+  .tab-btn,
+  .filter-bar input,
+  .filter-bar select,
+  .nav-btn,
+  .region-pill,
+  .region-dropdown-trigger,
+  .multi-select-trigger,
+  .node-count-pill,
+  .analytics-time-range button,
+  .detail-back-btn,
+  .filter-toggle-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .filter-bar input,
+  .filter-bar select {
+    height: 44px;
+  }
+  .region-dropdown-trigger,
+  .multi-select-trigger {
+    height: 44px;
+  }
+}
+
+/* #630-3: Status text labels — visually hidden text for screen readers */
+.sr-status-label { font-size: 11px; margin-left: 4px; }
+
+/* #630-4: Detail panel as full-width overlay on mobile */
+@media (max-width: 640px) {
+  .split-layout .panel-right:not(.empty) {
+    display: block;
+    position: fixed;
+    top: 52px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    min-width: 0;
+    z-index: 150;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* #630-5: Analytics tabs — horizontal scroll on small screens */
+@media (max-width: 640px) {
+  .analytics-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    padding-bottom: 4px;
+  }
+  .analytics-tabs .tab-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+/* #630-6: Tables — horizontal scroll wrapper */
+.table-scroll-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 640px) {
+  .data-table { min-width: 480px; }
+}

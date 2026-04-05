@@ -283,7 +283,7 @@
       }
     }
     app.innerHTML = `<div class="split-layout detail-collapsed">
-      <div class="panel-left" id="pktLeft"></div>
+      <div class="panel-left" id="pktLeft" aria-live="polite" aria-relevant="additions removals"></div>
       <div class="panel-right empty" id="pktRight" aria-live="polite">
         <div class="panel-resize-handle" id="pktResizeHandle"></div>
         ${PANEL_CLOSE_HTML}

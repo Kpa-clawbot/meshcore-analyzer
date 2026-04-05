@@ -472,6 +472,12 @@ function navigate() {
     const ms = performance.now() - t0;
     if (ms > 100) console.warn(`[SLOW PAGE] ${basePage} init took ${Math.round(ms)}ms`);
     app.classList.remove('page-enter'); void app.offsetWidth; app.classList.add('page-enter');
+    // #630-7: SPA focus management — move focus to first heading or main content
+    requestAnimationFrame(function() {
+      var heading = app.querySelector('h1, h2, h3, [role="heading"]');
+      if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
+      else { app.setAttribute('tabindex', '-1'); app.focus({ preventScroll: true }); }
+    });
   } else {
     app.innerHTML = `<div style="padding:40px;text-align:center;color:#6b7280"><h2>${route}</h2><p>Page not yet implemented.</p></div>`;
   }

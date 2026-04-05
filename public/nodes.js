@@ -324,7 +324,7 @@
       </div>
       <div id="nodesRegionFilter" class="region-filter-container"></div>
       <div class="split-layout">
-        <div class="panel-left" id="nodesLeft"></div>
+        <div class="panel-left" id="nodesLeft" aria-live="polite" aria-relevant="additions removals"></div>
         <div class="panel-right empty" id="nodesRight"><span>Select a node to view details</span></div>
       </div>
     </div>`;
@@ -920,6 +920,17 @@
       }
     });
 
+    // #630: Close button for node detail panel (important for mobile full-screen overlay)
+    document.getElementById('nodesRight').addEventListener('click', function(e) {
+      if (e.target.closest('.panel-close-btn')) {
+        const panel = document.getElementById('nodesRight');
+        panel.classList.add('empty');
+        panel.innerHTML = '<span>Select a node to view details</span>';
+        selectedKey = null;
+        renderRows();
+      }
+    });
+
     renderRows();
   }
 
@@ -1007,6 +1018,7 @@
     const dupBadge = dupNameBadge(n.name, n.public_key, dupMap);
 
     panel.innerHTML = `
+      <button class="panel-close-btn" title="Close detail pane (Esc)">✕</button>
       <div class="node-detail">
         <div class="node-detail-name">${escapeHtml(n.name || '(unnamed)')}${dupBadge}</div>
         <div class="node-detail-role">${renderNodeBadges(n, roleColor)}
