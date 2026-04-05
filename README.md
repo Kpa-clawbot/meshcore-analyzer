@@ -74,9 +74,24 @@ Full experience on your phone — proper touch controls, iOS safe area support, 
 
 ## Quick Start
 
-### Docker (Recommended)
+### Pre-built Image (Recommended)
 
-No Go installation needed — everything builds inside the container.
+No build step required — just run:
+
+```bash
+docker run -d --name corescope \
+  -p 80:80 \
+  -v corescope-data:/app/data \
+  -e DISABLE_CADDY=true \
+  ghcr.io/kpa-clawbot/corescope:latest
+```
+
+Open `http://localhost` — done. No config file needed; CoreScope starts with sensible defaults.
+
+See [DEPLOY.md](DEPLOY.md) for image tags, Docker Compose, and migration from `manage.sh`.
+See [docs/deployment.md](docs/deployment.md) for the full deployment guide — MQTT setup, HTTPS options, backups, monitoring, and troubleshooting.
+
+### Build from Source
 
 ```bash
 git clone https://github.com/Kpa-clawbot/CoreScope.git
@@ -94,8 +109,6 @@ The setup wizard walks you through config, domain, HTTPS, build, and run.
 ./manage.sh mqtt-test    # Check if observer data is flowing
 ./manage.sh help         # All commands
 ```
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full deployment guide — HTTPS options (auto cert, bring your own, Cloudflare Tunnel), MQTT security, backups, and troubleshooting.
 
 ### Configure
 

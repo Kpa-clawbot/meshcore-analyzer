@@ -32,9 +32,25 @@ func TestLoadConfigValidJSON(t *testing.T) {
 }
 
 func TestLoadConfigMissingFile(t *testing.T) {
-	_, err := LoadConfig("/nonexistent/path/config.json")
-	if err == nil {
-		t.Error("expected error for missing file")
+	t.Setenv("DB_PATH", "")
+	t.Setenv("MQTT_BROKER", "")
+
+	cfg, err := LoadConfig("/nonexistent/path/config.json")
+	if err != nil {
+		t.Fatalf("missing config should not error (zero-config mode), got: %v", err)
+	}
+	if cfg.DBPath != "data/meshcore.db" {
+		t.Errorf("dbPath=%s, want data/meshcore.db", cfg.DBPath)
+	}
+	// Should default to localhost MQTT
+	if len(cfg.MQTTSources) != 1 {
+		t.Fatalf("mqttSources len=%d, want 1", len(cfg.MQTTSources))
+	}
+	if cfg.MQTTSources[0].Broker != "mqtt://localhost:1883" {
+		t.Errorf("default broker=%s, want mqtt://localhost:1883", cfg.MQTTSources[0].Broker)
+	}
+	if cfg.MQTTSources[0].Name != "local" {
+		t.Errorf("default source name=%s, want local", cfg.MQTTSources[0].Name)
 	}
 }
 
@@ -196,8 +212,8 @@ func TestLoadConfigLegacyMQTTEmptyBroker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.MQTTSources) != 0 {
-		t.Errorf("mqttSources should be empty when legacy broker is empty, got %d", len(cfg.MQTTSources))
+	if len(cfg.MQTTSources) != 1 || cfg.MQTTSources[0].Name != "local" {
+		t.Errorf("mqttSources should default to local broker when legacy broker is empty, got %v", cfg.MQTTSources)
 	}
 }
 

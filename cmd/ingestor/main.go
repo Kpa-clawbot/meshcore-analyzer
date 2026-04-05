@@ -49,9 +49,6 @@ func main() {
 	}
 
 	sources := cfg.ResolvedSources()
-	if len(sources) == 0 {
-		log.Fatal("no MQTT sources configured — set mqttSources in config or MQTT_BROKER env var")
-	}
 
 	store, err := OpenStoreWithInterval(cfg.DBPath, cfg.MetricsSampleInterval())
 	if err != nil {
