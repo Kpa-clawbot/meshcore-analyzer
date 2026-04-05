@@ -2881,7 +2881,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
 
     // Scale functions
     const sx = t => pad.left + ((t - minT) / rangeT) * cw;
-    const sy = v => pad.top + ((v - minV) / rangeV) * ch; // higher dBm = higher on chart (top)
+    const sy = v => pad.top + ch - ((v - minV) / rangeV) * ch; // higher dBm (worse) = higher on chart (lower y)
 
     // Data line
     const pts = data.map(d => `${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`).join(' ');
@@ -2935,9 +2935,6 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     svg += '</svg>';
     return svg;
   }
-
-  // HTML escaping helper (in case not defined)
-  function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
   registerPage('analytics', { init, destroy });
 })();
