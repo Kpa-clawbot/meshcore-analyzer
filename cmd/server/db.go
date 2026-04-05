@@ -1898,6 +1898,12 @@ func computeDeltas(raw []rawMetricsSample, sampleIntervalSec int) ([]MetricsSamp
 		if cur.RecvErrors != nil && prev.RecvErrors != nil && *cur.RecvErrors < *prev.RecvErrors {
 			isReboot = true
 		}
+		if cur.PacketsSent != nil && prev.PacketsSent != nil && *cur.PacketsSent < *prev.PacketsSent {
+			isReboot = true
+		}
+		if cur.PacketsRecv != nil && prev.PacketsRecv != nil && *cur.PacketsRecv < *prev.PacketsRecv {
+			isReboot = true
+		}
 
 		if isReboot {
 			s.IsReboot = true
@@ -1945,13 +1951,6 @@ func computeDeltas(raw []rawMetricsSample, sampleIntervalSec int) ([]MetricsSamp
 				rate := (deltaErrors / total) * 100.0
 				rate = math.Round(rate*100) / 100
 				s.RecvErrorRate = &rate
-			}
-		} else if cur.RecvErrors != nil && prev.RecvErrors != nil {
-			// Fallback: just report delta errors per interval if no packets_recv
-			deltaErrors := float64(*cur.RecvErrors - *prev.RecvErrors)
-			if deltaErrors >= 0 {
-				// Can't compute rate without packets_recv, leave nil
-				_ = deltaErrors
 			}
 		}
 

@@ -2959,22 +2959,6 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
   }
 
   // Shared: build polyline points string from data, skip nulls (break line)
-  function rfPolylineSegments(data, sx, sy) {
-    // Returns array of polyline point strings (one per contiguous segment)
-    const segments = [];
-    let current = [];
-    for (const d of data) {
-      if (d.v == null) {
-        if (current.length > 1) segments.push(current.join(' '));
-        current = [];
-      } else {
-        current.push(`${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`);
-      }
-    }
-    if (current.length > 1) segments.push(current.join(' '));
-    return segments;
-  }
-
   // Airtime chart: TX (red/orange) + RX (blue) lines, Y 0-100%
   function rfAirtimeChart(txData, rxData, w, h, reboots, sharedMinT, sharedMaxT) {
     const pad = { top: 20, right: 50, bottom: 30, left: 55 };
