@@ -65,6 +65,37 @@
   // --- Virtual scroll state ---
   const VSCROLL_ROW_HEIGHT = 36;  // estimated row height in px
   const VSCROLL_BUFFER = 30;      // extra rows above/below viewport
+
+  // Pure range calculation extracted for testability (#598).
+  // Parameters mirror the scroll math in renderVisibleRows.
+  function _calcVisibleRange(scrollTop, viewportHeight, offsets, buffer, rowHeight) {
+    const totalEntries = offsets.length - 1;
+    const adjustedScrollTop = Math.max(0, scrollTop - 40); // 40px thead
+    const firstDomRow = Math.floor(adjustedScrollTop / rowHeight);
+    const visibleDomCount = Math.ceil(viewportHeight / rowHeight);
+
+    let lo = 0, hi = totalEntries;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] <= firstDomRow) lo = mid + 1;
+      else hi = mid;
+    }
+    const firstEntry = lo;
+
+    const lastDomRow = firstDomRow + visibleDomCount;
+    lo = firstEntry; hi = totalEntries;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid + 1] <= lastDomRow) lo = mid + 1;
+      else hi = mid;
+    }
+    const lastEntry = Math.min(lo + 1, totalEntries);
+
+    return {
+      startIdx: Math.max(0, firstEntry - buffer),
+      endIdx: Math.min(totalEntries, lastEntry + buffer),
+    };
+  }
   let _displayPackets = [];       // filtered packets for current view
   let _displayGrouped = false;    // whether _displayPackets is in grouped mode
   let _rowCounts = [];            // per-entry DOM row counts (1 for flat, 1+children for expanded groups)
@@ -1271,35 +1302,9 @@
     // Calculate visible range based on scroll position
     const scrollTop = scrollContainer.scrollTop;
     const viewportHeight = scrollContainer.clientHeight;
-    // Account for thead height (~40px)
-    const theadHeight = 40;
-    const adjustedScrollTop = Math.max(0, scrollTop - theadHeight);
-
-    // Find the first entry whose cumulative row offset covers the scroll position
-    const firstDomRow = Math.floor(adjustedScrollTop / VSCROLL_ROW_HEIGHT);
-    const visibleDomCount = Math.ceil(viewportHeight / VSCROLL_ROW_HEIGHT);
-
-    // Binary search for entry index containing firstDomRow
-    let lo = 0, hi = _displayPackets.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (offsets[mid + 1] <= firstDomRow) lo = mid + 1;
-      else hi = mid;
-    }
-    const firstEntry = lo;
-
-    // Find entry index covering last visible DOM row
-    const lastDomRow = firstDomRow + visibleDomCount;
-    lo = firstEntry; hi = _displayPackets.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (offsets[mid + 1] <= lastDomRow) lo = mid + 1;
-      else hi = mid;
-    }
-    const lastEntry = Math.min(lo + 1, _displayPackets.length);
-
-    const startIdx = Math.max(0, firstEntry - VSCROLL_BUFFER);
-    const endIdx = Math.min(_displayPackets.length, lastEntry + VSCROLL_BUFFER);
+    const { startIdx, endIdx } = _calcVisibleRange(
+      scrollTop, viewportHeight, offsets, VSCROLL_BUFFER, VSCROLL_ROW_HEIGHT
+    );
 
     // Skip DOM rebuild if visible range hasn't changed
     if (startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd) return;
@@ -2142,6 +2147,7 @@
       fieldRow,
       renderTimestampCell,
       renderPath,
+      _calcVisibleRange,
       _getRowCount,
       _cumulativeRowOffsets,
       _invalidateRowCounts,

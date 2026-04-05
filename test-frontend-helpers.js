@@ -2718,12 +2718,56 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
 // ===== Packets page: virtual scroll infrastructure =====
 {
   console.log('\nPackets page — virtual scroll:');
-  const packetsSource = fs.readFileSync('public/packets.js', 'utf8');
 
-  // --- Behavioral tests using extracted logic ---
+  // Load real packets.js via vm to access _packetsTestAPI functions (#598)
+  const vscrollCtx = vm.createContext({
+    window: { innerWidth: 1200 },
+    document: {
+      getElementById: () => null,
+      createElement: (tag) => ({ style: {}, className: '', innerHTML: '', appendChild: () => {}, querySelector: () => null }),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      querySelectorAll: () => [],
+    },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    console,
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    setInterval: () => 0,
+    clearInterval: () => {},
+    JSON,
+    Array,
+    Object,
+    Map,
+    Set,
+    Math,
+    Date,
+    Number,
+    String,
+    RegExp,
+    Error,
+    Promise,
+    URLSearchParams,
+    parseInt,
+    parseFloat,
+    isNaN,
+    isFinite,
+    encodeURIComponent: (s) => s,
+    requestAnimationFrame: (fn) => 0,
+    cancelAnimationFrame: () => {},
+    observerMap: new Map(),
+    registerPage: () => {},
+    onWS: () => {},
+    offWS: () => {},
+    api: () => Promise.resolve({}),
+  });
+  vm.runInContext(fs.readFileSync('public/packets.js', 'utf8'), vscrollCtx);
+  const calcVisibleRange = vscrollCtx.window._packetsTestAPI._calcVisibleRange;
+  const cumulativeRowOffsets = vscrollCtx.window._packetsTestAPI._cumulativeRowOffsets;
 
-  // Extract _cumulativeRowOffsets logic for testing
-  function cumulativeRowOffsets(rowCounts) {
+  // _cumulativeRowOffsets from packets.js expects internal state; wrap for test convenience
+  // We need a standalone version that takes rowCounts directly (same algorithm)
+  function testCumulativeOffsets(rowCounts) {
     const offsets = new Array(rowCounts.length + 1);
     offsets[0] = 0;
     for (let i = 0; i < rowCounts.length; i++) {
@@ -2732,7 +2776,8 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
     return offsets;
   }
 
-  // Extract _getRowCount logic for testing (#424 — single source of truth)
+  // _getRowCount in packets.js uses closure state, so tests pass params directly.
+  // This mirrors the same logic for testability (#424).
   function getRowCount(p, grouped, expandedHashes, observerFilterSet) {
     if (!grouped) return 1;
     if (!expandedHashes.has(p.hash) || !p._children) return 1;
@@ -2745,13 +2790,13 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
 
   test('cumulativeRowOffsets computes correct offsets for flat rows', () => {
     const counts = [1, 1, 1, 1, 1];
-    const offsets = cumulativeRowOffsets(counts);
+    const offsets = testCumulativeOffsets(counts);
     assert.deepStrictEqual(offsets, [0, 1, 2, 3, 4, 5]);
   });
 
   test('cumulativeRowOffsets handles expanded groups with multiple rows', () => {
     const counts = [1, 4, 1];
-    const offsets = cumulativeRowOffsets(counts);
+    const offsets = testCumulativeOffsets(counts);
     assert.deepStrictEqual(offsets, [0, 1, 5, 6]);
     assert.strictEqual(offsets[offsets.length - 1], 6);
   });
@@ -2759,7 +2804,7 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   test('total scroll height accounts for expanded group rows', () => {
     const VSCROLL_ROW_HEIGHT = 36;
     const counts = [1, 4, 1, 4, 1];
-    const offsets = cumulativeRowOffsets(counts);
+    const offsets = testCumulativeOffsets(counts);
     const totalDomRows = offsets[offsets.length - 1];
     assert.strictEqual(totalDomRows, 11);
     assert.strictEqual(totalDomRows * VSCROLL_ROW_HEIGHT, 396);
@@ -2768,7 +2813,7 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   test('scroll height with all collapsed equals entries * row height', () => {
     const VSCROLL_ROW_HEIGHT = 36;
     const counts = [1, 1, 1, 1, 1];
-    const offsets = cumulativeRowOffsets(counts);
+    const offsets = testCumulativeOffsets(counts);
     const totalDomRows = offsets[offsets.length - 1];
     assert.strictEqual(totalDomRows * VSCROLL_ROW_HEIGHT, 5 * VSCROLL_ROW_HEIGHT);
   });
@@ -2804,45 +2849,16 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
     assert.strictEqual(getRowCount(p, true, expanded, null), 1);
   });
 
-  // --- Range calculation: replicate renderVisibleRows scroll math for behavioral tests (#405) ---
-
-  function calcVisibleRange(scrollTop, viewportHeight, offsets, buffer, rowHeight) {
-    const totalEntries = offsets.length - 1;
-    const adjustedScrollTop = Math.max(0, scrollTop - 40); // 40px thead
-    const firstDomRow = Math.floor(adjustedScrollTop / rowHeight);
-    const visibleDomCount = Math.ceil(viewportHeight / rowHeight);
-
-    let lo = 0, hi = totalEntries;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (offsets[mid + 1] <= firstDomRow) lo = mid + 1;
-      else hi = mid;
-    }
-    const firstEntry = lo;
-
-    const lastDomRow = firstDomRow + visibleDomCount;
-    lo = firstEntry; hi = totalEntries;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (offsets[mid + 1] <= lastDomRow) lo = mid + 1;
-      else hi = mid;
-    }
-    const lastEntry = Math.min(lo + 1, totalEntries);
-
-    return {
-      startIdx: Math.max(0, firstEntry - buffer),
-      endIdx: Math.min(totalEntries, lastEntry + buffer),
-    };
-  }
+  // --- Range calculation: uses real _calcVisibleRange from packets.js (#598) ---
 
   test('range calc: scroll to top shows entries from index 0', () => {
-    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const offsets = testCumulativeOffsets(new Array(100).fill(1));
     const { startIdx } = calcVisibleRange(0, 500, offsets, 0, 36);
     assert.strictEqual(startIdx, 0);
   });
 
   test('range calc: scroll mid-list shows correct entry window', () => {
-    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const offsets = testCumulativeOffsets(new Array(100).fill(1));
     const scrollTop = 40 + 20 * 36; // thead + 20 rows
     const { startIdx, endIdx } = calcVisibleRange(scrollTop, 5 * 36, offsets, 0, 36);
     assert.strictEqual(startIdx, 20);
@@ -2850,7 +2866,7 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   });
 
   test('range calc: buffer expands window by buffer size each side', () => {
-    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const offsets = testCumulativeOffsets(new Array(100).fill(1));
     const scrollTop = 40 + 20 * 36;
     const r0 = calcVisibleRange(scrollTop, 5 * 36, offsets, 0, 36);
     const rB = calcVisibleRange(scrollTop, 5 * 36, offsets, 5, 36);
@@ -2860,20 +2876,20 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
 
   test('range calc: expanded group occupies multiple DOM rows', () => {
     // entry 2 is expanded with 3 children (4 DOM rows): [1, 1, 4, 1, 1]
-    const offsets = cumulativeRowOffsets([1, 1, 4, 1, 1]);
+    const offsets = testCumulativeOffsets([1, 1, 4, 1, 1]);
     const scrollTop = 40 + 2 * 36 + 1; // scroll into the expanded group
     const { startIdx } = calcVisibleRange(scrollTop, 36, offsets, 0, 36);
     assert.strictEqual(startIdx, 2, 'should land on expanded group entry index');
   });
 
   test('range calc: scroll past bottom clamps endIdx at total entries', () => {
-    const offsets = cumulativeRowOffsets(new Array(20).fill(1));
+    const offsets = testCumulativeOffsets(new Array(20).fill(1));
     const { endIdx } = calcVisibleRange(40 + 999 * 36, 5 * 36, offsets, 5, 36);
     assert.strictEqual(endIdx, 20);
   });
 
   test('range calc: same scroll position produces identical range (no spurious rebuilds)', () => {
-    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const offsets = testCumulativeOffsets(new Array(100).fill(1));
     const scrollTop = 40 + 30 * 36;
     const r1 = calcVisibleRange(scrollTop, 10 * 36, offsets, 5, 36);
     const r2 = calcVisibleRange(scrollTop, 10 * 36, offsets, 5, 36);
@@ -2881,7 +2897,7 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   });
 
   test('range calc: list smaller than viewport shows all entries', () => {
-    const offsets = cumulativeRowOffsets([1, 1, 1]);
+    const offsets = testCumulativeOffsets([1, 1, 1]);
     const { startIdx, endIdx } = calcVisibleRange(0, 1000, offsets, 0, 36);
     assert.strictEqual(startIdx, 0);
     assert.strictEqual(endIdx, 3);
@@ -2976,8 +2992,8 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
 
   test('virtual scroll state is empty after cleanup (no DOM rows)', () => {
     // Mirrors destroy(): _rowCounts = [], _cumulativeOffsetsCache = null
-    // cumulativeRowOffsets([]) must return [0] — totalDomRows = 0
-    const result = cumulativeRowOffsets([]);
+    // testCumulativeOffsets([]) must return [0] — totalDomRows = 0
+    const result = testCumulativeOffsets([]);
     assert.deepStrictEqual(result, [0]);
     assert.strictEqual(result[result.length - 1], 0);
   });
