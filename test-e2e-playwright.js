@@ -1627,6 +1627,33 @@ async function run() {
     }
   } catch {}
 
+  // --- Group: Deep linking (#536) ---
+
+  // Test: nodes tab deep link
+  await test('Nodes tab deep link restores active tab', async () => {
+    await page.goto(BASE + '#/nodes?tab=repeater', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.node-tab', { timeout: 8000 });
+    const activeTab = await page.$('.node-tab.active');
+    assert(activeTab, 'No active tab found');
+    const tabText = await activeTab.textContent();
+    assert(tabText.includes('Repeater'), `Expected Repeater tab active, got: ${tabText}`);
+    const url = page.url();
+    assert(url.includes('tab=repeater'), `URL should contain tab=repeater, got: ${url}`);
+  });
+
+  // Test: nodes tab click updates URL
+  await test('Nodes tab click updates URL', async () => {
+    await page.goto(BASE + '#/nodes', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.node-tab', { timeout: 8000 });
+    const roomTab = await page.$('.node-tab[data-tab="room"]');
+    if (roomTab) {
+      await roomTab.click();
+      await page.waitForTimeout(300);
+      const url = page.url();
+      assert(url.includes('tab=room'), `URL should contain tab=room after click, got: ${url}`);
+    }
+  });
+
   await browser.close();
 
   // Summary

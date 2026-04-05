@@ -4534,6 +4534,71 @@ console.log('\n=== region-filter.js: setSelected ===');
   });
 }
 
+// ===== NODES.JS: buildNodesQuery =====
+console.log('\n=== nodes.js: buildNodesQuery ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/app.js');
+
+  // Provide required globals for nodes.js IIFE to execute
+  ctx.registerPage = () => {};
+  ctx.RegionFilter = { init: () => Promise.resolve(), onChange: () => () => {}, offChange: () => {}, getSelected: () => null, getRegionParam: () => '' };
+  ctx.onWS = () => {};
+  ctx.offWS = () => {};
+  ctx.debouncedOnWS = () => () => {};
+  ctx.invalidateApiCache = () => {};
+  ctx.favStar = () => '';
+  ctx.bindFavStars = () => {};
+  ctx.getFavorites = () => [];
+  ctx.isFavorite = () => false;
+  ctx.connectWS = () => {};
+  ctx.HopResolver = { init: () => {}, resolve: () => ({}), ready: () => false };
+  ctx.initTabBar = () => {};
+  ctx.debounce = (fn) => fn;
+  ctx.copyToClipboard = () => {};
+  ctx.api = () => Promise.resolve({});
+  ctx.escapeHtml = (s) => s;
+  ctx.timeAgo = () => '';
+  ctx.formatTimestampWithTooltip = () => '';
+  ctx.getTimestampMode = () => 'ago';
+  ctx.CLIENT_TTL = {};
+  ctx.qrcode = null;
+
+  try {
+    const src = fs.readFileSync('public/nodes.js', 'utf8');
+    vm.runInContext(src, ctx);
+    for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+  } catch (e) {
+    console.log('  ⚠️ nodes.js sandbox load failed:', e.message.slice(0, 120));
+  }
+
+  const buildNodesQuery = ctx.buildNodesQuery;
+
+  if (buildNodesQuery) {
+    test('buildNodesQuery: all tab + no search = empty', () => {
+      assert.strictEqual(buildNodesQuery('all', ''), '');
+    });
+    test('buildNodesQuery: repeater tab only', () => {
+      assert.strictEqual(buildNodesQuery('repeater', ''), '?tab=repeater');
+    });
+    test('buildNodesQuery: search only (all tab)', () => {
+      assert.strictEqual(buildNodesQuery('all', 'foo'), '?search=foo');
+    });
+    test('buildNodesQuery: tab + search combined', () => {
+      assert.strictEqual(buildNodesQuery('companion', 'bar'), '?tab=companion&search=bar');
+    });
+    test('buildNodesQuery: null search treated as empty', () => {
+      assert.strictEqual(buildNodesQuery('all', null), '');
+    });
+    test('buildNodesQuery: sensor tab', () => {
+      assert.strictEqual(buildNodesQuery('sensor', ''), '?tab=sensor');
+    });
+  } else {
+    console.log('  ⚠️ buildNodesQuery not exposed — skipping');
+  }
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
