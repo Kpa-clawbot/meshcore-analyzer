@@ -560,9 +560,10 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 				}
 			}
 
-			// Fix C: minimize write lock hold time.
-			// Step 1: Under write lock, update resolved paths in memory and collect affected tx pointers.
-			var affectedTxs []*StoreTx
+			// Update in-memory state and re-pick best observation under a single
+			// write lock. The per-tx pickBestObservation is O(observations) which is
+			// typically <10 per tx — negligible cost vs. the race risk of splitting
+			// the lock (pollAndMerge can append to tx.Observations concurrently).
 			store.mu.Lock()
 			affectedSet := make(map[string]bool)
 			for _, r := range results {
@@ -572,63 +573,9 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 				if !affectedSet[r.txHash] {
 					affectedSet[r.txHash] = true
 					if tx, ok := store.byHash[r.txHash]; ok {
-						affectedTxs = append(affectedTxs, tx)
+						pickBestObservation(tx)
 					}
 				}
-			}
-			store.mu.Unlock()
-
-			// Step 2: Re-pick best observation for each affected tx outside write lock.
-			// pickBestObservation reads tx.Observations (slice doesn't change during backfill)
-			// and computes which obs is "best" — a read-only scan. We snapshot the result
-			// and write it back under a brief lock.
-			type bestPick struct {
-				tx           *StoreTx
-				observerID   string
-				observerName string
-				snr          *float64
-				rssi         *float64
-				pathJSON     string
-				direction    string
-				resolvedPath []*string
-			}
-			var picks []bestPick
-			for _, tx := range affectedTxs {
-				if len(tx.Observations) == 0 {
-					continue
-				}
-				best := tx.Observations[0]
-				bestLen := pathLen(best.PathJSON)
-				for _, obs := range tx.Observations[1:] {
-					l := pathLen(obs.PathJSON)
-					if l > bestLen {
-						best = obs
-						bestLen = l
-					}
-				}
-				picks = append(picks, bestPick{
-					tx:           tx,
-					observerID:   best.ObserverID,
-					observerName: best.ObserverName,
-					snr:          best.SNR,
-					rssi:         best.RSSI,
-					pathJSON:     best.PathJSON,
-					direction:    best.Direction,
-					resolvedPath: best.ResolvedPath,
-				})
-			}
-
-			// Step 3: Under brief write lock, write back the re-picked best observation fields.
-			store.mu.Lock()
-			for _, p := range picks {
-				p.tx.ObserverID = p.observerID
-				p.tx.ObserverName = p.observerName
-				p.tx.SNR = p.snr
-				p.tx.RSSI = p.rssi
-				p.tx.PathJSON = p.pathJSON
-				p.tx.Direction = p.direction
-				p.tx.ResolvedPath = p.resolvedPath
-				p.tx.pathParsed = false
 			}
 			store.mu.Unlock()
 		}
