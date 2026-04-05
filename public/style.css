@@ -2023,7 +2023,8 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   font-size: 18px; padding: 2px 6px; border-radius: 4px;
 }
 .rf-detail-close:hover { background: var(--bg-hover); }
-.rf-detail-chart { margin: 8px 0; overflow-x: auto; }
+.rf-detail-charts { display: flex; flex-direction: column; gap: 4px; }
+.rf-detail-chart { margin: 0; overflow-x: auto; }
 .rf-detail-summary { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 640px) {

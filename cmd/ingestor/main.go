@@ -231,12 +231,14 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		// Insert metrics sample from status message
 		if meta != nil {
 			metricsData := &MetricsData{
-				ObserverID: observerID,
-				NoiseFloor: meta.NoiseFloor,
-				TxAirSecs:  meta.TxAirSecs,
-				RxAirSecs:  meta.RxAirSecs,
-				RecvErrors: meta.RecvErrors,
-				BatteryMv:  meta.BatteryMv,
+				ObserverID:  observerID,
+				NoiseFloor:  meta.NoiseFloor,
+				TxAirSecs:   meta.TxAirSecs,
+				RxAirSecs:   meta.RxAirSecs,
+				RecvErrors:  meta.RecvErrors,
+				BatteryMv:   meta.BatteryMv,
+				PacketsSent: meta.PacketsSent,
+				PacketsRecv: meta.PacketsRecv,
 			}
 			if err := store.InsertMetrics(metricsData); err != nil {
 				log.Printf("MQTT [%s] metrics insert error: %v", tag, err)
@@ -661,6 +663,20 @@ func extractObserverMeta(msg map[string]interface{}) *ObserverMeta {
 		if f, ok := toFloat64(v); ok {
 			iv := int(math.Round(f))
 			meta.RecvErrors = &iv
+			hasData = true
+		}
+	}
+	if v := nestedOrTopLevel(stats, msg, "packets_sent"); v != nil {
+		if f, ok := toFloat64(v); ok {
+			iv := int(math.Round(f))
+			meta.PacketsSent = &iv
+			hasData = true
+		}
+	}
+	if v := nestedOrTopLevel(stats, msg, "packets_recv"); v != nil {
+		if f, ok := toFloat64(v); ok {
+			iv := int(math.Round(f))
+			meta.PacketsRecv = &iv
 			hasData = true
 		}
 	}

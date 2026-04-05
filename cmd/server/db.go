@@ -1735,21 +1735,74 @@ func (db *DB) PruneOldPackets(days int) (int64, error) {
 	return n, tx.Commit()
 }
 
-// MetricsSample represents a single row from observer_metrics.
+// MetricsSample represents a single row from observer_metrics with computed deltas.
 type MetricsSample struct {
-	Timestamp  string   `json:"timestamp"`
-	NoiseFloor *float64 `json:"noise_floor"`
-	TxAirSecs  *int     `json:"tx_air_secs"`
-	RxAirSecs  *int     `json:"rx_air_secs"`
-	RecvErrors *int     `json:"recv_errors"`
-	BatteryMv  *int     `json:"battery_mv"`
+	Timestamp     string   `json:"timestamp"`
+	NoiseFloor    *float64 `json:"noise_floor"`
+	TxAirSecs     *int     `json:"tx_air_secs,omitempty"`
+	RxAirSecs     *int     `json:"rx_air_secs,omitempty"`
+	RecvErrors    *int     `json:"recv_errors,omitempty"`
+	BatteryMv     *int     `json:"battery_mv"`
+	PacketsSent   *int     `json:"packets_sent,omitempty"`
+	PacketsRecv   *int     `json:"packets_recv,omitempty"`
+	TxAirtimePct  *float64 `json:"tx_airtime_pct"`
+	RxAirtimePct  *float64 `json:"rx_airtime_pct"`
+	RecvErrorRate *float64 `json:"recv_error_rate"`
+	IsReboot      bool     `json:"is_reboot_sample,omitempty"`
 }
 
-// GetObserverMetrics returns time-series metrics for a single observer.
-func (db *DB) GetObserverMetrics(observerID, since, until string) ([]MetricsSample, error) {
-	query := `SELECT timestamp, noise_floor, tx_air_secs, rx_air_secs, recv_errors, battery_mv
-		FROM observer_metrics WHERE observer_id = ?`
+// rawMetricsSample is the raw DB row before delta computation.
+type rawMetricsSample struct {
+	Timestamp   string
+	NoiseFloor  *float64
+	TxAirSecs   *int
+	RxAirSecs   *int
+	RecvErrors  *int
+	BatteryMv   *int
+	PacketsSent *int
+	PacketsRecv *int
+}
+
+// GetObserverMetrics returns time-series metrics with server-side delta computation.
+// resolution: "5m" (raw), "1h", "1d"
+// sampleIntervalSec: expected interval between samples (default 300)
+func (db *DB) GetObserverMetrics(observerID, since, until, resolution string, sampleIntervalSec int) ([]MetricsSample, []string, error) {
+	if sampleIntervalSec <= 0 {
+		sampleIntervalSec = 300
+	}
+
+	// Build query based on resolution
+	var query string
 	args := []interface{}{observerID}
+
+	switch resolution {
+	case "1h":
+		query = `SELECT
+			strftime('%Y-%m-%dT%H:00:00Z', timestamp) as ts,
+			AVG(noise_floor) as noise_floor,
+			MAX(tx_air_secs) as tx_air_secs,
+			MAX(rx_air_secs) as rx_air_secs,
+			MAX(recv_errors) as recv_errors,
+			AVG(battery_mv) as battery_mv,
+			MAX(packets_sent) as packets_sent,
+			MAX(packets_recv) as packets_recv
+			FROM observer_metrics WHERE observer_id = ?`
+	case "1d":
+		query = `SELECT
+			strftime('%Y-%m-%dT00:00:00Z', timestamp) as ts,
+			AVG(noise_floor) as noise_floor,
+			MAX(tx_air_secs) as tx_air_secs,
+			MAX(rx_air_secs) as rx_air_secs,
+			MAX(recv_errors) as recv_errors,
+			AVG(battery_mv) as battery_mv,
+			MAX(packets_sent) as packets_sent,
+			MAX(packets_recv) as packets_recv
+			FROM observer_metrics WHERE observer_id = ?`
+	default: // "5m" or raw
+		query = `SELECT timestamp, noise_floor, tx_air_secs, rx_air_secs, recv_errors, battery_mv, packets_sent, packets_recv
+			FROM observer_metrics WHERE observer_id = ?`
+	}
+
 	if since != "" {
 		query += " AND timestamp >= ?"
 		args = append(args, since)
@@ -1758,23 +1811,154 @@ func (db *DB) GetObserverMetrics(observerID, since, until string) ([]MetricsSamp
 		query += " AND timestamp <= ?"
 		args = append(args, until)
 	}
-	query += " ORDER BY timestamp ASC"
+
+	switch resolution {
+	case "1h":
+		query += " GROUP BY strftime('%Y-%m-%dT%H:00:00Z', timestamp) ORDER BY ts ASC"
+	case "1d":
+		query += " GROUP BY strftime('%Y-%m-%dT00:00:00Z', timestamp) ORDER BY ts ASC"
+	default:
+		query += " ORDER BY timestamp ASC"
+	}
 
 	rows, err := db.conn.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
-	var result []MetricsSample
+	var raw []rawMetricsSample
 	for rows.Next() {
-		var s MetricsSample
-		if err := rows.Scan(&s.Timestamp, &s.NoiseFloor, &s.TxAirSecs, &s.RxAirSecs, &s.RecvErrors, &s.BatteryMv); err != nil {
-			return nil, err
+		var s rawMetricsSample
+		if err := rows.Scan(&s.Timestamp, &s.NoiseFloor, &s.TxAirSecs, &s.RxAirSecs, &s.RecvErrors, &s.BatteryMv, &s.PacketsSent, &s.PacketsRecv); err != nil {
+			return nil, nil, err
 		}
+		raw = append(raw, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// Compute deltas between consecutive samples
+	return computeDeltas(raw, sampleIntervalSec)
+}
+
+// computeDeltas computes per-interval rates from cumulative counters.
+// Handles reboots (counter reset) and gaps (missing samples).
+func computeDeltas(raw []rawMetricsSample, sampleIntervalSec int) ([]MetricsSample, []string, error) {
+	if len(raw) == 0 {
+		return nil, nil, nil
+	}
+
+	gapThreshold := float64(sampleIntervalSec) * 2.0
+	result := make([]MetricsSample, 0, len(raw))
+	var reboots []string
+
+	for i, cur := range raw {
+		s := MetricsSample{
+			Timestamp:  cur.Timestamp,
+			NoiseFloor: cur.NoiseFloor,
+			BatteryMv:  cur.BatteryMv,
+		}
+
+		if i == 0 {
+			// First sample: no delta possible
+			result = append(result, s)
+			continue
+		}
+
+		prev := raw[i-1]
+
+		// Check for gap
+		curT, err1 := time.Parse(time.RFC3339, cur.Timestamp)
+		prevT, err2 := time.Parse(time.RFC3339, prev.Timestamp)
+		if err1 != nil || err2 != nil {
+			result = append(result, s)
+			continue
+		}
+		intervalSecs := curT.Sub(prevT).Seconds()
+		if intervalSecs > gapThreshold {
+			// Gap detected: insert null deltas (don't interpolate)
+			result = append(result, s)
+			continue
+		}
+		if intervalSecs <= 0 {
+			result = append(result, s)
+			continue
+		}
+
+		// Detect reboot: any cumulative counter decreased
+		isReboot := false
+		if cur.TxAirSecs != nil && prev.TxAirSecs != nil && *cur.TxAirSecs < *prev.TxAirSecs {
+			isReboot = true
+		}
+		if cur.RxAirSecs != nil && prev.RxAirSecs != nil && *cur.RxAirSecs < *prev.RxAirSecs {
+			isReboot = true
+		}
+		if cur.RecvErrors != nil && prev.RecvErrors != nil && *cur.RecvErrors < *prev.RecvErrors {
+			isReboot = true
+		}
+
+		if isReboot {
+			s.IsReboot = true
+			reboots = append(reboots, cur.Timestamp)
+			// Skip delta computation for reboot samples — use as new baseline
+			result = append(result, s)
+			continue
+		}
+
+		// Compute TX airtime percentage
+		if cur.TxAirSecs != nil && prev.TxAirSecs != nil {
+			delta := float64(*cur.TxAirSecs - *prev.TxAirSecs)
+			pct := (delta / intervalSecs) * 100.0
+			if pct < 0 {
+				pct = 0
+			}
+			if pct > 100 {
+				pct = 100
+			}
+			result_pct := math.Round(pct*100) / 100
+			s.TxAirtimePct = &result_pct
+		}
+
+		// Compute RX airtime percentage
+		if cur.RxAirSecs != nil && prev.RxAirSecs != nil {
+			delta := float64(*cur.RxAirSecs - *prev.RxAirSecs)
+			pct := (delta / intervalSecs) * 100.0
+			if pct < 0 {
+				pct = 0
+			}
+			if pct > 100 {
+				pct = 100
+			}
+			result_pct := math.Round(pct*100) / 100
+			s.RxAirtimePct = &result_pct
+		}
+
+		// Compute recv error rate
+		if cur.RecvErrors != nil && prev.RecvErrors != nil &&
+			cur.PacketsRecv != nil && prev.PacketsRecv != nil {
+			deltaErrors := float64(*cur.RecvErrors - *prev.RecvErrors)
+			deltaRecv := float64(*cur.PacketsRecv - *prev.PacketsRecv)
+			total := deltaRecv + deltaErrors
+			if total > 0 {
+				rate := (deltaErrors / total) * 100.0
+				rate = math.Round(rate*100) / 100
+				s.RecvErrorRate = &rate
+			}
+		} else if cur.RecvErrors != nil && prev.RecvErrors != nil {
+			// Fallback: just report delta errors per interval if no packets_recv
+			deltaErrors := float64(*cur.RecvErrors - *prev.RecvErrors)
+			if deltaErrors >= 0 {
+				// Can't compute rate without packets_recv, leave nil
+				_ = deltaErrors
+			}
+		}
+
 		result = append(result, s)
 	}
-	return result, rows.Err()
+
+	return result, reboots, nil
 }
 
 // MetricsSummaryRow holds summary data for one observer.

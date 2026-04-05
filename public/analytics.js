@@ -2827,9 +2827,15 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     container.innerHTML = '<div class="text-muted" style="padding:10px">Loading detail…</div>';
 
     const { since, until } = rfHealthTimeRangeToParams(_rfHealthState.range, _rfHealthState.customFrom, _rfHealthState.customTo);
+    // Choose resolution based on time range
+    let resolution = '5m';
+    const rangeMap = { '7d': '1h', '30d': '1h' };
+    if (rangeMap[_rfHealthState.range]) resolution = rangeMap[_rfHealthState.range];
+
     try {
-      const data = await api(`/observers/${observerId}/metrics?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`);
+      const data = await api(`/observers/${observerId}/metrics?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}&resolution=${resolution}`);
       const metrics = data.metrics || [];
+      const reboots = (data.reboots || []).map(r => new Date(r).getTime());
       const name = data.observer_name || observerId.substring(0, 8);
 
       if (!metrics.length) {
@@ -2837,8 +2843,16 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
         return;
       }
 
-      // Extract noise floor data
+      // Extract data series
       const nfData = metrics.map(m => ({ t: m.timestamp, v: m.noise_floor })).filter(d => d.v != null);
+      const txData = metrics.map(m => ({ t: m.timestamp, v: m.tx_airtime_pct })).filter(d => d.v != null);
+      const rxData = metrics.map(m => ({ t: m.timestamp, v: m.rx_airtime_pct })).filter(d => d.v != null);
+      const errData = metrics.map(m => ({ t: m.timestamp, v: m.recv_error_rate })).filter(d => d.v != null);
+      const battData = metrics.map(m => ({ t: m.timestamp, v: m.battery_mv })).filter(d => d.v != null && d.v > 0);
+
+      const hasAirtime = txData.length > 1 || rxData.length > 1;
+      const hasErrors = errData.length > 1;
+      const hasBattery = battData.length > 1;
 
       // Current values
       const latest = metrics[metrics.length - 1];
@@ -2847,16 +2861,24 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
       const minNf = nfValues.length ? Math.min(...nfValues).toFixed(1) : '—';
       const maxNf = nfValues.length ? Math.max(...nfValues).toFixed(1) : '—';
       const curNf = latest.noise_floor != null ? latest.noise_floor.toFixed(1) : '—';
-      const curBatt = latest.battery_mv != null ? (latest.battery_mv / 1000).toFixed(2) + 'V' : '—';
+      const curBatt = latest.battery_mv != null && latest.battery_mv > 0 ? (latest.battery_mv / 1000).toFixed(2) + 'V' : '—';
+      const curTx = latest.tx_airtime_pct != null ? latest.tx_airtime_pct.toFixed(1) + '%' : '—';
+      const curRx = latest.rx_airtime_pct != null ? latest.rx_airtime_pct.toFixed(1) + '%' : '—';
+      const curErr = latest.recv_error_rate != null ? latest.recv_error_rate.toFixed(2) + '%' : '—';
 
       container.innerHTML = `
         <div class="rf-detail-header">
           <h3>${esc(name)}</h3>
           <button class="rf-detail-close" aria-label="Close detail" title="Close">✕</button>
         </div>
-        <div class="rf-detail-chart" id="rfDetailChart"></div>
+        <div class="rf-detail-charts">
+          <div class="rf-detail-chart" id="rfDetailNFChart"></div>
+          ${hasAirtime ? '<div class="rf-detail-chart" id="rfDetailAirtimeChart"></div>' : ''}
+          ${hasErrors ? '<div class="rf-detail-chart" id="rfDetailErrorChart"></div>' : ''}
+          ${hasBattery ? '<div class="rf-detail-chart" id="rfDetailBatteryChart"></div>' : ''}
+        </div>
         <div class="rf-detail-summary">
-          NF: ${curNf} dBm | avg: ${avgNf} | min: ${minNf} | max: ${maxNf} | Batt: ${curBatt}
+          NF: ${curNf} dBm | avg: ${avgNf} | min: ${minNf} | max: ${maxNf} | TX: ${curTx} | RX: ${curRx} | Err: ${curErr} | Batt: ${curBatt}${reboots.length ? ' | ' + reboots.length + ' reboots' : ''}
         </div>`;
 
       // Close button
@@ -2868,40 +2890,277 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
         document.querySelectorAll('.rf-cell').forEach(c => c.classList.remove('rf-cell-selected'));
       });
 
-      // Render noise floor line chart
-      const chartEl = document.getElementById('rfDetailChart');
-      if (nfData.length > 1) {
-        chartEl.innerHTML = rfNFLineChart(nfData, chartEl.clientWidth || 700, 200);
-      } else {
-        chartEl.innerHTML = '<span class="text-muted">Not enough data points for chart</span>';
+      // Compute shared time range across all charts
+      const allTimestamps = metrics.map(m => new Date(m.timestamp).getTime());
+      const minT = Math.min(...allTimestamps);
+      const maxT = Math.max(...allTimestamps);
+
+      // Render noise floor chart
+      const nfEl = document.getElementById('rfDetailNFChart');
+      if (nfEl && nfData.length > 1) {
+        nfEl.innerHTML = rfNFLineChart(nfData, nfEl.clientWidth || 700, 180, reboots, minT, maxT);
+      } else if (nfEl) {
+        nfEl.innerHTML = '<span class="text-muted">Not enough noise floor data</span>';
+      }
+
+      // Render airtime chart
+      if (hasAirtime) {
+        const atEl = document.getElementById('rfDetailAirtimeChart');
+        if (atEl) {
+          atEl.innerHTML = rfAirtimeChart(txData, rxData, atEl.clientWidth || 700, 150, reboots, minT, maxT);
+        }
+      }
+
+      // Render error rate chart
+      if (hasErrors) {
+        const errEl = document.getElementById('rfDetailErrorChart');
+        if (errEl) {
+          errEl.innerHTML = rfErrorRateChart(errData, errEl.clientWidth || 700, 120, reboots, minT, maxT);
+        }
+      }
+
+      // Render battery chart
+      if (hasBattery) {
+        const battEl = document.getElementById('rfDetailBatteryChart');
+        if (battEl) {
+          battEl.innerHTML = rfBatteryChart(battData, battEl.clientWidth || 700, 120, reboots, minT, maxT);
+        }
       }
     } catch (e) {
       container.innerHTML = `<div class="text-muted" style="padding:10px">Failed to load detail: ${esc(e.message)}</div>`;
     }
   }
 
-  function rfNFLineChart(data, w, h) {
+  // Shared helper: render reboot markers as vertical hairlines
+  function rfRebootMarkers(reboots, sx, pad, h, w) {
+    let svg = '';
+    for (const rt of reboots) {
+      const x = sx(rt);
+      if (x >= pad.left && x <= w - pad.right) {
+        svg += `<line x1="${x.toFixed(1)}" y1="${pad.top}" x2="${x.toFixed(1)}" y2="${(h - pad.bottom).toFixed(1)}" stroke="var(--text-muted)" stroke-width="0.5" stroke-dasharray="3,3" opacity="0.6"/>`;
+        svg += `<text x="${(x + 2).toFixed(1)}" y="${(pad.top + 8).toFixed(1)}" font-size="7" fill="var(--text-muted)" opacity="0.7">reboot</text>`;
+      }
+    }
+    return svg;
+  }
+
+  // Shared helper: render X-axis time labels
+  function rfXAxisLabels(data, sx, h, pad) {
+    let svg = '';
+    const xTicks = Math.min(6, data.length);
+    for (let i = 0; i < xTicks; i++) {
+      const idx = Math.floor(i * (data.length - 1) / Math.max(xTicks - 1, 1));
+      const t = new Date(data[idx].t);
+      const x = sx(t.getTime());
+      const label = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      svg += `<text x="${x.toFixed(1)}" y="${h - 5}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${label}</text>`;
+    }
+    return svg;
+  }
+
+  // Shared: build polyline points string from data, skip nulls (break line)
+  function rfPolylineSegments(data, sx, sy) {
+    // Returns array of polyline point strings (one per contiguous segment)
+    const segments = [];
+    let current = [];
+    for (const d of data) {
+      if (d.v == null) {
+        if (current.length > 1) segments.push(current.join(' '));
+        current = [];
+      } else {
+        current.push(`${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`);
+      }
+    }
+    if (current.length > 1) segments.push(current.join(' '));
+    return segments;
+  }
+
+  // Airtime chart: TX (red/orange) + RX (blue) lines, Y 0-100%
+  function rfAirtimeChart(txData, rxData, w, h, reboots, sharedMinT, sharedMaxT) {
+    const pad = { top: 20, right: 50, bottom: 30, left: 55 };
+    const cw = w - pad.left - pad.right;
+    const ch = h - pad.top - pad.bottom;
+    const minT = sharedMinT, maxT = sharedMaxT;
+    const rangeT = maxT - minT || 1;
+
+    const sx = t => pad.left + ((t - minT) / rangeT) * cw;
+    const sy = v => pad.top + ch - (v / 100) * ch; // 0-100%
+
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Airtime chart"><title>Airtime %</title>`;
+
+    // Chart title
+    svg += `<text x="${pad.left}" y="12" font-size="10" fill="var(--text-muted)" font-weight="600">Airtime %</text>`;
+
+    // Y-axis: 0, 25, 50, 75, 100
+    for (let pct = 0; pct <= 100; pct += 25) {
+      const y = sy(pct);
+      svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${pct}</text>`;
+      svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.3"/>`;
+    }
+
+    // Reboot markers
+    svg += rfRebootMarkers(reboots, sx, pad, h, w);
+
+    // TX line (red/orange)
+    if (txData.length > 1) {
+      const txPts = txData.map(d => `${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`).join(' ');
+      svg += `<polyline points="${txPts}" fill="none" stroke="var(--danger, #e74c3c)" stroke-width="1.5"/>`;
+      // Direct label at last point
+      const lastTx = txData[txData.length - 1];
+      const lx = sx(new Date(lastTx.t).getTime());
+      const ly = sy(lastTx.v);
+      svg += `<text x="${(lx + 4).toFixed(1)}" y="${(ly + 3).toFixed(1)}" font-size="9" fill="var(--danger, #e74c3c)">TX ${lastTx.v.toFixed(1)}%</text>`;
+    }
+
+    // RX line (blue)
+    if (rxData.length > 1) {
+      const rxPts = rxData.map(d => `${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`).join(' ');
+      svg += `<polyline points="${rxPts}" fill="none" stroke="var(--info, #3498db)" stroke-width="1.5"/>`;
+      // Direct label at last point
+      const lastRx = rxData[rxData.length - 1];
+      const lx = sx(new Date(lastRx.t).getTime());
+      const ly = sy(lastRx.v);
+      svg += `<text x="${(lx + 4).toFixed(1)}" y="${(ly + 3).toFixed(1)}" font-size="9" fill="var(--info, #3498db)">RX ${lastRx.v.toFixed(1)}%</text>`;
+    }
+
+    // X-axis labels
+    const allData = txData.length >= rxData.length ? txData : rxData;
+    svg += rfXAxisLabels(allData, sx, h, pad);
+
+    svg += '</svg>';
+    return svg;
+  }
+
+  // Error rate chart: recv_error_rate line
+  function rfErrorRateChart(errData, w, h, reboots, sharedMinT, sharedMaxT) {
+    const pad = { top: 20, right: 50, bottom: 30, left: 55 };
+    const cw = w - pad.left - pad.right;
+    const ch = h - pad.top - pad.bottom;
+    const minT = sharedMinT, maxT = sharedMaxT;
+    const rangeT = maxT - minT || 1;
+
+    const values = errData.map(d => d.v);
+    const maxV = Math.max(...values, 1); // at least 1% scale
+    const rangeV = maxV || 1;
+
+    const sx = t => pad.left + ((t - minT) / rangeT) * cw;
+    const sy = v => pad.top + ch - (v / rangeV) * ch;
+
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Error rate chart"><title>Error Rate</title>`;
+
+    // Chart title
+    svg += `<text x="${pad.left}" y="12" font-size="10" fill="var(--text-muted)" font-weight="600">Error Rate %</text>`;
+
+    // Y-axis
+    const yTicks = 4;
+    for (let i = 0; i <= yTicks; i++) {
+      const v = (rangeV * i / yTicks);
+      const y = sy(v);
+      svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v.toFixed(1)}</text>`;
+      svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.3"/>`;
+    }
+
+    // Reboot markers
+    svg += rfRebootMarkers(reboots, sx, pad, h, w);
+
+    // Error rate line
+    const pts = errData.map(d => `${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`).join(' ');
+    svg += `<polyline points="${pts}" fill="none" stroke="var(--warning, #f39c12)" stroke-width="1.5"/>`;
+
+    // Direct label at last point
+    const last = errData[errData.length - 1];
+    const lx = sx(new Date(last.t).getTime());
+    const ly = sy(last.v);
+    svg += `<text x="${(lx + 4).toFixed(1)}" y="${(ly + 3).toFixed(1)}" font-size="9" fill="var(--warning, #f39c12)">${last.v.toFixed(2)}%</text>`;
+
+    // X-axis labels
+    svg += rfXAxisLabels(errData, sx, h, pad);
+
+    svg += '</svg>';
+    return svg;
+  }
+
+  // Battery voltage chart
+  function rfBatteryChart(battData, w, h, reboots, sharedMinT, sharedMaxT) {
+    const pad = { top: 20, right: 50, bottom: 30, left: 55 };
+    const cw = w - pad.left - pad.right;
+    const ch = h - pad.top - pad.bottom;
+    const minT = sharedMinT, maxT = sharedMaxT;
+    const rangeT = maxT - minT || 1;
+
+    const values = battData.map(d => d.v);
+    const minV = Math.min(...values);
+    const maxV = Math.max(...values);
+    const rangeV = maxV - minV || 100; // at least 100mV range
+
+    const sx = t => pad.left + ((t - minT) / rangeT) * cw;
+    const sy = v => pad.top + ch - ((v - minV) / rangeV) * ch;
+
+    let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Battery voltage chart"><title>Battery</title>`;
+
+    // Chart title
+    svg += `<text x="${pad.left}" y="12" font-size="10" fill="var(--text-muted)" font-weight="600">Battery</text>`;
+
+    // Y-axis (in volts)
+    const yTicks = 4;
+    for (let i = 0; i <= yTicks; i++) {
+      const v = minV + (rangeV * i / yTicks);
+      const y = sy(v);
+      svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${(v/1000).toFixed(2)}V</text>`;
+      svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.3"/>`;
+    }
+
+    // Low battery reference line at 3.3V
+    const lowBattMv = 3300;
+    if (lowBattMv >= minV && lowBattMv <= maxV) {
+      const y = sy(lowBattMv);
+      svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--warning, #f39c12)" stroke-width="0.5" stroke-dasharray="4,2"/>`;
+      svg += `<text x="${w - pad.right + 2}" y="${(y + 3).toFixed(1)}" font-size="8" fill="var(--warning, #f39c12)">3.3V low</text>`;
+    }
+
+    // Reboot markers
+    svg += rfRebootMarkers(reboots, sx, pad, h, w);
+
+    // Battery line
+    const pts = battData.map(d => `${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`).join(' ');
+    svg += `<polyline points="${pts}" fill="none" stroke="var(--success, #27ae60)" stroke-width="1.5"/>`;
+
+    // Direct label at last point
+    const last = battData[battData.length - 1];
+    const lx = sx(new Date(last.t).getTime());
+    const ly = sy(last.v);
+    svg += `<text x="${(lx + 4).toFixed(1)}" y="${(ly + 3).toFixed(1)}" font-size="9" fill="var(--success, #27ae60)">${(last.v/1000).toFixed(2)}V</text>`;
+
+    // X-axis labels
+    svg += rfXAxisLabels(battData, sx, h, pad);
+
+    svg += '</svg>';
+    return svg;
+  }
+
+  function rfNFLineChart(data, w, h, reboots, sharedMinT, sharedMaxT) {
+    reboots = reboots || [];
     const pad = { top: 20, right: 40, bottom: 30, left: 55 };
     const cw = w - pad.left - pad.right;
     const ch = h - pad.top - pad.bottom;
 
     const values = data.map(d => d.v);
-    const times = data.map(d => new Date(d.t).getTime());
-    const minT = Math.min(...times);
-    const maxT = Math.max(...times);
+    const minT = sharedMinT != null ? sharedMinT : Math.min(...data.map(d => new Date(d.t).getTime()));
+    const maxT = sharedMaxT != null ? sharedMaxT : Math.max(...data.map(d => new Date(d.t).getTime()));
     const minV = Math.min(...values);
     const maxV = Math.max(...values);
     const rangeV = maxV - minV || 1;
     const rangeT = maxT - minT || 1;
 
-    // Scale functions
     const sx = t => pad.left + ((t - minT) / rangeT) * cw;
-    const sy = v => pad.top + ch - ((v - minV) / rangeV) * ch; // higher dBm (worse) = higher on chart (lower y)
+    const sy = v => pad.top + ch - ((v - minV) / rangeV) * ch;
 
-    // Data line
     const pts = data.map(d => `${sx(new Date(d.t).getTime()).toFixed(1)},${sy(d.v).toFixed(1)}`).join(' ');
 
     let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Noise floor line chart"><title>Noise floor over time</title>`;
+
+    // Chart title
+    svg += `<text x="${pad.left}" y="12" font-size="10" fill="var(--text-muted)" font-weight="600">Noise Floor dBm</text>`;
 
     // Reference lines
     const refLines = [-100, -85];
@@ -2923,20 +3182,17 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
       svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.3"/>`;
     }
 
+    // Reboot markers
+    svg += rfRebootMarkers(reboots, sx, pad, h, w);
+
     // X-axis labels
-    const xTicks = Math.min(6, data.length);
-    for (let i = 0; i < xTicks; i++) {
-      const idx = Math.floor(i * (data.length - 1) / Math.max(xTicks - 1, 1));
-      const t = new Date(data[idx].t);
-      const x = sx(t.getTime());
-      const label = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      svg += `<text x="${x.toFixed(1)}" y="${h - 5}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${label}</text>`;
-    }
+    svg += rfXAxisLabels(data, sx, h, pad);
 
     // Data polyline
     svg += `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>`;
 
     // Direct labels: min and max points
+    const times = data.map(d => new Date(d.t).getTime());
     const maxIdx = values.indexOf(maxV);
     const minIdx = values.indexOf(minV);
     svg += `<circle cx="${sx(times[maxIdx]).toFixed(1)}" cy="${sy(maxV).toFixed(1)}" r="3" fill="var(--danger, red)"/>`;

@@ -83,6 +83,8 @@ func setupTestDB(t *testing.T) *DB {
 			rx_air_secs INTEGER,
 			recv_errors INTEGER,
 			battery_mv INTEGER,
+			packets_sent INTEGER,
+			packets_recv INTEGER,
 			PRIMARY KEY (observer_id, timestamp)
 		);
 
@@ -1562,38 +1564,45 @@ func TestGetObserverMetrics(t *testing.T) {
 
 	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor, tx_air_secs, rx_air_secs, recv_errors, battery_mv) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		"obs1", t1, -112.5, 100, 500, 3, 3720)
-	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor) VALUES (?, ?, ?)",
-		"obs1", t2, -110.0)
-	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor) VALUES (?, ?, ?)",
-		"obs1", t3, -108.0)
+	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor, tx_air_secs, rx_air_secs, recv_errors) VALUES (?, ?, ?, ?, ?, ?)",
+		"obs1", t2, -110.0, 200, 800, 5)
+	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor, tx_air_secs, rx_air_secs, recv_errors) VALUES (?, ?, ?, ?, ?, ?)",
+		"obs1", t3, -108.0, 300, 1100, 8)
 	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor) VALUES (?, ?, ?)",
 		"obs2", t1, -115.0)
 
 	// Query all for obs1
 	since := now.Add(-3 * time.Hour).Format(time.RFC3339)
-	metrics, err := db.GetObserverMetrics("obs1", since, "")
+	metrics, reboots, err := db.GetObserverMetrics("obs1", since, "", "5m", 3600)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(metrics) != 3 {
 		t.Errorf("expected 3 metrics, got %d", len(metrics))
 	}
+	if len(reboots) != 0 {
+		t.Errorf("expected 0 reboots, got %d", len(reboots))
+	}
 
-	// Verify first row has all fields
+	// Verify first row has noise_floor
 	if metrics[0].NoiseFloor == nil || *metrics[0].NoiseFloor != -112.5 {
 		t.Errorf("first noise_floor = %v, want -112.5", metrics[0].NoiseFloor)
 	}
-	if metrics[0].TxAirSecs == nil || *metrics[0].TxAirSecs != 100 {
-		t.Errorf("first tx_air_secs = %v, want 100", metrics[0].TxAirSecs)
+	// First row: no delta possible (first sample)
+	if metrics[0].TxAirtimePct != nil {
+		t.Errorf("first sample should have nil tx_airtime_pct, got %v", *metrics[0].TxAirtimePct)
 	}
 
-	// Second row has NULL for tx_air_secs
-	if metrics[1].TxAirSecs != nil {
-		t.Errorf("second tx_air_secs should be nil, got %v", *metrics[1].TxAirSecs)
+	// Second row should have computed deltas
+	// TX: (200-100) / 3600 * 100 ≈ 2.78%
+	if metrics[1].TxAirtimePct == nil {
+		t.Errorf("second sample tx_airtime_pct should not be nil")
+	} else if *metrics[1].TxAirtimePct < 2.0 || *metrics[1].TxAirtimePct > 3.5 {
+		t.Errorf("second sample tx_airtime_pct = %v, want ~2.78", *metrics[1].TxAirtimePct)
 	}
 
 	// Query with until filter
-	metrics2, err := db.GetObserverMetrics("obs1", since, t2)
+	metrics2, _, err := db.GetObserverMetrics("obs1", since, t2, "5m", 3600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1664,12 +1673,160 @@ func TestObserverMetricsAPIEndpoints(t *testing.T) {
 		"obs1", t1, -112.0)
 
 	// Query directly to verify
-	metrics, err := db.GetObserverMetrics("obs1", "", "")
+	metrics, _, err := db.GetObserverMetrics("obs1", "", "", "5m", 300)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(metrics) != 1 {
 		t.Errorf("expected 1 metric, got %d", len(metrics))
+	}
+}
+
+func TestComputeDeltas(t *testing.T) {
+	intPtr := func(v int) *int { return &v }
+	floatPtr := func(v float64) *float64 { return &v }
+
+	t.Run("empty input", func(t *testing.T) {
+		result, reboots, err := computeDeltas(nil, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+		if reboots != nil {
+			t.Errorf("expected nil reboots, got %v", reboots)
+		}
+	})
+
+	t.Run("normal delta computation", func(t *testing.T) {
+		raw := []rawMetricsSample{
+			{Timestamp: "2026-04-05T00:00:00Z", NoiseFloor: floatPtr(-112), TxAirSecs: intPtr(100), RxAirSecs: intPtr(500), RecvErrors: intPtr(3), PacketsRecv: intPtr(1000)},
+			{Timestamp: "2026-04-05T00:05:00Z", NoiseFloor: floatPtr(-110), TxAirSecs: intPtr(115), RxAirSecs: intPtr(525), RecvErrors: intPtr(5), PacketsRecv: intPtr(1100)},
+		}
+		result, reboots, err := computeDeltas(raw, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("expected 2 results, got %d", len(result))
+		}
+		if len(reboots) != 0 {
+			t.Errorf("expected 0 reboots, got %d", len(reboots))
+		}
+		// First sample: no deltas
+		if result[0].TxAirtimePct != nil {
+			t.Errorf("first sample should have nil tx_airtime_pct")
+		}
+		// Second sample: TX delta = 15 secs / 300 secs * 100 = 5%
+		if result[1].TxAirtimePct == nil {
+			t.Fatal("second sample tx_airtime_pct should not be nil")
+		}
+		if *result[1].TxAirtimePct != 5.0 {
+			t.Errorf("tx_airtime_pct = %v, want 5.0", *result[1].TxAirtimePct)
+		}
+		// RX delta = 25 secs / 300 secs * 100 ≈ 8.33%
+		if result[1].RxAirtimePct == nil {
+			t.Fatal("second sample rx_airtime_pct should not be nil")
+		}
+		if *result[1].RxAirtimePct < 8.3 || *result[1].RxAirtimePct > 8.4 {
+			t.Errorf("rx_airtime_pct = %v, want ~8.33", *result[1].RxAirtimePct)
+		}
+		// Error rate: delta_errors=2, delta_recv=100, rate = 2/(100+2)*100 ≈ 1.96%
+		if result[1].RecvErrorRate == nil {
+			t.Fatal("second sample recv_error_rate should not be nil")
+		}
+		if *result[1].RecvErrorRate < 1.9 || *result[1].RecvErrorRate > 2.0 {
+			t.Errorf("recv_error_rate = %v, want ~1.96", *result[1].RecvErrorRate)
+		}
+	})
+
+	t.Run("reboot detection", func(t *testing.T) {
+		raw := []rawMetricsSample{
+			{Timestamp: "2026-04-05T00:00:00Z", TxAirSecs: intPtr(1000), RxAirSecs: intPtr(5000)},
+			{Timestamp: "2026-04-05T00:05:00Z", TxAirSecs: intPtr(10), RxAirSecs: intPtr(20)}, // reboot!
+			{Timestamp: "2026-04-05T00:10:00Z", TxAirSecs: intPtr(25), RxAirSecs: intPtr(45)},
+		}
+		result, reboots, err := computeDeltas(raw, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reboots) != 1 {
+			t.Fatalf("expected 1 reboot, got %d", len(reboots))
+		}
+		if reboots[0] != "2026-04-05T00:05:00Z" {
+			t.Errorf("reboot timestamp = %s", reboots[0])
+		}
+		if !result[1].IsReboot {
+			t.Error("second sample should be marked as reboot")
+		}
+		// Reboot sample should have nil deltas
+		if result[1].TxAirtimePct != nil {
+			t.Error("reboot sample should have nil tx_airtime_pct")
+		}
+		// Third sample should have valid deltas from post-reboot baseline
+		if result[2].TxAirtimePct == nil {
+			t.Fatal("third sample tx_airtime_pct should not be nil")
+		}
+		if *result[2].TxAirtimePct != 5.0 { // 15/300*100
+			t.Errorf("third sample tx_airtime_pct = %v, want 5.0", *result[2].TxAirtimePct)
+		}
+	})
+
+	t.Run("gap detection", func(t *testing.T) {
+		raw := []rawMetricsSample{
+			{Timestamp: "2026-04-05T00:00:00Z", TxAirSecs: intPtr(100)},
+			{Timestamp: "2026-04-05T00:15:00Z", TxAirSecs: intPtr(200)}, // 15min gap > 2*300s
+		}
+		result, _, err := computeDeltas(raw, 300)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Gap sample should have nil deltas
+		if result[1].TxAirtimePct != nil {
+			t.Error("gap sample should have nil tx_airtime_pct")
+		}
+	})
+}
+
+func TestGetObserverMetricsResolution(t *testing.T) {
+	db := setupTestDB(t)
+	seedTestData(t, db)
+
+	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor, tx_air_secs) VALUES (?, ?, ?, ?)",
+		"obs1", "2026-04-05T00:00:00Z", -112.0, 100)
+	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor, tx_air_secs) VALUES (?, ?, ?, ?)",
+		"obs1", "2026-04-05T00:05:00Z", -110.0, 200)
+	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor, tx_air_secs) VALUES (?, ?, ?, ?)",
+		"obs1", "2026-04-05T01:00:00Z", -108.0, 500)
+	db.conn.Exec("INSERT INTO observer_metrics (observer_id, timestamp, noise_floor, tx_air_secs) VALUES (?, ?, ?, ?)",
+		"obs1", "2026-04-05T01:05:00Z", -106.0, 600)
+
+	// 5m resolution: all 4 rows
+	m5, _, err := db.GetObserverMetrics("obs1", "2026-04-04T00:00:00Z", "", "5m", 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m5) != 4 {
+		t.Errorf("5m resolution: expected 4 rows, got %d", len(m5))
+	}
+
+	// 1h resolution: 2 buckets
+	m1h, _, err := db.GetObserverMetrics("obs1", "2026-04-04T00:00:00Z", "", "1h", 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m1h) != 2 {
+		t.Errorf("1h resolution: expected 2 rows, got %d", len(m1h))
+	}
+
+	// 1d resolution: 1 bucket
+	m1d, _, err := db.GetObserverMetrics("obs1", "2026-04-04T00:00:00Z", "", "1d", 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m1d) != 1 {
+		t.Errorf("1d resolution: expected 1 row, got %d", len(m1d))
 	}
 }
 

@@ -2159,19 +2159,38 @@ func (s *Server) handleObserverMetrics(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	since := r.URL.Query().Get("since")
 	until := r.URL.Query().Get("until")
+	resolution := r.URL.Query().Get("resolution")
 
 	// Default to last 24h if no since provided
 	if since == "" {
 		since = time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 	}
 
-	metrics, err := s.db.GetObserverMetrics(id, since, until)
+	// Validate resolution
+	if resolution == "" {
+		resolution = "5m"
+	}
+	switch resolution {
+	case "5m", "1h", "1d":
+		// valid
+	default:
+		writeError(w, 400, "invalid resolution: "+resolution+". Must be 5m, 1h, or 1d")
+		return
+	}
+
+	// Sample interval (default 300s = 5min)
+	sampleInterval := 300
+
+	metrics, reboots, err := s.db.GetObserverMetrics(id, since, until, resolution, sampleInterval)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
 	if metrics == nil {
 		metrics = []MetricsSample{}
+	}
+	if reboots == nil {
+		reboots = []string{}
 	}
 
 	// Get observer name
@@ -2184,6 +2203,7 @@ func (s *Server) handleObserverMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"observer_id":   id,
 		"observer_name": name,
+		"reboots":       reboots,
 		"metrics":       metrics,
 	})
 }
