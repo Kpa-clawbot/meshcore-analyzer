@@ -153,7 +153,7 @@ func main() {
 	// NOTE on startup ordering (review item #10): ensureResolvedPathColumn runs AFTER
 	// OpenDB/detectSchema, so db.hasResolvedPath will be false on first run with a
 	// pre-existing DB. This means Load() won't SELECT resolved_path from SQLite.
-	// That's OK: backfillResolvedPaths (below) computes and persists them in-memory
+	// Async backfill runs after HTTP starts (see backfillResolvedPathsAsync below)
 	// AND to SQLite. On next restart, detectSchema finds the column and Load() reads it.
 	if err := ensureResolvedPathColumn(dbPath); err != nil {
 		log.Printf("[store] warning: could not add resolved_path column: %v", err)
