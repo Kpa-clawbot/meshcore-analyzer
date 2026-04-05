@@ -207,8 +207,33 @@ type cachedResult struct {
 	expiresAt time.Time
 }
 
+// cacheTTLSec extracts a duration from the cacheTTL config map.
+// Values may be float64 (from JSON) or int. Returns false if key is missing or non-positive.
+func cacheTTLSec(m map[string]interface{}, key string) (time.Duration, bool) {
+	v, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+	var sec float64
+	switch n := v.(type) {
+	case float64:
+		sec = n
+	case int:
+		sec = float64(n)
+	case int64:
+		sec = float64(n)
+	default:
+		return 0, false
+	}
+	if sec <= 0 {
+		return 0, false
+	}
+	return time.Duration(sec * float64(time.Second)), true
+}
+
 // NewPacketStore creates a new empty packet store backed by db.
-func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
+// cacheTTLs is the optional cacheTTL map from config.json; keys are strings, values are seconds.
+func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]interface{}) *PacketStore {
 	ps := &PacketStore{
 		db:            db,
 		packets:       make([]*StoreTx, 0, 65536),
@@ -229,7 +254,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
 		distCache:     make(map[string]*cachedResult),
 		subpathCache:  make(map[string]*cachedResult),
 		rfCacheTTL:         15 * time.Second,
-		collisionCacheTTL: 60 * time.Second,
+		collisionCacheTTL: 3600 * time.Second,
 		invCooldown:       10 * time.Second,
 		spIndex:       make(map[string]int, 4096),
 		spTxIndex:     make(map[string][]*StoreTx, 4096),
@@ -238,6 +263,16 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
 	if cfg != nil {
 		ps.retentionHours = cfg.RetentionHours
 		ps.maxMemoryMB = cfg.MaxMemoryMB
+	}
+	// Wire cacheTTL config values to server-side cache durations.
+	if len(cacheTTLs) > 0 && cacheTTLs[0] != nil {
+		ct := cacheTTLs[0]
+		if v, ok := cacheTTLSec(ct, "analyticsHashSizes"); ok {
+			ps.collisionCacheTTL = v
+		}
+		if v, ok := cacheTTLSec(ct, "analyticsRF"); ok {
+			ps.rfCacheTTL = v
+		}
 	}
 	return ps
 }

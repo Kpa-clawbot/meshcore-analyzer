@@ -276,3 +276,29 @@ func TestNewPacketStoreNilConfig(t *testing.T) {
 		t.Fatalf("expected retentionHours=0, got %f", store.retentionHours)
 	}
 }
+
+func TestCacheTTLFromConfig(t *testing.T) {
+	// With config values: analyticsHashSizes and analyticsRF should override defaults.
+	cacheTTL := map[string]interface{}{
+		"analyticsHashSizes": float64(7200),
+		"analyticsRF":        float64(300),
+	}
+	store := NewPacketStore(nil, nil, cacheTTL)
+	if store.collisionCacheTTL != 7200*time.Second {
+		t.Fatalf("expected collisionCacheTTL=7200s, got %v", store.collisionCacheTTL)
+	}
+	if store.rfCacheTTL != 300*time.Second {
+		t.Fatalf("expected rfCacheTTL=300s, got %v", store.rfCacheTTL)
+	}
+}
+
+func TestCacheTTLDefaults(t *testing.T) {
+	// Without config, defaults should apply.
+	store := NewPacketStore(nil, nil)
+	if store.collisionCacheTTL != 3600*time.Second {
+		t.Fatalf("expected default collisionCacheTTL=3600s, got %v", store.collisionCacheTTL)
+	}
+	if store.rfCacheTTL != 15*time.Second {
+		t.Fatalf("expected default rfCacheTTL=15s, got %v", store.rfCacheTTL)
+	}
+}

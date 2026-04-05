@@ -3186,7 +3186,7 @@ func TestHashCollisionsClassification(t *testing.T) {
 }
 
 func TestHashCollisionsCacheTTL(t *testing.T) {
-	// Issue #420: collision cache should use dedicated TTL (60s), not rfCacheTTL (15s)
+	// Issue #420: collision cache should use dedicated TTL, default 3600s (1 hour)
 	db := setupTestDB(t)
 	seedTestData(t, db)
 	store := NewPacketStore(db, nil)
@@ -3194,8 +3194,8 @@ func TestHashCollisionsCacheTTL(t *testing.T) {
 		t.Fatalf("store.Load failed: %v", err)
 	}
 
-	if store.collisionCacheTTL != 60*time.Second {
-		t.Errorf("expected collisionCacheTTL=60s, got %v", store.collisionCacheTTL)
+	if store.collisionCacheTTL != 3600*time.Second {
+		t.Errorf("expected collisionCacheTTL=3600s, got %v", store.collisionCacheTTL)
 	}
 	if store.rfCacheTTL != 15*time.Second {
 		t.Errorf("expected rfCacheTTL=15s, got %v", store.rfCacheTTL)
