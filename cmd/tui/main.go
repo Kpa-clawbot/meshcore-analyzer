@@ -22,13 +22,12 @@ import (
 // --- Data types ---
 
 type ObserverSummary struct {
-	ObserverID   string   `json:"observer_id"`
-	ObserverName *string  `json:"observer_name"`
-	CurrentNF    *float64 `json:"current_noise_floor"`
-	AvgNF        *float64 `json:"avg_noise_floor_24h"`
-	MaxNF        *float64 `json:"max_noise_floor_24h"`
+	ObserverID   string   `json:"id"`
+	ObserverName *string  `json:"name"`
+	NoiseFloor   *float64 `json:"noise_floor"`
 	BatteryMv    *int     `json:"battery_mv"`
-	SampleCount  int      `json:"sample_count"`
+	PacketCount  int      `json:"packet_count"`
+	LastSeen     string   `json:"last_seen"`
 }
 
 type Packet struct {
@@ -48,6 +47,7 @@ type summaryErrMsg struct{ err error }
 type packetMsg Packet
 type wsStatusMsg string
 type tickMsg time.Time
+type renderTickMsg time.Time
 
 // --- Model ---
 
@@ -76,6 +76,7 @@ type model struct {
 	ringBuf  [ringBufferMax]Packet
 	ringHead int // index of oldest element
 	ringLen  int // number of elements in the buffer
+	dirty    bool // true when new data arrived since last render tick
 	// wsMsgChan multiplexes packets and status updates from the WS goroutine
 	// into the bubbletea event loop.
 	wsMsgChan  chan tea.Msg
@@ -112,7 +113,7 @@ var (
 func fetchSummary(baseURL string) tea.Cmd {
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get(baseURL + "/api/observers/metrics/summary?window=24h")
+		resp, err := client.Get(baseURL + "/api/observers")
 		if err != nil {
 			return summaryErrMsg{err}
 		}
@@ -121,17 +122,27 @@ func fetchSummary(baseURL string) tea.Cmd {
 		if err != nil {
 			return summaryErrMsg{err}
 		}
-		var result []ObserverSummary
-		if err := json.Unmarshal(body, &result); err != nil {
+		// The API returns {"observers": [...]}
+		var wrapper struct {
+			Observers []ObserverSummary `json:"observers"`
+		}
+		if err := json.Unmarshal(body, &wrapper); err != nil {
 			return summaryErrMsg{fmt.Errorf("json: %w (body: %.100s)", err, string(body))}
 		}
-		return summaryMsg(result)
+		return summaryMsg(wrapper.Observers)
 	}
 }
 
 func tickEvery(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return tickMsg(t)
+	})
+}
+
+// renderTick fires every 16ms (~60fps) to coalesce packet renders.
+func renderTick() tea.Cmd {
+	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg {
+		return renderTickMsg(t)
 	})
 }
 
@@ -202,10 +213,39 @@ func connectWS(baseURL string, msgChan chan<- tea.Msg, done <-chan struct{}) {
 		sendStatus(msgChan, done, "connected")
 		backoff = time.Second
 
-		// readLoop reads messages until error or done. We use a read deadline
-		// so that ReadMessage unblocks periodically, letting us check done.
+		// readLoop reads messages until error or done.
+		// Ping/pong keepalive detects dead connections faster than relying on
+		// read deadline alone. We send pings every 30s; the pong handler resets
+		// the read deadline to 60s. If no pong arrives, ReadMessage times out.
 		func() {
 			defer conn.Close()
+
+			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			conn.SetPongHandler(func(string) error {
+				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+				return nil
+			})
+
+			// Periodic ping goroutine
+			pingDone := make(chan struct{})
+			defer close(pingDone)
+			go func() {
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ticker.C:
+						if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+							return
+						}
+					case <-pingDone:
+						return
+					case <-done:
+						return
+					}
+				}
+			}()
+
 			for {
 				select {
 				case <-done:
@@ -218,9 +258,11 @@ func connectWS(baseURL string, msgChan chan<- tea.Msg, done <-chan struct{}) {
 				default:
 				}
 
-				// Set a deadline so ReadMessage doesn't block forever, allowing
-				// us to re-check the done channel.
-				conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+				// ReadMessage blocks until data arrives or the 60s read deadline
+				// expires. The pong handler resets the deadline on each pong.
+				// On timeout (dead connection), we break out and reconnect.
+				// We don't set a per-read deadline here — the pong handler and
+				// initial SetReadDeadline above manage it.
 				_, message, err := conn.ReadMessage()
 				if err != nil {
 					if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
@@ -272,50 +314,45 @@ func isTimeoutError(err error) bool {
 	return false
 }
 
+// parseWSMessage parses a WebSocket broadcast frame.
+// The server sends: {"type":"packet","data":{...}} where data contains
+// top-level fields (observer_name, rssi, snr, timestamp, ...) plus
+// nested "decoded" (with header.payloadTypeName, payload) and "packet".
 func parseWSMessage(data []byte) *Packet {
-	var msg map[string]interface{}
-	if err := json.Unmarshal(data, &msg); err != nil {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil
+	}
+
+	// Unwrap the {"type":"packet","data":{...}} envelope
+	if t, _ := envelope["type"].(string); t != "packet" {
+		return nil // ignore non-packet messages (e.g. "status")
+	}
+	msg, ok := envelope["data"].(map[string]interface{})
+	if !ok {
 		return nil
 	}
 
 	pkt := &Packet{}
 
-	// Timestamp
-	if decoded, ok := msg["decoded"].(map[string]interface{}); ok {
-		if ts, ok := decoded["timestamp"].(string); ok {
-			if t, err := time.Parse(time.RFC3339, ts); err == nil {
-				pkt.Timestamp = t.Format("15:04:05")
-			} else {
-				pkt.Timestamp = ts
-			}
-		}
-	}
-	if pkt.Timestamp == "" {
-		if packet, ok := msg["packet"].(map[string]interface{}); ok {
-			if ts, ok := packet["timestamp"].(string); ok {
-				if t, err := time.Parse(time.RFC3339, ts); err == nil {
-					pkt.Timestamp = t.Format("15:04:05")
-				} else if len(ts) >= 8 {
-					pkt.Timestamp = ts[:8]
-				} else {
-					pkt.Timestamp = ts
-				}
-			}
+	// Timestamp — prefer top-level, fall back to nested packet
+	if ts, ok := msg["timestamp"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			pkt.Timestamp = t.Format("15:04:05")
+		} else if len(ts) >= 8 {
+			pkt.Timestamp = ts[:8]
+		} else {
+			pkt.Timestamp = ts
 		}
 	}
 	if pkt.Timestamp == "" {
 		pkt.Timestamp = time.Now().Format("15:04:05")
 	}
 
-	// Type
+	// Type — from decoded.header.payloadTypeName (matches live.js)
 	if decoded, ok := msg["decoded"].(map[string]interface{}); ok {
-		if t, ok := decoded["type"].(string); ok {
-			pkt.Type = t
-		}
-	}
-	if pkt.Type == "" {
-		if packet, ok := msg["packet"].(map[string]interface{}); ok {
-			if t, ok := packet["type"].(string); ok {
+		if header, ok := decoded["header"].(map[string]interface{}); ok {
+			if t, ok := header["payloadTypeName"].(string); ok {
 				pkt.Type = t
 			}
 		}
@@ -325,42 +362,42 @@ func parseWSMessage(data []byte) *Packet {
 	}
 
 	// Observer name
-	if packet, ok := msg["packet"].(map[string]interface{}); ok {
-		if name, ok := packet["observer_name"].(string); ok {
-			pkt.ObserverName = name
-		} else if name, ok := packet["observer_id"].(string); ok {
-			pkt.ObserverName = safePrefix(name, 8)
-		}
+	if name, ok := msg["observer_name"].(string); ok {
+		pkt.ObserverName = name
+	} else if id, ok := msg["observer_id"].(string); ok {
+		pkt.ObserverName = safePrefix(id, 8)
 	}
 
-	// Hops
+	// Hops — from decoded.payload.hops or path
 	if decoded, ok := msg["decoded"].(map[string]interface{}); ok {
-		if hops, ok := decoded["hops"].(float64); ok {
-			pkt.Hops = fmt.Sprintf("%d", int(hops))
+		if payload, ok := decoded["payload"].(map[string]interface{}); ok {
+			if hops, ok := payload["hops"].(float64); ok {
+				pkt.Hops = fmt.Sprintf("%d", int(hops))
+			}
 		}
 	}
 
-	// RSSI / SNR
-	if packet, ok := msg["packet"].(map[string]interface{}); ok {
-		if rssi, ok := packet["rssi"].(float64); ok {
-			pkt.RSSI = fmt.Sprintf("%.0f", rssi)
-		}
-		if snr, ok := packet["snr"].(float64); ok {
-			pkt.SNR = fmt.Sprintf("%.1f", snr)
-		}
+	// RSSI / SNR — top-level fields
+	if rssi, ok := msg["rssi"].(float64); ok {
+		pkt.RSSI = fmt.Sprintf("%.0f", rssi)
+	}
+	if snr, ok := msg["snr"].(float64); ok {
+		pkt.SNR = fmt.Sprintf("%.1f", snr)
 	}
 
-	// Channel text
+	// Channel text — from decoded.payload
 	if decoded, ok := msg["decoded"].(map[string]interface{}); ok {
-		ch := ""
-		if name, ok := decoded["channel_name"].(string); ok {
-			ch = "#" + name
-		}
-		if text, ok := decoded["text"].(string); ok {
-			if ch != "" {
-				pkt.ChannelText = ch + " " + truncate(text, 40)
-			} else {
-				pkt.ChannelText = truncate(text, 40)
+		if payload, ok := decoded["payload"].(map[string]interface{}); ok {
+			ch := ""
+			if name, ok := payload["channel_name"].(string); ok {
+				ch = "#" + name
+			}
+			if text, ok := payload["text"].(string); ok {
+				if ch != "" {
+					pkt.ChannelText = ch + " " + truncate(text, 40)
+				} else {
+					pkt.ChannelText = truncate(text, 40)
+				}
 			}
 		}
 	}
@@ -369,18 +406,20 @@ func parseWSMessage(data []byte) *Packet {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(runes[:n-1]) + "…"
 }
 
-// safePrefix returns the first n bytes of s, or s itself if shorter.
+// safePrefix returns the first n characters of s (rune-aware), or s if shorter.
 func safePrefix(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n]
+	return string(runes[:n])
 }
 
 // --- Init / Update / View ---
@@ -392,6 +431,7 @@ func (m model) Init() tea.Cmd {
 		fetchSummary(m.baseURL),
 		tickEvery(5*time.Second),
 		listenForWSMsg(m.wsMsgChan),
+		renderTick(),
 	)
 }
 
@@ -418,6 +458,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case summaryMsg:
 		m.observers = []ObserverSummary(msg)
+		// Pre-sort by worst noise floor (highest = worst) so View doesn't sort on every render.
+		sort.Slice(m.observers, func(i, j int) bool {
+			return nfVal(m.observers[i].NoiseFloor) > nfVal(m.observers[j].NoiseFloor)
+		})
 		m.lastRefresh = time.Now()
 		m.fetchErr = nil
 
@@ -446,7 +490,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ringBuf[m.ringHead] = p
 			m.ringHead = (m.ringHead + 1) % ringBufferMax
 		}
+		m.dirty = true
 		return m, listenForWSMsg(m.wsMsgChan)
+
+	case renderTickMsg:
+		// 60fps render coalescing: bubbletea re-renders when Update returns.
+		// By ticking at 16ms, we batch all packets that arrived between ticks
+		// into a single View() call instead of re-rendering per packet.
+		if m.dirty {
+			m.dirty = false
+		}
+		return m, renderTick()
 	}
 
 	// Always keep the WS listener running, even for unhandled messages.
@@ -512,54 +566,53 @@ func (m model) viewDashboard() string {
 		b.WriteString("\n\n")
 	}
 
-	// Sort by worst noise floor (highest = worst)
-	observers := make([]ObserverSummary, len(m.observers))
-	copy(observers, m.observers)
-	sort.Slice(observers, func(i, j int) bool {
-		ni, nj := nfVal(observers[i].CurrentNF), nfVal(observers[j].CurrentNF)
-		return ni > nj // worst first
-	})
-
 	refreshStr := ""
 	if !m.lastRefresh.IsZero() {
 		refreshStr = m.lastRefresh.Format("15:04:05")
 	}
 	b.WriteString(fmt.Sprintf("Observers: %d │ Last refresh: %s\n\n",
-		len(observers), refreshStr))
+		len(m.observers), refreshStr))
 
 	// Header
-	b.WriteString(headerStyle.Render(fmt.Sprintf("%-24s %8s %8s %8s %10s %8s",
-		"Observer", "NF(dBm)", "Avg NF", "Max NF", "Battery", "Samples")))
+	b.WriteString(headerStyle.Render(fmt.Sprintf("%-24s %8s %10s %8s %10s",
+		"Observer", "NF(dBm)", "Battery", "Packets", "Last Seen")))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(strings.Repeat("─", 78)))
+	b.WriteString(dimStyle.Render(strings.Repeat("─", 68)))
 	b.WriteString("\n")
 
-	for _, o := range observers {
+	for _, o := range m.observers {
 		name := safePrefix(o.ObserverID, 8)
 		if o.ObserverName != nil && *o.ObserverName != "" {
 			name = truncate(*o.ObserverName, 24)
 		}
 
-		nf := fmtNF(o.CurrentNF)
-		avg := fmtNF(o.AvgNF)
-		maxnf := fmtNF(o.MaxNF)
+		nf := fmtNF(o.NoiseFloor)
 		batt := "—"
 		if o.BatteryMv != nil {
 			batt = fmt.Sprintf("%dmV", *o.BatteryMv)
 		}
+		lastSeen := "—"
+		if o.LastSeen != "" {
+			if t, err := time.Parse(time.RFC3339, o.LastSeen); err == nil {
+				lastSeen = time.Since(t).Truncate(time.Second).String() + " ago"
+				if time.Since(t) < time.Minute {
+					lastSeen = "just now"
+				}
+			}
+		}
 
 		// Color code NF
 		nfStyle := greenStyle
-		if o.CurrentNF != nil {
-			if *o.CurrentNF > -85 {
+		if o.NoiseFloor != nil {
+			if *o.NoiseFloor > -85 {
 				nfStyle = redStyle
-			} else if *o.CurrentNF > -100 {
+			} else if *o.NoiseFloor > -100 {
 				nfStyle = yellowStyle
 			}
 		}
 
-		line := fmt.Sprintf("%-24s %8s %8s %8s %10s %8d",
-			name, nfStyle.Render(nf), avg, maxnf, batt, o.SampleCount)
+		line := fmt.Sprintf("%-24s %8s %10s %8d %10s",
+			name, nfStyle.Render(nf), batt, o.PacketCount, lastSeen)
 		b.WriteString(line + "\n")
 	}
 
