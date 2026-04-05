@@ -3,9 +3,14 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [master]
+    tags: ['v*']
   pull_request:
     branches: [master]
   workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -18,8 +23,8 @@ env:
   STAGING_CONTAINER: corescope-staging-go
 
 # Pipeline (sequential, fail-fast):
-#   go-test → e2e-test → build → deploy → publish
-#   PRs stop after build. Master continues to deploy + publish.
+#   go-test → e2e-test → build-and-publish → deploy → publish-badges
+#   PRs stop after build-and-publish (no GHCR push). Master continues to deploy + badges.
 
 jobs:
   # ───────────────────────────────────────────────────────────────
@@ -231,20 +236,15 @@ jobs:
           include-hidden-files: true
 
   # ───────────────────────────────────────────────────────────────
-  # 3. Build Docker Image
+  # 3. Build & Publish Docker Image
   # ───────────────────────────────────────────────────────────────
-  build:
-    name: "🏗️ Build Docker Image"
+  build-and-publish:
+    name: "🏗️ Build & Publish Docker Image"
     needs: [e2e-test]
     runs-on: [self-hosted, meshcore-runner-2]
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v5
-        with:
-          node-version: '22'
 
       - name: Free disk space
         run: |
@@ -252,17 +252,73 @@ jobs:
           docker builder prune -af 2>/dev/null || true
           df -h /
 
-      - name: Build Go Docker image
+      - name: Compute build metadata
+        id: meta
         run: |
-          echo "${GITHUB_SHA::7}" > .git-commit
-          APP_VERSION=$(node -p "require('./package.json').version") \
-          GIT_COMMIT="${GITHUB_SHA::7}" \
-          APP_VERSION=$(grep -oP 'APP_VERSION:-\K[^}]+' docker-compose.yml | head -1 || echo "3.0.0")
-          GIT_COMMIT=$(git rev-parse --short HEAD)
           BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-          export APP_VERSION GIT_COMMIT BUILD_TIME
+          GIT_COMMIT="${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            APP_VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            APP_VERSION="edge"
+          fi
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
+          echo "git_commit=$GIT_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Build: version=$APP_VERSION commit=$GIT_COMMIT time=$BUILD_TIME"
+
+      - name: Build Go Docker image (local staging)
+        run: |
+          GIT_COMMIT="${{ steps.meta.outputs.git_commit }}" \
+          APP_VERSION="${{ steps.meta.outputs.app_version }}" \
+          BUILD_TIME="${{ steps.meta.outputs.build_time }}" \
           docker compose -f "$STAGING_COMPOSE_FILE" -p corescope-staging build "$STAGING_SERVICE"
           echo "Built Go staging image ✅"
+
+      - name: Set up QEMU
+        if: github.event_name == 'push'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: github.event_name == 'push'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        if: github.event_name == 'push'
+        id: docker-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/kpa-clawbot/corescope
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=edge,branch=master
+
+      - name: Build and push to GHCR
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.app_version }}
+            GIT_COMMIT=${{ steps.meta.outputs.git_commit }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # ───────────────────────────────────────────────────────────────
   # 4. Deploy Staging (master only)
@@ -270,11 +326,21 @@ jobs:
   deploy:
     name: "🚀 Deploy Staging"
     if: github.event_name == 'push'
-    needs: [build]
+    needs: [build-and-publish]
     runs-on: [self-hosted, meshcore-runner-2]
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Pull latest image from GHCR
+        run: |
+          # Try to pull the edge image from GHCR and tag for docker-compose compatibility
+          if docker pull ghcr.io/kpa-clawbot/corescope:edge; then
+            docker tag ghcr.io/kpa-clawbot/corescope:edge corescope-go:latest
+            echo "Pulled and tagged GHCR edge image ✅"
+          else
+            echo "⚠️ GHCR pull failed — falling back to locally built image"
+          fi
 
       - name: Deploy staging
         run: |
