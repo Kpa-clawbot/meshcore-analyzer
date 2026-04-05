@@ -169,6 +169,11 @@ func main() {
 		log.Printf("[neighbor] no persisted edges found, will build in background...")
 		store.graph = NewNeighborGraph() // empty graph — gets populated by background goroutine
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[neighbor] graph build panic recovered: %v", r)
+				}
+			}()
 			rw, rwErr := openRW(dbPath)
 			if rwErr == nil {
 				edgeCount := buildAndPersistEdges(store, rw)
@@ -185,13 +190,34 @@ func main() {
 
 	// Initial pickBestObservation runs in background — doesn't need to block HTTP.
 	// API serves best-effort data until this completes (~10s for 100K txs).
+	// Processes in chunks of 5000, releasing the lock between chunks so API
+	// handlers remain responsive.
 	go func() {
-		store.mu.Lock()
-		for _, tx := range store.packets {
-			pickBestObservation(tx)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[store] pickBestObservation panic recovered: %v", r)
+			}
+		}()
+		const chunkSize = 5000
+		store.mu.RLock()
+		totalPackets := len(store.packets)
+		store.mu.RUnlock()
+
+		for i := 0; i < totalPackets; i += chunkSize {
+			end := i + chunkSize
+			if end > totalPackets {
+				end = totalPackets
+			}
+			store.mu.Lock()
+			for j := i; j < end && j < len(store.packets); j++ {
+				pickBestObservation(store.packets[j])
+			}
+			store.mu.Unlock()
+			if end < totalPackets {
+				time.Sleep(10 * time.Millisecond) // yield to API handlers
+			}
 		}
-		store.mu.Unlock()
-		log.Printf("[store] initial pickBestObservation complete (%d transmissions)", len(store.packets))
+		log.Printf("[store] initial pickBestObservation complete (%d transmissions)", totalPackets)
 	}()
 
 	// WebSocket hub
@@ -240,6 +266,11 @@ func main() {
 			close(pruneDone)
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[prune] panic recovered: %v", r)
+				}
+			}()
 			time.Sleep(1 * time.Minute)
 			if n, err := database.PruneOldPackets(days); err != nil {
 				log.Printf("[prune] error: %v", err)
@@ -273,6 +304,11 @@ func main() {
 			close(metricsPruneDone)
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[metrics-prune] panic recovered: %v", r)
+				}
+			}()
 			time.Sleep(2 * time.Minute) // stagger after packet prune
 			database.PruneOldMetrics(metricsDays)
 			for {
@@ -298,18 +334,23 @@ func main() {
 			close(edgePruneDone)
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[neighbor-prune] panic recovered: %v", r)
+				}
+			}()
 			time.Sleep(4 * time.Minute) // stagger after metrics prune
 			store.mu.RLock()
 			g := store.graph
 			store.mu.RUnlock()
-			PruneNeighborEdges(database.conn, g, maxAgeDays)
+			PruneNeighborEdges(dbPath, g, maxAgeDays)
 			for {
 				select {
 				case <-edgePruneTicker.C:
 					store.mu.RLock()
 					g := store.graph
 					store.mu.RUnlock()
-					PruneNeighborEdges(database.conn, g, maxAgeDays)
+					PruneNeighborEdges(dbPath, g, maxAgeDays)
 				case <-edgePruneDone:
 					return
 				}

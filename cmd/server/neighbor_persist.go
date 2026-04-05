@@ -349,6 +349,11 @@ func unmarshalResolvedPath(s string) []*string {
 // store.backfillComplete when finished and re-picks best observations for any
 // transmissions affected by newly resolved paths.
 func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int, yieldDuration time.Duration, backfillHours int) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[store] backfillResolvedPathsAsync panic recovered: %v", r)
+		}
+	}()
 	// Collect ALL pending obs refs upfront in one pass under a single RLock (fix A).
 	type obsRef struct {
 		obsID       int
@@ -363,7 +368,6 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 
 	store.mu.RLock()
 	pm := store.nodePM
-	graph := store.graph
 	var allPending []obsRef
 	for _, tx := range store.packets {
 		// Skip transmissions older than the backfill window.
@@ -424,6 +428,13 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 			end = totalPending
 		}
 		chunk := allPending[totalProcessed:end]
+
+		// Re-read graph under RLock at the start of each chunk so we pick up
+		// a freshly-built graph once the background build goroutine completes,
+		// instead of using the potentially-empty graph captured at cold start.
+		store.mu.RLock()
+		graph := store.graph
+		store.mu.RUnlock()
 
 		// Resolve paths outside any lock.
 		type resolved struct {
@@ -583,16 +594,23 @@ func openRW(dbPath string) (*sql.DB, error) {
 }
 
 // PruneNeighborEdges removes edges older than maxAgeDays from both SQLite and
-// the in-memory graph. Returns the number of edges pruned.
-func PruneNeighborEdges(conn *sql.DB, graph *NeighborGraph, maxAgeDays int) (int, error) {
+// the in-memory graph. Uses openRW internally because the shared database.conn
+// is opened with mode=ro and DELETEs would silently fail.
+func PruneNeighborEdges(dbPath string, graph *NeighborGraph, maxAgeDays int) (int, error) {
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeDays) * 24 * time.Hour)
 
-	// 1. Prune from SQLite
-	res, err := conn.Exec("DELETE FROM neighbor_edges WHERE last_seen < ?", cutoff.Format(time.RFC3339))
+	// 1. Prune from SQLite using a read-write connection
+	var dbPruned int64
+	rw, err := openRW(dbPath)
+	if err != nil {
+		return 0, fmt.Errorf("prune neighbor_edges: open rw: %w", err)
+	}
+	defer rw.Close()
+	res, err := rw.Exec("DELETE FROM neighbor_edges WHERE last_seen < ?", cutoff.Format(time.RFC3339))
 	if err != nil {
 		return 0, fmt.Errorf("prune neighbor_edges: %w", err)
 	}
-	dbPruned, _ := res.RowsAffected()
+	dbPruned, _ = res.RowsAffected()
 
 	// 2. Prune from in-memory graph
 	memPruned := 0

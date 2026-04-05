@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -72,7 +73,9 @@ func TestGraphPruneOlderThan(t *testing.T) {
 }
 
 func TestPruneNeighborEdgesDB(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +104,7 @@ func TestPruneNeighborEdgesDB(t *testing.T) {
 	g.upsertEdge("aaa", "bbb", "bb", "obs1", nil, now)
 	g.upsertEdge("ccc", "ddd", "dd", "obs1", nil, old)
 
-	pruned, err := PruneNeighborEdges(db, g, 30)
+	pruned, err := PruneNeighborEdges(dbPath, g, 30)
 	if err != nil {
 		t.Fatal(err)
 	}
