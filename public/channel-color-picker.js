@@ -271,13 +271,15 @@
       var tx = touch.clientX;
       var ty = touch.clientY;
       longPressTriggered = false;
-      e.preventDefault(); // prevent native long-press context menu / text selection
+      // Don't preventDefault here — it blocks scroll initiation on feed items.
+      // CSS -webkit-touch-callout:none + user-select:none (on .live-feed-item)
+      // already suppress native context menu and text selection.
       longPressTimer = setTimeout(function() {
         longPressTimer = null;
         longPressTriggered = true;
         showPopover(ch, tx, ty);
       }, 500);
-    }, { passive: false });
+    }, { passive: true });
 
     feed.addEventListener('touchend', function(e) {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
