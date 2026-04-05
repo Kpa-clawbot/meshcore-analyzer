@@ -456,77 +456,61 @@ func backfillResolvedPaths(store *PacketStore, dbPath string) int {
 // store.backfillComplete when finished and re-picks best observations for any
 // transmissions affected by newly resolved paths.
 func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int, yieldDuration time.Duration) {
-	// Count total pending under read lock.
+	// Snapshot of pending observation references — collected once under read lock.
+	type obsRef struct {
+		obsID       int
+		pathJSON    string
+		observerID  string
+		txJSON      string
+		payloadType *int
+		txHash      string
+	}
+
 	store.mu.RLock()
 	pm := store.nodePM
 	graph := store.graph
-	var totalPending int
+	var pending []obsRef
 	for _, tx := range store.packets {
 		for _, obs := range tx.Observations {
 			if obs.ResolvedPath == nil && obs.PathJSON != "" && obs.PathJSON != "[]" {
-				totalPending++
+				pending = append(pending, obsRef{
+					obsID:       obs.ID,
+					pathJSON:    obs.PathJSON,
+					observerID:  obs.ObserverID,
+					txJSON:      tx.DecodedJSON,
+					payloadType: tx.PayloadType,
+					txHash:      tx.Hash,
+				})
 			}
 		}
 	}
 	store.mu.RUnlock()
 
-	if totalPending == 0 || pm == nil {
+	if len(pending) == 0 || pm == nil {
 		store.backfillComplete.Store(true)
 		log.Printf("[store] async resolved_path backfill: nothing to do")
 		return
 	}
 
-	store.backfillTotal.Store(int64(totalPending))
+	store.backfillTotal.Store(int64(len(pending)))
 	store.backfillProcessed.Store(0)
-	log.Printf("[store] async resolved_path backfill starting: %d observations", totalPending)
+	log.Printf("[store] async resolved_path backfill starting: %d observations", len(pending))
 
-	totalProcessed := 0
-	for {
-		// Collect a chunk of pending observations under read lock.
-		type obsRef struct {
-			obsID      int
-			pathJSON   string
-			observerID string
-			txJSON     string
-			payloadType *int
-			txHash     string // to re-pick best obs
-		}
+	type resolved struct {
+		obsID  int
+		rp     []*string
+		rpJSON string
+		txHash string
+	}
 
-		store.mu.RLock()
-		var chunk []obsRef
-		for _, tx := range store.packets {
-			if len(chunk) >= chunkSize {
-				break
-			}
-			for _, obs := range tx.Observations {
-				if obs.ResolvedPath == nil && obs.PathJSON != "" && obs.PathJSON != "[]" {
-					chunk = append(chunk, obsRef{
-						obsID:       obs.ID,
-						pathJSON:    obs.PathJSON,
-						observerID:  obs.ObserverID,
-						txJSON:      tx.DecodedJSON,
-						payloadType: tx.PayloadType,
-						txHash:      tx.Hash,
-					})
-					if len(chunk) >= chunkSize {
-						break
-					}
-				}
-			}
+	for i := 0; i < len(pending); i += chunkSize {
+		end := i + chunkSize
+		if end > len(pending) {
+			end = len(pending)
 		}
-		store.mu.RUnlock()
-
-		if len(chunk) == 0 {
-			break
-		}
+		chunk := pending[i:end]
 
 		// Resolve paths outside the lock.
-		type resolved struct {
-			obsID  int
-			rp     []*string
-			rpJSON string
-			txHash string
-		}
 		var results []resolved
 		for _, ref := range chunk {
 			fakeTx := &StoreTx{DecodedJSON: ref.txJSON, PayloadType: ref.payloadType}
@@ -539,7 +523,7 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 			}
 		}
 
-		// Persist to SQLite.
+		// Persist to SQLite in a single transaction per chunk.
 		if len(results) > 0 {
 			rw, err := openRW(dbPath)
 			if err != nil {
@@ -555,7 +539,9 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 						sqlTx.Rollback()
 					} else {
 						for _, r := range results {
-							stmt.Exec(r.rpJSON, r.obsID)
+							if _, err := stmt.Exec(r.rpJSON, r.obsID); err != nil {
+								log.Printf("[store] async backfill: exec error obs %d: %v", r.obsID, err)
+							}
 						}
 						stmt.Close()
 						if err := sqlTx.Commit(); err != nil {
@@ -583,16 +569,15 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 			store.mu.Unlock()
 		}
 
-		totalProcessed += len(chunk)
-		store.backfillProcessed.Store(int64(totalProcessed))
-		pct := float64(totalProcessed) / float64(totalPending) * 100
-		log.Printf("[store] backfill progress: %d/%d observations (%.1f%%)", totalProcessed, totalPending, pct)
+		store.backfillProcessed.Store(int64(end))
+		pct := float64(end) / float64(len(pending)) * 100
+		log.Printf("[store] backfill progress: %d/%d observations (%.1f%%)", end, len(pending), pct)
 
 		time.Sleep(yieldDuration)
 	}
 
 	store.backfillComplete.Store(true)
-	log.Printf("[store] async resolved_path backfill complete: %d observations processed", totalProcessed)
+	log.Printf("[store] async resolved_path backfill complete: %d observations processed", len(pending))
 }
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────

@@ -160,7 +160,7 @@ type PacketStore struct {
 	// Async backfill state: set after backfillResolvedPathsAsync completes.
 	backfillComplete atomic.Bool
 	// Progress tracking for async backfill (total pending and processed so far).
-	backfillTotal     atomic.Int64 // set once at start of async backfill
+	backfillTotal     atomic.Int64
 	backfillProcessed atomic.Int64
 
 	// Eviction config and stats

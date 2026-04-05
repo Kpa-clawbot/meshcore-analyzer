@@ -169,10 +169,12 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 
 func (s *Server) backfillStatusMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.store != nil && s.store.backfillComplete.Load() {
-			w.Header().Set("X-CoreScope-Status", "ready")
-		} else {
-			w.Header().Set("X-CoreScope-Status", "backfilling")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if s.store != nil && s.store.backfillComplete.Load() {
+				w.Header().Set("X-CoreScope-Status", "ready")
+			} else {
+				w.Header().Set("X-CoreScope-Status", "backfilling")
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
