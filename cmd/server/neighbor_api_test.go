@@ -347,6 +347,69 @@ func TestNeighborGraphAPI_AmbiguousEdgesCount(t *testing.T) {
 	}
 }
 
+func TestNeighborAPI_DistanceKm_WithGPS(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen)
+		VALUES ('aaaa', 'NodeA', 'repeater', 51.5074, -0.1278, '2026-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`)
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen)
+		VALUES ('bbbb', 'NodeB', 'repeater', 51.5200, -0.1200, '2026-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`)
+
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	srv.store = NewPacketStore(db, nil)
+
+	now := time.Now()
+	srv.neighborGraph = makeTestGraph(newEdge("aaaa", "bbbb", "bb", 50, now))
+
+	rr := serveRequest(srv, "GET", "/api/nodes/aaaa/neighbors")
+	var resp NeighborResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if len(resp.Neighbors) != 1 {
+		t.Fatalf("expected 1 neighbor, got %d", len(resp.Neighbors))
+	}
+	n := resp.Neighbors[0]
+	if n.DistanceKm == nil {
+		t.Fatal("expected distance_km to be set for GPS-enabled nodes")
+	}
+	if *n.DistanceKm <= 0 {
+		t.Errorf("expected positive distance, got %f", *n.DistanceKm)
+	}
+}
+
+func TestNeighborAPI_DistanceKm_NoGPS(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Nodes with 0,0 coords → HasGPS=false
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen)
+		VALUES ('aaaa', 'NodeA', 'repeater', 0, 0, '2026-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`)
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen)
+		VALUES ('bbbb', 'NodeB', 'repeater', 0, 0, '2026-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`)
+
+	cfg := &Config{Port: 3000}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	srv.store = NewPacketStore(db, nil)
+
+	now := time.Now()
+	srv.neighborGraph = makeTestGraph(newEdge("aaaa", "bbbb", "bb", 50, now))
+
+	rr := serveRequest(srv, "GET", "/api/nodes/aaaa/neighbors")
+	var resp NeighborResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if len(resp.Neighbors) != 1 {
+		t.Fatalf("expected 1 neighbor, got %d", len(resp.Neighbors))
+	}
+	if resp.Neighbors[0].DistanceKm != nil {
+		t.Errorf("expected nil distance_km for nodes without GPS, got %f", *resp.Neighbors[0].DistanceKm)
+	}
+}
+
 func TestNeighborGraphAPI_RegionFilter(t *testing.T) {
 	now := time.Now()
 	// Edge with observer "obs-sjc" — would match region SJC if we had region resolution.

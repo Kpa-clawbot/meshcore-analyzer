@@ -204,6 +204,9 @@
         : '<span class="text-muted">—</span>';
       var scoreTitle = 'Observations: ' + nb.count;
       if (nb.avg_snr != null) scoreTitle += ' · Avg SNR: ' + Number(nb.avg_snr).toFixed(1) + ' dB';
+      var distanceCell = nb.distance_km != null
+        ? Number(nb.distance_km).toFixed(1) + ' km'
+        : '<span class="text-muted">—</span>';
       var showOnMap = nb.pubkey
         ? ' <button class="btn-link neighbor-show-map" data-pubkey="' + escapeHtml(nb.pubkey) + '" style="font-size:11px;padding:1px 6px;white-space:nowrap">📍 Map</button>'
         : '';
@@ -213,6 +216,7 @@
         '<td title="' + escapeHtml(scoreTitle) + '">' + Number(nb.score).toFixed(2) + '</td>' +
         '<td>' + nb.count + '</td>' +
         '<td>' + renderNodeTimestampHtml(nb.last_seen) + '</td>' +
+        '<td>' + distanceCell + '</td>' +
         '<td><span title="' + conf.label + '">' + conf.icon + '</span></td>' +
         '<td style="text-align:right">' + showOnMap + '</td>' +
         '</tr>';
@@ -221,7 +225,7 @@
 
   function renderNeighborTable(neighbors, limit) {
     return '<table class="data-table" style="font-size:12px">' +
-      '<thead><tr><th>Neighbor</th><th>Role</th><th>Score</th><th>Obs</th><th>Last Seen</th><th>Conf</th><th></th></tr></thead>' +
+      '<thead><tr><th>Neighbor</th><th>Role</th><th>Score</th><th>Obs</th><th>Last Seen</th><th>Distance</th><th>Conf</th><th></th></tr></thead>' +
       '<tbody>' + renderNeighborRows(neighbors, limit) + '</tbody></table>';
   }
 
