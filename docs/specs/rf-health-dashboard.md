@@ -431,6 +431,10 @@ Note: No hardcoded duty cycle limit line on charts. Duty cycle regulations vary 
 - All charts time-aligned, sharing X-axis, reboot markers spanning all charts
 - Tests: delta computation, reboot handling, counter reset, gap insertion, downsampling, error rate calculation
 
+#### M2 feedback improvements (post-M2)
+- **Auto-scale airtime Y-axis**: clamp to min/max of actual data values (20% headroom, min 1%) instead of fixed 0-100%, matching noise floor chart behavior. Increases data-ink ratio for low-activity nodes.
+- **Hover tooltips on all chart data points**: invisible SVG circles with `<title>` elements on every data point across all 4 charts (noise floor, airtime, error rate, battery). Shows exact value + UTC timestamp on hover. Detail-on-demand without cluttering the chart.
+
 ### M3: Pattern detection
 - Implement after operators have used raw charts (M1–M2) and provided feedback
 - Jammer detection (NF spike + RX drop)

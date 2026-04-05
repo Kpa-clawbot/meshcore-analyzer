@@ -2945,6 +2945,20 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
   }
 
   // Shared helper: render X-axis time labels
+  function rfTooltipCircles(data, sx, sy, label, unit, formatV) {
+    let svg = '';
+    formatV = formatV || (v => v.toFixed(1));
+    data.forEach(d => {
+      const t = new Date(d.t);
+      const x = sx(t.getTime());
+      const y = sy(d.v);
+      const ts = t.toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC');
+      const tip = `${label}: ${formatV(d.v)}${unit}\n${ts}`;
+      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="transparent" stroke="none"><title>${tip}</title></circle>`;
+    });
+    return svg;
+  }
+
   function rfXAxisLabels(data, sx, h, pad) {
     let svg = '';
     const xTicks = Math.min(6, data.length);
@@ -2967,18 +2981,24 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     const minT = sharedMinT, maxT = sharedMaxT;
     const rangeT = maxT - minT || 1;
 
+    // Auto-scale Y-axis to data range (20% headroom, min 1%)
+    const allValues = txData.map(d => d.v).concat(rxData.map(d => d.v));
+    const yMax = Math.max((Math.max(...allValues) || 0) * 1.2, 1);
+
     const sx = t => pad.left + ((t - minT) / rangeT) * cw;
-    const sy = v => pad.top + ch - (v / 100) * ch; // 0-100%
+    const sy = v => pad.top + ch - (v / yMax) * ch;
 
     let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Airtime chart"><title>Airtime %</title>`;
 
     // Chart title
     svg += `<text x="${pad.left}" y="12" font-size="10" fill="var(--text-muted)" font-weight="600">Airtime %</text>`;
 
-    // Y-axis: 0, 25, 50, 75, 100
-    for (let pct = 0; pct <= 100; pct += 25) {
-      const y = sy(pct);
-      svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${pct}</text>`;
+    // Y-axis: 5 ticks from 0 to yMax
+    const yTicks = 4;
+    for (let i = 0; i <= yTicks; i++) {
+      const v = yMax * i / yTicks;
+      const y = sy(v);
+      svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v.toFixed(1)}</text>`;
       svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.3"/>`;
     }
 
@@ -3018,6 +3038,10 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     // X-axis labels
     const allData = txData.length >= rxData.length ? txData : rxData;
     svg += rfXAxisLabels(allData, sx, h, pad);
+
+    // Hover tooltips
+    svg += rfTooltipCircles(txData, sx, sy, 'TX', '%');
+    svg += rfTooltipCircles(rxData, sx, sy, 'RX', '%');
 
     svg += '</svg>';
     return svg;
@@ -3067,6 +3091,9 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
 
     // X-axis labels
     svg += rfXAxisLabels(errData, sx, h, pad);
+
+    // Hover tooltips
+    svg += rfTooltipCircles(errData, sx, sy, 'Err', '%', v => v.toFixed(2));
 
     svg += '</svg>';
     return svg;
@@ -3126,6 +3153,9 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     // X-axis labels
     svg += rfXAxisLabels(battData, sx, h, pad);
 
+    // Hover tooltips
+    svg += rfTooltipCircles(battData, sx, sy, 'Batt', 'V', v => (v/1000).toFixed(2));
+
     svg += '</svg>';
     return svg;
   }
@@ -3182,6 +3212,9 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
 
     // Data polyline
     svg += `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>`;
+
+    // Hover tooltips
+    svg += rfTooltipCircles(data, sx, sy, 'NF', ' dBm');
 
     // Direct labels: min and max points
     const times = data.map(d => new Date(d.t).getTime());
