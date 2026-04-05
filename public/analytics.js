@@ -2653,10 +2653,14 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
             <button class="rf-range-btn" id="rfCustomApply">Apply</button>
           </span>
         </div>
-        <div id="rfHealthGrid" class="rf-health-grid">
-          <div class="text-muted" style="padding:20px">Loading RF metrics…</div>
+        <div class="rf-health-split">
+          <div id="rfHealthGrid" class="rf-health-grid">
+            <div class="text-muted" style="padding:20px">Loading RF metrics…</div>
+          </div>
+          <div id="rfHealthDetail" class="rf-health-detail rf-panel-empty">
+            <span>Select an observer to view details</span>
+          </div>
         </div>
-        <div id="rfHealthDetail" class="rf-health-detail" style="display:none"></div>
       </div>`;
 
     // Range button handlers
@@ -2699,13 +2703,19 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
       const summaryData = await api('/observers/metrics/summary?window=' + window);
       const observers = summaryData.observers || [];
 
-      if (!observers.length) {
+      // Filter to observers with sufficient sparkline data (≥2 non-null noise_floor values)
+      const filteredObservers = observers.filter(obs => {
+        const nfValues = (obs.sparkline || []).filter(v => v != null);
+        return nfValues.length >= 2;
+      });
+
+      if (!filteredObservers.length) {
         grid.innerHTML = '<div class="text-muted" style="padding:20px">No RF metrics data available yet. Metrics are collected from observer status messages every ~5 minutes.</div>';
         return;
       }
 
       // Render small multiples grid
-      grid.innerHTML = observers.map(obs => {
+      grid.innerHTML = filteredObservers.map(obs => {
         const nf = obs.current_noise_floor != null ? obs.current_noise_floor.toFixed(1) : '—';
         const avgNf = obs.avg_noise_floor_24h != null ? obs.avg_noise_floor_24h.toFixed(1) : '—';
         const maxNf = obs.max_noise_floor_24h != null ? obs.max_noise_floor_24h.toFixed(1) : '—';
@@ -2751,13 +2761,11 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
       });
 
       // Render sparklines from summary data (no extra API calls)
-      for (const obs of observers) {
+      for (const obs of filteredObservers) {
         const nfValues = (obs.sparkline || []).filter(v => v != null);
         const container = document.getElementById(`rf-spark-${obs.observer_id}`);
         if (container && nfValues.length > 1) {
           container.innerHTML = rfNFSparkline(nfValues, 140, 24);
-        } else if (container) {
-          container.innerHTML = '<span class="text-muted" style="font-size:10px">insufficient data</span>';
         }
       }
 
@@ -2815,7 +2823,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
   }
 
   async function loadRFHealthDetail(observerId, container) {
-    container.style.display = 'block';
+    container.classList.remove('rf-panel-empty');
     container.innerHTML = '<div class="text-muted" style="padding:10px">Loading detail…</div>';
 
     const { since, until } = rfHealthTimeRangeToParams(_rfHealthState.range, _rfHealthState.customFrom, _rfHealthState.customTo);
@@ -2853,7 +2861,8 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
 
       // Close button
       container.querySelector('.rf-detail-close').addEventListener('click', () => {
-        container.style.display = 'none';
+        container.classList.add('rf-panel-empty');
+        container.innerHTML = '<span>Select an observer to view details</span>';
         _rfHealthState.selectedObserver = null;
         rfHealthUpdateHash();
         document.querySelectorAll('.rf-cell').forEach(c => c.classList.remove('rf-cell-selected'));
