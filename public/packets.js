@@ -36,16 +36,18 @@
   let showHexHashes = localStorage.getItem('meshcore-hex-hashes') === 'true';
   var _pendingUrlRegion = null;
 
-  function buildPacketsUrl(timeWindowMin, regionParam) {
+  var DEFAULT_TIME_WINDOW = 15;
+
+  function buildPacketsQuery(timeWindowMin, regionParam) {
     var parts = [];
-    if (timeWindowMin && timeWindowMin !== 15) parts.push('timeWindow=' + timeWindowMin);
+    if (timeWindowMin && timeWindowMin !== DEFAULT_TIME_WINDOW) parts.push('timeWindow=' + timeWindowMin);
     if (regionParam) parts.push('region=' + encodeURIComponent(regionParam));
-    return '#/packets' + (parts.length ? '?' + parts.join('&') : '');
+    return parts.length ? '?' + parts.join('&') : '';
   }
-  window.buildPacketsUrl = buildPacketsUrl;
+  window.buildPacketsQuery = buildPacketsQuery;
 
   function updatePacketsUrl() {
-    history.replaceState(null, '', buildPacketsUrl(savedTimeWindowMin, RegionFilter.getRegionParam()));
+    history.replaceState(null, '', '#/packets' + buildPacketsQuery(savedTimeWindowMin, RegionFilter.getRegionParam()));
   }
 
   let filtersBuilt = false;
@@ -296,7 +298,7 @@
     }
 
     // Read URL params (router strips query from routeParam; read from location.hash)
-    var _initUrlParams = new URLSearchParams(location.hash.split('?')[1] || '');
+    var _initUrlParams = getHashParams();
     var _urlTimeWindow = Number(_initUrlParams.get('timeWindow'));
     if (Number.isFinite(_urlTimeWindow) && _urlTimeWindow > 0) {
       savedTimeWindowMin = _urlTimeWindow;

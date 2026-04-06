@@ -319,7 +319,7 @@
   let regionChangeHandler = null;
 
   function init(app, routeParam) {
-    var _initUrlParams = new URLSearchParams(location.hash.split('?')[1] || '');
+    var _initUrlParams = getHashParams();
     var _pendingNode = _initUrlParams.get('node');
 
     app.innerHTML = `<div class="ch-layout">
@@ -357,7 +357,7 @@
     loadObserverRegions();
     loadChannels().then(async function () {
       if (routeParam) await selectChannel(routeParam);
-      if (_pendingNode) await showNodeDetail(_pendingNode);
+      if (_pendingNode && _pendingNode.length < 200) await showNodeDetail(_pendingNode);
     });
 
     // #89: Sidebar resize handle

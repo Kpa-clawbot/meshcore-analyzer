@@ -328,7 +328,7 @@
     // Reset list-view state to defaults, then override from URL params
     activeTab = 'all';
     search = '';
-    const _listUrlParams = new URLSearchParams(location.hash.split('?')[1] || '');
+    const _listUrlParams = getHashParams();
     const _urlTab = _listUrlParams.get('tab');
     const _urlSearch = _listUrlParams.get('search');
     if (_urlTab && TABS.some(function(t) { return t.key === _urlTab; })) activeTab = _urlTab;

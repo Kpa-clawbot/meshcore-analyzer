@@ -104,6 +104,10 @@ function timeAgo(iso) {
   return value + suffix + ' ago';
 }
 
+function getHashParams() {
+  return new URLSearchParams(location.hash.split('?')[1] || '');
+}
+
 function getTimestampMode() {
   const saved = localStorage.getItem('meshcore-timestamp-mode');
   if (saved === 'ago' || saved === 'absolute') return saved;

@@ -75,6 +75,7 @@ function makeSandbox() {
       };
     })(),
     location: { hash: '' },
+    getHashParams: function() { return new URLSearchParams((ctx.location.hash.split('?')[1] || '')); },
     CustomEvent: class CustomEvent {},
     Map,
     Promise,
@@ -4599,8 +4600,8 @@ console.log('\n=== nodes.js: buildNodesQuery ===');
   }
 }
 
-// ===== PACKETS.JS: buildPacketsUrl =====
-console.log('\n=== packets.js: buildPacketsUrl ===');
+// ===== PACKETS.JS: buildPacketsQuery =====
+console.log('\n=== packets.js: buildPacketsQuery ===');
 {
   const ctx = makeSandbox();
   loadInCtx(ctx, 'public/roles.js');
@@ -4637,26 +4638,26 @@ console.log('\n=== packets.js: buildPacketsUrl ===');
     console.log('  ⚠️ packets.js sandbox load failed:', e.message.slice(0, 120));
   }
 
-  const buildPacketsUrl = ctx.buildPacketsUrl;
+  const buildPacketsQuery = ctx.buildPacketsQuery;
 
-  if (buildPacketsUrl) {
-    test('buildPacketsUrl: default (15min, no region) = bare #/packets', () => {
-      assert.strictEqual(buildPacketsUrl(15, ''), '#/packets');
+  if (buildPacketsQuery) {
+    test('buildPacketsQuery: default (15min, no region) = empty string', () => {
+      assert.strictEqual(buildPacketsQuery(15, ''), '');
     });
-    test('buildPacketsUrl: non-default timeWindow', () => {
-      assert.strictEqual(buildPacketsUrl(60, ''), '#/packets?timeWindow=60');
+    test('buildPacketsQuery: non-default timeWindow', () => {
+      assert.strictEqual(buildPacketsQuery(60, ''), '?timeWindow=60');
     });
-    test('buildPacketsUrl: region only', () => {
-      assert.strictEqual(buildPacketsUrl(15, 'US-SFO'), '#/packets?region=US-SFO');
+    test('buildPacketsQuery: region only', () => {
+      assert.strictEqual(buildPacketsQuery(15, 'US-SFO'), '?region=US-SFO');
     });
-    test('buildPacketsUrl: timeWindow + region', () => {
-      assert.strictEqual(buildPacketsUrl(30, 'US-SFO,US-LAX'), '#/packets?timeWindow=30&region=US-SFO%2CUS-LAX');
+    test('buildPacketsQuery: timeWindow + region', () => {
+      assert.strictEqual(buildPacketsQuery(30, 'US-SFO,US-LAX'), '?timeWindow=30&region=US-SFO%2CUS-LAX');
     });
-    test('buildPacketsUrl: timeWindow=0 treated as default', () => {
-      assert.strictEqual(buildPacketsUrl(0, ''), '#/packets');
+    test('buildPacketsQuery: timeWindow=0 treated as default', () => {
+      assert.strictEqual(buildPacketsQuery(0, ''), '');
     });
   } else {
-    console.log('  ⚠️ buildPacketsUrl not exposed — skipping');
+    console.log('  ⚠️ buildPacketsQuery not exposed — skipping');
   }
 }
 
