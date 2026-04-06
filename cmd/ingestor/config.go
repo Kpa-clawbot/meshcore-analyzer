@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -79,15 +81,21 @@ func (c *Config) NodeDaysOrDefault() int {
 }
 
 // LoadConfig reads configuration from a JSON file, with env var overrides.
+// If the config file does not exist, sensible defaults are used (zero-config startup).
 func LoadConfig(path string) (*Config, error) {
+	var cfg Config
+
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading config %s: %w", path, err)
-	}
-
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config %s: %w", path, err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("reading config %s: %w", path, err)
+		}
+		// Config file doesn't exist — use defaults (zero-config mode)
+		log.Printf("config file %s not found, using sensible defaults", path)
+	} else {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("parsing config %s: %w", path, err)
+		}
 	}
 
 	// Env var overrides
@@ -119,6 +127,16 @@ func LoadConfig(path string) (*Config, error) {
 			Broker: cfg.MQTT.Broker,
 			Topics: []string{cfg.MQTT.Topic, "meshcore/#"},
 		}}
+	}
+
+	// Default MQTT source: connect to localhost broker when no sources configured
+	if len(cfg.MQTTSources) == 0 {
+		cfg.MQTTSources = []MQTTSource{{
+			Name:   "local",
+			Broker: "mqtt://localhost:1883",
+			Topics: []string{"meshcore/#"},
+		}}
+		log.Printf("no MQTT sources configured, defaulting to mqtt://localhost:1883")
 	}
 
 	return &cfg, nil

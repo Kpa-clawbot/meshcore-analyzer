@@ -49,9 +49,6 @@ func main() {
 	}
 
 	sources := cfg.ResolvedSources()
-	if len(sources) == 0 {
-		log.Fatal("no MQTT sources configured — set mqttSources in config or MQTT_BROKER env var")
-	}
 
 	store, err := OpenStoreWithInterval(cfg.DBPath, cfg.MetricsSampleInterval())
 	if err != nil {
@@ -163,7 +160,7 @@ func main() {
 	}
 
 	if len(clients) == 0 {
-		log.Fatal("no MQTT connections established")
+		log.Fatal("no MQTT connections established — check broker is running (default: mqtt://localhost:1883). Set MQTT_BROKER env var or configure mqttSources in config.json")
 	}
 
 	log.Printf("Running — %d MQTT source(s) connected", len(clients))

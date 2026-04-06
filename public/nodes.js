@@ -20,26 +20,24 @@
   let activeTab = 'all';
   let search = '';
   // Sort state: column + direction, persisted to localStorage
-  let sortState = (function () {
-    try {
-      const saved = JSON.parse(localStorage.getItem('meshcore-nodes-sort'));
-      if (saved && saved.column && saved.direction) return saved;
-    } catch {}
-    return { column: 'last_seen', direction: 'desc' };
-  })();
+  // Managed by TableSort utility (public/table-sort.js) when DOM is available,
+  // falls back to simple object for unit testing
+  var _nodesTableSortCtrl = null;
+  // TODO(M5): remove fallback when tests use DOM sandbox
+  var _fallbackSortState = null; // used when TableSort controller not initialized (tests)
 
-  function toggleSort(column) {
-    if (sortState.column === column) {
-      sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
-    } else {
-      // Default direction per column type
-      const descDefault = ['last_seen', 'advert_count'];
-      sortState = { column, direction: descDefault.includes(column) ? 'desc' : 'asc' };
-    }
-    localStorage.setItem('meshcore-nodes-sort', JSON.stringify(sortState));
+  function _getSortState() {
+    if (_nodesTableSortCtrl) return _nodesTableSortCtrl.getState();
+    if (_fallbackSortState) return _fallbackSortState;
+    try {
+      var saved = JSON.parse(localStorage.getItem('meshcore-nodes-sort'));
+      if (saved && saved.column && saved.direction) return saved;
+    } catch (e) { /* ignore */ }
+    return { column: 'last_seen', direction: 'desc' };
   }
 
   function sortNodes(arr) {
+    var sortState = _getSortState();
     const col = sortState.column;
     const dir = sortState.direction === 'asc' ? 1 : -1;
     return arr.sort(function (a, b) {
@@ -65,11 +63,6 @@
       }
       return 0;
     });
-  }
-
-  function sortArrow(col) {
-    if (sortState.column !== col) return '';
-    return '<span class="sort-arrow">' + (sortState.direction === 'asc' ? '▲' : '▼') + '</span>';
   }
   let lastHeard = localStorage.getItem('meshcore-nodes-last-heard') || '';
   let statusFilter = localStorage.getItem('meshcore-nodes-status-filter') || 'all';
@@ -189,7 +182,7 @@
 
   function renderNeighborRows(neighbors, limit) {
     var sorted = neighbors.slice().sort(function(a, b) {
-      return (b.score || b.affinity || 0) - (a.score || a.affinity || 0);
+      return (b.count || 0) - (a.count || 0);
     });
     var items = limit ? sorted.slice(0, limit) : sorted;
     return items.map(function(nb) {
@@ -204,15 +197,21 @@
         : '<span class="text-muted">—</span>';
       var scoreTitle = 'Observations: ' + nb.count;
       if (nb.avg_snr != null) scoreTitle += ' · Avg SNR: ' + Number(nb.avg_snr).toFixed(1) + ' dB';
+      var distanceCell = nb.distance_km != null
+        ? Number(nb.distance_km).toFixed(1) + ' km'
+        : '<span class="text-muted">—</span>';
       var showOnMap = nb.pubkey
         ? ' <button class="btn-link neighbor-show-map" data-pubkey="' + escapeHtml(nb.pubkey) + '" style="font-size:11px;padding:1px 6px;white-space:nowrap">📍 Map</button>'
         : '';
+      var lastSeenVal = nb.last_seen ? new Date(nb.last_seen).getTime() : 0;
+      var distanceVal = nb.distance_km != null ? Number(nb.distance_km) : '';
       return '<tr>' +
-        '<td style="font-weight:600">' + nameHtml + '</td>' +
-        '<td>' + roleBadge + '</td>' +
-        '<td title="' + escapeHtml(scoreTitle) + '">' + Number(nb.score).toFixed(2) + '</td>' +
-        '<td>' + nb.count + '</td>' +
-        '<td>' + renderNodeTimestampHtml(nb.last_seen) + '</td>' +
+        '<td data-value="' + escapeHtml(name.toLowerCase()) + '" style="font-weight:600">' + nameHtml + '</td>' +
+        '<td data-value="' + escapeHtml(role.toLowerCase()) + '">' + roleBadge + '</td>' +
+        '<td data-value="' + Number(nb.score || 0) + '" title="' + escapeHtml(scoreTitle) + '">' + Number(nb.score).toFixed(2) + '</td>' +
+        '<td data-value="' + (nb.count || 0) + '">' + nb.count + '</td>' +
+        '<td data-value="' + lastSeenVal + '">' + renderNodeTimestampHtml(nb.last_seen) + '</td>' +
+        '<td data-value="' + distanceVal + '">' + distanceCell + '</td>' +
         '<td><span title="' + conf.label + '">' + conf.icon + '</span></td>' +
         '<td style="text-align:right">' + showOnMap + '</td>' +
         '</tr>';
@@ -220,8 +219,16 @@
   }
 
   function renderNeighborTable(neighbors, limit) {
-    return '<table class="data-table" style="font-size:12px">' +
-      '<thead><tr><th>Neighbor</th><th>Role</th><th>Score</th><th>Obs</th><th>Last Seen</th><th>Conf</th><th></th></tr></thead>' +
+    return '<table class="data-table neighbor-sort-table" style="font-size:12px">' +
+      '<thead><tr>' +
+      '<th scope="col" data-sort="name">Neighbor</th>' +
+      '<th scope="col" data-sort="role">Role</th>' +
+      '<th scope="col" data-sort="score" data-type="number" data-sort-default="desc">Score</th>' +
+      '<th scope="col" data-sort="count" data-type="number" data-sort-default="desc">Obs</th>' +
+      '<th scope="col" data-sort="last_seen" data-type="number" data-sort-default="desc">Last Seen</th>' +
+      '<th scope="col" data-sort="distance" data-type="number">Distance</th>' +
+      '<th scope="col">Conf</th><th scope="col"></th>' +
+      '</tr></thead>' +
       '<tbody>' + renderNeighborRows(neighbors, limit) + '</tbody></table>';
   }
 
@@ -272,6 +279,15 @@
     }
     el.innerHTML = html;
 
+    // Initialize TableSort on neighbor table
+    var neighborTable = el.querySelector('.neighbor-sort-table');
+    if (neighborTable && window.TableSort) {
+      TableSort.init(neighborTable, {
+        defaultColumn: 'count',
+        defaultDirection: 'desc'
+      });
+    }
+
     // Wire up "Show on Map" buttons via event delegation
     el.addEventListener('click', function(e) {
       var btn = e.target.closest('.neighbor-show-map');
@@ -320,7 +336,7 @@
       </div>
       <div id="nodesRegionFilter" class="region-filter-container"></div>
       <div class="split-layout">
-        <div class="panel-left" id="nodesLeft"></div>
+        <div class="panel-left" id="nodesLeft" aria-live="polite" aria-relevant="additions removals"></div>
         <div class="panel-right empty" id="nodesRight"><span>Select a node to view details</span></div>
       </div>
     </div>`;
@@ -453,15 +469,21 @@
         ${observers.length ? `<div class="node-full-card" id="node-observers">
           ${(() => { const regions = [...new Set(observers.map(o => o.iata).filter(Boolean))]; return regions.length ? `<div style="margin-bottom:8px"><strong>Regions:</strong> ${regions.map(r => '<span class="badge" style="margin:0 2px">' + escapeHtml(r) + '</span>').join(' ')}</div>` : ''; })()}
           <h4>Heard By (${observers.length} observer${observers.length > 1 ? 's' : ''})</h4>
-          <table class="data-table" style="font-size:12px">
-            <thead><tr><th scope="col">Observer</th><th scope="col">Region</th><th scope="col">Packets</th><th scope="col">Avg SNR</th><th scope="col">Avg RSSI</th></tr></thead>
+          <table class="data-table observer-sort-table" style="font-size:12px">
+            <thead><tr>
+              <th scope="col" data-sort="observer">Observer</th>
+              <th scope="col" data-sort="region">Region</th>
+              <th scope="col" data-sort="packets" data-type="number" data-sort-default="desc">Packets</th>
+              <th scope="col" data-sort="snr" data-type="number" data-sort-default="desc">Avg SNR</th>
+              <th scope="col" data-sort="rssi" data-type="number" data-sort-default="desc">Avg RSSI</th>
+            </tr></thead>
             <tbody>
               ${observers.map(o => `<tr>
-                <td style="font-weight:600">${escapeHtml(o.observer_name || o.observer_id)}</td>
-                <td>${o.iata ? escapeHtml(o.iata) : '—'}</td>
-                <td>${o.packetCount}</td>
-                <td>${o.avgSnr != null ? Number(o.avgSnr).toFixed(1) + ' dB' : '—'}</td>
-                <td>${o.avgRssi != null ? Number(o.avgRssi).toFixed(0) + ' dBm' : '—'}</td>
+                <td data-value="${escapeHtml((o.observer_name || o.observer_id || '').toLowerCase())}" style="font-weight:600">${escapeHtml(o.observer_name || o.observer_id)}</td>
+                <td data-value="${escapeHtml((o.iata || '').toLowerCase())}">${o.iata ? escapeHtml(o.iata) : '—'}</td>
+                <td data-value="${o.packetCount || 0}">${o.packetCount}</td>
+                <td data-value="${o.avgSnr != null ? Number(o.avgSnr) : ''}">${o.avgSnr != null ? Number(o.avgSnr).toFixed(1) + ' dB' : '—'}</td>
+                <td data-value="${o.avgRssi != null ? Number(o.avgRssi) : ''}">${o.avgRssi != null ? Number(o.avgRssi).toFixed(0) + ' dBm' : '—'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -557,6 +579,15 @@
           const svg = qrFullEl.querySelector('svg');
           if (svg) { svg.style.display = 'block'; svg.style.margin = '0 auto'; }
         } catch {}
+      }
+
+      // Initialize TableSort on observer table (full detail page)
+      var observerTable = document.querySelector('#node-observers .observer-sort-table');
+      if (observerTable && window.TableSort) {
+        TableSort.init(observerTable, {
+          defaultColumn: 'packets',
+          defaultDirection: 'desc'
+        });
       }
 
       // Fetch neighbors for this node (full-screen view)
@@ -855,11 +886,11 @@
       </div>
       <table class="data-table" id="nodesTable">
         <thead><tr>
-          <th scope="col" class="sortable${sortState.column==='name'?' sort-active':''}" data-sort="name">Name${sortArrow('name')}</th>
-          <th scope="col" class="col-pubkey sortable${sortState.column==='public_key'?' sort-active':''}" data-sort="public_key">Public Key${sortArrow('public_key')}</th>
-          <th scope="col" class="sortable${sortState.column==='role'?' sort-active':''}" data-sort="role">Role${sortArrow('role')}</th>
-          <th scope="col" class="sortable${sortState.column==='last_seen'?' sort-active':''}" data-sort="last_seen">Last Seen${sortArrow('last_seen')}</th>
-          <th scope="col" class="sortable${sortState.column==='advert_count'?' sort-active':''}" data-sort="advert_count">Adverts${sortArrow('advert_count')}</th>
+          <th scope="col" data-sort="name">Name</th>
+          <th scope="col" class="col-pubkey" data-sort="public_key">Public Key</th>
+          <th scope="col" data-sort="role">Role</th>
+          <th scope="col" data-sort="last_seen" data-sort-default="desc">Last Seen</th>
+          <th scope="col" data-sort="advert_count" data-sort-default="desc">Adverts</th>
         </tr></thead>
         <tbody id="nodesBody"></tbody>
       </table>`;
@@ -884,10 +915,18 @@
       });
     });
 
-    // Sortable column headers
-    el.querySelectorAll('th.sortable').forEach(th => {
-      th.addEventListener('click', () => { toggleSort(th.dataset.sort); renderLeft(); });
-    });
+    // Initialize TableSort on nodes table (handles header clicks, indicators, persistence)
+    // We use onSort callback to re-render rows (sorting is done at JS-array level in renderRows
+    // because of claimed/favorites pinning logic that TableSort can't handle)
+    var nodesTableEl = document.getElementById('nodesTable');
+    if (nodesTableEl && window.TableSort) {
+      _nodesTableSortCtrl = TableSort.init(nodesTableEl, {
+        defaultColumn: 'last_seen',
+        defaultDirection: 'desc',
+        storageKey: 'meshcore-nodes-sort',
+        onSort: function () { renderRows(); }
+      });
+    }
 
     // Delegated click/keyboard handler for table rows
     const tbody = document.getElementById('nodesBody');
@@ -913,6 +952,17 @@
           selectedKey = null;
           renderRows();
         }
+      }
+    });
+
+    // #630: Close button for node detail panel (important for mobile full-screen overlay)
+    document.getElementById('nodesRight').addEventListener('click', function(e) {
+      if (e.target.closest('.panel-close-btn')) {
+        const panel = document.getElementById('nodesRight');
+        panel.classList.add('empty');
+        panel.innerHTML = '<span>Select a node to view details</span>';
+        selectedKey = null;
+        renderRows();
       }
     });
 
@@ -1003,6 +1053,7 @@
     const dupBadge = dupNameBadge(n.name, n.public_key, dupMap);
 
     panel.innerHTML = `
+      <button class="panel-close-btn" title="Close detail pane (Esc)">✕</button>
       <div class="node-detail">
         <div class="node-detail-name">${escapeHtml(n.name || '(unnamed)')}${dupBadge}</div>
         <div class="node-detail-role">${renderNodeBadges(n, roleColor)}
@@ -1196,11 +1247,29 @@
   window._nodesIsAdvertMessage = isAdvertMessage;
   window._nodesGetAllNodes = function() { return _allNodes; };
   window._nodesSetAllNodes = function(n) { _allNodes = n; };
-  window._nodesToggleSort = toggleSort;
+  window._nodesToggleSort = function(col) {
+    if (_nodesTableSortCtrl) { _nodesTableSortCtrl.sort(col); return; }
+    // Fallback for tests without DOM
+    var st = _getSortState();
+    var descDefault = ['last_seen', 'advert_count'];
+    if (st.column === col) {
+      _fallbackSortState = { column: col, direction: st.direction === 'asc' ? 'desc' : 'asc' };
+    } else {
+      _fallbackSortState = { column: col, direction: descDefault.indexOf(col) >= 0 ? 'desc' : 'asc' };
+    }
+    localStorage.setItem('meshcore-nodes-sort', JSON.stringify(_fallbackSortState));
+  };
   window._nodesSortNodes = sortNodes;
-  window._nodesSortArrow = sortArrow;
-  window._nodesGetSortState = function() { return sortState; };
-  window._nodesSetSortState = function(s) { sortState = s; };
+  window._nodesSortArrow = function(col) {
+    var st = _getSortState();
+    if (st.column !== col) return '';
+    return '<span class="sort-arrow">' + (st.direction === 'asc' ? '▲' : '▼') + '</span>';
+  };
+  window._nodesGetSortState = _getSortState;
+  window._nodesSetSortState = function(s) {
+    _fallbackSortState = s;
+    if (_nodesTableSortCtrl) _nodesTableSortCtrl.sort(s.column, s.direction);
+  };
   window._nodesSyncClaimedToFavorites = syncClaimedToFavorites;
   window._nodesRenderNodeTimestampHtml = renderNodeTimestampHtml;
   window._nodesRenderNodeTimestampText = renderNodeTimestampText;

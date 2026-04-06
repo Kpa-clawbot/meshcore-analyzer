@@ -754,7 +754,7 @@
             <label class="audio-slider-label">Vol <input type="range" id="audioVolSlider" min="0" max="100" value="30" class="audio-slider"><span id="audioVolVal">30</span></label>
           </div>
         </div>
-        <div class="live-overlay live-feed" id="liveFeed">
+        <div class="live-overlay live-feed" id="liveFeed" aria-live="polite" aria-relevant="additions" role="log">
           <button class="feed-hide-btn" id="feedHideBtn" title="Hide feed">✕</button>
         </div>
         <button class="feed-show-btn hidden" id="feedShowBtn" title="Show feed">📋</button>
@@ -1323,7 +1323,7 @@
       let html = `
         <div style="padding:16px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-            <span class="${statusDot}" style="font-size:18px">●</span>
+            <span class="${statusDot}" style="font-size:18px" aria-hidden="true">●</span>
             <h3 style="margin:0;font-size:16px;font-weight:700;">${escapeHtml(n.name || 'Unknown')}</h3>
           </div>
           <div style="margin-bottom:12px;">
@@ -1563,6 +1563,7 @@
         <span class="feed-text">${escapeHtml(preview)}</span>
         <span class="feed-time">${formatLiveTimestampHtml(group.latestTs || Date.now())}</span>
       `;
+      var _ccD = (pkt.decoded || {}), _ccH = (_ccD.header || {}), _ccP = (_ccD.payload || {}); if (_ccH.payloadTypeName === 'GRP_TXT' || _ccH.payloadTypeName === 'CHAN') item._ccChannel = _ccP.channelName || null; // channel color picker (#271 M2)
       item.addEventListener('click', () => showFeedCard(item, pkt, color));
       feed.appendChild(item);
 
@@ -2524,6 +2525,7 @@
       <span class="feed-text">${escapeHtml(preview)}</span>
       <span class="feed-time">${formatLiveTimestampHtml(pkt._ts || Date.now())}</span>
     `;
+    var _ccD = (pkt.decoded || {}), _ccH = (_ccD.header || {}), _ccP = (_ccD.payload || {}); if (_ccH.payloadTypeName === 'GRP_TXT' || _ccH.payloadTypeName === 'CHAN') item._ccChannel = _ccP.channelName || null; // channel color picker (#271 M2)
     item.addEventListener('click', () => showFeedCard(item, pkt, color));
     feed.appendChild(item);
   }
@@ -2595,6 +2597,7 @@
       <span class="feed-text">${escapeHtml(preview)}</span>
       <span class="feed-time">${formatLiveTimestampHtml(pkt._ts || Date.now())}</span>
     `;
+    var _ccD = (pkt.decoded || {}), _ccH = (_ccD.header || {}), _ccP = (_ccD.payload || {}); if (_ccH.payloadTypeName === 'GRP_TXT' || _ccH.payloadTypeName === 'CHAN') item._ccChannel = _ccP.channelName || null; // channel color picker (#271 M2)
     item.addEventListener('click', () => showFeedCard(item, pkt, color));
     feed.prepend(item);
     requestAnimationFrame(() => requestAnimationFrame(() => item.classList.remove('live-feed-enter')));
@@ -2714,7 +2717,10 @@
         if (activeNodeDetailKey) showNodeDetail(activeNodeDetailKey);
       };
       window.addEventListener('theme-refresh', _themeRefreshHandler);
-      return init(app, routeParam);
+      var result = init(app, routeParam);
+      // Install channel color picker (M2, #271)
+      if (window.ChannelColorPicker) window.ChannelColorPicker.installLiveFeed();
+      return result;
     },
     destroy: function() {
       if (_themeRefreshHandler) { window.removeEventListener('theme-refresh', _themeRefreshHandler); _themeRefreshHandler = null; }

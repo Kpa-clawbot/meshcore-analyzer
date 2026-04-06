@@ -68,6 +68,8 @@ type StatsResponse struct {
 	Commit             string     `json:"commit"`
 	BuildTime          string     `json:"buildTime"`
 	Counts             RoleCounts `json:"counts"`
+	Backfilling        bool       `json:"backfilling"`
+	BackfillProgress   float64    `json:"backfillProgress"`
 }
 
 // ─── Health ────────────────────────────────────────────────────────────────────

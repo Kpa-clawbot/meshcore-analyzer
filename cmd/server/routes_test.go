@@ -47,7 +47,7 @@ func setupTestServerWithAPIKey(t *testing.T, apiKey string) (*Server, *mux.Route
 }
 
 func TestWriteEndpointsRequireAPIKey(t *testing.T) {
-	_, router := setupTestServerWithAPIKey(t, "test-secret")
+	_, router := setupTestServerWithAPIKey(t, "test-secret-key-strong-enough")
 
 	t.Run("missing key returns 401", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/perf/reset", nil)
@@ -65,7 +65,7 @@ func TestWriteEndpointsRequireAPIKey(t *testing.T) {
 
 	t.Run("wrong key returns 401", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/perf/reset", nil)
-		req.Header.Set("X-API-Key", "wrong-secret")
+		req.Header.Set("X-API-Key", "wrong-secret-key-strong-enough")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
@@ -75,7 +75,7 @@ func TestWriteEndpointsRequireAPIKey(t *testing.T) {
 
 	t.Run("correct key passes", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/perf/reset", nil)
-		req.Header.Set("X-API-Key", "test-secret")
+		req.Header.Set("X-API-Key", "test-secret-key-strong-enough")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -3186,7 +3186,7 @@ func TestHashCollisionsClassification(t *testing.T) {
 }
 
 func TestHashCollisionsCacheTTL(t *testing.T) {
-	// Issue #420: collision cache should use dedicated TTL (60s), not rfCacheTTL (15s)
+	// Issue #420: collision cache should use dedicated TTL, default 3600s (1 hour)
 	db := setupTestDB(t)
 	seedTestData(t, db)
 	store := NewPacketStore(db, nil)
@@ -3194,8 +3194,8 @@ func TestHashCollisionsCacheTTL(t *testing.T) {
 		t.Fatalf("store.Load failed: %v", err)
 	}
 
-	if store.collisionCacheTTL != 60*time.Second {
-		t.Errorf("expected collisionCacheTTL=60s, got %v", store.collisionCacheTTL)
+	if store.collisionCacheTTL != 3600*time.Second {
+		t.Errorf("expected collisionCacheTTL=3600s, got %v", store.collisionCacheTTL)
 	}
 	if store.rfCacheTTL != 15*time.Second {
 		t.Errorf("expected rfCacheTTL=15s, got %v", store.rfCacheTTL)

@@ -15,9 +15,16 @@ if [ -f /app/data/theme.json ]; then
 fi
 
 SUPERVISORD_CONF="/etc/supervisor/conf.d/supervisord.conf"
-if [ "${DISABLE_MOSQUITTO:-false}" = "true" ]; then
+if [ "${DISABLE_MOSQUITTO:-false}" = "true" ] && [ "${DISABLE_CADDY:-false}" = "true" ]; then
+  echo "[config] internal MQTT broker disabled (DISABLE_MOSQUITTO=true)"
+  echo "[config] Caddy reverse proxy disabled (DISABLE_CADDY=true)"
+  SUPERVISORD_CONF="/etc/supervisor/conf.d/supervisord-no-mosquitto-no-caddy.conf"
+elif [ "${DISABLE_MOSQUITTO:-false}" = "true" ]; then
   echo "[config] internal MQTT broker disabled (DISABLE_MOSQUITTO=true)"
   SUPERVISORD_CONF="/etc/supervisor/conf.d/supervisord-no-mosquitto.conf"
+elif [ "${DISABLE_CADDY:-false}" = "true" ]; then
+  echo "[config] Caddy reverse proxy disabled (DISABLE_CADDY=true)"
+  SUPERVISORD_CONF="/etc/supervisor/conf.d/supervisord-no-caddy.conf"
 fi
 
 exec /usr/bin/supervisord -c "$SUPERVISORD_CONF"

@@ -20,19 +20,20 @@ type NeighborResponse struct {
 }
 
 type NeighborEntry struct {
-	Pubkey     *string           `json:"pubkey"`
-	Prefix     string            `json:"prefix"`
-	Name       *string           `json:"name"`
-	Role       *string           `json:"role"`
-	Count      int               `json:"count"`
-	Score      float64           `json:"score"`
-	FirstSeen  string            `json:"first_seen"`
-	LastSeen   string            `json:"last_seen"`
-	AvgSNR     *float64          `json:"avg_snr"`
-	Observers  []string          `json:"observers"`
-	Ambiguous  bool              `json:"ambiguous"`
-	Unresolved bool              `json:"unresolved,omitempty"`
-	Candidates []CandidateEntry  `json:"candidates,omitempty"`
+	Pubkey      *string          `json:"pubkey"`
+	Prefix      string           `json:"prefix"`
+	Name        *string          `json:"name"`
+	Role        *string          `json:"role"`
+	Count       int              `json:"count"`
+	Score       float64          `json:"score"`
+	FirstSeen   string           `json:"first_seen"`
+	LastSeen    string           `json:"last_seen"`
+	AvgSNR      *float64         `json:"avg_snr"`
+	DistanceKm  *float64         `json:"distance_km,omitempty"`
+	Observers   []string         `json:"observers"`
+	Ambiguous   bool             `json:"ambiguous"`
+	Unresolved  bool             `json:"unresolved,omitempty"`
+	Candidates  []CandidateEntry `json:"candidates,omitempty"`
 }
 
 type CandidateEntry struct {
@@ -115,8 +116,14 @@ func (s *Server) handleNodeNeighbors(w http.ResponseWriter, r *http.Request) {
 	edges := graph.Neighbors(pubkey)
 	now := time.Now()
 
-	// Build node info lookup for names/roles.
+	// Build node info lookup for names/roles/coordinates.
 	nodeMap := s.buildNodeInfoMap()
+
+	// Look up the queried node's GPS coordinates for distance computation.
+	var srcInfo nodeInfo
+	if nodeMap != nil {
+		srcInfo = nodeMap[pubkey]
+	}
 
 	var entries []NeighborEntry
 	totalObs := 0
@@ -170,6 +177,10 @@ func (s *Server) handleNodeNeighbors(w http.ResponseWriter, r *http.Request) {
 			if info, ok := nodeMap[strings.ToLower(neighborPK)]; ok {
 				entry.Name = &info.Name
 				entry.Role = &info.Role
+				if srcInfo.HasGPS && info.HasGPS {
+					d := haversineKm(srcInfo.Lat, srcInfo.Lon, info.Lat, info.Lon)
+					entry.DistanceKm = &d
+				}
 			}
 		}
 

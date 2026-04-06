@@ -104,6 +104,8 @@ func main() {
 	}
 	if cfg.APIKey == "" {
 		log.Printf("[security] WARNING: no apiKey configured — write endpoints are BLOCKED (set apiKey in config.json to enable them)")
+	} else if IsWeakAPIKey(cfg.APIKey) {
+		log.Printf("[security] WARNING: API key is weak or a known default — write endpoints are vulnerable")
 	}
 
 	// Resolve DB path
@@ -139,7 +141,7 @@ func main() {
 	}
 
 	// In-memory packet store
-	store := NewPacketStore(database, cfg.PacketStore)
+	store := NewPacketStore(database, cfg.PacketStore, cfg.CacheTTL)
 	if err := store.Load(); err != nil {
 		log.Fatalf("[store] failed to load: %v", err)
 	}
@@ -153,7 +155,7 @@ func main() {
 	// NOTE on startup ordering (review item #10): ensureResolvedPathColumn runs AFTER
 	// OpenDB/detectSchema, so db.hasResolvedPath will be false on first run with a
 	// pre-existing DB. This means Load() won't SELECT resolved_path from SQLite.
-	// That's OK: backfillResolvedPaths (below) computes and persists them in-memory
+	// Async backfill runs after HTTP starts (see backfillResolvedPathsAsync below)
 	// AND to SQLite. On next restart, detectSchema finds the column and Load() reads it.
 	if err := ensureResolvedPathColumn(dbPath); err != nil {
 		log.Printf("[store] warning: could not add resolved_path column: %v", err)
@@ -166,27 +168,59 @@ func main() {
 		store.graph = loadNeighborEdgesFromDB(database.conn)
 		log.Printf("[neighbor] loaded persisted neighbor graph")
 	} else {
-		log.Printf("[neighbor] no persisted edges found, building from store...")
-		rw, rwErr := openRW(dbPath)
-		if rwErr == nil {
-			edgeCount := buildAndPersistEdges(store, rw)
-			rw.Close()
-			log.Printf("[neighbor] persisted %d edges", edgeCount)
+		log.Printf("[neighbor] no persisted edges found, will build in background...")
+		store.graph = NewNeighborGraph() // empty graph — gets populated by background goroutine
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[neighbor] graph build panic recovered: %v", r)
+				}
+			}()
+			rw, rwErr := openRW(dbPath)
+			if rwErr == nil {
+				edgeCount := buildAndPersistEdges(store, rw)
+				rw.Close()
+				log.Printf("[neighbor] persisted %d edges", edgeCount)
+			}
+			built := BuildFromStore(store)
+			store.mu.Lock()
+			store.graph = built
+			store.mu.Unlock()
+			log.Printf("[neighbor] graph build complete")
+		}()
+	}
+
+	// Initial pickBestObservation runs in background — doesn't need to block HTTP.
+	// API serves best-effort data until this completes (~10s for 100K txs).
+	// Processes in chunks of 5000, releasing the lock between chunks so API
+	// handlers remain responsive.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[store] pickBestObservation panic recovered: %v", r)
+			}
+		}()
+		const chunkSize = 5000
+		store.mu.RLock()
+		totalPackets := len(store.packets)
+		store.mu.RUnlock()
+
+		for i := 0; i < totalPackets; i += chunkSize {
+			end := i + chunkSize
+			if end > totalPackets {
+				end = totalPackets
+			}
+			store.mu.Lock()
+			for j := i; j < end && j < len(store.packets); j++ {
+				pickBestObservation(store.packets[j])
+			}
+			store.mu.Unlock()
+			if end < totalPackets {
+				time.Sleep(10 * time.Millisecond) // yield to API handlers
+			}
 		}
-		store.graph = BuildFromStore(store)
-	}
-
-	// Backfill resolved_path for observations that don't have it yet
-	if backfilled := backfillResolvedPaths(store, dbPath); backfilled > 0 {
-		log.Printf("[store] backfilled resolved_path for %d observations", backfilled)
-	}
-
-	// Re-pick best observation now that resolved paths are populated
-	store.mu.Lock()
-	for _, tx := range store.packets {
-		pickBestObservation(tx)
-	}
-	store.mu.Unlock()
+		log.Printf("[store] initial pickBestObservation complete (%d transmissions)", totalPackets)
+	}()
 
 	// WebSocket hub
 	hub := NewHub()
@@ -234,6 +268,11 @@ func main() {
 			close(pruneDone)
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[prune] panic recovered: %v", r)
+				}
+			}()
 			time.Sleep(1 * time.Minute)
 			if n, err := database.PruneOldPackets(days); err != nil {
 				log.Printf("[prune] error: %v", err)
@@ -267,6 +306,11 @@ func main() {
 			close(metricsPruneDone)
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[metrics-prune] panic recovered: %v", r)
+				}
+			}()
 			time.Sleep(2 * time.Minute) // stagger after packet prune
 			database.PruneOldMetrics(metricsDays)
 			for {
@@ -279,6 +323,42 @@ func main() {
 			}
 		}()
 		log.Printf("[metrics-prune] auto-prune enabled: metrics older than %d days", metricsDays)
+	}
+
+	// Auto-prune old neighbor edges
+	var stopEdgePrune func()
+	{
+		maxAgeDays := cfg.NeighborMaxAgeDays()
+		edgePruneTicker := time.NewTicker(24 * time.Hour)
+		edgePruneDone := make(chan struct{})
+		stopEdgePrune = func() {
+			edgePruneTicker.Stop()
+			close(edgePruneDone)
+		}
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[neighbor-prune] panic recovered: %v", r)
+				}
+			}()
+			time.Sleep(4 * time.Minute) // stagger after metrics prune
+			store.mu.RLock()
+			g := store.graph
+			store.mu.RUnlock()
+			PruneNeighborEdges(dbPath, g, maxAgeDays)
+			for {
+				select {
+				case <-edgePruneTicker.C:
+					store.mu.RLock()
+					g := store.graph
+					store.mu.RUnlock()
+					PruneNeighborEdges(dbPath, g, maxAgeDays)
+				case <-edgePruneDone:
+					return
+				}
+			}
+		}()
+		log.Printf("[neighbor-prune] auto-prune enabled: edges older than %d days", maxAgeDays)
 	}
 
 	// Graceful shutdown
@@ -306,6 +386,9 @@ func main() {
 		if stopMetricsPrune != nil {
 			stopMetricsPrune()
 		}
+		if stopEdgePrune != nil {
+			stopEdgePrune()
+		}
 
 		// 2. Gracefully drain HTTP connections (up to 15s)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -325,6 +408,10 @@ func main() {
 	}()
 
 	log.Printf("[server] CoreScope (Go) listening on http://localhost:%d", cfg.Port)
+
+	// Start async backfill in background — HTTP is now available.
+	go backfillResolvedPathsAsync(store, dbPath, 5000, 100*time.Millisecond, cfg.BackfillHours())
+
 	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("[server] %v", err)
 	}

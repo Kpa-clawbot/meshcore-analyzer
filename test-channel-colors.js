@@ -168,6 +168,91 @@ test('getRowStyle returns empty when channel has no assigned color', function() 
   assert.strictEqual(ctx.window.ChannelColors.getRowStyle('GRP_TXT', '#nope'), '');
 });
 
+// ── M2: Channel Color Picker tests ──
+
+test('channel-color-picker.js loads without error in sandbox', function() {
+  const ctx = makeSandbox();
+  // Provide minimal DOM stubs for the picker
+  const elements = {};
+  const createdEls = [];
+  ctx.document = {
+    createElement: function(tag) {
+      var el = {
+        tagName: tag.toUpperCase(),
+        className: '', style: { cssText: '', display: '' },
+        innerHTML: '', textContent: '', title: '',
+        children: [],
+        _attrs: {},
+        _listeners: {},
+        setAttribute: function(k, v) { this._attrs[k] = v; },
+        getAttribute: function(k) { return this._attrs[k] || null; },
+        addEventListener: function(ev, fn, opts) { this._listeners[ev] = fn; },
+        removeEventListener: function() {},
+        appendChild: function(c) { this.children.push(c); return c; },
+        querySelector: function(sel) {
+          // Very basic selector matching for test
+          if (sel === '.cc-picker-swatches') return { addEventListener: function(){}, appendChild: function(c){} };
+          if (sel === '.cc-picker-apply') return { addEventListener: function(){} };
+          if (sel === '.cc-picker-clear') return { addEventListener: function(){}, style: {} };
+          if (sel === '.cc-picker-close') return { addEventListener: function(){} };
+          if (sel === '.cc-picker-title') return { textContent: '' };
+          if (sel === '.cc-picker-input') return { value: '#000000' };
+          return null;
+        },
+        querySelectorAll: function() { return []; },
+        classList: { toggle: function(){}, remove: function(){}, add: function(){} },
+        contains: function() { return false; },
+        closest: function() { return null; },
+        getBoundingClientRect: function() { return { width: 200, height: 200 }; }
+      };
+      createdEls.push(el);
+      return el;
+    },
+    getElementById: function() { return null; },
+    addEventListener: function() {},
+    removeEventListener: function() {},
+    body: { appendChild: function(c) {} },
+    querySelectorAll: function() { return []; }
+  };
+  ctx.setTimeout = function(fn) { fn(); };
+  ctx.window.innerWidth = 1024;
+  ctx.window.innerHeight = 768;
+  const pickerSrc = fs.readFileSync(__dirname + '/public/channel-color-picker.js', 'utf8');
+  vm.runInContext(pickerSrc, ctx);
+  assert.ok(ctx.window.ChannelColorPicker, 'ChannelColorPicker should be exported');
+  assert.strictEqual(typeof ctx.window.ChannelColorPicker.install, 'function');
+  assert.strictEqual(typeof ctx.window.ChannelColorPicker.show, 'function');
+  assert.strictEqual(typeof ctx.window.ChannelColorPicker.hide, 'function');
+});
+
+test('ChannelColorPicker.install does not throw when elements missing', function() {
+  const ctx = makeSandbox();
+  ctx.document = {
+    createElement: function() {
+      return { className: '', style: {}, innerHTML: '', _attrs: {}, children: [],
+        setAttribute: function(){}, getAttribute: function(){ return null; },
+        addEventListener: function(){}, appendChild: function(c){ this.children.push(c); return c; },
+        querySelector: function(){ return { addEventListener: function(){}, style: {}, textContent: '' }; },
+        querySelectorAll: function(){ return []; },
+        getBoundingClientRect: function(){ return {width:0,height:0}; },
+        contains: function(){ return false; }
+      };
+    },
+    getElementById: function() { return null; },
+    addEventListener: function() {},
+    removeEventListener: function() {},
+    body: { appendChild: function(){} },
+    querySelectorAll: function() { return []; }
+  };
+  ctx.setTimeout = function(fn) { fn(); };
+  ctx.window.innerWidth = 1024;
+  ctx.window.innerHeight = 768;
+  const pickerSrc = fs.readFileSync(__dirname + '/public/channel-color-picker.js', 'utf8');
+  vm.runInContext(pickerSrc, ctx);
+  // Should not throw when feed/table elements don't exist
+  ctx.window.ChannelColorPicker.install();
+});
+
 // Summary
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

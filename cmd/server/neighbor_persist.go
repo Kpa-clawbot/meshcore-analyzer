@@ -343,112 +343,175 @@ func unmarshalResolvedPath(s string) []*string {
 	return result
 }
 
-// backfillResolvedPaths resolves paths for all observations that have NULL resolved_path.
-func backfillResolvedPaths(store *PacketStore, dbPath string) int {
-	// Collect pending observations and snapshot immutable fields under read lock.
-	// graph is set in main.go before backfill is called; nil-safe throughout (review item #6).
+
+// backfillResolvedPathsAsync processes observations with NULL resolved_path in
+// chunks, yielding between batches so HTTP handlers remain responsive. It sets
+// store.backfillComplete when finished and re-picks best observations for any
+// transmissions affected by newly resolved paths.
+func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int, yieldDuration time.Duration, backfillHours int) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[store] backfillResolvedPathsAsync panic recovered: %v", r)
+		}
+	}()
+	// Collect ALL pending obs refs upfront in one pass under a single RLock (fix A).
 	type obsRef struct {
-		obsID      int
-		pathJSON   string
-		observerID string
-		txJSON     string // snapshot of DecodedJSON for extractFromNode
+		obsID       int
+		pathJSON    string
+		observerID  string
+		txJSON      string
 		payloadType *int
+		txHash      string // to re-pick best obs
 	}
+
+	cutoff := time.Now().UTC().Add(-time.Duration(backfillHours) * time.Hour)
+
 	store.mu.RLock()
 	pm := store.nodePM
-	graph := store.graph
-	var pending []obsRef
+	var allPending []obsRef
 	for _, tx := range store.packets {
+		// Skip transmissions older than the backfill window.
+		if tx.FirstSeen != "" {
+			if ts, err := time.Parse(time.RFC3339Nano, tx.FirstSeen); err == nil && ts.Before(cutoff) {
+				continue
+			}
+			// Also try the common SQLite format
+			if ts, err := time.Parse("2006-01-02 15:04:05", tx.FirstSeen); err == nil && ts.Before(cutoff) {
+				continue
+			}
+		}
 		for _, obs := range tx.Observations {
 			if obs.ResolvedPath == nil && obs.PathJSON != "" && obs.PathJSON != "[]" {
-				pending = append(pending, obsRef{
+				allPending = append(allPending, obsRef{
 					obsID:       obs.ID,
 					pathJSON:    obs.PathJSON,
 					observerID:  obs.ObserverID,
 					txJSON:      tx.DecodedJSON,
 					payloadType: tx.PayloadType,
+					txHash:      tx.Hash,
 				})
 			}
 		}
 	}
 	store.mu.RUnlock()
 
-	if len(pending) == 0 || pm == nil {
-		return 0
+	totalPending := len(allPending)
+	if totalPending == 0 || pm == nil {
+		store.backfillComplete.Store(true)
+		log.Printf("[store] async resolved_path backfill: nothing to do")
+		return
 	}
 
-	// Resolve paths outside the lock — resolvePathForObs only reads pm and graph.
-	type resolved struct {
-		obsID  int
-		rp     []*string
-		rpJSON string
+	store.backfillTotal.Store(int64(totalPending))
+	store.backfillProcessed.Store(0)
+	log.Printf("[store] async resolved_path backfill starting: %d observations", totalPending)
+
+	// Open RW connection once before the chunk loop (fix B).
+	var rw *sql.DB
+	if dbPath != "" {
+		var err error
+		rw, err = openRW(dbPath)
+		if err != nil {
+			log.Printf("[store] async backfill: open rw error: %v", err)
+		}
 	}
-	var results []resolved
-	for _, ref := range pending {
-		// Build a minimal StoreTx for extractFromNode (only needs DecodedJSON + PayloadType).
-		fakeTx := &StoreTx{DecodedJSON: ref.txJSON, PayloadType: ref.payloadType}
-		rp := resolvePathForObs(ref.pathJSON, ref.observerID, fakeTx, pm, graph)
-		if len(rp) > 0 {
-			rpJSON := marshalResolvedPath(rp)
-			if rpJSON != "" {
-				results = append(results, resolved{ref.obsID, rp, rpJSON})
+	defer func() {
+		if rw != nil {
+			rw.Close()
+		}
+	}()
+
+	totalProcessed := 0
+	for totalProcessed < totalPending {
+		end := totalProcessed + chunkSize
+		if end > totalPending {
+			end = totalPending
+		}
+		chunk := allPending[totalProcessed:end]
+
+		// Re-read graph under RLock at the start of each chunk so we pick up
+		// a freshly-built graph once the background build goroutine completes,
+		// instead of using the potentially-empty graph captured at cold start.
+		store.mu.RLock()
+		graph := store.graph
+		store.mu.RUnlock()
+
+		// Resolve paths outside any lock.
+		type resolved struct {
+			obsID  int
+			rp     []*string
+			rpJSON string
+			txHash string
+		}
+		var results []resolved
+		for _, ref := range chunk {
+			fakeTx := &StoreTx{DecodedJSON: ref.txJSON, PayloadType: ref.payloadType}
+			rp := resolvePathForObs(ref.pathJSON, ref.observerID, fakeTx, pm, graph)
+			if len(rp) > 0 {
+				rpJSON := marshalResolvedPath(rp)
+				if rpJSON != "" {
+					results = append(results, resolved{ref.obsID, rp, rpJSON, ref.txHash})
+				}
 			}
 		}
-	}
 
-	if len(results) == 0 {
-		return 0
-	}
+		// Persist to SQLite using the shared connection.
+		if len(results) > 0 && rw != nil {
+			sqlTx, err := rw.Begin()
+			if err != nil {
+				log.Printf("[store] async backfill: begin tx error: %v", err)
+			} else {
+				stmt, err := sqlTx.Prepare("UPDATE observations SET resolved_path = ? WHERE id = ?")
+				if err != nil {
+					log.Printf("[store] async backfill: prepare error: %v", err)
+					sqlTx.Rollback()
+				} else {
+					var execErr error
+					for _, r := range results {
+						if _, e := stmt.Exec(r.rpJSON, r.obsID); e != nil && execErr == nil {
+							execErr = e
+						}
+					}
+					if execErr != nil {
+						log.Printf("[store] async backfill: exec error (first): %v", execErr)
+					}
+					stmt.Close()
+					if err := sqlTx.Commit(); err != nil {
+						log.Printf("[store] async backfill: commit error: %v", err)
+					}
+				}
+			}
 
-	// Persist to SQLite (no lock needed — separate RW connection).
-	rw, err := openRW(dbPath)
-	if err != nil {
-		log.Printf("[store] backfill: open rw error: %v", err)
-		return 0
-	}
-	defer rw.Close()
-
-	sqlTx, err := rw.Begin()
-	if err != nil {
-		log.Printf("[store] backfill: begin tx error: %v", err)
-		return 0
-	}
-	defer sqlTx.Rollback()
-
-	stmt, err := sqlTx.Prepare("UPDATE observations SET resolved_path = ? WHERE id = ?")
-	if err != nil {
-		log.Printf("[store] backfill: prepare error: %v", err)
-		return 0
-	}
-	defer stmt.Close()
-
-	var firstErr error
-	for _, r := range results {
-		if _, err := stmt.Exec(r.rpJSON, r.obsID); err != nil && firstErr == nil {
-			firstErr = err
+			// Update in-memory state and re-pick best observation under a single
+			// write lock. The per-tx pickBestObservation is O(observations) which is
+			// typically <10 per tx — negligible cost vs. the race risk of splitting
+			// the lock (pollAndMerge can append to tx.Observations concurrently).
+			store.mu.Lock()
+			affectedSet := make(map[string]bool)
+			for _, r := range results {
+				if obs, ok := store.byObsID[r.obsID]; ok {
+					obs.ResolvedPath = r.rp
+				}
+				if !affectedSet[r.txHash] {
+					affectedSet[r.txHash] = true
+					if tx, ok := store.byHash[r.txHash]; ok {
+						pickBestObservation(tx)
+					}
+				}
+			}
+			store.mu.Unlock()
 		}
-	}
-	if firstErr != nil {
-		log.Printf("[store] backfill resolved_path exec error (first): %v", firstErr)
+
+		totalProcessed += len(chunk)
+		store.backfillProcessed.Store(int64(totalProcessed))
+		pct := float64(totalProcessed) / float64(totalPending) * 100
+		log.Printf("[store] backfill progress: %d/%d observations (%.1f%%)", totalProcessed, totalPending, pct)
+
+		time.Sleep(yieldDuration)
 	}
 
-	if err := sqlTx.Commit(); err != nil {
-		log.Printf("[store] backfill: commit error: %v", err)
-		return 0
-	}
-
-	// Update in-memory state under write lock.
-	store.mu.Lock()
-	count := 0
-	for _, r := range results {
-		if obs, ok := store.byObsID[r.obsID]; ok {
-			obs.ResolvedPath = r.rp
-			count++
-		}
-	}
-	store.mu.Unlock()
-
-	return count
+	store.backfillComplete.Store(true)
+	log.Printf("[store] async resolved_path backfill complete: %d observations processed", totalProcessed)
 }
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
@@ -528,4 +591,35 @@ func openRW(dbPath string) (*sql.DB, error) {
 	}
 	rw.SetMaxOpenConns(1)
 	return rw, nil
+}
+
+// PruneNeighborEdges removes edges older than maxAgeDays from both SQLite and
+// the in-memory graph. Uses openRW internally because the shared database.conn
+// is opened with mode=ro and DELETEs would silently fail.
+func PruneNeighborEdges(dbPath string, graph *NeighborGraph, maxAgeDays int) (int, error) {
+	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeDays) * 24 * time.Hour)
+
+	// 1. Prune from SQLite using a read-write connection
+	var dbPruned int64
+	rw, err := openRW(dbPath)
+	if err != nil {
+		return 0, fmt.Errorf("prune neighbor_edges: open rw: %w", err)
+	}
+	defer rw.Close()
+	res, err := rw.Exec("DELETE FROM neighbor_edges WHERE last_seen < ?", cutoff.Format(time.RFC3339))
+	if err != nil {
+		return 0, fmt.Errorf("prune neighbor_edges: %w", err)
+	}
+	dbPruned, _ = res.RowsAffected()
+
+	// 2. Prune from in-memory graph
+	memPruned := 0
+	if graph != nil {
+		memPruned = graph.PruneOlderThan(cutoff)
+	}
+
+	if dbPruned > 0 || memPruned > 0 {
+		log.Printf("[neighbor-prune] removed %d DB rows, %d in-memory edges older than %d days", dbPruned, memPruned, maxAgeDays)
+	}
+	return int(dbPruned), nil
 }

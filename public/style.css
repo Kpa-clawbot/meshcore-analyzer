@@ -2037,3 +2037,211 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   .rf-time-selector { gap: 3px; }
   .rf-custom-inputs { margin-left: 0; margin-top: 4px; flex-wrap: wrap; }
 }
+
+/* Channel Color Picker Popover (M2, #271) */
+.cc-picker-popover {
+  position: fixed;
+  z-index: 10000;
+  background: var(--surface-1, #1e1e2e);
+  border: 1px solid var(--border, #444);
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 200px;
+  max-width: 260px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  font-size: 13px;
+}
+.cc-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.cc-picker-title {
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-picker-close {
+  background: none;
+  border: none;
+  color: var(--muted, #888);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+}
+.cc-picker-close:hover { color: var(--text-primary, #e0e0e0); }
+.cc-picker-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.cc-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s;
+}
+.cc-swatch:hover { border-color: var(--text-primary, #e0e0e0); }
+.cc-swatch:focus-visible { border-color: #fff; outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }
+.cc-swatch-active { border-color: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,0.5); }
+
+/* Mobile: larger touch targets, hide native color picker, safe areas */
+@media (pointer: coarse) {
+  .cc-swatch {
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+  }
+  .cc-picker-swatches {
+    gap: 8px;
+  }
+  .cc-picker-custom {
+    display: none !important;
+  }
+  .cc-picker-popover {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 16px 16px 0 0;
+    padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    box-sizing: border-box;
+  }
+  .live-feed-item {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+}
+.cc-picker-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.cc-picker-custom label {
+  color: var(--muted, #888);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.cc-picker-input {
+  width: 32px;
+  height: 24px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+}
+.cc-picker-apply {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.cc-picker-apply:hover { opacity: 0.85; }
+.cc-picker-clear {
+  background: none;
+  border: 1px solid var(--border, #444);
+  color: var(--muted, #888);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  width: 100%;
+}
+.cc-picker-clear:hover { color: var(--text-primary, #e0e0e0); border-color: var(--text-primary, #e0e0e0); }
+
+/* === #630 — Mobile Accessibility Fixes === */
+
+/* #630-1: Touch targets — minimum 44px on touch devices */
+@media (pointer: coarse) {
+  .filter-bar .btn,
+  .filter-group .btn,
+  .tab-btn,
+  .filter-bar input,
+  .filter-bar select,
+  .nav-btn,
+  .region-pill,
+  .region-dropdown-trigger,
+  .multi-select-trigger,
+  .node-count-pill,
+  .analytics-time-range button,
+  .detail-back-btn,
+  .filter-toggle-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .filter-bar input,
+  .filter-bar select {
+    height: 44px;
+  }
+  .region-dropdown-trigger,
+  .multi-select-trigger {
+    height: 44px;
+  }
+}
+
+/* #630-3: Status text labels — visually hidden text for screen readers */
+.sr-status-label { font-size: 11px; margin-left: 4px; }
+
+/* #630-4: Detail panel as full-width overlay on mobile */
+@media (max-width: 640px) {
+  .split-layout .panel-right:not(.empty) {
+    display: block;
+    position: fixed;
+    top: 52px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    min-width: 0;
+    z-index: 150;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* #630-5: Analytics tabs — horizontal scroll on small screens */
+@media (max-width: 640px) {
+  .analytics-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    padding-bottom: 4px;
+  }
+  .analytics-tabs .tab-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+/* #630-6: Tables — horizontal scroll wrapper */
+.table-scroll-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 640px) {
+  .data-table { min-width: 480px; }
+}
+
+/* Table sorting indicators */
+th[data-sort-key] { cursor: pointer; user-select: none; }
+th[data-sort-key]:hover { background: var(--hover-bg, rgba(255,255,255,0.05)); }
+th.sort-active { color: var(--accent, #60a5fa); }
+.sort-arrow { font-size: 0.75em; opacity: 0.8; }

@@ -57,6 +57,47 @@ type Config struct {
 	Timestamps *TimestampConfig `json:"timestamps,omitempty"`
 
 	DebugAffinity bool `json:"debugAffinity,omitempty"`
+
+	ResolvedPath  *ResolvedPathConfig  `json:"resolvedPath,omitempty"`
+	NeighborGraph *NeighborGraphConfig `json:"neighborGraph,omitempty"`
+}
+
+// weakAPIKeys is the blocklist of known default/example API keys that must be rejected.
+var weakAPIKeys = map[string]bool{
+	"your-secret-api-key-here": true,
+	"change-me":                true,
+	"example":                  true,
+	"test":                     true,
+	"password":                 true,
+	"admin":                    true,
+	"apikey":                   true,
+	"api-key":                  true,
+	"secret":                   true,
+	"default":                  true,
+}
+
+// IsWeakAPIKey returns true if the key is in the blocklist or shorter than 16 characters.
+func IsWeakAPIKey(key string) bool {
+	if key == "" {
+		return false // empty is handled separately (endpoints disabled)
+	}
+	if weakAPIKeys[strings.ToLower(key)] {
+		return true
+	}
+	if len(key) < 16 {
+		return true
+	}
+	return false
+}
+
+// ResolvedPathConfig controls async backfill behavior.
+type ResolvedPathConfig struct {
+	BackfillHours int `json:"backfillHours"` // how far back (hours) to scan for NULL resolved_path (default 24)
+}
+
+// NeighborGraphConfig controls neighbor edge pruning.
+type NeighborGraphConfig struct {
+	MaxAgeDays int `json:"maxAgeDays"` // edges older than this are pruned (default 5)
 }
 
 // PacketStoreConfig controls in-memory packet store limits.
@@ -82,6 +123,21 @@ func (c *Config) MetricsRetentionDays() int {
 	return 30
 }
 
+// BackfillHours returns configured backfill window or 24h default.
+func (c *Config) BackfillHours() int {
+	if c.ResolvedPath != nil && c.ResolvedPath.BackfillHours > 0 {
+		return c.ResolvedPath.BackfillHours
+	}
+	return 24
+}
+
+// NeighborMaxAgeDays returns configured max edge age or 30 days default.
+func (c *Config) NeighborMaxAgeDays() int {
+	if c.NeighborGraph != nil && c.NeighborGraph.MaxAgeDays > 0 {
+		return c.NeighborGraph.MaxAgeDays
+	}
+	return 5
+}
 
 type TimestampConfig struct {
 	DefaultMode       string `json:"defaultMode"`       // "ago" | "absolute"

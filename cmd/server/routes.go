@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -42,6 +43,9 @@ type Server struct {
 	// Neighbor affinity graph (lazy-built, cached with TTL)
 	neighborMu    sync.Mutex
 	neighborGraph *NeighborGraph
+
+	// Router reference for OpenAPI spec generation
+	router *mux.Router
 }
 
 // PerfStats tracks request performance.
@@ -98,8 +102,12 @@ func (s *Server) getMemStats() runtime.MemStats {
 
 // RegisterRoutes sets up all HTTP routes on the given router.
 func (s *Server) RegisterRoutes(r *mux.Router) {
+	s.router = r
 	// Performance instrumentation middleware
 	r.Use(s.perfMiddleware)
+
+	// Backfill status header middleware
+	r.Use(s.backfillStatusMiddleware)
 
 	// Config endpoints
 	r.HandleFunc("/api/config/cache", s.handleConfigCache).Methods("GET")
@@ -162,6 +170,21 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/traces/{hash}", s.handleTraces).Methods("GET")
 	r.HandleFunc("/api/iata-coords", s.handleIATACoords).Methods("GET")
 	r.HandleFunc("/api/audio-lab/buckets", s.handleAudioLabBuckets).Methods("GET")
+
+	// OpenAPI spec + Swagger UI
+	r.HandleFunc("/api/spec", s.handleOpenAPISpec).Methods("GET")
+	r.HandleFunc("/api/docs", s.handleSwaggerUI).Methods("GET")
+}
+
+func (s *Server) backfillStatusMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.store != nil && s.store.backfillComplete.Load() {
+			w.Header().Set("X-CoreScope-Status", "ready")
+		} else {
+			w.Header().Set("X-CoreScope-Status", "backfilling")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) perfMiddleware(next http.Handler) http.Handler {
@@ -224,8 +247,13 @@ func (s *Server) requireAPIKey(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "write endpoints disabled — set apiKey in config.json")
 			return
 		}
-		if r.Header.Get("X-API-Key") != s.cfg.APIKey {
+		key := r.Header.Get("X-API-Key")
+		if !constantTimeEqual(key, s.cfg.APIKey) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if IsWeakAPIKey(key) {
+			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -521,6 +549,19 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	counts := s.db.GetRoleCounts()
+
+	// Compute backfill progress
+	backfilling := s.store != nil && !s.store.backfillComplete.Load()
+	var backfillProgress float64
+	if backfilling && s.store != nil && s.store.backfillTotal.Load() > 0 {
+		backfillProgress = float64(s.store.backfillProcessed.Load()) / float64(s.store.backfillTotal.Load())
+		if backfillProgress > 1 {
+			backfillProgress = 1
+		}
+	} else if !backfilling {
+		backfillProgress = 1
+	}
+
 	resp := &StatsResponse{
 		TotalPackets:       stats.TotalPackets,
 		TotalTransmissions: &stats.TotalTransmissions,
@@ -540,6 +581,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			Companions: counts["companions"],
 			Sensors:    counts["sensors"],
 		},
+		Backfilling:      backfilling,
+		BackfillProgress: backfillProgress,
 	}
 
 	s.statsMu.Lock()
@@ -2280,4 +2323,9 @@ func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
 	writeJSON(w, map[string]interface{}{"deleted": n, "days": days})
+}
+
+// constantTimeEqual compares two strings in constant time to prevent timing attacks.
+func constantTimeEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

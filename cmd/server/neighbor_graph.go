@@ -542,3 +542,24 @@ func minLen(s string, n int) int {
 	}
 	return n
 }
+
+// PruneOlderThan removes all edges with LastSeen before cutoff.
+// Returns the number of edges removed.
+func (g *NeighborGraph) PruneOlderThan(cutoff time.Time) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	pruned := 0
+	for key, edge := range g.edges {
+		if edge.LastSeen.Before(cutoff) {
+			// Remove from byNode index
+			g.removeFromByNode(edge.NodeA, edge)
+			if edge.NodeB != "" {
+				g.removeFromByNode(edge.NodeB, edge)
+			}
+			delete(g.edges, key)
+			pruned++
+		}
+	}
+	return pruned
+}

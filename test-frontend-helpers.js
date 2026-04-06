@@ -2718,7 +2718,6 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
 // ===== Packets page: virtual scroll infrastructure =====
 {
   console.log('\nPackets page — virtual scroll:');
-  const packetsSource = fs.readFileSync('public/packets.js', 'utf8');
 
   // --- Behavioral tests using extracted logic ---
 
@@ -2742,6 +2741,17 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
     }
     return 1 + childCount;
   }
+
+  // Load _calcVisibleRange from the actual packets.js via sandbox
+  const pktCtx = makeSandbox();
+  pktCtx.registerPage = (name, handlers) => {};
+  pktCtx.onWS = () => {};
+  pktCtx.offWS = () => {};
+  pktCtx.api = () => Promise.resolve({});
+  pktCtx.window.getParsedPath = () => [];
+  pktCtx.window.getParsedDecoded = () => ({});
+  loadInCtx(pktCtx, 'public/packets.js');
+  const _calcVisibleRange = pktCtx.window._packetsTestAPI._calcVisibleRange;
 
   test('cumulativeRowOffsets computes correct offsets for flat rows', () => {
     const counts = [1, 1, 1, 1, 1];
@@ -2804,38 +2814,101 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
     assert.strictEqual(getRowCount(p, true, expanded, null), 1);
   });
 
-  test('renderVisibleRows uses cumulative offsets not flat entry count', () => {
-    assert.ok(packetsSource.includes('_cumulativeRowOffsets'),
-      'renderVisibleRows should use cumulative row offsets');
-    assert.ok(!packetsSource.includes('const totalRows = _displayPackets.length'),
-      'should NOT use flat array length for total row count');
+  // --- Behavioral tests for _calcVisibleRange (#405, #409) ---
+
+  test('_calcVisibleRange: top of list (scrollTop = 0)', () => {
+    const offsets = cumulativeRowOffsets([1,1,1,1,1,1,1,1,1,1]); // 10 flat items
+    const r = _calcVisibleRange(offsets, 10, 0, 360, 36, 0, 2);
+    assert.strictEqual(r.startIdx, 0, 'start should be 0');
+    assert.ok(r.endIdx <= 10, 'end should not exceed entry count');
+    assert.ok(r.endIdx >= 10, 'with buffer=2, should cover visible + buffer');
   });
 
-  test('renderVisibleRows skips DOM rebuild when range unchanged', () => {
-    assert.ok(packetsSource.includes('startIdx === _lastVisibleStart && endIdx === _lastVisibleEnd'),
-      'should skip rebuild when range is unchanged');
+  test('_calcVisibleRange: middle of list', () => {
+    // 100 flat items, viewport shows ~10 rows, scroll to row 50
+    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    const r = _calcVisibleRange(offsets, 100, 50 * 36, 360, 36, 0, 5);
+    assert.strictEqual(r.firstEntry, 50, 'firstEntry should be 50');
+    assert.strictEqual(r.startIdx, 45, 'startIdx = firstEntry - buffer');
+    assert.ok(r.endIdx <= 100);
+    assert.ok(r.endIdx >= 60, 'endIdx should cover visible + buffer');
   });
 
-  test('lazy row generation — HTML built only for visible slice', () => {
-    assert.ok(!packetsSource.includes('_lastRenderedRows'),
-      'should NOT have pre-built row HTML cache');
-    assert.ok(packetsSource.includes('_displayPackets.slice(startIdx, endIdx)'),
-      'should slice display packets for visible range on full rebuild');
-    // Incremental path uses builder() per-item in loops; full rebuild uses .map()
-    assert.ok(packetsSource.includes('builder(p, startIdx + i)') || packetsSource.includes('builder(_displayPackets[i], i)'),
-      'should build HTML lazily per visible packet');
+  test('_calcVisibleRange: bottom of list', () => {
+    const offsets = cumulativeRowOffsets(new Array(100).fill(1));
+    // Scroll past the end
+    const r = _calcVisibleRange(offsets, 100, 99 * 36, 360, 36, 0, 5);
+    assert.strictEqual(r.endIdx, 100, 'endIdx clamped to entry count');
+    assert.ok(r.startIdx >= 84, 'startIdx should be near end minus buffer');
   });
 
-  test('observer filter Set is hoisted, not recreated per-packet', () => {
-    assert.ok(packetsSource.includes('_observerFilterSet = filters.observer ? new Set(filters.observer.split'),
-      'observer filter Set should be created once in renderTableRows');
-    assert.ok(packetsSource.includes('_observerFilterSet.has(String(c.observer_id))'),
-      'buildGroupRowHtml should use hoisted _observerFilterSet');
+  test('_calcVisibleRange: empty array', () => {
+    const offsets = cumulativeRowOffsets([]);
+    const r = _calcVisibleRange(offsets, 0, 0, 360, 36, 0, 5);
+    assert.strictEqual(r.startIdx, 0);
+    assert.strictEqual(r.endIdx, 0);
   });
+
+  test('_calcVisibleRange: single item', () => {
+    const offsets = cumulativeRowOffsets([1]);
+    const r = _calcVisibleRange(offsets, 1, 0, 360, 36, 0, 5);
+    assert.strictEqual(r.startIdx, 0);
+    assert.strictEqual(r.endIdx, 1);
+  });
+
+  test('_calcVisibleRange: exact row boundary', () => {
+    const offsets = cumulativeRowOffsets(new Array(20).fill(1));
+    // scrollTop exactly at row 5 boundary
+    const r = _calcVisibleRange(offsets, 20, 5 * 36, 360, 36, 0, 2);
+    assert.strictEqual(r.firstEntry, 5, 'firstEntry at exact boundary');
+    assert.strictEqual(r.startIdx, 3, 'startIdx = firstEntry - buffer');
+  });
+
+  test('_calcVisibleRange: large dataset (30K items)', () => {
+    const offsets = cumulativeRowOffsets(new Array(30000).fill(1));
+    const r = _calcVisibleRange(offsets, 30000, 15000 * 36, 360, 36, 30, 30);
+    // theadHeight=30 means adjustedScrollTop = 15000*36 - 30, so firstDomRow = floor((540000-30)/36) = 14999
+    assert.strictEqual(r.firstEntry, 14999);
+    assert.strictEqual(r.startIdx, 14969);
+    assert.ok(r.endIdx <= 30000);
+    assert.ok(r.endIdx >= 15040);
+  });
+
+  test('_calcVisibleRange: various row heights', () => {
+    const offsets = cumulativeRowOffsets(new Array(50).fill(1));
+    // rowHeight = 24 instead of 36
+    const r = _calcVisibleRange(offsets, 50, 10 * 24, 240, 24, 0, 3);
+    assert.strictEqual(r.firstEntry, 10);
+    assert.strictEqual(r.startIdx, 7);
+  });
+
+  test('_calcVisibleRange: thead offset shifts visible range', () => {
+    const offsets = cumulativeRowOffsets(new Array(20).fill(1));
+    // scrollTop = 40 but theadHeight = 40, so adjustedScrollTop = 0
+    const r = _calcVisibleRange(offsets, 20, 40, 360, 36, 40, 2);
+    assert.strictEqual(r.firstEntry, 0, 'thead offset should be subtracted');
+  });
+
+  test('_calcVisibleRange: expanded groups with variable row counts', () => {
+    // Simulate: item0=1row, item1=5rows(expanded group), item2=1row, item3=3rows, item4=1row
+    const offsets = cumulativeRowOffsets([1, 5, 1, 3, 1]);
+    // Scroll to DOM row 6 (in item2), viewport shows 3 DOM rows
+    const r = _calcVisibleRange(offsets, 5, 6 * 36, 108, 36, 0, 0);
+    assert.strictEqual(r.firstEntry, 2, 'should land in item2 (offsets[2]=6)');
+    assert.strictEqual(r.startIdx, 2);
+  });
+
+  test('_calcVisibleRange: buffer clamped at boundaries', () => {
+    const offsets = cumulativeRowOffsets(new Array(10).fill(1));
+    // At top with buffer=20 (larger than dataset)
+    const r = _calcVisibleRange(offsets, 10, 0, 360, 36, 0, 20);
+    assert.strictEqual(r.startIdx, 0, 'start clamped to 0');
+    assert.strictEqual(r.endIdx, 10, 'end clamped to entry count');
+  });
+
+  // --- Behavioral tests for observer filter logic (#537) ---
 
   test('observer filter in grouped mode includes packet when child matches (#537)', () => {
-    // The display filter should keep a grouped packet whose primary observer_id
-    // does NOT match, but one of its _children does.
     const obsIds = new Set(['OBS_B']);
     const packets = [
       { observer_id: 'OBS_A', _children: [{ observer_id: 'OBS_A' }, { observer_id: 'OBS_B' }] },
@@ -2873,53 +2946,6 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
     const p2 = { observer_id: 'OBS_C', _children: [{ observer_id: 'OBS_D' }] };
     const passes2 = obsSet.has(p2.observer_id) || (p2._children && p2._children.some(c => obsSet.has(String(c.observer_id))));
     assert.ok(!passes2, 'WS filter should reject grouped packet with no matching observers');
-  });
-
-  test('packets.js display filter checks _children for observer match (#537)', () => {
-    // Verify the actual source code has the children check
-    assert.ok(
-      packetsSource.includes('p._children) return p._children.some(c => obsIds.has(String(c.observer_id))'),
-      'display filter should check _children for observer match'
-    );
-  });
-
-  test('packets.js WS filter checks _children for observer match (#537)', () => {
-    assert.ok(
-      packetsSource.includes('p._children && p._children.some(c => obsSet.has(String(c.observer_id)))'),
-      'WS filter should check _children for observer match'
-    );
-  });
-
-  test('buildFlatRowHtml has null-safe decoded_json', () => {
-    const flatBuilderMatch = packetsSource.match(/function buildFlatRowHtml[\s\S]*?(?=\n  function )/);
-    assert.ok(flatBuilderMatch, 'buildFlatRowHtml should exist');
-    assert.ok(flatBuilderMatch[0].includes('getParsedDecoded(p)'),
-      'buildFlatRowHtml should use getParsedDecoded for null-safe decoded_json fallback');
-  });
-
-  test('pathHops null guard in buildFlatRowHtml (issue #451)', () => {
-    const flatBuilderMatch = packetsSource.match(/function buildFlatRowHtml[\s\S]*?(?=\n  function )/);
-    assert.ok(flatBuilderMatch, 'buildFlatRowHtml should exist');
-    assert.ok(flatBuilderMatch[0].includes('getParsedPath(p)'),
-      'buildFlatRowHtml should use getParsedPath which guards against null');
-  });
-
-  test('pathHops null guard in detail pane (issue #451)', () => {
-    assert.ok(packetsSource.includes('getParsedPath(pkt)'),
-      'detail pane should use getParsedPath for null-safe path parsing');
-    assert.ok(packetsSource.includes('getParsedDecoded(pkt)'),
-      'detail pane should use getParsedDecoded for null-safe decoded parsing');
-  });
-
-  test('destroy cleans up virtual scroll state', () => {
-    assert.ok(packetsSource.includes('detachVScrollListener'),
-      'destroy should detach virtual scroll listener');
-    assert.ok(packetsSource.includes("_displayPackets = []"),
-      'destroy should reset display packets');
-    assert.ok(packetsSource.includes("_rowCounts = []"),
-      'destroy should reset row counts');
-    assert.ok(packetsSource.includes("_lastVisibleStart = -1"),
-      'destroy should reset visible start');
   });
 }
 

@@ -75,7 +75,7 @@
           <h2>📊 Mesh Analytics</h2>
           <p class="text-muted">Deep dive into your mesh network data</p>
           <div id="analyticsRegionFilter" class="region-filter-container"></div>
-          <div class="analytics-tabs" id="analyticsTabs">
+          <div class="analytics-tabs" id="analyticsTabs" role="tablist" aria-label="Analytics tabs">
             <button class="tab-btn active" data-tab="overview">Overview</button>
             <button class="tab-btn" data-tab="rf">RF / Signal</button>
             <button class="tab-btn" data-tab="topology">Topology</button>
@@ -90,7 +90,7 @@
             <button class="tab-btn" data-tab="prefix-tool">Prefix Tool</button>
           </div>
         </div>
-        <div id="analyticsContent" class="analytics-content">
+        <div id="analyticsContent" class="analytics-content" aria-live="polite">
           <div class="text-center text-muted" style="padding:40px">Loading analytics…</div>
         </div>
       </div>`;
@@ -992,6 +992,7 @@
         <span style="color:var(--border)">|</span>
         <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">🔎 Check a prefix →</a>
       </nav>
+      <p class="text-muted" style="margin:0 0 12px;font-size:0.78em">This tab shows operational collisions among <strong>repeaters</strong> grouped by their configured hash size. The <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Prefix Tool</a> checks all repeaters regardless of their configured hash size.</p>
 
       <div class="analytics-card" id="inconsistentHashSection">
         <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">⚠️ Inconsistent Hash Sizes</h3><a href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a></div>
@@ -1197,6 +1198,45 @@
     </div>`;
   }
 
+  // --- Shared cell classification for hash matrix ---
+
+  function classifyHashCell(count, isConfirmedCollision, isPossibleConflict) {
+    if (count === 0) return { cls: 'hash-cell-empty', bg: '' };
+    if (!isConfirmedCollision && !isPossibleConflict) return { cls: 'hash-cell-taken', bg: '' };
+    if (isPossibleConflict) return { cls: 'hash-cell-possible', bg: '' };
+    const t = Math.min((count - 2) / 4, 1);
+    return { cls: 'hash-cell-collision', bg: `background:rgb(${Math.round(220+35*t)},${Math.round(120*(1-t))},30);` };
+  }
+
+  function hashCellTd(hex, cellSize, cls, bg, count, tipHtml, fontWeight) {
+    return `<td class="hash-cell ${cls}${count ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tipHtml.replace(/"/g,'&quot;')}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;${bg}border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:11px;font-weight:${fontWeight}">${hex}</td>`;
+  }
+
+  function hashTooltipHtml(hexLabel, statusText, nodesHtml) {
+    let html = `<div class="hash-matrix-tooltip-hex">${hexLabel}</div><div class="hash-matrix-tooltip-status">${statusText}</div>`;
+    if (nodesHtml) html += `<div class="hash-matrix-tooltip-nodes">${nodesHtml}</div>`;
+    return html;
+  }
+
+  function renderHashMatrixPanel(el, statCardsHtml, cellRendererFn, detailMaxWidth, legendLabels, clickHandlerFn) {
+    const nibbles = '0123456789ABCDEF'.split('');
+    const cellSize = 36;
+    const headerSize = 24;
+    let html = statCardsHtml;
+    html += hashMatrixGridHtml(nibbles, cellSize, headerSize, cellRendererFn);
+    html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:${detailMaxWidth}px;font-size:0.85em"></div></div>`;
+    html += hashMatrixLegendHtml(legendLabels);
+    el.innerHTML = html;
+    initMatrixTooltip(el);
+    el.querySelectorAll('.hash-active').forEach(td => {
+      td.addEventListener('click', () => {
+        clickHandlerFn(td);
+        el.querySelectorAll('.hash-selected').forEach(c => c.classList.remove('hash-selected'));
+        td.classList.add('hash-selected');
+      });
+    });
+  }
+
   function renderHashMatrixFromServer(sizeData, bytes) {
     const el = document.getElementById('hashMatrix');
     if (!sizeData) { el.innerHTML = '<div class="text-muted">No data</div>'; return; }
@@ -1206,13 +1246,10 @@
     // 3-byte: show a summary panel instead of a matrix
     if (bytes === 3) {
       el.innerHTML = hashStatCardsHtml(totalNodes, stats.using_this_size || 0, '3-byte', 16777216, stats.unique_prefixes || 0, stats.collision_count || 0) +
-        `<p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid.</p>`;
+        `<p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid.</p>` +
+        `<p class="text-muted" style="margin:8px 0 0;font-size:0.8em">ℹ️ This tab only counts collisions among repeaters configured for this hash size. The <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Prefix Tool</a> checks all repeaters regardless of configured hash size.</p>`;
       return;
     }
-
-    const nibbles = '0123456789ABCDEF'.split('');
-    const cellSize = 36;
-    const headerSize = 24;
 
     if (bytes === 1) {
       const oneByteCells = sizeData.one_byte_cells || {};
@@ -1220,41 +1257,31 @@
       const oneUsed = Object.values(oneByteCells).filter(v => v.length > 0).length;
       const oneCollisions = Object.values(oneByteCells).filter(v => v.length > 1).length;
 
-      let html = hashStatCardsHtml(totalNodes, oneByteCount, '1-byte', 256, oneUsed, oneCollisions);
-      html += hashMatrixGridHtml(nibbles, cellSize, headerSize, (hex, cs) => {
+      renderHashMatrixPanel(el,
+        hashStatCardsHtml(totalNodes, oneByteCount, '1-byte', 256, oneUsed, oneCollisions),
+        (hex, cs) => {
           const nodes = oneByteCells[hex] || [];
           const count = nodes.length;
           const repeaterCount = nodes.filter(n => n.role === 'repeater').length;
           const isCollision = count >= 2 && repeaterCount >= 2;
           const isPossible = count >= 2 && !isCollision;
-          let cellClass, bgStyle;
-          if (count === 0) { cellClass = 'hash-cell-empty'; bgStyle = ''; }
-          else if (count === 1) { cellClass = 'hash-cell-taken'; bgStyle = ''; }
-          else if (isPossible) { cellClass = 'hash-cell-possible'; bgStyle = ''; }
-          else { const t = Math.min((count - 2) / 4, 1); bgStyle = `background:rgb(${Math.round(220+35*t)},${Math.round(120*(1-t))},30);`; cellClass = 'hash-cell-collision'; }
+          const { cls, bg } = classifyHashCell(count, isCollision, isPossible);
           const nodeLabel = m => `<div style="font-size:11px">${esc(m.name||m.public_key.slice(0,12))}${!m.role ? ' <span style="opacity:0.7">(unknown role)</span>' : ''}</div>`;
-          const tip1 = count === 0
-            ? `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">Available</div>`
-            : count === 1
-              ? `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">One node — no collision</div><div class="hash-matrix-tooltip-nodes">${nodeLabel(nodes[0])}</div>`
-              : isPossible
-                ? `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">${count} nodes — POSSIBLE CONFLICT</div><div class="hash-matrix-tooltip-nodes">${nodes.slice(0,5).map(nodeLabel).join('')}${nodes.length>5?`<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>`:''}</div>`
-                : `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">${count} nodes — COLLISION</div><div class="hash-matrix-tooltip-nodes">${nodes.slice(0,5).map(nodeLabel).join('')}${nodes.length>5?`<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>`:''}</div>`;
-          return `<td class="hash-cell ${cellClass}${count ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip1.replace(/"/g,'&quot;')}" style="width:${cs}px;height:${cs}px;text-align:center;${bgStyle}border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:11px;font-weight:${count >= 2 ? '700' : '400'}">${hex}</td>`;
-      });
-      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>`;
-      html += hashMatrixLegendHtml([
-        {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'Available'},
-        {cls: 'hash-cell-taken', text: 'One node'},
-        {cls: 'hash-cell-possible', text: 'Possible conflict'},
-        {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
-      ]);
-      el.innerHTML = html;
-
-      initMatrixTooltip(el);
-
-      el.querySelectorAll('.hash-active').forEach(td => {
-        td.addEventListener('click', () => {
+          const nodesPreview = nodes.slice(0,5).map(nodeLabel).join('') + (nodes.length > 5 ? `<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>` : '');
+          const tip = count === 0 ? hashTooltipHtml(`0x${hex}`, 'Available')
+            : count === 1 ? hashTooltipHtml(`0x${hex}`, 'One node — no collision', nodeLabel(nodes[0]))
+            : isPossible ? hashTooltipHtml(`0x${hex}`, `${count} nodes — POSSIBLE CONFLICT`, nodesPreview)
+            : hashTooltipHtml(`0x${hex}`, `${count} nodes — COLLISION`, nodesPreview);
+          return hashCellTd(hex, cs, cls, bg, count, tip, count >= 2 ? '700' : '400');
+        },
+        400,
+        [
+          {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'Available'},
+          {cls: 'hash-cell-taken', text: 'One node'},
+          {cls: 'hash-cell-possible', text: 'Possible conflict'},
+          {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
+        ],
+        (td) => {
           const hex = td.dataset.hex.toUpperCase();
           const matches = oneByteCells[hex] || [];
           const detail = document.getElementById('hashDetail');
@@ -1265,10 +1292,8 @@
               const role = m.role ? `<span class="badge" style="font-size:0.7em;padding:1px 4px;background:var(--border)">${esc(m.role)}</span> ` : '';
               return `<div style="padding:3px 0">${role}<a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a> ${coords}</div>`;
             }).join('')}</div>`;
-          el.querySelectorAll('.hash-selected').forEach(c => c.classList.remove('hash-selected'));
-          td.classList.add('hash-selected');
-        });
-      });
+        }
+      );
 
     } else if (bytes === 2) {
       const twoByteCells = sizeData.two_byte_cells || {};
@@ -1276,38 +1301,34 @@
       const uniqueTwoBytePrefixes = stats.unique_prefixes || 0;
       const twoCollisions = Object.values(twoByteCells).filter(v => v.collision_count > 0).length;
 
-      let html = hashStatCardsHtml(totalNodes, twoByteCount, '2-byte', 65536, uniqueTwoBytePrefixes, twoCollisions);
-      html += hashMatrixGridHtml(nibbles, cellSize, headerSize, (hex, cs) => {
+      renderHashMatrixPanel(el,
+        hashStatCardsHtml(totalNodes, twoByteCount, '2-byte', 65536, uniqueTwoBytePrefixes, twoCollisions),
+        (hex, cs) => {
           const info = twoByteCells[hex] || { group_nodes: [], max_collision: 0, collision_count: 0, two_byte_map: {} };
           const nodeCount = (info.group_nodes || []).length;
           const maxCol = info.max_collision || 0;
           const overlapping = Object.values(info.two_byte_map || {}).filter(v => v.length > 1);
           const hasConfirmed = overlapping.some(ns => ns.filter(n => n.role === 'repeater').length >= 2);
           const hasPossible = !hasConfirmed && overlapping.some(ns => ns.length >= 2);
-          let cellClass2, bgStyle2;
-          if (nodeCount === 0) { cellClass2 = 'hash-cell-empty'; bgStyle2 = ''; }
-          else if (maxCol === 0) { cellClass2 = 'hash-cell-taken'; bgStyle2 = ''; }
-          else if (hasPossible) { cellClass2 = 'hash-cell-possible'; bgStyle2 = ''; }
-          else { const t = Math.min((maxCol - 2) / 4, 1); bgStyle2 = `background:rgb(${Math.round(220+35*t)},${Math.round(120*(1-t))},30);`; cellClass2 = 'hash-cell-collision'; }
+          const { cls, bg } = classifyHashCell(maxCol > 0 ? maxCol : nodeCount === 0 ? 0 : 1, hasConfirmed, hasPossible);
           const nodeLabel2 = m => esc(m.name||m.public_key.slice(0,8)) + (!m.role ? ' (?)' : '');
-          const tip2 = nodeCount === 0
-            ? `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">No nodes in this group</div>`
+          const tip = nodeCount === 0
+            ? hashTooltipHtml(`0x${hex}__`, 'No nodes in this group')
             : (info.collision_count || 0) === 0
-              ? `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">${nodeCount} node${nodeCount>1?'s':''} — no 2-byte collisions</div>`
-              : `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">${hasConfirmed ? (info.collision_count||0) + ' collision' + ((info.collision_count||0)>1?'s':'') : 'Possible conflict'}</div><div class="hash-matrix-tooltip-nodes">${Object.entries(info.two_byte_map||{}).filter(([,v])=>v.length>1).slice(0,4).map(([p,ns])=>`<div style="font-size:11px;padding:1px 0"><span style="color:${hasConfirmed?'var(--status-red)':'var(--status-yellow)'};font-family:var(--mono);font-weight:700">${p}</span> — ${ns.map(nodeLabel2).join(', ')}</div>`).join('')}</div>`;
-          return `<td class="hash-cell ${cellClass2}${nodeCount ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip2.replace(/"/g,'&quot;')}" style="width:${cs}px;height:${cs}px;text-align:center;${bgStyle2}border:1px solid var(--border);cursor:${nodeCount ? 'pointer' : 'default'};font-size:11px;font-weight:${maxCol > 0 ? '700' : '400'}">${hex}</td>`;
-      });
-      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:420px;font-size:0.85em"></div></div>`;
-      html += hashMatrixLegendHtml([
-        {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'No nodes in group'},
-        {cls: 'hash-cell-taken', text: 'Nodes present, no collision'},
-        {cls: 'hash-cell-possible', text: 'Possible conflict'},
-        {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
-      ]);
-      el.innerHTML = html;
-
-      el.querySelectorAll('.hash-active').forEach(td => {
-        td.addEventListener('click', () => {
+              ? hashTooltipHtml(`0x${hex}__`, `${nodeCount} node${nodeCount>1?'s':''} — no 2-byte collisions`)
+              : hashTooltipHtml(`0x${hex}__`,
+                  hasConfirmed ? (info.collision_count||0) + ' collision' + ((info.collision_count||0)>1?'s':'') : 'Possible conflict',
+                  Object.entries(info.two_byte_map||{}).filter(([,v])=>v.length>1).slice(0,4).map(([p,ns])=>`<div style="font-size:11px;padding:1px 0"><span style="color:${hasConfirmed?'var(--status-red)':'var(--status-yellow)'};font-family:var(--mono);font-weight:700">${p}</span> — ${ns.map(nodeLabel2).join(', ')}</div>`).join(''));
+          return hashCellTd(hex, cs, cls, bg, nodeCount, tip, maxCol > 0 ? '700' : '400');
+        },
+        420,
+        [
+          {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'No nodes in group'},
+          {cls: 'hash-cell-taken', text: 'Nodes present, no collision'},
+          {cls: 'hash-cell-possible', text: 'Possible conflict'},
+          {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
+        ],
+        (td) => {
           const hex = td.dataset.hex.toUpperCase();
           const info = twoByteCells[hex];
           const detail = document.getElementById('hashDetail');
@@ -1332,12 +1353,8 @@
             dhtml += '</div>';
           }
           detail.innerHTML = dhtml;
-          el.querySelectorAll('.hash-selected').forEach(c => c.classList.remove('hash-selected'));
-          td.classList.add('hash-selected');
-        });
-      });
-
-      initMatrixTooltip(el);
+        }
+      );
     }
   }
 
@@ -1348,7 +1365,7 @@
 
     if (!collisions.length) {
       const cleanMsg = bytes === 3
-        ? '✅ No 3-byte prefix collisions detected — all nodes have unique 3-byte prefixes.'
+        ? '✅ No 3-byte prefix collisions detected — all repeaters have unique 3-byte prefixes.'
         : `✅ No ${bytes}-byte collisions detected`;
       el.innerHTML = `<div class="text-muted" style="padding:8px">${cleanMsg}</div>`;
       return;
@@ -2330,7 +2347,10 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
         nodeMap.set(n.public_key, n);
       }
     });
-    const nodes = [...nodeMap.values()];
+    const allNodes = [...nodeMap.values()];
+    // Only repeaters matter for prefix collisions — they relay packets using hash prefixes.
+    // Companions, rooms, and sensors don't route, so their prefix collisions are harmless.
+    const nodes = allNodes.filter(n => n.role === 'repeater');
 
     if (nodes.length === 0) {
       el.innerHTML = `<div class="analytics-card"><p class="text-muted">No nodes in the network yet. Any prefix is available!</p></div>`;
@@ -2405,9 +2425,14 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
               </div>
             </div>`).join('')}
           </div>
-          <div style="background:var(--bg-secondary,var(--bg));border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+          <div style="background:var(--bg-secondary,var(--bg));border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:12px">
             <strong>Recommendation: ${rec} prefixes</strong> — ${recDetail}
             <span class="text-muted" style="font-size:0.8em;display:block;margin-top:4px">Hash size is configured per-node in firmware. Changing requires reflashing.</span>
+          </div>
+          <div style="background:var(--bg-secondary,var(--bg));border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:0.85em">
+            <strong>ℹ️ About these numbers:</strong> This tool checks <em>repeater</em> public key prefixes regardless of their configured hash size. Only repeaters are included because they are the nodes that relay packets using hash-based addressing.
+            The <a href="#/analytics?tab=collisions" style="color:var(--accent)">Hash Issues</a> tab shows only <em>operational</em> collisions — nodes that actually use the same hash size and are repeaters.
+            A collision shown here may not appear in Hash Issues if the nodes use a different hash size.
           </div>
         </div>
       </div>
@@ -2454,8 +2479,9 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     function nodeEntry(n) {
       const name = esc(n.name || n.public_key.slice(0, 12));
       const role = n.role ? `<span class="text-muted" style="font-size:0.82em">${esc(n.role)}</span>` : '';
+      const hs = n.hash_size ? ` <span class="text-muted" style="font-size:0.78em;opacity:0.7">${n.hash_size}B hash</span>` : '';
       const when = n.last_seen ? ` <span class="text-muted" style="font-size:0.8em">${new Date(n.last_seen).toLocaleDateString()}</span>` : '';
-      return `<div style="padding:3px 0"><a href="#/nodes/${encodeURIComponent(n.public_key)}" class="analytics-link">${name}</a> ${role}${when}</div>`;
+      return `<div style="padding:3px 0"><a href="#/nodes/${encodeURIComponent(n.public_key)}" class="analytics-link">${name}</a> ${role}${hs}${when}</div>`;
     }
 
     function severityBadge(count) {
@@ -2945,6 +2971,20 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
   }
 
   // Shared helper: render X-axis time labels
+  function rfTooltipCircles(data, sx, sy, label, unit, formatV) {
+    let svg = '';
+    formatV = formatV || (v => v.toFixed(1));
+    data.forEach(d => {
+      const t = new Date(d.t);
+      const x = sx(t.getTime());
+      const y = sy(d.v);
+      const ts = t.toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC');
+      const tip = `${label}: ${formatV(d.v)}${unit}\n${ts}`;
+      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="8" fill="transparent" stroke="none" pointer-events="all"><title>${tip}</title></circle>`;
+    });
+    return svg;
+  }
+
   function rfXAxisLabels(data, sx, h, pad) {
     let svg = '';
     const xTicks = Math.min(6, data.length);
@@ -2967,18 +3007,26 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     const minT = sharedMinT, maxT = sharedMaxT;
     const rangeT = maxT - minT || 1;
 
+    // Auto-scale Y-axis to data range (20% headroom, min 1%)
+    let dataMax = 0;
+    for (let i = 0; i < txData.length; i++) { if (txData[i].v > dataMax) dataMax = txData[i].v; }
+    for (let i = 0; i < rxData.length; i++) { if (rxData[i].v > dataMax) dataMax = rxData[i].v; }
+    const yMax = Math.max(dataMax * 1.2, 1);
+
     const sx = t => pad.left + ((t - minT) / rangeT) * cw;
-    const sy = v => pad.top + ch - (v / 100) * ch; // 0-100%
+    const sy = v => pad.top + ch - (v / yMax) * ch;
 
     let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Airtime chart"><title>Airtime %</title>`;
 
     // Chart title
     svg += `<text x="${pad.left}" y="12" font-size="10" fill="var(--text-muted)" font-weight="600">Airtime %</text>`;
 
-    // Y-axis: 0, 25, 50, 75, 100
-    for (let pct = 0; pct <= 100; pct += 25) {
-      const y = sy(pct);
-      svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${pct}</text>`;
+    // Y-axis: 5 ticks from 0 to yMax
+    const yTicks = 4;
+    for (let i = 0; i <= yTicks; i++) {
+      const v = yMax * i / yTicks;
+      const y = sy(v);
+      svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v.toFixed(1)}</text>`;
       svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.3"/>`;
     }
 
@@ -3018,6 +3066,10 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     // X-axis labels
     const allData = txData.length >= rxData.length ? txData : rxData;
     svg += rfXAxisLabels(allData, sx, h, pad);
+
+    // Hover tooltips
+    svg += rfTooltipCircles(txData, sx, sy, 'TX', '%');
+    svg += rfTooltipCircles(rxData, sx, sy, 'RX', '%');
 
     svg += '</svg>';
     return svg;
@@ -3067,6 +3119,9 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
 
     // X-axis labels
     svg += rfXAxisLabels(errData, sx, h, pad);
+
+    // Hover tooltips
+    svg += rfTooltipCircles(errData, sx, sy, 'Err', '%', v => v.toFixed(2));
 
     svg += '</svg>';
     return svg;
@@ -3126,6 +3181,9 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     // X-axis labels
     svg += rfXAxisLabels(battData, sx, h, pad);
 
+    // Hover tooltips
+    svg += rfTooltipCircles(battData, sx, sy, 'Batt', 'V', v => (v/1000).toFixed(2));
+
     svg += '</svg>';
     return svg;
   }
@@ -3182,6 +3240,9 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
 
     // Data polyline
     svg += `<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>`;
+
+    // Hover tooltips
+    svg += rfTooltipCircles(data, sx, sy, 'NF', ' dBm');
 
     // Direct labels: min and max points
     const times = data.map(d => new Date(d.t).getTime());

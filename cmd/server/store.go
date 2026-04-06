@@ -80,6 +80,45 @@ func (tx *StoreTx) ParsedDecoded() map[string]interface{} {
 }
 
 // PacketStore holds all transmissions in memory with indexes for fast queries.
+//
+// Lock ordering
+// =============
+// PacketStore uses several mutexes. To prevent deadlocks, locks MUST be
+// acquired in the order listed below. Never acquire a higher-numbered lock
+// while holding a lower-numbered one.
+//
+//   1. mu            (sync.RWMutex) — guards the core packet data: packets,
+//                     indexes (byHash, byTxID, byObsID, byObserver, byNode,
+//                     byPathHop, byPayloadType), counters, and loaded flag.
+//
+//   2. cacheMu       (sync.Mutex)  — guards analytics response caches:
+//                     rfCache, topoCache, hashCache, collisionCache, chanCache,
+//                     distCache, subpathCache, and their TTLs/hit counters.
+//                     Also guards rate-limited invalidation state
+//                     (lastInvalidated, pendingInv).
+//
+//   3. channelsCacheMu (sync.Mutex) — guards the short-lived GetChannels
+//                     cache (channelsCacheKey/Exp/Res).
+//
+//   4. groupedCacheMu (sync.Mutex)  — guards the short-lived
+//                     QueryGroupedPackets cache.
+//
+//   5. regionObsMu   (sync.Mutex)  — guards the region→observer mapping
+//                     cache (regionObsCache, regionObsCacheTime).
+//
+//   6. hashSizeInfoMu (sync.Mutex)  — guards the cached hash-size-info
+//                     result (hashSizeInfoCache). Acquired independently or
+//                     under mu (in EvictStale).
+//
+// Nesting that occurs today:
+//   - IngestNew:               mu → cacheMu → channelsCacheMu  (1 → 2 → 3, OK)
+//   - IngestObservations:      mu → cacheMu                    (1 → 2, OK)
+//   - RunEviction/EvictStale:  mu → cacheMu → channelsCacheMu  (1 → 2 → 3, OK)
+//   - RunEviction/EvictStale:  mu → hashSizeInfoMu             (1 → 6, OK)
+//   - invalidateCachesFor:     cacheMu → channelsCacheMu       (2 → 3, OK)
+//
+// All other locks are acquired independently (no nesting).
+// When adding new lock acquisitions, respect this ordering.
 type PacketStore struct {
 	mu            sync.RWMutex
 	db            *DB
@@ -157,6 +196,12 @@ type PacketStore struct {
 	// Persisted neighbor graph for hop resolution at ingest time.
 	graph *NeighborGraph
 
+	// Async backfill state: set after backfillResolvedPathsAsync completes.
+	backfillComplete atomic.Bool
+	// Progress tracking for async backfill (total pending and processed so far).
+	backfillTotal     atomic.Int64 // set once at start of async backfill
+	backfillProcessed atomic.Int64
+
 	// Eviction config and stats
 	retentionHours   float64        // 0 = unlimited
 	maxMemoryMB      int            // 0 = unlimited
@@ -201,8 +246,33 @@ type cachedResult struct {
 	expiresAt time.Time
 }
 
+// cacheTTLSec extracts a duration from the cacheTTL config map.
+// Values may be float64 (from JSON) or int. Returns false if key is missing or non-positive.
+func cacheTTLSec(m map[string]interface{}, key string) (time.Duration, bool) {
+	v, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+	var sec float64
+	switch n := v.(type) {
+	case float64:
+		sec = n
+	case int:
+		sec = float64(n)
+	case int64:
+		sec = float64(n)
+	default:
+		return 0, false
+	}
+	if sec <= 0 {
+		return 0, false
+	}
+	return time.Duration(sec * float64(time.Second)), true
+}
+
 // NewPacketStore creates a new empty packet store backed by db.
-func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
+// cacheTTLs is the optional cacheTTL map from config.json; keys are strings, values are seconds.
+func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]interface{}) *PacketStore {
 	ps := &PacketStore{
 		db:            db,
 		packets:       make([]*StoreTx, 0, 65536),
@@ -223,7 +293,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
 		distCache:     make(map[string]*cachedResult),
 		subpathCache:  make(map[string]*cachedResult),
 		rfCacheTTL:         15 * time.Second,
-		collisionCacheTTL: 60 * time.Second,
+		collisionCacheTTL: 3600 * time.Second,
 		invCooldown:       10 * time.Second,
 		spIndex:       make(map[string]int, 4096),
 		spTxIndex:     make(map[string][]*StoreTx, 4096),
@@ -232,6 +302,16 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig) *PacketStore {
 	if cfg != nil {
 		ps.retentionHours = cfg.RetentionHours
 		ps.maxMemoryMB = cfg.MaxMemoryMB
+	}
+	// Wire cacheTTL config values to server-side cache durations.
+	if len(cacheTTLs) > 0 && cacheTTLs[0] != nil {
+		ct := cacheTTLs[0]
+		if v, ok := cacheTTLSec(ct, "analyticsHashSizes"); ok {
+			ps.collisionCacheTTL = v
+		}
+		if v, ok := cacheTTLSec(ct, "analyticsRF"); ok {
+			ps.rfCacheTTL = v
+		}
 	}
 	return ps
 }

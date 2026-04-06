@@ -8,13 +8,15 @@
   },
   "https": {
     "cert": "/path/to/cert.pem",
-    "key": "/path/to/key.pem"
+    "key": "/path/to/key.pem",
+    "_comment": "TLS cert/key paths for direct HTTPS. Most deployments use Caddy (included in Docker) for auto-TLS instead."
   },
   "branding": {
     "siteName": "CoreScope",
     "tagline": "Real-time MeshCore LoRa mesh network analyzer",
     "logoUrl": null,
-    "faviconUrl": null
+    "faviconUrl": null,
+    "_comment": "Customize site name, tagline, logo, and favicon. logoUrl/faviconUrl can be absolute URLs or relative paths."
   },
   "theme": {
     "accent": "#4a9eff",
@@ -23,38 +25,75 @@
     "navBg2": "#1a1a2e",
     "statusGreen": "#45644c",
     "statusYellow": "#b08b2d",
-    "statusRed": "#b54a4a"
+    "statusRed": "#b54a4a",
+    "_comment": "CSS color overrides. Use the in-app Theme Customizer for live preview, then export values here."
   },
   "nodeColors": {
     "repeater": "#dc2626",
     "companion": "#2563eb",
     "room": "#16a34a",
     "sensor": "#d97706",
-    "observer": "#8b5cf6"
+    "observer": "#8b5cf6",
+    "_comment": "Marker/badge colors per node role. Used on map, nodes list, and live feed."
   },
   "home": {
     "heroTitle": "CoreScope",
     "heroSubtitle": "Find your nodes to start monitoring them.",
     "steps": [
-      { "emoji": "📡", "title": "Connect", "description": "Link your node to the mesh" },
-      { "emoji": "🔍", "title": "Monitor", "description": "Watch packets flow in real-time" },
-      { "emoji": "📊", "title": "Analyze", "description": "Understand your network's health" }
+      {
+        "emoji": "\ud83d\udce1",
+        "title": "Connect",
+        "description": "Link your node to the mesh"
+      },
+      {
+        "emoji": "\ud83d\udd0d",
+        "title": "Monitor",
+        "description": "Watch packets flow in real-time"
+      },
+      {
+        "emoji": "\ud83d\udcca",
+        "title": "Analyze",
+        "description": "Understand your network's health"
+      }
     ],
     "checklist": [
-      { "question": "How do I add my node?", "answer": "Search for your node name or paste your public key." },
-      { "question": "What regions are covered?", "answer": "Check the map page to see active observers and nodes." }
+      {
+        "question": "How do I add my node?",
+        "answer": "Search for your node name or paste your public key."
+      },
+      {
+        "question": "What regions are covered?",
+        "answer": "Check the map page to see active observers and nodes."
+      }
     ],
     "footerLinks": [
-      { "label": "📦 Packets", "url": "#/packets" },
-      { "label": "🗺️ Network Map", "url": "#/map" },
-      { "label": "🔴 Live", "url": "#/live" },
-      { "label": "📡 All Nodes", "url": "#/nodes" },
-      { "label": "💬 Channels", "url": "#/channels" }
-    ]
+      {
+        "label": "\ud83d\udce6 Packets",
+        "url": "#/packets"
+      },
+      {
+        "label": "\ud83d\uddfa\ufe0f Network Map",
+        "url": "#/map"
+      },
+      {
+        "label": "\ud83d\udd34 Live",
+        "url": "#/live"
+      },
+      {
+        "label": "\ud83d\udce1 All Nodes",
+        "url": "#/nodes"
+      },
+      {
+        "label": "\ud83d\udcac Channels",
+        "url": "#/channels"
+      }
+    ],
+    "_comment": "Customize the landing page hero, onboarding steps, FAQ, and footer links."
   },
   "mqtt": {
     "broker": "mqtt://localhost:1883",
-    "topic": "meshcore/+/+/packets"
+    "topic": "meshcore/+/+/packets",
+    "_comment": "Legacy single-broker config. Prefer mqttSources[] for multiple brokers."
   },
   "mqttSources": [
     {
@@ -150,11 +189,26 @@
     "timezone": "local",
     "formatPreset": "iso",
     "customFormat": "",
-    "allowCustomFormat": false
+    "allowCustomFormat": false,
+    "_comment": "defaultMode: ago|local|iso. timezone: local|utc. formatPreset: iso|us|eu. customFormat: strftime-style (requires allowCustomFormat: true)."
   },
   "packetStore": {
     "maxMemoryMB": 1024,
     "estimatedPacketBytes": 450,
     "_comment": "In-memory packet store. maxMemoryMB caps RAM usage. All packets loaded on startup, served from RAM."
-  }
+  },
+  "resolvedPath": {
+    "backfillHours": 24,
+    "_comment": "How far back (hours) the async backfill scans for observations with NULL resolved_path. Default: 24. Set higher to backfill older data, lower to speed up startup."
+  },
+  "neighborGraph": {
+    "maxAgeDays": 5,
+    "_comment": "Neighbor edges older than this many days are pruned on startup and daily. Default: 5."
+  },
+  "_comment_mqttSources": "Each source connects to an MQTT broker. topics: what to subscribe to. iataFilter: only ingest packets from these regions (optional).",
+  "_comment_channelKeys": "Hex keys for decrypting channel messages. Key name = channel display name. public channel key is well-known.",
+  "_comment_hashChannels": "Channel names whose keys are derived via SHA256. Key = SHA256(name)[:16]. Listed here so the ingestor can auto-derive keys.",
+  "_comment_defaultRegion": "IATA code shown by default in region filters.",
+  "_comment_mapDefaults": "Initial map center [lat, lon] and zoom level.",
+  "_comment_regions": "IATA code to display name mapping. Packets are tagged with region codes by MQTT topic structure."
 }
