@@ -1197,6 +1197,45 @@
     </div>`;
   }
 
+  // --- Shared cell classification for hash matrix ---
+
+  function classifyHashCell(count, isConfirmedCollision, isPossibleConflict) {
+    if (count === 0) return { cls: 'hash-cell-empty', bg: '' };
+    if (!isConfirmedCollision && !isPossibleConflict) return { cls: 'hash-cell-taken', bg: '' };
+    if (isPossibleConflict) return { cls: 'hash-cell-possible', bg: '' };
+    const t = Math.min((count - 2) / 4, 1);
+    return { cls: 'hash-cell-collision', bg: `background:rgb(${Math.round(220+35*t)},${Math.round(120*(1-t))},30);` };
+  }
+
+  function hashCellTd(hex, cellSize, cls, bg, count, tipHtml, fontWeight) {
+    return `<td class="hash-cell ${cls}${count ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tipHtml.replace(/"/g,'&quot;')}" style="width:${cellSize}px;height:${cellSize}px;text-align:center;${bg}border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:11px;font-weight:${fontWeight}">${hex}</td>`;
+  }
+
+  function hashTooltipHtml(hexLabel, statusText, nodesHtml) {
+    let html = `<div class="hash-matrix-tooltip-hex">${hexLabel}</div><div class="hash-matrix-tooltip-status">${statusText}</div>`;
+    if (nodesHtml) html += `<div class="hash-matrix-tooltip-nodes">${nodesHtml}</div>`;
+    return html;
+  }
+
+  function renderHashMatrixPanel(el, statCardsHtml, cellRendererFn, detailMaxWidth, legendLabels, clickHandlerFn) {
+    const nibbles = '0123456789ABCDEF'.split('');
+    const cellSize = 36;
+    const headerSize = 24;
+    let html = statCardsHtml;
+    html += hashMatrixGridHtml(nibbles, cellSize, headerSize, cellRendererFn);
+    html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:${detailMaxWidth}px;font-size:0.85em"></div></div>`;
+    html += hashMatrixLegendHtml(legendLabels);
+    el.innerHTML = html;
+    initMatrixTooltip(el);
+    el.querySelectorAll('.hash-active').forEach(td => {
+      td.addEventListener('click', () => {
+        clickHandlerFn(td);
+        el.querySelectorAll('.hash-selected').forEach(c => c.classList.remove('hash-selected'));
+        td.classList.add('hash-selected');
+      });
+    });
+  }
+
   function renderHashMatrixFromServer(sizeData, bytes) {
     const el = document.getElementById('hashMatrix');
     if (!sizeData) { el.innerHTML = '<div class="text-muted">No data</div>'; return; }
@@ -1210,51 +1249,37 @@
       return;
     }
 
-    const nibbles = '0123456789ABCDEF'.split('');
-    const cellSize = 36;
-    const headerSize = 24;
-
     if (bytes === 1) {
       const oneByteCells = sizeData.one_byte_cells || {};
       const oneByteCount = stats.using_this_size || 0;
       const oneUsed = Object.values(oneByteCells).filter(v => v.length > 0).length;
       const oneCollisions = Object.values(oneByteCells).filter(v => v.length > 1).length;
 
-      let html = hashStatCardsHtml(totalNodes, oneByteCount, '1-byte', 256, oneUsed, oneCollisions);
-      html += hashMatrixGridHtml(nibbles, cellSize, headerSize, (hex, cs) => {
+      renderHashMatrixPanel(el,
+        hashStatCardsHtml(totalNodes, oneByteCount, '1-byte', 256, oneUsed, oneCollisions),
+        (hex, cs) => {
           const nodes = oneByteCells[hex] || [];
           const count = nodes.length;
           const repeaterCount = nodes.filter(n => n.role === 'repeater').length;
           const isCollision = count >= 2 && repeaterCount >= 2;
           const isPossible = count >= 2 && !isCollision;
-          let cellClass, bgStyle;
-          if (count === 0) { cellClass = 'hash-cell-empty'; bgStyle = ''; }
-          else if (count === 1) { cellClass = 'hash-cell-taken'; bgStyle = ''; }
-          else if (isPossible) { cellClass = 'hash-cell-possible'; bgStyle = ''; }
-          else { const t = Math.min((count - 2) / 4, 1); bgStyle = `background:rgb(${Math.round(220+35*t)},${Math.round(120*(1-t))},30);`; cellClass = 'hash-cell-collision'; }
+          const { cls, bg } = classifyHashCell(count, isCollision, isPossible);
           const nodeLabel = m => `<div style="font-size:11px">${esc(m.name||m.public_key.slice(0,12))}${!m.role ? ' <span style="opacity:0.7">(unknown role)</span>' : ''}</div>`;
-          const tip1 = count === 0
-            ? `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">Available</div>`
-            : count === 1
-              ? `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">One node — no collision</div><div class="hash-matrix-tooltip-nodes">${nodeLabel(nodes[0])}</div>`
-              : isPossible
-                ? `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">${count} nodes — POSSIBLE CONFLICT</div><div class="hash-matrix-tooltip-nodes">${nodes.slice(0,5).map(nodeLabel).join('')}${nodes.length>5?`<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>`:''}</div>`
-                : `<div class="hash-matrix-tooltip-hex">0x${hex}</div><div class="hash-matrix-tooltip-status">${count} nodes — COLLISION</div><div class="hash-matrix-tooltip-nodes">${nodes.slice(0,5).map(nodeLabel).join('')}${nodes.length>5?`<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>`:''}</div>`;
-          return `<td class="hash-cell ${cellClass}${count ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip1.replace(/"/g,'&quot;')}" style="width:${cs}px;height:${cs}px;text-align:center;${bgStyle}border:1px solid var(--border);cursor:${count ? 'pointer' : 'default'};font-size:11px;font-weight:${count >= 2 ? '700' : '400'}">${hex}</td>`;
-      });
-      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:400px;font-size:0.85em"></div></div>`;
-      html += hashMatrixLegendHtml([
-        {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'Available'},
-        {cls: 'hash-cell-taken', text: 'One node'},
-        {cls: 'hash-cell-possible', text: 'Possible conflict'},
-        {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
-      ]);
-      el.innerHTML = html;
-
-      initMatrixTooltip(el);
-
-      el.querySelectorAll('.hash-active').forEach(td => {
-        td.addEventListener('click', () => {
+          const nodesPreview = nodes.slice(0,5).map(nodeLabel).join('') + (nodes.length > 5 ? `<div class="hash-matrix-tooltip-status">+${nodes.length-5} more</div>` : '');
+          const tip = count === 0 ? hashTooltipHtml(`0x${hex}`, 'Available')
+            : count === 1 ? hashTooltipHtml(`0x${hex}`, 'One node — no collision', nodeLabel(nodes[0]))
+            : isPossible ? hashTooltipHtml(`0x${hex}`, `${count} nodes — POSSIBLE CONFLICT`, nodesPreview)
+            : hashTooltipHtml(`0x${hex}`, `${count} nodes — COLLISION`, nodesPreview);
+          return hashCellTd(hex, cs, cls, bg, count, tip, count >= 2 ? '700' : '400');
+        },
+        400,
+        [
+          {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'Available'},
+          {cls: 'hash-cell-taken', text: 'One node'},
+          {cls: 'hash-cell-possible', text: 'Possible conflict'},
+          {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
+        ],
+        (td) => {
           const hex = td.dataset.hex.toUpperCase();
           const matches = oneByteCells[hex] || [];
           const detail = document.getElementById('hashDetail');
@@ -1265,10 +1290,8 @@
               const role = m.role ? `<span class="badge" style="font-size:0.7em;padding:1px 4px;background:var(--border)">${esc(m.role)}</span> ` : '';
               return `<div style="padding:3px 0">${role}<a href="#/nodes/${encodeURIComponent(m.public_key)}" class="analytics-link">${esc(m.name || m.public_key.slice(0,12))}</a> ${coords}</div>`;
             }).join('')}</div>`;
-          el.querySelectorAll('.hash-selected').forEach(c => c.classList.remove('hash-selected'));
-          td.classList.add('hash-selected');
-        });
-      });
+        }
+      );
 
     } else if (bytes === 2) {
       const twoByteCells = sizeData.two_byte_cells || {};
@@ -1276,38 +1299,34 @@
       const uniqueTwoBytePrefixes = stats.unique_prefixes || 0;
       const twoCollisions = Object.values(twoByteCells).filter(v => v.collision_count > 0).length;
 
-      let html = hashStatCardsHtml(totalNodes, twoByteCount, '2-byte', 65536, uniqueTwoBytePrefixes, twoCollisions);
-      html += hashMatrixGridHtml(nibbles, cellSize, headerSize, (hex, cs) => {
+      renderHashMatrixPanel(el,
+        hashStatCardsHtml(totalNodes, twoByteCount, '2-byte', 65536, uniqueTwoBytePrefixes, twoCollisions),
+        (hex, cs) => {
           const info = twoByteCells[hex] || { group_nodes: [], max_collision: 0, collision_count: 0, two_byte_map: {} };
           const nodeCount = (info.group_nodes || []).length;
           const maxCol = info.max_collision || 0;
           const overlapping = Object.values(info.two_byte_map || {}).filter(v => v.length > 1);
           const hasConfirmed = overlapping.some(ns => ns.filter(n => n.role === 'repeater').length >= 2);
           const hasPossible = !hasConfirmed && overlapping.some(ns => ns.length >= 2);
-          let cellClass2, bgStyle2;
-          if (nodeCount === 0) { cellClass2 = 'hash-cell-empty'; bgStyle2 = ''; }
-          else if (maxCol === 0) { cellClass2 = 'hash-cell-taken'; bgStyle2 = ''; }
-          else if (hasPossible) { cellClass2 = 'hash-cell-possible'; bgStyle2 = ''; }
-          else { const t = Math.min((maxCol - 2) / 4, 1); bgStyle2 = `background:rgb(${Math.round(220+35*t)},${Math.round(120*(1-t))},30);`; cellClass2 = 'hash-cell-collision'; }
+          const { cls, bg } = classifyHashCell(maxCol > 0 ? maxCol : nodeCount === 0 ? 0 : 1, hasConfirmed, hasPossible);
           const nodeLabel2 = m => esc(m.name||m.public_key.slice(0,8)) + (!m.role ? ' (?)' : '');
-          const tip2 = nodeCount === 0
-            ? `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">No nodes in this group</div>`
+          const tip = nodeCount === 0
+            ? hashTooltipHtml(`0x${hex}__`, 'No nodes in this group')
             : (info.collision_count || 0) === 0
-              ? `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">${nodeCount} node${nodeCount>1?'s':''} — no 2-byte collisions</div>`
-              : `<div class="hash-matrix-tooltip-hex">0x${hex}__</div><div class="hash-matrix-tooltip-status">${hasConfirmed ? (info.collision_count||0) + ' collision' + ((info.collision_count||0)>1?'s':'') : 'Possible conflict'}</div><div class="hash-matrix-tooltip-nodes">${Object.entries(info.two_byte_map||{}).filter(([,v])=>v.length>1).slice(0,4).map(([p,ns])=>`<div style="font-size:11px;padding:1px 0"><span style="color:${hasConfirmed?'var(--status-red)':'var(--status-yellow)'};font-family:var(--mono);font-weight:700">${p}</span> — ${ns.map(nodeLabel2).join(', ')}</div>`).join('')}</div>`;
-          return `<td class="hash-cell ${cellClass2}${nodeCount ? ' hash-active' : ''}" data-hex="${hex}" data-tip="${tip2.replace(/"/g,'&quot;')}" style="width:${cs}px;height:${cs}px;text-align:center;${bgStyle2}border:1px solid var(--border);cursor:${nodeCount ? 'pointer' : 'default'};font-size:11px;font-weight:${maxCol > 0 ? '700' : '400'}">${hex}</td>`;
-      });
-      html += `<div id="hashDetail" style="flex:1;min-width:200px;max-width:420px;font-size:0.85em"></div></div>`;
-      html += hashMatrixLegendHtml([
-        {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'No nodes in group'},
-        {cls: 'hash-cell-taken', text: 'Nodes present, no collision'},
-        {cls: 'hash-cell-possible', text: 'Possible conflict'},
-        {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
-      ]);
-      el.innerHTML = html;
-
-      el.querySelectorAll('.hash-active').forEach(td => {
-        td.addEventListener('click', () => {
+              ? hashTooltipHtml(`0x${hex}__`, `${nodeCount} node${nodeCount>1?'s':''} — no 2-byte collisions`)
+              : hashTooltipHtml(`0x${hex}__`,
+                  hasConfirmed ? (info.collision_count||0) + ' collision' + ((info.collision_count||0)>1?'s':'') : 'Possible conflict',
+                  Object.entries(info.two_byte_map||{}).filter(([,v])=>v.length>1).slice(0,4).map(([p,ns])=>`<div style="font-size:11px;padding:1px 0"><span style="color:${hasConfirmed?'var(--status-red)':'var(--status-yellow)'};font-family:var(--mono);font-weight:700">${p}</span> — ${ns.map(nodeLabel2).join(', ')}</div>`).join(''));
+          return hashCellTd(hex, cs, cls, bg, nodeCount, tip, maxCol > 0 ? '700' : '400');
+        },
+        420,
+        [
+          {cls: 'hash-cell-empty', style: 'border:1px solid var(--border)', text: 'No nodes in group'},
+          {cls: 'hash-cell-taken', text: 'Nodes present, no collision'},
+          {cls: 'hash-cell-possible', text: 'Possible conflict'},
+          {cls: 'hash-cell-collision', style: 'background:rgb(220,80,30)', text: 'Collision'}
+        ],
+        (td) => {
           const hex = td.dataset.hex.toUpperCase();
           const info = twoByteCells[hex];
           const detail = document.getElementById('hashDetail');
@@ -1332,12 +1351,8 @@
             dhtml += '</div>';
           }
           detail.innerHTML = dhtml;
-          el.querySelectorAll('.hash-selected').forEach(c => c.classList.remove('hash-selected'));
-          td.classList.add('hash-selected');
-        });
-      });
-
-      initMatrixTooltip(el);
+        }
+      );
     }
   }
 
