@@ -992,7 +992,7 @@
         <span style="color:var(--border)">|</span>
         <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">🔎 Check a prefix →</a>
       </nav>
-      <p class="text-muted" style="margin:0 0 12px;font-size:0.78em">This tab shows operational collisions among <strong>repeaters</strong> grouped by their configured hash size. The <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Prefix Tool</a> checks all nodes regardless of role or hash size.</p>
+      <p class="text-muted" style="margin:0 0 12px;font-size:0.78em">This tab shows operational collisions among <strong>repeaters</strong> grouped by their configured hash size. The <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Prefix Tool</a> checks all repeaters regardless of their configured hash size.</p>
 
       <div class="analytics-card" id="inconsistentHashSection">
         <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">⚠️ Inconsistent Hash Sizes</h3><a href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a></div>
@@ -1247,7 +1247,7 @@
     if (bytes === 3) {
       el.innerHTML = hashStatCardsHtml(totalNodes, stats.using_this_size || 0, '3-byte', 16777216, stats.unique_prefixes || 0, stats.collision_count || 0) +
         `<p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid.</p>` +
-        `<p class="text-muted" style="margin:8px 0 0;font-size:0.8em">ℹ️ This tab only counts collisions among repeaters configured for this hash size. The <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Prefix Tool</a> checks all nodes regardless of hash size or role.</p>`;
+        `<p class="text-muted" style="margin:8px 0 0;font-size:0.8em">ℹ️ This tab only counts collisions among repeaters configured for this hash size. The <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Prefix Tool</a> checks all repeaters regardless of configured hash size.</p>`;
       return;
     }
 
@@ -2347,7 +2347,10 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
         nodeMap.set(n.public_key, n);
       }
     });
-    const nodes = [...nodeMap.values()];
+    const allNodes = [...nodeMap.values()];
+    // Only repeaters matter for prefix collisions — they relay packets using hash prefixes.
+    // Companions, rooms, and sensors don't route, so their prefix collisions are harmless.
+    const nodes = allNodes.filter(n => n.role === 'repeater');
 
     if (nodes.length === 0) {
       el.innerHTML = `<div class="analytics-card"><p class="text-muted">No nodes in the network yet. Any prefix is available!</p></div>`;
