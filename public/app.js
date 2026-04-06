@@ -108,6 +108,39 @@ function getHashParams() {
   return new URLSearchParams(location.hash.split('?')[1] || '');
 }
 
+function getDistanceUnit() {
+  var stored = localStorage.getItem('meshcore-distance-unit');
+  if (stored === 'km') return 'km';
+  if (stored === 'mi') return 'mi';
+  // 'auto' or no value — locale detection
+  var milesLocales = ['en-us', 'en-gb', 'my', 'lr'];
+  var lang = (typeof navigator !== 'undefined' && navigator.language || '').toLowerCase();
+  for (var i = 0; i < milesLocales.length; i++) {
+    if (lang === milesLocales[i] || lang.startsWith(milesLocales[i] + '-')) return 'mi';
+  }
+  return 'km';
+}
+window.getDistanceUnit = getDistanceUnit;
+
+function formatDistance(km) {
+  if (km == null || isNaN(+km)) return '—';
+  var d = +km;
+  var unit = getDistanceUnit();
+  if (unit === 'mi') return (d / 1.60934).toFixed(1) + ' mi';
+  if (d < 1) return Math.round(d * 1000) + ' m';
+  return d.toFixed(1) + ' km';
+}
+window.formatDistance = formatDistance;
+
+function formatDistanceRound(km) {
+  if (km == null || isNaN(+km)) return '—';
+  var unit = getDistanceUnit();
+  if (unit === 'mi') return Math.round(+km / 1.60934) + ' mi';
+  return Math.round(+km) + ' km';
+}
+window.formatDistanceRound = formatDistanceRound;
+
+
 function getTimestampMode() {
   const saved = localStorage.getItem('meshcore-timestamp-mode');
   if (saved === 'ago' || saved === 'absolute') return saved;

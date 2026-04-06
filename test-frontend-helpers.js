@@ -4687,6 +4687,60 @@ console.log('\n=== packets.js: buildPacketsQuery ===');
   }
 }
 
+// ===== APP.JS: formatDistance / getDistanceUnit =====
+console.log('\n=== app.js: formatDistance ===');
+{
+  function makeDistCtx(localeLang, storageUnit) {
+    const ctx = makeSandbox();
+    if (storageUnit !== undefined) ctx.localStorage.setItem('meshcore-distance-unit', storageUnit);
+    ctx.navigator = { language: localeLang || 'en-BE' };
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    return ctx;
+  }
+
+  test('formatDistance: km mode, 12.3 km', () => {
+    const ctx = makeDistCtx('en-BE', 'km');
+    assert.strictEqual(ctx.formatDistance(12.3), '12.3 km');
+  });
+  test('formatDistance: km mode, sub-1km shows meters', () => {
+    const ctx = makeDistCtx('en-BE', 'km');
+    assert.strictEqual(ctx.formatDistance(0.45), '450 m');
+  });
+  test('formatDistance: mi mode, 12.3 km → 7.6 mi', () => {
+    const ctx = makeDistCtx('en-BE', 'mi');
+    assert.strictEqual(ctx.formatDistance(12.3), '7.6 mi');
+  });
+  test('formatDistance: auto + en-US locale → mi', () => {
+    const ctx = makeDistCtx('en-US', 'auto');
+    assert.strictEqual(ctx.getDistanceUnit(), 'mi');
+  });
+  test('formatDistance: auto + en-GB locale → mi', () => {
+    const ctx = makeDistCtx('en-GB', 'auto');
+    assert.strictEqual(ctx.getDistanceUnit(), 'mi');
+  });
+  test('formatDistance: auto + fr-BE locale → km', () => {
+    const ctx = makeDistCtx('fr-BE', 'auto');
+    assert.strictEqual(ctx.getDistanceUnit(), 'km');
+  });
+  test('formatDistance: null input returns —', () => {
+    const ctx = makeDistCtx('en-BE', 'km');
+    assert.strictEqual(ctx.formatDistance(null), '—');
+  });
+  test('formatDistanceRound: 50 km → "50 km"', () => {
+    const ctx = makeDistCtx('en-BE', 'km');
+    assert.strictEqual(ctx.formatDistanceRound(50), '50 km');
+  });
+  test('formatDistanceRound: 50 km in mi mode → "31 mi"', () => {
+    const ctx = makeDistCtx('en-BE', 'mi');
+    assert.strictEqual(ctx.formatDistanceRound(50), '31 mi');
+  });
+  test('formatDistanceRound: 200 km in mi mode → "124 mi"', () => {
+    const ctx = makeDistCtx('en-BE', 'mi');
+    assert.strictEqual(ctx.formatDistanceRound(200), '124 mi');
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);

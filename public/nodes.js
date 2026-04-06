@@ -210,7 +210,7 @@
       var scoreTitle = 'Observations: ' + nb.count;
       if (nb.avg_snr != null) scoreTitle += ' · Avg SNR: ' + Number(nb.avg_snr).toFixed(1) + ' dB';
       var distanceCell = nb.distance_km != null
-        ? Number(nb.distance_km).toFixed(1) + ' km'
+        ? formatDistance(Number(nb.distance_km))
         : '<span class="text-muted">—</span>';
       var showOnMap = nb.pubkey
         ? ' <button class="btn-link neighbor-show-map" data-pubkey="' + escapeHtml(nb.pubkey) + '" style="font-size:11px;padding:1px 6px;white-space:nowrap">📍 Map</button>'

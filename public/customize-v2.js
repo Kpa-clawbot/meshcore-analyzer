@@ -33,9 +33,10 @@
     'meshcore-live-heatmap-opacity'
   ];
 
-  var VALID_SECTIONS = ['branding', 'theme', 'themeDark', 'nodeColors', 'typeColors', 'home', 'timestamps', 'heatmapOpacity', 'liveHeatmapOpacity'];
+  var VALID_SECTIONS = ['branding', 'theme', 'themeDark', 'nodeColors', 'typeColors', 'home', 'timestamps', 'heatmapOpacity', 'liveHeatmapOpacity', 'distanceUnit'];
   var OBJECT_SECTIONS = ['branding', 'theme', 'themeDark', 'nodeColors', 'typeColors', 'home', 'timestamps'];
   var SCALAR_SECTIONS = ['heatmapOpacity', 'liveHeatmapOpacity'];
+  var DISTANCE_UNIT_VALUES = ['km', 'mi', 'auto'];
 
   // CSS variable mapping (theme key → CSS custom property)
   var THEME_CSS_MAP = {
@@ -503,6 +504,11 @@
       localStorage.setItem('meshcore-live-heatmap-opacity', effectiveConfig.liveHeatmapOpacity);
     }
 
+    // Distance unit → sync to localStorage for all pages
+    if (typeof effectiveConfig.distanceUnit === 'string' && DISTANCE_UNIT_VALUES.indexOf(effectiveConfig.distanceUnit) >= 0) {
+      localStorage.setItem('meshcore-distance-unit', effectiveConfig.distanceUnit);
+    }
+
     // Nav gradient
     if (themeSection.navBg) {
       var nav = document.querySelector('.top-nav');
@@ -744,6 +750,10 @@
           }
         }
       }
+      // Validate distanceUnit
+      if (key === 'distanceUnit' && DISTANCE_UNIT_VALUES.indexOf(obj[key]) === -1) {
+        errors.push('Invalid distanceUnit: "' + obj[key] + '" — must be km, mi, or auto');
+      }
     }
     return { valid: errors.length === 0, errors: errors };
   }
@@ -895,7 +905,7 @@
       { id: 'theme', label: '🎨', title: 'Theme', badge: _tabBadge(isDarkMode() ? 'themeDark' : 'theme') },
       { id: 'nodes', label: '🎯', title: 'Colors', badge: (function () { var n = _countOverrides('nodeColors') + _countOverrides('typeColors'); return n ? ' <span class="cv2-tab-badge">' + n + '</span>' : ''; })() },
       { id: 'home', label: '🏠', title: 'Home', badge: _tabBadge('home') },
-      { id: 'display', label: '🖥️', title: 'Display', badge: _tabBadge('timestamps') },
+      { id: 'display', label: '🖥️', title: 'Display', badge: (function () { var n = _countOverrides('timestamps') + (_isOverridden(null, 'distanceUnit') ? 1 : 0); return n ? ' <span class="cv2-tab-badge">' + n + '</span>' : ''; })() },
       { id: 'export', label: '📤', title: 'Export' }
     ];
     return '<div class="cust-tabs">' + tabs.map(function (t) {
@@ -1059,6 +1069,7 @@
 
   function _renderDisplay() {
     var eff = _getEffective();
+    var distUnit = typeof eff.distanceUnit === 'string' && DISTANCE_UNIT_VALUES.indexOf(eff.distanceUnit) >= 0 ? eff.distanceUnit : 'auto';
     var ts = (eff.timestamps) || {};
     var tsMode = ts.defaultMode === 'absolute' ? 'absolute' : 'ago';
     var tsTz = ts.timezone === 'utc' ? 'utc' : 'local';
@@ -1086,6 +1097,13 @@
           '<option value="locale"' + (tsFmt === 'locale' ? ' selected' : '') + '>Locale (browser)</option></select></div>' +
       (canCustom ? '<div class="cust-field" data-ts-abs="custom"' + showAbs + '><label>Custom Format' + _overrideDot('timestamps', 'customFormat') + '</label>' +
         '<input type="text" data-cv2-field="timestamps.customFormat" value="' + escAttr(customFmt) + '" placeholder="YYYY-MM-DD HH:mm:ss"></div>' : '') +
+      '<p class="cust-section-title" style="font-size:14px;margin:16px 0 8px">Distances</p>' +
+      '<div class="cust-field"><label>Distance Unit' + _overrideDot(null, 'distanceUnit') + '</label>' +
+        '<select data-cv2-select="distanceUnit" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text)">' +
+          '<option value="auto"' + (distUnit === 'auto' ? ' selected' : '') + '>Auto (browser locale)</option>' +
+          '<option value="km"' + (distUnit === 'km' ? ' selected' : '') + '>Kilometers (km)</option>' +
+          '<option value="mi"' + (distUnit === 'mi' ? ' selected' : '') + '>Miles (mi)</option>' +
+        '</select></div>' +
     '</div>';
   }
 
@@ -1324,12 +1342,16 @@
     container.querySelectorAll('[data-cv2-select]').forEach(function (sel) {
       sel.addEventListener('change', function () {
         var parts = sel.dataset.cv2Select.split('.');
-        setOverride(parts[0], parts[1], sel.value);
-        // Show/hide absolute-only fields
-        if (parts[1] === 'defaultMode') {
-          container.querySelectorAll('[data-ts-abs]').forEach(function (el) {
-            el.style.display = sel.value === 'absolute' ? '' : 'none';
-          });
+        if (parts.length === 1) {
+          setOverride(null, parts[0], sel.value);
+        } else {
+          setOverride(parts[0], parts[1], sel.value);
+          // Show/hide absolute-only fields
+          if (parts[1] === 'defaultMode') {
+            container.querySelectorAll('[data-ts-abs]').forEach(function (el) {
+              el.style.display = sel.value === 'absolute' ? '' : 'none';
+            });
+          }
         }
         window.dispatchEvent(new CustomEvent('timestamp-mode-changed'));
       });

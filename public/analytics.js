@@ -1381,22 +1381,24 @@
         <th scope="col">Colliding Nodes</th>
       </tr></thead>
       <tbody>${collisions.map(c => {
+        const t50 = formatDistanceRound(50);
+        const t200 = formatDistanceRound(200);
         let badge, tooltip;
         if (c.classification === 'local') {
-          badge = '<span class="badge" style="background:var(--status-green);color:#fff" title="All nodes within 50km — likely true collision, same RF neighborhood">🏘️ Local</span>';
+          badge = `<span class="badge" style="background:var(--status-green);color:#fff" title="All nodes within ${t50} — likely true collision, same RF neighborhood">🏘️ Local</span>`;
           tooltip = 'Nodes close enough for direct RF — probably genuine prefix collision';
         } else if (c.classification === 'regional') {
-          badge = '<span class="badge" style="background:var(--status-yellow);color:#fff" title="Nodes 50–200km apart — edge of LoRa range, could be atmospheric">⚡ Regional</span>';
+          badge = `<span class="badge" style="background:var(--status-yellow);color:#fff" title="Nodes ${t50}–${t200} apart — edge of LoRa range, could be atmospheric">⚡ Regional</span>`;
           tooltip = 'At edge of 915MHz range — could indicate atmospheric ducting or hilltop-to-hilltop links';
         } else if (c.classification === 'distant') {
-          badge = '<span class="badge" style="background:var(--status-red);color:#fff" title="Nodes >200km apart — beyond typical 915MHz range">🌐 Distant</span>';
+          badge = `<span class="badge" style="background:var(--status-red);color:#fff" title="Nodes >${t200} apart — beyond typical 915MHz range">🌐 Distant</span>`;
           tooltip = 'Beyond typical LoRa range — likely internet bridging, MQTT gateway, or separate mesh networks sharing prefix';
         } else {
           badge = '<span class="badge" style="background:#6b7280;color:#fff">❓ Unknown</span>';
           tooltip = 'Not enough coordinate data to classify';
         }
         const nodes = c.nodes || [];
-        const distStr = c.with_coords >= 2 ? `${Math.round(c.max_dist_km)} km` : '<span class="text-muted">—</span>';
+        const distStr = c.with_coords >= 2 ? formatDistanceRound(c.max_dist_km) : '<span class="text-muted">—</span>';
         return `<tr>
           <td class="mono">${c.prefix}</td>
           ${showAppearances ? `<td>${(c.appearances || 0).toLocaleString()}</td>` : ''}
@@ -1412,9 +1414,9 @@
       }).join('')}</tbody>
     </table>
     <div class="text-muted" style="padding:8px;font-size:0.8em">
-      <strong>🏘️ Local</strong> &lt;50km: true prefix collision, same mesh area &nbsp;
-      <strong>⚡ Regional</strong> 50–200km: edge of LoRa range, possible atmospheric propagation &nbsp;
-      <strong>🌐 Distant</strong> &gt;200km: beyond 915MHz range — internet bridge, MQTT gateway, or separate networks
+      <strong>🏘️ Local</strong> &lt;${formatDistanceRound(50)}: true prefix collision, same mesh area &nbsp;
+      <strong>⚡ Regional</strong> ${formatDistanceRound(50)}–${formatDistanceRound(200)}: edge of LoRa range, possible atmospheric propagation &nbsp;
+      <strong>🌐 Distant</strong> &gt;${formatDistanceRound(200)}: beyond 915MHz range — internet bridge, MQTT gateway, or separate networks
     </div>`;
   }
     async function renderSubpaths(el) {
@@ -1545,12 +1547,12 @@
                   : (() => { const R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLon=(b.lon-a.lon)*Math.PI/180, h=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)**2; return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h)); })();
                 total += km;
                 const cls = km > 200 ? 'color:var(--status-red);font-weight:bold' : km > 50 ? 'color:var(--status-yellow)' : 'color:var(--status-green)';
-                dists.push(`<div style="padding:2px 0"><span style="${cls}">${km < 1 ? (km*1000).toFixed(0)+'m' : km.toFixed(1)+'km'}</span> <span class="text-muted">${esc(a.name)} → ${esc(b.name)}</span></div>`);
+                dists.push(`<div style="padding:2px 0"><span style="${cls}">${formatDistance(km)}</span> <span class="text-muted">${esc(a.name)} → ${esc(b.name)}</span></div>`);
               } else {
                 dists.push(`<div style="padding:2px 0"><span class="text-muted">? ${esc(a.name)} → ${esc(b.name)} (no coords)</span></div>`);
               }
             }
-            if (dists.length > 1) dists.push(`<div style="padding:4px 0;border-top:1px solid var(--border);margin-top:4px"><strong>Total: ${total < 1 ? (total*1000).toFixed(0)+'m' : total.toFixed(1)+'km'}</strong></div>`);
+            if (dists.length > 1) dists.push(`<div style="padding:4px 0;border-top:1px solid var(--border);margin-top:4px"><strong>Total: ${formatDistance(total)}</strong></div>`);
             return dists.join('');
           })()}
         </div>` : ''}
@@ -1787,16 +1789,17 @@
       let html = `<div class="analytics-grid">
         <div class="stat-card"><div class="stat-value">${s.totalHops.toLocaleString()}</div><div class="stat-label">Total Hops Analyzed</div></div>
         <div class="stat-card"><div class="stat-value">${s.totalPaths.toLocaleString()}</div><div class="stat-label">Paths Analyzed</div></div>
-        <div class="stat-card"><div class="stat-value">${s.avgDist} km</div><div class="stat-label">Avg Hop Distance</div></div>
-        <div class="stat-card"><div class="stat-value">${s.maxDist} km</div><div class="stat-label">Max Hop Distance</div></div>
+        <div class="stat-card"><div class="stat-value">${formatDistance(s.avgDist)}</div><div class="stat-label">Avg Hop Distance</div></div>
+        <div class="stat-card"><div class="stat-value">${formatDistance(s.maxDist)}</div><div class="stat-label">Max Hop Distance</div></div>
       </div>`;
 
       // Category stats
       const cats = data.catStats;
-      html += `<div class="analytics-section"><h3>Distance by Link Type</h3><table class="data-table"><thead><tr><th scope="col">Type</th><th scope="col">Count</th><th scope="col">Avg (km)</th><th scope="col">Median (km)</th><th scope="col">Min (km)</th><th scope="col">Max (km)</th></tr></thead><tbody>`;
+      const distUnitLabel = getDistanceUnit() === 'mi' ? 'mi' : 'km';
+      html += `<div class="analytics-section"><h3>Distance by Link Type</h3><table class="data-table"><thead><tr><th scope="col">Type</th><th scope="col">Count</th><th scope="col">Avg (${distUnitLabel})</th><th scope="col">Median (${distUnitLabel})</th><th scope="col">Min (${distUnitLabel})</th><th scope="col">Max (${distUnitLabel})</th></tr></thead><tbody>`;
       for (const [cat, st] of Object.entries(cats)) {
         if (!st.count) continue;
-        html += `<tr><td><strong>${esc(cat)}</strong></td><td>${st.count.toLocaleString()}</td><td>${st.avg}</td><td>${st.median}</td><td>${st.min}</td><td>${st.max}</td></tr>`;
+        html += `<tr><td><strong>${esc(cat)}</strong></td><td>${st.count.toLocaleString()}</td><td>${formatDistance(st.avg)}</td><td>${formatDistance(st.median)}</td><td>${formatDistance(st.min)}</td><td>${formatDistance(st.max)}</td></tr>`;
       }
       html += `</tbody></table></div>`;
 
@@ -1813,7 +1816,7 @@
       }
 
       // Top hops leaderboard
-      html += `<div class="analytics-section"><h3>🏆 Top 20 Longest Hops</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Distance (km)</th><th scope="col">Type</th><th scope="col">SNR</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
+      html += `<div class="analytics-section"><h3>🏆 Top 20 Longest Hops</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Distance (${distUnitLabel})</th><th scope="col">Type</th><th scope="col">SNR</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
       const top20 = data.topHops.slice(0, 20);
       top20.forEach((h, i) => {
         const fromLink = h.fromPk ? `<a href="#/nodes/${encodeURIComponent(h.fromPk)}" class="analytics-link">${esc(h.fromName)}</a>` : esc(h.fromName || '?');
@@ -1821,13 +1824,13 @@
         const snr = h.snr != null ? h.snr + ' dB' : '<span class="text-muted">—</span>';
         const pktLink = h.hash ? `<a href="#/packet/${encodeURIComponent(h.hash)}" class="analytics-link mono" style="font-size:0.85em">${esc(h.hash.slice(0, 12))}…</a>` : '—';
         const mapBtn = h.fromPk && h.toPk ? `<button class="btn-icon dist-map-hop" data-from="${esc(h.fromPk)}" data-to="${esc(h.toPk)}" title="View on map">🗺️</button>` : '';
-        html += `<tr><td>${i+1}</td><td>${fromLink}</td><td>${toLink}</td><td><strong>${h.dist}</strong></td><td>${esc(h.type)}</td><td>${snr}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
+        html += `<tr><td>${i+1}</td><td>${fromLink}</td><td>${toLink}</td><td><strong>${formatDistance(h.dist)}</strong></td><td>${esc(h.type)}</td><td>${snr}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
       });
       html += `</tbody></table></div>`;
 
       // Top paths
       if (data.topPaths.length) {
-        html += `<div class="analytics-section"><h3>🛤️ Top 10 Longest Multi-Hop Paths</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">Total Distance (km)</th><th scope="col">Hops</th><th scope="col">Route</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
+        html += `<div class="analytics-section"><h3>🛤️ Top 10 Longest Multi-Hop Paths</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">Total Distance (${distUnitLabel})</th><th scope="col">Hops</th><th scope="col">Route</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
         data.topPaths.slice(0, 10).forEach((p, i) => {
           const route = p.hops.map(h => esc(h.fromName)).concat(esc(p.hops[p.hops.length-1].toName)).join(' → ');
           const pktLink = p.hash ? `<a href="#/packet/${encodeURIComponent(p.hash)}" class="analytics-link mono" style="font-size:0.85em">${esc(p.hash.slice(0, 12))}…</a>` : '—';
@@ -1836,7 +1839,7 @@
           p.hops.forEach(h => { if (h.fromPk && !pathPks.includes(h.fromPk)) pathPks.push(h.fromPk); });
           if (p.hops.length && p.hops[p.hops.length-1].toPk) { const last = p.hops[p.hops.length-1].toPk; if (!pathPks.includes(last)) pathPks.push(last); }
           const mapBtn = pathPks.length >= 2 ? `<button class="btn-icon dist-map-path" data-hops='${JSON.stringify(pathPks)}' title="View on map">🗺️</button>` : '';
-          html += `<tr><td>${i+1}</td><td><strong>${p.totalDist}</strong></td><td>${p.hopCount}</td><td style="font-size:0.9em">${route}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
+          html += `<tr><td>${i+1}</td><td><strong>${formatDistance(p.totalDist)}</strong></td><td>${p.hopCount}</td><td style="font-size:0.9em">${route}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
         });
         html += `</tbody></table></div>`;
       }
