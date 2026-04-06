@@ -23,6 +23,7 @@
   // Managed by TableSort utility (public/table-sort.js) when DOM is available,
   // falls back to simple object for unit testing
   var _nodesTableSortCtrl = null;
+  // TODO(M5): remove fallback when tests use DOM sandbox
   var _fallbackSortState = null; // used when TableSort controller not initialized (tests)
 
   function _getSortState() {
@@ -204,7 +205,6 @@
         : '';
       var lastSeenVal = nb.last_seen ? new Date(nb.last_seen).getTime() : 0;
       var distanceVal = nb.distance_km != null ? Number(nb.distance_km) : '';
-      var snrVal = nb.avg_snr != null ? Number(nb.avg_snr) : '';
       return '<tr>' +
         '<td data-value="' + escapeHtml(name.toLowerCase()) + '" style="font-weight:600">' + nameHtml + '</td>' +
         '<td data-value="' + escapeHtml(role.toLowerCase()) + '">' + roleBadge + '</td>' +
@@ -221,13 +221,13 @@
   function renderNeighborTable(neighbors, limit) {
     return '<table class="data-table neighbor-sort-table" style="font-size:12px">' +
       '<thead><tr>' +
-      '<th data-sort="name">Neighbor</th>' +
-      '<th data-sort="role">Role</th>' +
-      '<th data-sort="score" data-type="number" data-sort-default="desc">Score</th>' +
-      '<th data-sort="count" data-type="number" data-sort-default="desc">Obs</th>' +
-      '<th data-sort="last_seen" data-type="number" data-sort-default="desc">Last Seen</th>' +
-      '<th data-sort="distance" data-type="number">Distance</th>' +
-      '<th>Conf</th><th></th>' +
+      '<th scope="col" data-sort="name">Neighbor</th>' +
+      '<th scope="col" data-sort="role">Role</th>' +
+      '<th scope="col" data-sort="score" data-type="number" data-sort-default="desc">Score</th>' +
+      '<th scope="col" data-sort="count" data-type="number" data-sort-default="desc">Obs</th>' +
+      '<th scope="col" data-sort="last_seen" data-type="number" data-sort-default="desc">Last Seen</th>' +
+      '<th scope="col" data-sort="distance" data-type="number">Distance</th>' +
+      '<th scope="col">Conf</th><th scope="col"></th>' +
       '</tr></thead>' +
       '<tbody>' + renderNeighborRows(neighbors, limit) + '</tbody></table>';
   }
