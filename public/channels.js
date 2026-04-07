@@ -171,8 +171,11 @@
   async function showNodeDetail(name) {
     _nodePanelTrigger = document.activeElement;
     if (_focusTrapCleanup) { _focusTrapCleanup(); _focusTrapCleanup = null; }
+    var _capturedHash = selectedHash;
     const node = await lookupNode(name);
     selectedNode = name;
+    var _chBase = _capturedHash ? '#/channels/' + encodeURIComponent(_capturedHash) : '#/channels';
+    history.replaceState(null, '', _chBase + '?node=' + encodeURIComponent(name));
 
     let panel = document.getElementById('chNodePanel');
     if (!panel) {
@@ -234,6 +237,8 @@
     const panel = document.getElementById('chNodePanel');
     if (panel) panel.classList.remove('open');
     selectedNode = null;
+    var _chRestoreUrl = selectedHash ? '#/channels/' + encodeURIComponent(selectedHash) : '#/channels';
+    history.replaceState(null, '', _chRestoreUrl);
     if (_nodePanelTrigger && typeof _nodePanelTrigger.focus === 'function') {
       _nodePanelTrigger.focus();
       _nodePanelTrigger = null;
@@ -314,6 +319,9 @@
   let regionChangeHandler = null;
 
   function init(app, routeParam) {
+    var _initUrlParams = getHashParams();
+    var _pendingNode = _initUrlParams.get('node');
+
     app.innerHTML = `<div class="ch-layout">
       <div class="ch-sidebar" aria-label="Channel list">
         <div class="ch-sidebar-header">
@@ -347,8 +355,9 @@
     });
 
     loadObserverRegions();
-    loadChannels().then(() => {
-      if (routeParam) selectChannel(routeParam);
+    loadChannels().then(async function () {
+      if (routeParam) await selectChannel(routeParam);
+      if (_pendingNode && _pendingNode.length < 200) await showNodeDetail(_pendingNode);
     });
 
     // #89: Sidebar resize handle

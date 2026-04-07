@@ -37,6 +37,22 @@
   let _packetSortColumn = null;
   let _packetSortDirection = 'desc';
   let showHexHashes = localStorage.getItem('meshcore-hex-hashes') === 'true';
+  var _pendingUrlRegion = null;
+
+  var DEFAULT_TIME_WINDOW = 15;
+
+  function buildPacketsQuery(timeWindowMin, regionParam) {
+    var parts = [];
+    if (timeWindowMin && timeWindowMin !== DEFAULT_TIME_WINDOW) parts.push('timeWindow=' + timeWindowMin);
+    if (regionParam) parts.push('region=' + encodeURIComponent(regionParam));
+    return parts.length ? '?' + parts.join('&') : '';
+  }
+  window.buildPacketsQuery = buildPacketsQuery;
+
+  function updatePacketsUrl() {
+    history.replaceState(null, '', '#/packets' + buildPacketsQuery(savedTimeWindowMin, RegionFilter.getRegionParam()));
+  }
+
   let filtersBuilt = false;
   let _renderTimer = null;
   function scheduleRender() {
@@ -316,6 +332,17 @@
         filters.node = routeParam;
       }
     }
+
+    // Read URL params (router strips query from routeParam; read from location.hash)
+    var _initUrlParams = getHashParams();
+    var _urlTimeWindow = Number(_initUrlParams.get('timeWindow'));
+    if (Number.isFinite(_urlTimeWindow) && _urlTimeWindow > 0) {
+      savedTimeWindowMin = _urlTimeWindow;
+      localStorage.setItem('meshcore-time-window', String(_urlTimeWindow));
+    }
+    var _urlRegion = _initUrlParams.get('region');
+    if (_urlRegion) _pendingUrlRegion = _urlRegion;
+
     app.innerHTML = `<div class="split-layout detail-collapsed">
       <div class="panel-left" id="pktLeft" aria-live="polite" aria-relevant="additions removals"></div>
       <div class="panel-right empty" id="pktRight" aria-live="polite">
@@ -758,7 +785,11 @@
 
     // Init shared RegionFilter component
     RegionFilter.init(document.getElementById('packetsRegionFilter'), { dropdown: true });
-    RegionFilter.onChange(function() { loadPackets(); });
+    if (_pendingUrlRegion) {
+      RegionFilter.setSelected(_pendingUrlRegion.split(',').filter(Boolean));
+      _pendingUrlRegion = null;
+    }
+    RegionFilter.onChange(function() { updatePacketsUrl(); loadPackets(); });
 
     // --- Packet Filter Language ---
     (function() {
@@ -908,6 +939,7 @@
       savedTimeWindowMin = Number(fTimeWindow.value);
       if (!Number.isFinite(savedTimeWindowMin) || savedTimeWindowMin <= 0) savedTimeWindowMin = 15;
       localStorage.setItem('meshcore-time-window', fTimeWindow.value);
+      updatePacketsUrl();
       loadPackets();
     });
 
@@ -1723,7 +1755,7 @@
 
     // Parse hash size from path byte
     const rawPathByte = pkt.raw_hex ? parseInt(pkt.raw_hex.slice(2, 4), 16) : NaN;
-    const hashSize = isNaN(rawPathByte) ? null : ((rawPathByte >> 6) + 1);
+    const hashSize = (isNaN(rawPathByte) || (rawPathByte & 0x3F) === 0) ? null : ((rawPathByte >> 6) + 1);
 
     const size = pkt.raw_hex ? Math.floor(pkt.raw_hex.length / 2) : 0;
     const typeName = payloadTypeName(pkt.payload_type);
@@ -1945,7 +1977,7 @@
     const pathByte0 = parseInt(buf.slice(2, 4), 16);
     const hashSizeVal = isNaN(pathByte0) ? '?' : ((pathByte0 >> 6) + 1);
     const hashCountVal = isNaN(pathByte0) ? '?' : (pathByte0 & 0x3F);
-    rows += fieldRow(1, 'Path Length', '0x' + (buf.slice(2, 4) || '??'), `hash_size=${hashSizeVal} byte${hashSizeVal !== 1 ? 's' : ''}, hash_count=${hashCountVal}`);
+    rows += fieldRow(1, 'Path Length', '0x' + (buf.slice(2, 4) || '??'), hashCountVal === 0 ? `hash_count=0 (direct advert)` : `hash_size=${hashSizeVal} byte${hashSizeVal !== 1 ? 's' : ''}, hash_count=${hashCountVal}`);
 
     // Transport codes
     let off = 2;
@@ -1973,7 +2005,7 @@
     rows += sectionRow('Payload — ' + payloadTypeName(pkt.payload_type), 'section-payload');
 
     if (decoded.type === 'ADVERT') {
-      rows += fieldRow(1, 'Advertised Hash Size', hashSizeVal + ' byte' + (hashSizeVal !== 1 ? 's' : ''), 'From path byte 0x' + (buf.slice(2, 4) || '??') + ' — bits 7-6 = ' + (hashSizeVal - 1));
+      if (hashCountVal !== 0) rows += fieldRow(1, 'Advertised Hash Size', hashSizeVal + ' byte' + (hashSizeVal !== 1 ? 's' : ''), 'From path byte 0x' + (buf.slice(2, 4) || '??') + ' — bits 7-6 = ' + (hashSizeVal - 1));
       rows += fieldRow(off, 'Public Key (32B)', truncate(decoded.pubKey || '', 24), '');
       rows += fieldRow(off + 32, 'Timestamp (4B)', decoded.timestampISO || '', 'Unix: ' + (decoded.timestamp || ''));
       rows += fieldRow(off + 36, 'Signature (64B)', truncate(decoded.signature || '', 24), '');

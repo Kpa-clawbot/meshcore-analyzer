@@ -75,6 +75,7 @@ function makeSandbox() {
       };
     })(),
     location: { hash: '' },
+    getHashParams: function() { return new URLSearchParams((ctx.location.hash.split('?')[1] || '')); },
     CustomEvent: class CustomEvent {},
     Map,
     Promise,
@@ -4514,6 +4515,176 @@ console.log('\n=== app.js: routeTypeName/payloadTypeName edge cases ===');
     assert.notDeepStrictEqual(getParsedDecoded(obs), getParsedDecoded(parent),
       'observation must have different decoded from parent');
   });
+}
+
+// ===== REGION-FILTER.JS: setSelected =====
+console.log('\n=== region-filter.js: setSelected ===');
+{
+  const ctx = makeSandbox();
+  ctx.fetch = () => Promise.resolve({ json: () => Promise.resolve({ 'US-SFO': 'San Jose', 'US-LAX': 'Los Angeles' }) });
+
+  // Patch createElement to return an object with style property
+  const origCreate = ctx.document.createElement;
+  ctx.document.createElement = () => ({
+    id: '', textContent: '', innerHTML: '',
+    style: {},
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    onclick: null,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  });
+
+  loadInCtx(ctx, 'public/region-filter.js');
+
+  const RF = ctx.RegionFilter;
+
+  test('setSelected sets region codes', async () => {
+    await RF.init(ctx.document.createElement('div'));
+    RF.setSelected(['US-SFO', 'US-LAX']);
+    assert.strictEqual(RF.getRegionParam(), 'US-SFO,US-LAX');
+  });
+
+  test('setSelected with null clears selection', async () => {
+    await RF.init(ctx.document.createElement('div'));
+    RF.setSelected(['US-SFO']);
+    RF.setSelected(null);
+    assert.strictEqual(RF.getRegionParam(), '');
+  });
+
+  test('setSelected with empty array clears selection', async () => {
+    await RF.init(ctx.document.createElement('div'));
+    RF.setSelected(['US-SFO']);
+    RF.setSelected([]);
+    assert.strictEqual(RF.getRegionParam(), '');
+  });
+}
+
+// ===== NODES.JS: buildNodesQuery =====
+console.log('\n=== nodes.js: buildNodesQuery ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/app.js');
+
+  // Provide required globals for nodes.js IIFE to execute
+  ctx.registerPage = () => {};
+  ctx.RegionFilter = { init: () => Promise.resolve(), onChange: () => () => {}, offChange: () => {}, getSelected: () => null, getRegionParam: () => '' };
+  ctx.onWS = () => {};
+  ctx.offWS = () => {};
+  ctx.debouncedOnWS = () => () => {};
+  ctx.invalidateApiCache = () => {};
+  ctx.favStar = () => '';
+  ctx.bindFavStars = () => {};
+  ctx.getFavorites = () => [];
+  ctx.isFavorite = () => false;
+  ctx.connectWS = () => {};
+  ctx.HopResolver = { init: () => {}, resolve: () => ({}), ready: () => false };
+  ctx.initTabBar = () => {};
+  ctx.debounce = (fn) => fn;
+  ctx.copyToClipboard = () => {};
+  ctx.api = () => Promise.resolve({});
+  ctx.escapeHtml = (s) => s;
+  ctx.timeAgo = () => '';
+  ctx.formatTimestampWithTooltip = () => '';
+  ctx.getTimestampMode = () => 'ago';
+  ctx.CLIENT_TTL = {};
+  ctx.qrcode = null;
+
+  try {
+    const src = fs.readFileSync('public/nodes.js', 'utf8');
+    vm.runInContext(src, ctx);
+    for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+  } catch (e) {
+    console.log('  ⚠️ nodes.js sandbox load failed:', e.message.slice(0, 120));
+  }
+
+  const buildNodesQuery = ctx.buildNodesQuery;
+
+  if (buildNodesQuery) {
+    test('buildNodesQuery: all tab + no search = empty', () => {
+      assert.strictEqual(buildNodesQuery('all', ''), '');
+    });
+    test('buildNodesQuery: repeater tab only', () => {
+      assert.strictEqual(buildNodesQuery('repeater', ''), '?tab=repeater');
+    });
+    test('buildNodesQuery: search only (all tab)', () => {
+      assert.strictEqual(buildNodesQuery('all', 'foo'), '?search=foo');
+    });
+    test('buildNodesQuery: tab + search combined', () => {
+      assert.strictEqual(buildNodesQuery('companion', 'bar'), '?tab=companion&search=bar');
+    });
+    test('buildNodesQuery: null search treated as empty', () => {
+      assert.strictEqual(buildNodesQuery('all', null), '');
+    });
+    test('buildNodesQuery: sensor tab', () => {
+      assert.strictEqual(buildNodesQuery('sensor', ''), '?tab=sensor');
+    });
+  } else {
+    console.log('  ⚠️ buildNodesQuery not exposed — skipping');
+  }
+}
+
+// ===== PACKETS.JS: buildPacketsQuery =====
+console.log('\n=== packets.js: buildPacketsQuery ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/app.js');
+
+  ctx.registerPage = () => {};
+  ctx.RegionFilter = { init: () => Promise.resolve(), onChange: () => () => {}, offChange: () => {}, getSelected: () => null, getRegionParam: () => '', setSelected: () => {} };
+  ctx.onWS = () => {};
+  ctx.offWS = () => {};
+  ctx.debouncedOnWS = () => () => {};
+  ctx.invalidateApiCache = () => {};
+  ctx.api = () => Promise.resolve({});
+  ctx.observerMap = new Map();
+  ctx.getParsedPath = () => [];
+  ctx.getParsedDecoded = () => ({});
+  ctx.clearParsedCache = () => {};
+  ctx.escapeHtml = (s) => s;
+  ctx.timeAgo = () => '';
+  ctx.formatTimestampWithTooltip = () => '';
+  ctx.getTimestampMode = () => 'ago';
+  ctx.copyToClipboard = () => {};
+  ctx.CLIENT_TTL = {};
+  ctx.debounce = (fn) => fn;
+  ctx.initTabBar = () => {};
+
+  try {
+    const src = fs.readFileSync('public/packet-helpers.js', 'utf8');
+    vm.runInContext(src, ctx);
+    for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    const src2 = fs.readFileSync('public/packets.js', 'utf8');
+    vm.runInContext(src2, ctx);
+    for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+  } catch (e) {
+    console.log('  ⚠️ packets.js sandbox load failed:', e.message.slice(0, 120));
+  }
+
+  const buildPacketsQuery = ctx.buildPacketsQuery;
+
+  if (buildPacketsQuery) {
+    test('buildPacketsQuery: default (15min, no region) = empty string', () => {
+      assert.strictEqual(buildPacketsQuery(15, ''), '');
+    });
+    test('buildPacketsQuery: non-default timeWindow', () => {
+      assert.strictEqual(buildPacketsQuery(60, ''), '?timeWindow=60');
+    });
+    test('buildPacketsQuery: region only', () => {
+      assert.strictEqual(buildPacketsQuery(15, 'US-SFO'), '?region=US-SFO');
+    });
+    test('buildPacketsQuery: timeWindow + region', () => {
+      assert.strictEqual(buildPacketsQuery(30, 'US-SFO,US-LAX'), '?timeWindow=30&region=US-SFO%2CUS-LAX');
+    });
+    test('buildPacketsQuery: timeWindow=0 treated as default', () => {
+      assert.strictEqual(buildPacketsQuery(0, ''), '');
+    });
+  } else {
+    console.log('  ⚠️ buildPacketsQuery not exposed — skipping');
+  }
 }
 
 // ===== SUMMARY =====

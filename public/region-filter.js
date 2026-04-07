@@ -6,6 +6,7 @@
   var _regions = {};       // { code: label }
   var _selected = null;    // Set of selected region codes, null = all
   var _listeners = [];
+  var _container = null;
   var _loaded = false;
 
   function loadFromStorage() {
@@ -199,9 +200,17 @@
   /** Initialize filter in a container, fetch regions, render, return promise.
    *  Options: { dropdown: true } to force dropdown mode regardless of region count */
   async function initFilter(container, opts) {
+    _container = container;
     if (opts && opts.dropdown) container._forceDropdown = true;
     await fetchRegions();
     render(container);
+  }
+
+  /** Override selected regions (e.g. from URL param). Persists to localStorage and re-renders. */
+  function setSelected(codesArray) {
+    _selected = (codesArray && codesArray.length > 0) ? new Set(codesArray) : null;
+    saveToStorage();
+    if (_container) render(_container);
   }
 
   // Expose globally
@@ -213,6 +222,7 @@
     regionQueryString: regionQueryString,
     onChange: onChange,
     offChange: offChange,
-    fetchRegions: fetchRegions
+    fetchRegions: fetchRegions,
+    setSelected: setSelected
   };
 })();

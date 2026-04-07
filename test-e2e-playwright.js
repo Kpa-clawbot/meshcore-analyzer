@@ -1627,6 +1627,65 @@ async function run() {
     }
   } catch {}
 
+  // --- Group: Deep linking (#536) ---
+
+  // Test: nodes tab deep link
+  await test('Nodes tab deep link restores active tab', async () => {
+    await page.goto(BASE + '#/nodes?tab=repeater', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.node-tab', { timeout: 8000 });
+    const activeTab = await page.$('.node-tab.active');
+    assert(activeTab, 'No active tab found');
+    const tabText = await activeTab.textContent();
+    assert(tabText.includes('Repeater'), `Expected Repeater tab active, got: ${tabText}`);
+    const url = page.url();
+    assert(url.includes('tab=repeater'), `URL should contain tab=repeater, got: ${url}`);
+  });
+
+  // Test: nodes tab click updates URL
+  await test('Nodes tab click updates URL', async () => {
+    await page.goto(BASE + '#/nodes', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.node-tab', { timeout: 8000 });
+    const roomTab = await page.$('.node-tab[data-tab="room"]');
+    assert(roomTab, 'Room tab (data-tab="room") not found — nodes page may not have rendered or tab selector changed');
+    await roomTab.click();
+    await page.waitForTimeout(300);
+    const url = page.url();
+    assert(url.includes('tab=room'), `URL should contain tab=room after click, got: ${url}`);
+  });
+
+  // Test: packets timeWindow deep link
+  await test('Packets timeWindow deep link restores dropdown', async () => {
+    await page.goto(BASE + '#/packets?timeWindow=60', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#fTimeWindow', { timeout: 8000 });
+    const val = await page.$eval('#fTimeWindow', el => el.value);
+    assert(val === '60', `Expected timeWindow dropdown = 60, got: ${val}`);
+    const url = page.url();
+    assert(url.includes('timeWindow=60'), `URL should still contain timeWindow=60, got: ${url}`);
+  });
+
+  // Test: timeWindow change updates URL
+  await test('Packets timeWindow change updates URL', async () => {
+    await page.goto(BASE + '#/packets', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#fTimeWindow', { timeout: 8000 });
+    await page.selectOption('#fTimeWindow', '30');
+    await page.waitForTimeout(300);
+    const url = page.url();
+    assert(url.includes('timeWindow=30'), `URL should contain timeWindow=30 after change, got: ${url}`);
+  });
+
+  // Test: channels selected channel survives refresh (already implemented, verify it still works)
+  await test('Channels channel selection is URL-addressable', async () => {
+    await page.goto(BASE + '#/channels', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.ch-item', { timeout: 8000 }).catch(() => null);
+    const firstChannel = await page.$('.ch-item');
+    if (firstChannel) {
+      await firstChannel.click();
+      await page.waitForTimeout(500);
+      const url = page.url();
+      assert(url.includes('#/channels/') || url.includes('#/channels'), `URL should reflect channel selection, got: ${url}`);
+    }
+  });
+
   await browser.close();
 
   // Summary

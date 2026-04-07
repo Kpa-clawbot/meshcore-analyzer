@@ -2353,7 +2353,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     const nodes = allNodes.filter(n => n.role === 'repeater');
 
     if (nodes.length === 0) {
-      el.innerHTML = `<div class="analytics-card"><p class="text-muted">No nodes in the network yet. Any prefix is available!</p></div>`;
+      el.innerHTML = `<div class="analytics-card"><p class="text-muted">No repeaters in the network yet. Any prefix is available!</p></div>`;
       return;
     }
 
@@ -2382,11 +2382,11 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     const totalNodes = nodes.length;
     let rec, recDetail;
     if (totalNodes < 20) {
-      rec = '1-byte'; recDetail = `With only ${totalNodes} nodes, 1-byte prefixes have low collision risk.`;
+      rec = '1-byte'; recDetail = `With only ${totalNodes} repeaters, 1-byte prefixes have low collision risk.`;
     } else if (totalNodes < 500) {
-      rec = '2-byte'; recDetail = `With ${totalNodes} nodes, 2-byte prefixes are recommended to avoid collisions.`;
+      rec = '2-byte'; recDetail = `With ${totalNodes} repeaters, 2-byte prefixes are recommended to avoid collisions.`;
     } else {
-      rec = '2-byte'; recDetail = `With ${totalNodes} nodes, 2-byte prefixes are strongly recommended.`;
+      rec = '2-byte'; recDetail = `With ${totalNodes} repeaters, 2-byte prefixes are strongly recommended.`;
     }
 
     // URL params for pre-fill / auto-run
@@ -2395,7 +2395,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     const initGenerate = hashParams.get('generate') || '';
 
     const regionNote = regionLabel
-      ? `<p class="text-muted" style="font-size:0.85em;margin:4px 0 0">Showing data for region: <strong>${esc(regionLabel)}</strong>. <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Check all nodes →</a></p>`
+      ? `<p class="text-muted" style="font-size:0.85em;margin:4px 0 0">Showing data for region: <strong>${esc(regionLabel)}</strong>. <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Check all repeaters →</a></p>`
       : '';
 
     el.innerHTML = `
@@ -2408,7 +2408,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
           ${regionNote}
           <div style="display:flex;gap:12px;flex-wrap:wrap;margin:12px 0 16px">
             <div class="analytics-stat-card" style="flex:1;min-width:110px">
-              <div class="analytics-stat-label">Total nodes</div>
+              <div class="analytics-stat-label">Total repeaters</div>
               <div class="analytics-stat-value">${totalNodes.toLocaleString()}</div>
             </div>
             ${[1, 2, 3].map(b => `
