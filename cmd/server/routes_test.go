@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -3535,6 +3536,122 @@ func TestNodePathsEndpointUsesIndex(t *testing.T) {
 	}
 	if len(resp.Paths) == 0 {
 		t.Error("expected at least 1 path group")
+	}
+}
+
+func TestNodePathsPrefixCollisionFilter(t *testing.T) {
+	// Two nodes share the "aa" prefix: TestRepeater (aabbccdd11223344) and a
+	// second node (aacafe0000000000). Packets whose resolved_path points to
+	// the second node must NOT appear when querying TestRepeater's paths.
+	srv, router := setupTestServer(t)
+
+	// Manually inject a transmission whose raw path contains "aa" but whose
+	// resolved_path points to the other node (aacafe0000000000).
+	now := time.Now().UTC()
+	recent := now.Add(-30 * time.Minute).Format(time.RFC3339)
+	recentEpoch := now.Add(-30 * time.Minute).Unix()
+
+	// Insert a second node with the same 2-char prefix
+	srv.db.conn.Exec(`INSERT OR IGNORE INTO nodes (public_key, name, role, last_seen, first_seen, advert_count)
+		VALUES ('aacafe0000000000', 'CollisionNode', 'repeater', ?, '2026-01-01T00:00:00Z', 5)`, recent)
+
+	// Insert a transmission with path hop "aa" that resolves to the OTHER node
+	srv.db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('FF01', 'collision_test_hash', ?, 1, 4, '{}')`, recent)
+	// Get its ID
+	var collisionTxID int
+	srv.db.conn.QueryRow(`SELECT id FROM transmissions WHERE hash='collision_test_hash'`).Scan(&collisionTxID)
+
+	srv.db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp, resolved_path)
+		VALUES (?, 1, 10.0, -90, '["aa","bb"]', ?, '["aacafe0000000000","eeff00112233aabb"]')`,
+		collisionTxID, recentEpoch)
+
+	// Reload store to pick up new data
+	store := NewPacketStore(srv.db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	srv.store = store
+
+	// Query paths for TestRepeater — should NOT include the collision packet
+	req := httptest.NewRequest("GET", "/api/nodes/aabbccdd11223344/paths", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Paths              []json.RawMessage `json:"paths"`
+		TotalTransmissions int               `json:"totalTransmissions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+
+	// The collision packet should be filtered out. Only transmission 1 (and 3
+	// if prefix matches) should remain — but transmission 3 has path "cc" and
+	// resolved_path pointing to TestRoom, so only tx 1 should match.
+	// Check that collision_test_hash is not in any path group.
+	bodyStr := w.Body.String()
+	if strings.Contains(bodyStr, "collision_test_hash") {
+		t.Error("collision packet should have been filtered out but appeared in response")
+	}
+
+	// Query paths for CollisionNode — should include the collision packet
+	req2 := httptest.NewRequest("GET", "/api/nodes/aacafe0000000000/paths", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+
+	if w2.Code != 200 {
+		t.Fatalf("expected 200 for CollisionNode, got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	body2 := w2.Body.String()
+	if !strings.Contains(body2, "collision_test_hash") {
+		t.Error("collision packet should appear for CollisionNode but was missing")
+	}
+}
+
+func TestNodeInResolvedPath(t *testing.T) {
+	target := "aabbccdd11223344"
+
+	// Case 1: tx.ResolvedPath contains target
+	pk := "aabbccdd11223344"
+	tx1 := &StoreTx{ResolvedPath: []*string{&pk}}
+	if !nodeInResolvedPath(tx1, target) {
+		t.Error("should match when ResolvedPath contains target")
+	}
+
+	// Case 2: tx.ResolvedPath contains different node
+	other := "aacafe0000000000"
+	tx2 := &StoreTx{ResolvedPath: []*string{&other}}
+	if nodeInResolvedPath(tx2, target) {
+		t.Error("should not match when ResolvedPath contains different node")
+	}
+
+	// Case 3: nil ResolvedPath — should not match (exclude ambiguous)
+	tx3 := &StoreTx{}
+	if nodeInResolvedPath(tx3, target) {
+		t.Error("should not match when ResolvedPath is nil")
+	}
+
+	// Case 4: ResolvedPath with nil elements only
+	tx4 := &StoreTx{ResolvedPath: []*string{nil, nil}}
+	if nodeInResolvedPath(tx4, target) {
+		t.Error("should not match when all ResolvedPath elements are nil")
+	}
+
+	// Case 5: target in observation but not in tx.ResolvedPath
+	tx5 := &StoreTx{
+		ResolvedPath: []*string{&other},
+		Observations: []*StoreObs{
+			{ResolvedPath: []*string{&pk}},
+		},
+	}
+	if !nodeInResolvedPath(tx5, target) {
+		t.Error("should match when observation's ResolvedPath contains target")
 	}
 }
 

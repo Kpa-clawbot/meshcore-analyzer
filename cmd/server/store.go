@@ -2158,6 +2158,33 @@ func resolvePayloadTypeName(pt *int) string {
 }
 
 // txGetParsedPath returns cached parsed path hops, parsing on first call.
+// nodeInResolvedPath checks whether a transmission's resolved_path contains
+// the target node's full pubkey. Returns true if at least one observation's
+// resolved_path includes targetPK (lowercased). Excludes transmissions where
+// resolved_path is nil/empty or the hop resolved to a different node.
+func nodeInResolvedPath(tx *StoreTx, targetPK string) bool {
+	// Check the best observation's resolved_path (stored on tx directly).
+	if tx.ResolvedPath != nil {
+		for _, rp := range tx.ResolvedPath {
+			if rp != nil && strings.ToLower(*rp) == targetPK {
+				return true
+			}
+		}
+	}
+	// Also check all observations in case a non-best observation resolved it.
+	for _, obs := range tx.Observations {
+		if obs.ResolvedPath == nil {
+			continue
+		}
+		for _, rp := range obs.ResolvedPath {
+			if rp != nil && strings.ToLower(*rp) == targetPK {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func txGetParsedPath(tx *StoreTx) []string {
 	if tx.pathParsed {
 		return tx.parsedPath

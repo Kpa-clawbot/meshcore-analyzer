@@ -1176,6 +1176,17 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Post-filter: verify target node actually appears in each candidate's resolved_path.
+	// The byPathHop index uses short prefixes which can collide (e.g. "c0" matches multiple nodes).
+	// We lean on resolved_path (from neighbor affinity graph) to disambiguate.
+	filtered := candidates[:0] // reuse backing array
+	for _, tx := range candidates {
+		if nodeInResolvedPath(tx, lowerPK) {
+			filtered = append(filtered, tx)
+		}
+	}
+	candidates = filtered
+
 	type pathAgg struct {
 		Hops       []PathHopResp
 		Count      int

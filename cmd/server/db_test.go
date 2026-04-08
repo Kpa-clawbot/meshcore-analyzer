@@ -72,7 +72,8 @@ func setupTestDB(t *testing.T) *DB {
 			rssi REAL,
 			score INTEGER,
 			path_json TEXT,
-			timestamp INTEGER NOT NULL
+			timestamp INTEGER NOT NULL,
+			resolved_path TEXT
 		);
 
 		CREATE TABLE IF NOT EXISTS observer_metrics (
@@ -95,7 +96,7 @@ func setupTestDB(t *testing.T) *DB {
 		t.Fatal(err)
 	}
 
-	return &DB{conn: conn, isV3: true}
+	return &DB{conn: conn, isV3: true, hasResolvedPath: true}
 }
 
 func seedTestData(t *testing.T, db *DB) {
@@ -132,14 +133,15 @@ func seedTestData(t *testing.T, db *DB) {
 		VALUES ('AA1F', 'def456abc1230099', ?, 1, 4, '{"pubKey":"aabbccdd11223344","name":"TestRepeater","type":"ADVERT","timestamp":1700000100,"timestampISO":"2023-11-14T22:14:40.000Z","signature":"fedcba","flags":{"isRepeater":true},"lat":37.5,"lon":-122.0}')`, yesterday)
 
 	// Seed observations (use unix timestamps)
-	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
-		VALUES (1, 1, 12.5, -90, '["aa","bb"]', ?)`, recentEpoch)
-	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
-		VALUES (1, 2, 8.0, -95, '["aa"]', ?)`, recentEpoch-100)
+	// resolved_path contains full pubkeys parallel to path_json hops
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp, resolved_path)
+		VALUES (1, 1, 12.5, -90, '["aa","bb"]', ?, '["aabbccdd11223344","eeff00112233aabb"]')`, recentEpoch)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp, resolved_path)
+		VALUES (1, 2, 8.0, -95, '["aa"]', ?, '["aabbccdd11223344"]')`, recentEpoch-100)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 		VALUES (2, 1, 15.0, -85, '[]', ?)`, yesterdayEpoch)
-	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
-		VALUES (3, 1, 10.0, -92, '["cc"]', ?)`, yesterdayEpoch)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp, resolved_path)
+		VALUES (3, 1, 10.0, -92, '["cc"]', ?, '["1122334455667788"]')`, yesterdayEpoch)
 }
 
 func TestGetStats(t *testing.T) {
