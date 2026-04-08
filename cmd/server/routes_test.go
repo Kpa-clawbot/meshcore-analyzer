@@ -3631,13 +3631,13 @@ func TestNodeInResolvedPath(t *testing.T) {
 		t.Error("should not match when ResolvedPath contains different node")
 	}
 
-	// Case 3: nil ResolvedPath — should not match (exclude ambiguous)
+	// Case 3: nil ResolvedPath — should match (no data to disambiguate, keep it)
 	tx3 := &StoreTx{}
-	if nodeInResolvedPath(tx3, target) {
-		t.Error("should not match when ResolvedPath is nil")
+	if !nodeInResolvedPath(tx3, target) {
+		t.Error("should match when ResolvedPath is nil (no data to disambiguate)")
 	}
 
-	// Case 4: ResolvedPath with nil elements only
+	// Case 4: ResolvedPath with nil elements only — has data but no match
 	tx4 := &StoreTx{ResolvedPath: []*string{nil, nil}}
 	if nodeInResolvedPath(tx4, target) {
 		t.Error("should not match when all ResolvedPath elements are nil")
