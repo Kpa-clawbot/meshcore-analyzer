@@ -1655,7 +1655,7 @@
         <span class="feed-text">${escapeHtml(preview)}</span>
         <span class="feed-time">${formatLiveTimestampHtml(group.latestTs || Date.now())}</span>
       `;
-      var _ccD = (pkt.decoded || {}), _ccH = (_ccD.header || {}), _ccP = (_ccD.payload || {}); if (_ccH.payloadTypeName === 'GRP_TXT' || _ccH.payloadTypeName === 'CHAN') item._ccChannel = _ccP.channelName || null; // channel color picker (#271 M2)
+      var _ccPayload = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload.channelHash != null ? String(_ccPayload.channelHash) : null; // channel color picker (#674)
       item.addEventListener('click', () => showFeedCard(item, pkt, color));
       feed.appendChild(item);
 
@@ -2644,7 +2644,8 @@
     var d = pkt.decoded || {};
     var h = d.header || {};
     var p = d.payload || {};
-    return window.ChannelColors.getRowStyle(h.payloadTypeName || '', p.channelName || null);
+    var ch = p.channelHash != null ? String(p.channelHash) : null;
+    return window.ChannelColors.getRowStyle(h.payloadTypeName || '', ch);
   }
 
   function addFeedItemDOM(icon, typeName, payload, hops, color, pkt, feed) {
@@ -2667,7 +2668,7 @@
       <span class="feed-text">${escapeHtml(preview)}</span>
       <span class="feed-time">${formatLiveTimestampHtml(pkt._ts || Date.now())}</span>
     `;
-    var _ccD = (pkt.decoded || {}), _ccH = (_ccD.header || {}), _ccP = (_ccD.payload || {}); if (_ccH.payloadTypeName === 'GRP_TXT' || _ccH.payloadTypeName === 'CHAN') item._ccChannel = _ccP.channelName || null; // channel color picker (#271 M2)
+    var _ccPayload2 = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload2.channelHash != null ? String(_ccPayload2.channelHash) : null; // channel color picker (#674)
     item.addEventListener('click', () => showFeedCard(item, pkt, color));
     feed.appendChild(item);
   }
@@ -2739,7 +2740,7 @@
       <span class="feed-text">${escapeHtml(preview)}</span>
       <span class="feed-time">${formatLiveTimestampHtml(pkt._ts || Date.now())}</span>
     `;
-    var _ccD = (pkt.decoded || {}), _ccH = (_ccD.header || {}), _ccP = (_ccD.payload || {}); if (_ccH.payloadTypeName === 'GRP_TXT' || _ccH.payloadTypeName === 'CHAN') item._ccChannel = _ccP.channelName || null; // channel color picker (#271 M2)
+    var _ccPayload3 = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload3.channelHash != null ? String(_ccPayload3.channelHash) : null; // channel color picker (#674)
     item.addEventListener('click', () => showFeedCard(item, pkt, color));
     feed.prepend(item);
     requestAnimationFrame(() => requestAnimationFrame(() => item.classList.remove('live-feed-enter')));

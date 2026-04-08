@@ -2042,132 +2042,93 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 }
 
 /* Channel Color Picker Popover (M2, #271) */
+/* === Channel Color Picker (#674) === */
 .cc-picker-popover {
   position: fixed;
-  z-index: 10000;
-  background: var(--surface-1, #1e1e2e);
-  border: 1px solid var(--border, #444);
+  z-index: 9999;
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid var(--border-color, #333);
   border-radius: 8px;
-  padding: 10px;
-  min-width: 200px;
-  max-width: 260px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-  font-size: 13px;
+  padding: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
-.cc-picker-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.cc-picker-title {
-  font-weight: 600;
-  color: var(--text-primary, #e0e0e0);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cc-picker-close {
-  background: none;
-  border: none;
-  color: var(--muted, #888);
-  cursor: pointer;
-  font-size: 14px;
-  padding: 2px 4px;
-}
-.cc-picker-close:hover { color: var(--text-primary, #e0e0e0); }
 .cc-picker-swatches {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 8px;
 }
 .cc-swatch {
   width: 24px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
   padding: 0;
   transition: border-color 0.15s;
 }
-.cc-swatch:hover { border-color: var(--text-primary, #e0e0e0); }
+.cc-swatch:hover { border-color: rgba(255,255,255,0.6); }
 .cc-swatch:focus-visible { border-color: #fff; outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }
-.cc-swatch-active { border-color: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,0.5); }
+.cc-swatch-active { border-color: #fff; }
+.cc-picker-clear {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: center;
+}
+.cc-picker-clear:hover { color: var(--text-primary, #e0e0e0); }
 
-/* Mobile: larger touch targets, hide native color picker, safe areas */
+/* Color dot affordance (#674) */
+.ch-color-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.3);
+  cursor: pointer;
+  vertical-align: middle;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.ch-color-dot:not([style*="background"]) {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--text-muted, #888);
+}
+
+/* Mobile bottom-sheet + larger touch targets (#674) */
 @media (pointer: coarse) {
+  .ch-color-dot {
+    width: 20px;
+    height: 20px;
+    margin-left: 8px;
+  }
   .cc-swatch {
-    width: 40px;
-    height: 40px;
-    border-radius: 6px;
+    width: 36px;
+    height: 36px;
   }
   .cc-picker-swatches {
-    gap: 8px;
-  }
-  .cc-picker-custom {
-    display: none !important;
+    justify-content: center;
+    gap: 10px;
   }
   .cc-picker-popover {
     position: fixed !important;
+    bottom: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    bottom: 0 !important;
     top: auto !important;
     width: 100% !important;
     max-width: 100% !important;
-    border-radius: 16px 16px 0 0;
+    border-radius: 12px 12px 0 0;
     padding: 16px;
     padding-bottom: calc(16px + env(safe-area-inset-bottom));
     box-sizing: border-box;
   }
-  .live-feed-item {
-    -webkit-touch-callout: none;
-    user-select: none;
-  }
 }
-.cc-picker-custom {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.cc-picker-custom label {
-  color: var(--muted, #888);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-}
-.cc-picker-input {
-  width: 32px;
-  height: 24px;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  background: none;
-}
-.cc-picker-apply {
-  background: var(--accent, #3b82f6);
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.cc-picker-apply:hover { opacity: 0.85; }
-.cc-picker-clear {
-  background: none;
-  border: 1px solid var(--border, #444);
-  color: var(--muted, #888);
-  border-radius: 4px;
-  padding: 4px 8px;
-  cursor: pointer;
-  font-size: 12px;
-  width: 100%;
-}
-.cc-picker-clear:hover { color: var(--text-primary, #e0e0e0); border-color: var(--text-primary, #e0e0e0); }
 
 /* === #630 — Mobile Accessibility Fixes === */
 

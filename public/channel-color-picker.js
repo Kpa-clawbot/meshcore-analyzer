@@ -1,16 +1,17 @@
 /**
- * Channel Color Quick-Assign Popover (M2, #271)
+ * Channel Color Picker — Simplified popover with 8-color constrained palette (#674)
  *
- * Right-click (or long-press on mobile) a channel name in the live feed
- * or packets table to open a color picker popover.
+ * Click a color dot next to channel names (channels page, live feed) to open picker.
+ * Right-click on live feed items retained as power-user shortcut (desktop only).
+ * No long-press. No custom color input. 8 preset colors.
  *
- * Uses ChannelColors.set/get/remove from channel-colors.js (M1).
+ * Uses ChannelColors.set/get/remove from channel-colors.js.
  */
 (function() {
   'use strict';
 
-  // Curated maximally-distinct palette (10 swatches, ColorBrewer-inspired)
-  var PRESET_COLORS = [
+  // 8 maximally-distinct colors on dark backgrounds (#674 Tufte spec)
+  var CHANNEL_PALETTE = [
     '#ef4444', // red
     '#f97316', // orange
     '#eab308', // yellow
@@ -18,14 +19,11 @@
     '#06b6d4', // cyan
     '#3b82f6', // blue
     '#8b5cf6', // violet
-    '#ec4899', // pink
-    '#14b8a6', // teal
-    '#f43f5e'  // rose
+    '#ec4899'  // pink
   ];
 
   var popoverEl = null;
   var currentChannel = null;
-  var longPressTimer = null;
 
   function createPopover() {
     if (popoverEl) return popoverEl;
@@ -35,27 +33,19 @@
     el.setAttribute('aria-label', 'Channel color picker');
     el.style.display = 'none';
     el.innerHTML =
-      '<div class="cc-picker-header">' +
-        '<span class="cc-picker-title" id="cc-picker-title"></span>' +
-        '<button class="cc-picker-close" title="Close" aria-label="Close">✕</button>' +
-      '</div>' +
       '<div class="cc-picker-swatches" role="group" aria-label="Color swatches"></div>' +
-      '<div class="cc-picker-custom">' +
-        '<label>Custom: <input type="color" class="cc-picker-input" value="#3b82f6" aria-label="Custom color"></label>' +
-        '<button class="cc-picker-apply">Apply</button>' +
-      '</div>' +
       '<button class="cc-picker-clear">Clear color</button>';
-    el.setAttribute('aria-labelledby', 'cc-picker-title');
 
     // Build swatches
     var swatchContainer = el.querySelector('.cc-picker-swatches');
-    for (var i = 0; i < PRESET_COLORS.length; i++) {
+    for (var i = 0; i < CHANNEL_PALETTE.length; i++) {
       var sw = document.createElement('button');
       sw.className = 'cc-swatch';
-      sw.style.background = PRESET_COLORS[i];
-      sw.setAttribute('data-color', PRESET_COLORS[i]);
-      sw.setAttribute('aria-label', PRESET_COLORS[i]);
-      sw.title = PRESET_COLORS[i];
+      sw.style.background = CHANNEL_PALETTE[i];
+      sw.setAttribute('data-color', CHANNEL_PALETTE[i]);
+      sw.setAttribute('aria-label', CHANNEL_PALETTE[i]);
+      sw.title = CHANNEL_PALETTE[i];
+      sw.setAttribute('tabindex', '0');
       swatchContainer.appendChild(sw);
     }
 
@@ -66,7 +56,7 @@
       assignColor(btn.getAttribute('data-color'));
     });
 
-    // Keyboard navigation for swatches (arrow keys)
+    // Keyboard navigation for swatches
     swatchContainer.addEventListener('keydown', function(e) {
       var btn = e.target.closest('.cc-swatch');
       if (!btn) return;
@@ -80,23 +70,12 @@
       if (next >= 0) { swatches[next].focus(); e.preventDefault(); }
     });
 
-    // Event: custom apply
-    el.querySelector('.cc-picker-apply').addEventListener('click', function() {
-      var input = el.querySelector('.cc-picker-input');
-      assignColor(input.value);
-    });
-
     // Event: clear
     el.querySelector('.cc-picker-clear').addEventListener('click', function() {
       if (currentChannel && window.ChannelColors) {
         window.ChannelColors.remove(currentChannel);
         refreshVisibleRows();
       }
-      hidePopover();
-    });
-
-    // Event: close button
-    el.querySelector('.cc-picker-close').addEventListener('click', function() {
       hidePopover();
     });
 
@@ -120,23 +99,17 @@
     var el = createPopover();
     currentChannel = channel;
 
-    // Update title
-    el.querySelector('.cc-picker-title').textContent = channel;
-
     // Highlight current color
     var current = window.ChannelColors ? window.ChannelColors.get(channel) : null;
     var swatches = el.querySelectorAll('.cc-swatch');
     for (var i = 0; i < swatches.length; i++) {
       swatches[i].classList.toggle('cc-swatch-active', swatches[i].getAttribute('data-color') === current);
     }
-    if (current) {
-      el.querySelector('.cc-picker-input').value = current;
-    }
 
     // Show/hide clear button
     el.querySelector('.cc-picker-clear').style.display = current ? '' : 'none';
 
-    // Position — on touch devices, CSS handles bottom-sheet via @media(pointer:coarse)
+    // Position
     el.style.display = '';
     var isTouch = window.matchMedia('(pointer: coarse)').matches;
     if (!isTouch) {
@@ -188,7 +161,7 @@
     }
     // Trap Tab within the popover
     if (e.key === 'Tab' && popoverEl && popoverEl.style.display !== 'none') {
-      var focusable = popoverEl.querySelectorAll('button, input, [tabindex]');
+      var focusable = popoverEl.querySelectorAll('button, [tabindex]');
       if (focusable.length === 0) return;
       var first = focusable[0];
       var last = focusable[focusable.length - 1];
@@ -200,7 +173,7 @@
     }
   }
 
-  /** Refresh channel color styles on all visible feed items and packet rows. */
+  /** Refresh channel color styles on all visible feed items, channel list, and packet rows. */
   function refreshVisibleRows() {
     if (!window.ChannelColors) return;
 
@@ -210,11 +183,28 @@
       var item = feedItems[i];
       var ch = item._ccChannel;
       if (!ch) continue;
-      var style = window.ChannelColors.getRowStyle('GRP_TXT', ch);
-      // Remove old channel color styles, reapply
-      item.style.borderLeft = '';
-      item.style.background = '';
-      if (style) item.style.cssText += style;
+      var color = window.ChannelColors.get(ch);
+      item.style.borderLeft = color ? '3px solid ' + color : '';
+    }
+
+    // Update color dots everywhere
+    var dots = document.querySelectorAll('.ch-color-dot');
+    for (var j = 0; j < dots.length; j++) {
+      var dot = dots[j];
+      var dotCh = dot.getAttribute('data-channel');
+      if (!dotCh) continue;
+      var dotColor = window.ChannelColors.get(dotCh);
+      dot.style.background = dotColor || '';
+    }
+
+    // Channel list items — update border
+    var chItems = document.querySelectorAll('.ch-item[data-hash]');
+    for (var k = 0; k < chItems.length; k++) {
+      var chItem = chItems[k];
+      var hash = chItem.getAttribute('data-hash');
+      if (!hash) continue;
+      var chColor = window.ChannelColors.get(hash);
+      chItem.style.borderLeft = chColor ? '3px solid ' + chColor : '';
     }
 
     // Packets table — trigger re-render via custom event
@@ -222,31 +212,8 @@
   }
 
   /**
-   * Extract channel name from a packet object.
-   * Returns null if no channel found or not a GRP_TXT/CHAN type.
-   */
-  function extractChannel(pkt) {
-    if (!pkt) return null;
-    var d = pkt.decoded || {};
-    var h = d.header || {};
-    var p = d.payload || {};
-    var type = h.payloadTypeName || '';
-    if (type !== 'GRP_TXT' && type !== 'CHAN') return null;
-    return p.channelName || null;
-  }
-
-  /**
-   * Extract channel from a packets-table decoded_json.
-   */
-  function extractChannelFromDecoded(decoded) {
-    if (!decoded) return null;
-    var type = decoded.type || '';
-    if (type !== 'GRP_TXT' && type !== 'CHAN') return null;
-    return decoded.channel || null;
-  }
-
-  /**
-   * Install context-menu (right-click) and long-press handlers on the live feed.
+   * Install context-menu (right-click) handler on the live feed.
+   * No long-press — color dots handle mobile interaction.
    */
   function installLiveFeedHandlers() {
     var feed = document.getElementById('liveFeed');
@@ -255,42 +222,8 @@
     feed.addEventListener('contextmenu', function(e) {
       var item = e.target.closest('.live-feed-item');
       if (!item || !item._ccChannel) return;
-      var ch = item._ccChannel;
       e.preventDefault();
-      showPopover(ch, e.clientX, e.clientY);
-    });
-
-    // Long-press for mobile
-    var longPressTriggered = false;
-    feed.addEventListener('touchstart', function(e) {
-      var item = e.target.closest('.live-feed-item');
-      if (!item || !item._ccChannel) return;
-      var ch = item._ccChannel;
-      if (!ch) return;
-      var touch = e.touches[0];
-      var tx = touch.clientX;
-      var ty = touch.clientY;
-      longPressTriggered = false;
-      // Don't preventDefault here — it blocks scroll initiation on feed items.
-      // CSS -webkit-touch-callout:none + user-select:none (on .live-feed-item)
-      // already suppress native context menu and text selection.
-      longPressTimer = setTimeout(function() {
-        longPressTimer = null;
-        longPressTriggered = true;
-        showPopover(ch, tx, ty);
-      }, 500);
-    }, { passive: true });
-
-    feed.addEventListener('touchend', function(e) {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-      if (longPressTriggered) { e.preventDefault(); longPressTriggered = false; }
-    });
-    feed.addEventListener('touchmove', function() {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-    });
-    // Prevent context menu on long-press (some browsers fire contextmenu after touch)
-    feed.addEventListener('contextmenu', function(e) {
-      if (longPressTriggered) e.preventDefault();
+      showPopover(item._ccChannel, e.clientX, e.clientY);
     });
   }
 
@@ -304,33 +237,19 @@
     table.addEventListener('contextmenu', function(e) {
       var row = e.target.closest('tr');
       if (!row) return;
-      // Try to get decoded data from the row's data attribute
-      var decodedStr = row.getAttribute('data-decoded');
-      var decoded = null;
-      if (decodedStr) {
-        try { decoded = JSON.parse(decodedStr); } catch(ex) {}
-      }
-      // Fallback: check if the row has a chan-tag
-      if (!decoded) {
-        var chanTag = row.querySelector('.chan-tag');
-        if (chanTag) {
-          var ch = chanTag.textContent.trim();
-          if (ch) {
-            e.preventDefault();
-            showPopover(ch, e.clientX, e.clientY);
-            return;
-          }
+      var chanTag = row.querySelector('.chan-tag');
+      if (chanTag) {
+        var ch = chanTag.textContent.trim();
+        if (ch) {
+          e.preventDefault();
+          showPopover(ch, e.clientX, e.clientY);
+          return;
         }
-        return;
       }
-      var ch = extractChannelFromDecoded(decoded);
-      if (!ch) return;
-      e.preventDefault();
-      showPopover(ch, e.clientX, e.clientY);
     });
   }
 
-  // Export for use by live.js feed item creation
+  // Export
   window.ChannelColorPicker = {
     install: function() {
       installLiveFeedHandlers();
@@ -339,6 +258,7 @@
     installLiveFeed: installLiveFeedHandlers,
     installPacketsTable: installPacketsTableHandlers,
     show: showPopover,
-    hide: hidePopover
+    hide: hidePopover,
+    PALETTE: CHANNEL_PALETTE
   };
 })();

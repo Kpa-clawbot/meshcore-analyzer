@@ -94,8 +94,8 @@
     if (!channel) return '';
     var color = getChannelColor(channel);
     if (!color) return '';
-    // 4px left border + 10% opacity background tint
-    return 'border-left:4px solid ' + color + ';background:' + color + '1a;';
+    // 3px left border only — minimal Tufte-style encoding (#674)
+    return 'border-left:3px solid ' + color + ';';
   }
 
   // Export to window for use by live.js and packets.js

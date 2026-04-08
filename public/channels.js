@@ -403,6 +403,14 @@
 
     // Event delegation for channel selection (touch-friendly)
     document.getElementById('chList').addEventListener('click', (e) => {
+      // Color dot click — open picker, don't select channel
+      const dot = e.target.closest('.ch-color-dot');
+      if (dot && window.ChannelColorPicker) {
+        e.stopPropagation();
+        var ch = dot.getAttribute('data-channel');
+        if (ch) ChannelColorPicker.show(ch, e.clientX, e.clientY);
+        return;
+      }
       const item = e.target.closest('.ch-item[data-hash]');
       if (item) selectChannel(item.dataset.hash);
     });
@@ -679,12 +687,18 @@
         : `${ch.messageCount} messages`;
       const sel = selectedHash === ch.hash ? ' selected' : '';
       const abbr = name.startsWith('#') ? name.slice(0, 3) : name.slice(0, 2).toUpperCase();
+      // Channel color dot for color picker (#674)
+      const chColor = window.ChannelColors ? window.ChannelColors.get(ch.hash) : null;
+      const dotStyle = chColor ? ` style="background:${chColor}"` : '';
+      // Left border for assigned color
+      const borderStyle = chColor ? ` style="border-left:3px solid ${chColor}"` : '';
 
-      return `<button class="ch-item${sel}" data-hash="${ch.hash}" type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}">
+      return `<button class="ch-item${sel}" data-hash="${ch.hash}"${borderStyle} type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}">
         <div class="ch-badge" style="background:${color}" aria-hidden="true">${escapeHtml(abbr)}</div>
         <div class="ch-item-body">
           <div class="ch-item-top">
             <span class="ch-item-name">${escapeHtml(name)}</span>
+            <span class="ch-color-dot" data-channel="${escapeHtml(ch.hash)}"${dotStyle} title="Change channel color" aria-label="Change color for ${escapeHtml(name)}"></span>
             <span class="ch-item-time" data-channel-hash="${ch.hash}">${time}</span>
           </div>
           <div class="ch-item-preview">${escapeHtml(preview)}</div>
