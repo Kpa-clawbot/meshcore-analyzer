@@ -1602,3 +1602,29 @@ func TestDirectNonZeroHopKeepsHashSize(t *testing.T) {
 		t.Errorf("DIRECT with 1 hop: want HashSize=1, got %d", pkt.Path.HashSize)
 	}
 }
+
+func TestZeroHopTransportDirectHashSize(t *testing.T) {
+	// TRANSPORT_DIRECT (RouteType=3) + REQ (PayloadType=0) → header byte = 0x03
+	// 4 bytes transport codes + pathByte=0x00 → hash_count=0 → should get HashSize=0
+	hex := "03" + "11223344" + "00" + repeatHex("AA", 20)
+	pkt, err := DecodePacket(hex, nil)
+	if err != nil {
+		t.Fatalf("DecodePacket failed: %v", err)
+	}
+	if pkt.Path.HashSize != 0 {
+		t.Errorf("TRANSPORT_DIRECT zero-hop: want HashSize=0, got %d", pkt.Path.HashSize)
+	}
+}
+
+func TestZeroHopTransportDirectHashSizeWithNonZeroUpperBits(t *testing.T) {
+	// TRANSPORT_DIRECT (RouteType=3) + REQ (PayloadType=0) → header byte = 0x03
+	// 4 bytes transport codes + pathByte=0xC0 → hash_count=0, hash_size bits=11 → should still get HashSize=0
+	hex := "03" + "11223344" + "C0" + repeatHex("AA", 20)
+	pkt, err := DecodePacket(hex, nil)
+	if err != nil {
+		t.Fatalf("DecodePacket failed: %v", err)
+	}
+	if pkt.Path.HashSize != 0 {
+		t.Errorf("TRANSPORT_DIRECT zero-hop with hash_size bits set: want HashSize=0, got %d", pkt.Path.HashSize)
+	}
+}
