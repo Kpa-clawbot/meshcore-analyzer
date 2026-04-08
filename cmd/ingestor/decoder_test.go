@@ -1542,3 +1542,63 @@ func TestDecodeAdvertTelemetryZeroTemp(t *testing.T) {
 		t.Errorf("temperature_c=%f, want 0.0", *pkt.Payload.TemperatureC)
 	}
 }
+
+func repeatHex(byteHex string, n int) string {
+	s := ""
+	for i := 0; i < n; i++ {
+		s += byteHex
+	}
+	return s
+}
+
+func TestZeroHopDirectHashSize(t *testing.T) {
+	// DIRECT (RouteType=2) + REQ (PayloadType=0) → header byte = 0x02
+	// pathByte=0x00 → hash_count=0, hash_size bits=0 → should get HashSize=0
+	hex := "02" + "00" + repeatHex("AA", 20)
+	pkt, err := DecodePacket(hex, nil)
+	if err != nil {
+		t.Fatalf("DecodePacket failed: %v", err)
+	}
+	if pkt.Path.HashSize != 0 {
+		t.Errorf("DIRECT zero-hop: want HashSize=0, got %d", pkt.Path.HashSize)
+	}
+}
+
+func TestZeroHopDirectHashSizeWithNonZeroUpperBits(t *testing.T) {
+	// DIRECT (RouteType=2) + REQ (PayloadType=0) → header byte = 0x02
+	// pathByte=0x40 → hash_count=0, hash_size bits=01 → should still get HashSize=0
+	hex := "02" + "40" + repeatHex("AA", 20)
+	pkt, err := DecodePacket(hex, nil)
+	if err != nil {
+		t.Fatalf("DecodePacket failed: %v", err)
+	}
+	if pkt.Path.HashSize != 0 {
+		t.Errorf("DIRECT zero-hop with hash_size bits set: want HashSize=0, got %d", pkt.Path.HashSize)
+	}
+}
+
+func TestNonDirectZeroPathByteKeepsHashSize(t *testing.T) {
+	// FLOOD (RouteType=1) + REQ (PayloadType=0) → header byte = 0x01
+	// pathByte=0x00 → non-DIRECT should keep HashSize=1
+	hex := "01" + "00" + repeatHex("AA", 20)
+	pkt, err := DecodePacket(hex, nil)
+	if err != nil {
+		t.Fatalf("DecodePacket failed: %v", err)
+	}
+	if pkt.Path.HashSize != 1 {
+		t.Errorf("FLOOD zero pathByte: want HashSize=1, got %d", pkt.Path.HashSize)
+	}
+}
+
+func TestDirectNonZeroHopKeepsHashSize(t *testing.T) {
+	// DIRECT (RouteType=2) + REQ (PayloadType=0) → header byte = 0x02
+	// pathByte=0x01 → hash_count=1, hash_size=1 → should keep HashSize=1
+	hex := "02" + "01" + repeatHex("BB", 21)
+	pkt, err := DecodePacket(hex, nil)
+	if err != nil {
+		t.Fatalf("DecodePacket failed: %v", err)
+	}
+	if pkt.Path.HashSize != 1 {
+		t.Errorf("DIRECT with 1 hop: want HashSize=1, got %d", pkt.Path.HashSize)
+	}
+}

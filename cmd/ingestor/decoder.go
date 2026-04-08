@@ -587,11 +587,13 @@ func DecodePacket(hexString string, channelKeys map[string]string) (*DecodedPack
 		}
 	}
 
-	// Zero-hop direct packets have pathByte == 0x00, which makes the generic
-	// formula yield hashSize=1 (bogus). Reset to 0 (unknown) so API consumers
-	// get correct data. Skip TRACE packets — they use hashSize to parse hops
-	// from the payload above.
-	if header.RouteType == 2 && pathByte == 0x00 && header.PayloadType != PayloadTRACE {
+	// Zero-hop direct packets have hash_count=0 (lower 6 bits of pathByte),
+	// which makes the generic formula yield a bogus hashSize. Reset to 0
+	// (unknown) so API consumers get correct data. We mask with 0x3F to check
+	// only hash_count, matching the JS frontend approach — the upper hash_size
+	// bits are meaningless when there are no hops. Skip TRACE packets — they
+	// use hashSize to parse hops from the payload above.
+	if header.RouteType == 2 && pathByte&0x3F == 0 && header.PayloadType != PayloadTRACE {
 		path.HashSize = 0
 	}
 
