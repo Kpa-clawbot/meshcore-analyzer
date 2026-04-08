@@ -58,6 +58,92 @@
     REQUEST: '❓', RESPONSE: '📨', TRACE: '🔍', PATH: '🛤️'
   };
 
+  /* ---- Panel Corner Positioning (#608 M0) ---- */
+  var PANEL_DEFAULTS = { liveFeed: 'bl', liveLegend: 'br', liveNodeDetail: 'tr' };
+  var CORNER_CYCLE = ['tl', 'tr', 'br', 'bl'];
+  var CORNER_ARROWS = { tl: '↘', tr: '↙', bl: '↗', br: '↖' };
+  var CORNER_LABELS = { tl: 'top-left', tr: 'top-right', bl: 'bottom-left', br: 'bottom-right' };
+  var PANEL_NAMES = { liveFeed: 'Feed', liveLegend: 'Legend', liveNodeDetail: 'Node detail' };
+
+  function getPanelPositions() {
+    var pos = {};
+    for (var id in PANEL_DEFAULTS) {
+      try { pos[id] = localStorage.getItem('panel-corner-' + id) || PANEL_DEFAULTS[id]; }
+      catch (_) { pos[id] = PANEL_DEFAULTS[id]; }
+    }
+    return pos;
+  }
+
+  function nextAvailableCorner(panelId, desired, allPositions) {
+    var idx = CORNER_CYCLE.indexOf(desired);
+    for (var i = 0; i < 4; i++) {
+      var candidate = CORNER_CYCLE[(idx + i) % 4];
+      var occupied = false;
+      for (var otherId in allPositions) {
+        if (otherId !== panelId && allPositions[otherId] === candidate) { occupied = true; break; }
+      }
+      if (!occupied) return candidate;
+    }
+    return desired; // all occupied (impossible with 3 panels, 4 corners)
+  }
+
+  function applyPanelPosition(id, corner) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.setAttribute('data-position', corner);
+    var btn = el.querySelector('.panel-corner-btn');
+    if (btn) {
+      btn.textContent = CORNER_ARROWS[corner];
+      btn.setAttribute('aria-label',
+        'Move ' + (PANEL_NAMES[id] || 'panel') + ' to next corner (currently ' + CORNER_LABELS[corner] + ')');
+    }
+  }
+
+  function initPanelPositions() {
+    var positions = getPanelPositions();
+    for (var id in positions) {
+      applyPanelPosition(id, positions[id]);
+    }
+    // Wire up click handlers on corner buttons
+    var btns = document.querySelectorAll('.panel-corner-btn[data-panel]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function(e) {
+        e.stopPropagation();
+        var panelId = this.getAttribute('data-panel');
+        onCornerClick(panelId);
+      });
+    }
+  }
+
+  function onCornerClick(panelId) {
+    var positions = getPanelPositions();
+    var current = positions[panelId];
+    var nextIdx = (CORNER_CYCLE.indexOf(current) + 1) % 4;
+    var next = nextAvailableCorner(panelId, CORNER_CYCLE[nextIdx], positions);
+    try { localStorage.setItem('panel-corner-' + panelId, next); } catch (_) { /* quota */ }
+    applyPanelPosition(panelId, next);
+    // Announce for screen readers
+    var announce = document.getElementById('panelPositionAnnounce');
+    if (announce) announce.textContent = (PANEL_NAMES[panelId] || 'Panel') + ' moved to ' + CORNER_LABELS[next];
+  }
+
+  function resetPanelPositions() {
+    for (var id in PANEL_DEFAULTS) {
+      try { localStorage.removeItem('panel-corner-' + id); } catch (_) { /* ignore */ }
+      applyPanelPosition(id, PANEL_DEFAULTS[id]);
+    }
+  }
+
+  // Export for testing
+  if (typeof window !== 'undefined') {
+    window._panelCorner = {
+      PANEL_DEFAULTS: PANEL_DEFAULTS, CORNER_CYCLE: CORNER_CYCLE,
+      getPanelPositions: getPanelPositions, nextAvailableCorner: nextAvailableCorner,
+      applyPanelPosition: applyPanelPosition, onCornerClick: onCornerClick,
+      resetPanelPositions: resetPanelPositions
+    };
+  }
+
   function formatLiveTimestampHtml(isoLike) {
     if (typeof formatTimestampWithTooltip !== 'function' || typeof getTimestampMode !== 'function') {
       return escapeHtml(typeof timeAgo === 'function' ? timeAgo(isoLike) : '—');
@@ -755,15 +841,18 @@
           </div>
         </div>
         <div class="live-overlay live-feed" id="liveFeed" aria-live="polite" aria-relevant="additions" role="log">
+          <button class="panel-corner-btn" data-panel="liveFeed" title="Move panel to next corner" aria-label="Move panel to next corner">↗</button>
           <button class="feed-hide-btn" id="feedHideBtn" title="Hide feed">✕</button>
         </div>
         <button class="feed-show-btn hidden" id="feedShowBtn" title="Show feed">📋</button>
         <div class="live-overlay live-node-detail hidden" id="liveNodeDetail">
+          <button class="panel-corner-btn" data-panel="liveNodeDetail" title="Move panel to next corner" aria-label="Move panel to next corner">↙</button>
           <button class="feed-hide-btn" id="nodeDetailClose" title="Close">✕</button>
           <div id="nodeDetailContent"></div>
         </div>
         <button class="legend-toggle-btn" id="legendToggleBtn" aria-label="Show legend" title="Show legend">🎨</button>
         <div class="live-overlay live-legend" id="liveLegend" role="region" aria-label="Map legend">
+          <button class="panel-corner-btn" data-panel="liveLegend" title="Move panel to next corner" aria-label="Move panel to next corner">↖</button>
           <h3 class="legend-title">PACKET TYPES</h3>
           <ul class="legend-list">
             <li><span class="live-dot" style="background:${TYPE_COLORS.ADVERT}" aria-hidden="true"></span> Advert — Node advertisement</li>
@@ -777,6 +866,7 @@
         </div>
 
         <!-- VCR Bar -->
+        <div class="sr-only" id="panelPositionAnnounce" aria-live="polite"></div>
         <div class="vcr-bar" id="vcrBar">
           <div class="vcr-controls">
             <button id="vcrRewindBtn" class="vcr-btn" title="Rewind" aria-label="Rewind">⏪</button>
@@ -1060,6 +1150,8 @@
     }
 
     // Populate role legend from shared roles.js
+    // Initialize panel corner positions (#608 M0)
+    initPanelPositions();
     const roleLegendList = document.getElementById('roleLegendList');
     if (roleLegendList) {
       for (const role of (window.ROLE_SORT || ['repeater', 'companion', 'room', 'sensor', 'observer'])) {

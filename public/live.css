@@ -778,3 +778,69 @@
 }
 .nav-pin-btn:hover { opacity: 0.8; }
 .nav-pin-btn.pinned { opacity: 1; filter: drop-shadow(0 0 4px rgba(59,130,246,0.5)); }
+
+/* ========== Panel Corner Positioning (#608 M0) ========== */
+/* Corner positions — applied via data-position attribute on .live-overlay panels */
+.live-overlay[data-position="tl"] { top: 64px; left: 12px; bottom: auto; right: auto; }
+.live-overlay[data-position="tr"] { top: 64px; right: 12px; bottom: auto; left: auto; }
+.live-overlay[data-position="bl"] { bottom: 12px; left: 12px; top: auto; right: auto; }
+.live-overlay[data-position="br"] { bottom: 12px; right: 12px; top: auto; left: auto; }
+
+/* Smooth transition between corners */
+.live-overlay[data-position] {
+  transition: top 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              bottom 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              right 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Override hide animations for positioned panels — slide toward nearest edge */
+.live-overlay[data-position="tl"].hidden,
+.live-overlay[data-position="bl"].hidden { transform: translateX(-100%); }
+.live-overlay[data-position="tr"].hidden,
+.live-overlay[data-position="br"].hidden { transform: translateX(100%); }
+.live-overlay[data-position].hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .live-overlay[data-position] { transition: none; }
+}
+
+/* Corner toggle button */
+.panel-corner-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  font-size: 10px;
+  line-height: 20px;
+  text-align: center;
+  flex-shrink: 0;
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 5;
+}
+.panel-corner-btn:hover { opacity: 1; }
+.panel-corner-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* On mobile, corner toggle is not useful (panels are hidden or bottom-sheet) */
+@media (max-width: 640px) {
+  .panel-corner-btn { display: none !important; }
+  .live-overlay[data-position] {
+    top: unset !important; bottom: unset !important;
+    left: unset !important; right: unset !important;
+  }
+}
+
+/* Screen-reader-only live region for position announcements */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
