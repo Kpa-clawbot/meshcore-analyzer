@@ -1655,7 +1655,7 @@
         <span class="feed-text">${escapeHtml(preview)}</span>
         <span class="feed-time">${formatLiveTimestampHtml(group.latestTs || Date.now())}</span>
       `;
-      var _ccPayload = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload.channelHash != null ? String(_ccPayload.channelHash) : null; // channel color picker (#674)
+      var _ccPayload = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload.channel || null; // channel color picker (#674)
       item.addEventListener('click', () => showFeedCard(item, pkt, color));
       feed.appendChild(item);
 
@@ -2644,7 +2644,7 @@
     var d = pkt.decoded || {};
     var h = d.header || {};
     var p = d.payload || {};
-    var ch = p.channelHash != null ? String(p.channelHash) : null;
+    var ch = p.channel || null;
     return window.ChannelColors.getRowStyle(h.payloadTypeName || '', ch);
   }
 
@@ -2668,7 +2668,7 @@
       <span class="feed-text">${escapeHtml(preview)}</span>
       <span class="feed-time">${formatLiveTimestampHtml(pkt._ts || Date.now())}</span>
     `;
-    var _ccPayload2 = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload2.channelHash != null ? String(_ccPayload2.channelHash) : null; // channel color picker (#674)
+    var _ccPayload2 = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload2.channel || null; // channel color picker (#674)
     item.addEventListener('click', () => showFeedCard(item, pkt, color));
     feed.appendChild(item);
   }
@@ -2740,7 +2740,7 @@
       <span class="feed-text">${escapeHtml(preview)}</span>
       <span class="feed-time">${formatLiveTimestampHtml(pkt._ts || Date.now())}</span>
     `;
-    var _ccPayload3 = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload3.channelHash != null ? String(_ccPayload3.channelHash) : null; // channel color picker (#674)
+    var _ccPayload3 = (pkt.decoded || {}).payload || {}; if (typeName === 'GRP_TXT' || typeName === 'CHAN') item._ccChannel = _ccPayload3.channel || null; // channel color picker (#674)
     item.addEventListener('click', () => showFeedCard(item, pkt, color));
     feed.prepend(item);
     requestAnimationFrame(() => requestAnimationFrame(() => item.classList.remove('live-feed-enter')));

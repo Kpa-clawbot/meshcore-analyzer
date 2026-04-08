@@ -29,41 +29,43 @@ function assert(condition, msg) {
 // --- Test 1: _ccChannel extraction logic (simulates live.js behavior) ---
 console.log('\n=== _ccChannel assignment from flat decoded structure ===');
 
-// Simulate the fixed logic from live.js
+// Simulate the fixed logic from live.js — uses payload.channel (name string),
+// NOT payload.channelHash (numeric byte). Channel colors are keyed by channel
+// name (e.g. "public", "#test") matching the channels API hash field.
 function extractCcChannel(typeName, pkt) {
   var _ccPayload = (pkt.decoded || {}).payload || {};
   if (typeName === 'GRP_TXT' || typeName === 'CHAN') {
-    return _ccPayload.channelHash != null ? String(_ccPayload.channelHash) : null;
+    return _ccPayload.channel || null;
   }
   return undefined; // not set
 }
 
-// GRP_TXT with channelHash (normal case — WS broadcast)
-var wsPkt = {
+// CHAN with channel name (normal case — ingestor-decrypted WS broadcast)
+var chanPkt = {
+  decoded: {
+    header: { payloadTypeName: 'CHAN' },
+    payload: { type: 'CHAN', channel: '#test', channelHash: 217, text: 'hello' }
+  }
+};
+assert(extractCcChannel('CHAN', chanPkt) === '#test', 'CHAN with channel="#test" → _ccChannel="#test"');
+
+// CHAN with "public" channel
+var publicPkt = {
+  decoded: {
+    header: { payloadTypeName: 'CHAN' },
+    payload: { type: 'CHAN', channel: 'public', text: 'hi' }
+  }
+};
+assert(extractCcChannel('CHAN', publicPkt) === 'public', 'CHAN with channel="public" → _ccChannel="public"');
+
+// GRP_TXT without channel (encrypted, no decryption)
+var encryptedPkt = {
   decoded: {
     header: { payloadTypeName: 'GRP_TXT' },
     payload: { type: 'GRP_TXT', channelHash: 5, mac: 'ab12', encryptedData: 'ff' }
   }
 };
-assert(extractCcChannel('GRP_TXT', wsPkt) === '5', 'GRP_TXT with channelHash=5 → _ccChannel="5"');
-
-// GRP_TXT with channelHash=0 (valid channel)
-var zeroPkt = {
-  decoded: {
-    header: { payloadTypeName: 'GRP_TXT' },
-    payload: { type: 'GRP_TXT', channelHash: 0 }
-  }
-};
-assert(extractCcChannel('GRP_TXT', zeroPkt) === '0', 'GRP_TXT with channelHash=0 → _ccChannel="0"');
-
-// GRP_TXT with no channelHash (shouldn't happen but handle gracefully)
-var noHashPkt = {
-  decoded: {
-    header: { payloadTypeName: 'GRP_TXT' },
-    payload: { type: 'GRP_TXT' }
-  }
-};
-assert(extractCcChannel('GRP_TXT', noHashPkt) === null, 'GRP_TXT with no channelHash → null');
+assert(extractCcChannel('GRP_TXT', encryptedPkt) === null, 'GRP_TXT without channel field → null');
 
 // Non-GRP_TXT packet — should not set _ccChannel
 var advertPkt = {
@@ -85,7 +87,7 @@ function simulateGetChannelStyle(pkt, channelColors) {
   var d = pkt.decoded || {};
   var h = d.header || {};
   var p = d.payload || {};
-  var ch = p.channelHash != null ? String(p.channelHash) : null;
+  var ch = p.channel || null;
   var typeName = h.payloadTypeName || '';
   if (typeName !== 'GRP_TXT' && typeName !== 'CHAN') return '';
   if (!ch) return '';
@@ -94,13 +96,13 @@ function simulateGetChannelStyle(pkt, channelColors) {
   return 'border-left:3px solid ' + color + ';';
 }
 
-var colors = { '5': '#ef4444' };
+var colors = { '#test': '#ef4444' };
 assert(
-  simulateGetChannelStyle(wsPkt, colors) === 'border-left:3px solid #ef4444;',
+  simulateGetChannelStyle(chanPkt, colors) === 'border-left:3px solid #ef4444;',
   'getChannelStyle returns border-left for assigned color'
 );
 assert(
-  simulateGetChannelStyle(wsPkt, {}) === '',
+  simulateGetChannelStyle(chanPkt, {}) === '',
   'getChannelStyle returns empty for unassigned channel'
 );
 assert(
