@@ -233,12 +233,12 @@
   function renderNeighborTable(neighbors, limit) {
     return '<table class="data-table neighbor-sort-table" style="font-size:12px">' +
       '<thead><tr>' +
-      '<th scope="col" data-sort="name">Neighbor</th>' +
-      '<th scope="col" data-sort="role">Role</th>' +
-      '<th scope="col" data-sort="score" data-type="number" data-sort-default="desc">Score</th>' +
-      '<th scope="col" data-sort="count" data-type="number" data-sort-default="desc">Obs</th>' +
-      '<th scope="col" data-sort="last_seen" data-type="number" data-sort-default="desc">Last Seen</th>' +
-      '<th scope="col" data-sort="distance" data-type="number">Distance</th>' +
+      '<th scope="col" data-sort-key="name">Neighbor</th>' +
+      '<th scope="col" data-sort-key="role">Role</th>' +
+      '<th scope="col" data-sort-key="score" data-type="numeric" data-sort-default="desc">Score</th>' +
+      '<th scope="col" data-sort-key="count" data-type="numeric" data-sort-default="desc">Obs</th>' +
+      '<th scope="col" data-sort-key="last_seen" data-type="numeric" data-sort-default="desc">Last Seen</th>' +
+      '<th scope="col" data-sort-key="distance" data-type="numeric">Distance</th>' +
       '<th scope="col">Conf</th><th scope="col"></th>' +
       '</tr></thead>' +
       '<tbody>' + renderNeighborRows(neighbors, limit) + '</tbody></table>';
@@ -498,11 +498,11 @@
           <h4>Heard By (${observers.length} observer${observers.length > 1 ? 's' : ''})</h4>
           <table class="data-table observer-sort-table" style="font-size:12px">
             <thead><tr>
-              <th scope="col" data-sort="observer">Observer</th>
-              <th scope="col" data-sort="region">Region</th>
-              <th scope="col" data-sort="packets" data-type="number" data-sort-default="desc">Packets</th>
-              <th scope="col" data-sort="snr" data-type="number" data-sort-default="desc">Avg SNR</th>
-              <th scope="col" data-sort="rssi" data-type="number" data-sort-default="desc">Avg RSSI</th>
+              <th scope="col" data-sort-key="observer">Observer</th>
+              <th scope="col" data-sort-key="region">Region</th>
+              <th scope="col" data-sort-key="packets" data-type="numeric" data-sort-default="desc">Packets</th>
+              <th scope="col" data-sort-key="snr" data-type="numeric" data-sort-default="desc">Avg SNR</th>
+              <th scope="col" data-sort-key="rssi" data-type="numeric" data-sort-default="desc">Avg RSSI</th>
             </tr></thead>
             <tbody>
               ${observers.map(o => `<tr>
@@ -915,11 +915,11 @@
       </div>
       <table class="data-table" id="nodesTable">
         <thead><tr>
-          <th scope="col" data-sort="name">Name</th>
-          <th scope="col" class="col-pubkey" data-sort="public_key">Public Key</th>
-          <th scope="col" data-sort="role">Role</th>
-          <th scope="col" data-sort="last_seen" data-sort-default="desc">Last Seen</th>
-          <th scope="col" data-sort="advert_count" data-sort-default="desc">Adverts</th>
+          <th scope="col" data-sort-key="name">Name</th>
+          <th scope="col" class="col-pubkey" data-sort-key="public_key">Public Key</th>
+          <th scope="col" data-sort-key="role">Role</th>
+          <th scope="col" data-sort-key="last_seen" data-sort-default="desc">Last Seen</th>
+          <th scope="col" data-sort-key="advert_count" data-sort-default="desc">Adverts</th>
         </tr></thead>
         <tbody id="nodesBody"></tbody>
       </table>`;

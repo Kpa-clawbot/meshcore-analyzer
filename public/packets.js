@@ -1521,6 +1521,13 @@
       } else {
         result = TableSort.comparators.text(va, vb);
       }
+      // Stable tiebreaker: sort by timestamp (desc) when primary values are equal
+      if (result === 0 && !isDate) {
+        result = TableSort.comparators.date(
+          a.timestamp || a.first_seen || '',
+          b.timestamp || b.first_seen || ''
+        ) * -1; // desc (newest first)
+      }
       return dir * result;
     });
   }
