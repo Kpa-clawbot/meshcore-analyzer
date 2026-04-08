@@ -60,9 +60,10 @@ type TransportCodes struct {
 
 // Path holds decoded path/hop information.
 type Path struct {
-	HashSize  int      `json:"hashSize"`
-	HashCount int      `json:"hashCount"`
-	Hops      []string `json:"hops"`
+	HashSize      int      `json:"hashSize"`
+	HashCount     int      `json:"hashCount"`
+	Hops          []string `json:"hops"`
+	HopsCompleted *int     `json:"hopsCompleted,omitempty"`
 }
 
 // AdvertFlags holds decoded advert flag bits.
@@ -376,7 +377,12 @@ func DecodePacket(hexString string) (*DecodedPacket, error) {
 	// TRACE packets store hop IDs in the payload (buf[9:]) rather than the header
 	// path field. The header path byte still encodes hashSize in bits 6-7, which
 	// we use to split the payload path data into individual hop prefixes.
+	// The header path contains SNR bytes — one per hop that actually forwarded.
+	// We expose hopsCompleted (count of SNR bytes) so consumers can distinguish
+	// how far the trace got vs the full intended route.
 	if header.PayloadType == PayloadTRACE && payload.PathData != "" {
+		// The header path hops count represents SNR entries = completed hops
+		hopsCompleted := path.HashCount
 		pathBytes, err := hex.DecodeString(payload.PathData)
 		if err == nil && path.HashSize > 0 {
 			hops := make([]string, 0, len(pathBytes)/path.HashSize)
@@ -385,6 +391,7 @@ func DecodePacket(hexString string) (*DecodedPacket, error) {
 			}
 			path.Hops = hops
 			path.HashCount = len(hops)
+			path.HopsCompleted = &hopsCompleted
 		}
 	}
 
