@@ -786,24 +786,12 @@
 .live-overlay[data-position="bl"] { bottom: 12px; left: 12px; top: auto; right: auto; }
 .live-overlay[data-position="br"] { bottom: 12px; right: 12px; top: auto; left: auto; }
 
-/* Smooth transition between corners */
-.live-overlay[data-position] {
-  transition: top 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              bottom 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              right 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
 /* Override hide animations for positioned panels — slide toward nearest edge */
 .live-overlay[data-position="tl"].hidden,
 .live-overlay[data-position="bl"].hidden { transform: translateX(-100%); }
 .live-overlay[data-position="tr"].hidden,
 .live-overlay[data-position="br"].hidden { transform: translateX(100%); }
 .live-overlay[data-position].hidden { opacity: 0; pointer-events: none; visibility: hidden; }
-
-@media (prefers-reduced-motion: reduce) {
-  .live-overlay[data-position] { transition: none; }
-}
 
 /* Corner toggle button */
 .panel-corner-btn {
