@@ -1488,7 +1488,7 @@ async function run() {
     const hasTable = await page.$('#fullNeighborsContent .data-table');
     if (hasTable) {
       // Check columns
-      const headers = await page.$$eval('#fullNeighborsContent thead th', ths => ths.map(t => t.textContent));
+      const headers = await page.$$eval('#fullNeighborsContent thead th', ths => ths.map(t => t.textContent.trim().replace(/\s*[▲▼]\s*$/, '')));
       assert(headers.includes('Neighbor'), 'Should have Neighbor column');
       assert(headers.includes('Role'), 'Should have Role column');
       assert(headers.includes('Score'), 'Should have Score column');
