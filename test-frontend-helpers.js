@@ -2146,10 +2146,27 @@ console.log('\n=== analytics.js: rfNFColumnChart ===');
     assert.ok(svg.includes('<svg'), 'should return empty SVG');
   });
 
-  test('handles single data point', () => {
+  test('handles single data point with visible bar', () => {
     const data = [{ t: '2024-01-01T00:00:00Z', v: -100 }];
     const svg = rfNFColumnChart(data, 700, 180, []);
     assert.ok(svg.includes('class="nf-bar"'), 'should render single bar');
+    // Bar must have non-zero height (division-by-zero guard)
+    const m = svg.match(/height="([\d.]+)"/);
+    assert.ok(m && parseFloat(m[1]) > 0, 'single data point bar must have non-zero height');
+    assert.ok(!svg.includes('NaN'), 'must not contain NaN');
+  });
+
+  test('handles constant values with visible bars', () => {
+    const data = [
+      { t: '2024-01-01T00:00:00Z', v: -95 },
+      { t: '2024-01-01T00:05:00Z', v: -95 },
+      { t: '2024-01-01T00:10:00Z', v: -95 },
+    ];
+    const svg = rfNFColumnChart(data, 700, 180, []);
+    const heights = [...svg.matchAll(/class="nf-bar"[^>]*height="([\d.]+)"/g)].map(m => parseFloat(m[1]));
+    assert.strictEqual(heights.length, 3, 'should render 3 bars');
+    assert.ok(heights.every(h => h > 0), 'all bars must have non-zero height');
+    assert.ok(!svg.includes('NaN'), 'must not contain NaN');
   });
 
   test('includes legend', () => {
@@ -2194,6 +2211,16 @@ console.log('\n=== analytics.js: rfNFColumnChart ===');
     const maxT = new Date('2024-01-02T00:00:00Z').getTime();
     const svg = rfNFColumnChart(data, 700, 180, [], minT, maxT);
     assert.ok(svg.includes('class="nf-bar"'), 'renders with shared time axis');
+  });
+
+  test('renders reboot markers when reboots provided', () => {
+    const data = [
+      { t: '2024-01-01T00:00:00Z', v: -105 },
+      { t: '2024-01-01T01:00:00Z', v: -95 },
+    ];
+    const reboots = [new Date('2024-01-01T00:30:00Z').getTime()];
+    const svg = rfNFColumnChart(data, 700, 180, reboots);
+    assert.ok(svg.includes('reboot'), 'should render reboot marker');
   });
 }
 

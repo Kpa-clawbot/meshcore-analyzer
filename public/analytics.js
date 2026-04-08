@@ -3214,11 +3214,15 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     const maxT = sharedMaxT != null ? sharedMaxT : Math.max(...data.map(d => new Date(d.t).getTime()));
     const minV = Math.min(...values);
     const maxV = Math.max(...values);
-    const rangeV = maxV - minV || 1;
+    // Guard against zero range (single data point or constant values):
+    // use a ±5 dBm window so bars are visible and centered in the chart
+    const rawRangeV = maxV - minV;
+    const rangeV = rawRangeV || 10;
+    const adjMinV = rawRangeV ? minV : minV - 5;
     const rangeT = maxT - minT || 1;
 
     const sx = t => pad.left + ((t - minT) / rangeT) * cw;
-    const sy = v => pad.top + ch - ((v - minV) / rangeV) * ch;
+    const sy = v => pad.top + ch - ((v - adjMinV) / rangeV) * ch;
 
     // Column width: proportional to chart width / data points, min 2px, gap of 1px
     const colW = Math.max(2, Math.floor(cw / data.length) - 1);
@@ -3236,7 +3240,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     // Y-axis labels + grid lines
     const yTicks = 5;
     for (let i = 0; i <= yTicks; i++) {
-      const v = minV + (rangeV * i / yTicks);
+      const v = adjMinV + (rangeV * i / yTicks);
       const y = sy(v);
       svg += `<text x="${pad.left - 4}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v.toFixed(0)}</text>`;
       svg += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${w - pad.right}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.3"/>`;
