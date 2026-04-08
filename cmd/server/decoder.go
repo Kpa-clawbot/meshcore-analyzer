@@ -388,6 +388,14 @@ func DecodePacket(hexString string) (*DecodedPacket, error) {
 		}
 	}
 
+	// Zero-hop direct packets have pathByte == 0x00, which makes the generic
+	// formula yield hashSize=1 (bogus). Reset to 0 (unknown) so API consumers
+	// get correct data. Skip TRACE packets — they use hashSize to parse hops
+	// from the payload above.
+	if header.RouteType == 2 && pathByte == 0x00 && header.PayloadType != PayloadTRACE {
+		path.HashSize = 0
+	}
+
 	return &DecodedPacket{
 		Header:         header,
 		TransportCodes: tc,
