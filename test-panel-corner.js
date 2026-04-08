@@ -15,12 +15,27 @@ function createContext() {
   const elements = {};
   const listeners = {};
 
+  const mockEl = () => ({
+    style: {}, textContent: '', innerHTML: '',
+    classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
+    appendChild(c){ return c; }, removeChild(){ }, insertBefore(c){ return c; },
+    setAttribute(){}, getAttribute(){ return null; }, removeAttribute(){},
+    addEventListener(){}, removeEventListener(){},
+    querySelector(){ return null; }, querySelectorAll(){ return []; },
+    getBoundingClientRect(){ return {top:0,left:0,right:0,bottom:0,width:0,height:0}; },
+    closest(){ return null; }, matches(){ return false; },
+    children: [], childNodes: [], parentNode: null, parentElement: null,
+    focus(){}, blur(){}, click(){}, scrollTo(){},
+    dataset: {}, offsetWidth: 0, offsetHeight: 0,
+    getContext(){ return { clearRect(){}, fillRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}, fill(){}, arc(){}, save(){}, restore(){}, translate(){}, rotate(){}, scale(){}, drawImage(){}, measureText(){ return {width:0}; }, createLinearGradient(){ return {addColorStop(){}}; }, canvas: {width:0,height:0} }; },
+    width: 0, height: 0,
+  });
+
   const ctx = {
     window: {},
     document: {
       getElementById: (id) => elements[id] || null,
       querySelectorAll: (sel) => {
-        // Return buttons matching .panel-corner-btn[data-panel]
         const results = [];
         for (const id in elements) {
           const el = elements[id];
@@ -28,7 +43,15 @@ function createContext() {
         }
         return results;
       },
-      documentElement: { getAttribute: () => null }
+      querySelector: () => null,
+      documentElement: { getAttribute: () => null, style: {} },
+      addEventListener: () => {},
+      createElement: () => mockEl(),
+      createElementNS: () => mockEl(),
+      createTextNode: (t) => ({ textContent: t }),
+      createDocumentFragment: () => ({ appendChild(){}, children: [] }),
+      body: { appendChild(){}, removeChild(){}, style: {}, classList: { add(){}, remove(){} } },
+      head: { appendChild(){} },
     },
     localStorage: {
       getItem: (k) => storage[k] !== undefined ? storage[k] : null,
@@ -73,20 +96,21 @@ function createContext() {
 }
 
 function loadLiveModule(ctx) {
-  // We only need the panel corner functions, which are exported to window._panelCorner
-  // Load live.js in the VM context with stubs
+  // Load the REAL live.js in a VM context and return window._panelCorner.
+  // This tests the actual code, not a copy (per AGENTS.md "test the real code, not copies").
   const src = fs.readFileSync(path.join(__dirname, 'public', 'live.js'), 'utf8');
 
-  // Provide minimal stubs for the rest of live.js dependencies
+  // Minimal stubs for live.js dependencies (only what's needed to avoid errors)
   ctx.registerPage = () => {};
-  ctx.escapeHtml = (s) => s;
+  ctx.escapeHtml = (s) => String(s || '');
   ctx.timeAgo = () => '—';
-  ctx.getParsedPath = () => ({});
+  ctx.getParsedPath = () => [];
   ctx.getParsedDecoded = () => ({});
   ctx.TYPE_COLORS = { ADVERT: '#22c55e', GRP_TXT: '#3b82f6', TXT_MSG: '#f59e0b', ACK: '#6b7280', REQUEST: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6' };
   ctx.ROLE_COLORS = {};
   ctx.ROLE_LABELS = {};
   ctx.ROLE_STYLE = {};
+  ctx.ROLE_SORT = [];
   ctx.formatTimestampWithTooltip = () => '';
   ctx.getTimestampMode = () => 'relative';
   ctx.console = console;
@@ -108,80 +132,22 @@ function loadLiveModule(ctx) {
   ctx.HTMLElement = class {};
   ctx.Event = class {};
   ctx.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+  ctx.Number = Number; ctx.String = String; ctx.Array = Array; ctx.Object = Object;
+  ctx.JSON = JSON; ctx.Math = Math; ctx.Date = Date; ctx.RegExp = RegExp;
+  ctx.Error = Error; ctx.Map = Map; ctx.Set = Set; ctx.WeakMap = WeakMap;
+  ctx.parseInt = parseInt; ctx.parseFloat = parseFloat;
+  ctx.isNaN = isNaN; ctx.isFinite = isFinite;
+  ctx.encodeURIComponent = encodeURIComponent;
+  ctx.decodeURIComponent = decodeURIComponent;
+  ctx.Promise = Promise; ctx.Symbol = Symbol;
+  ctx.queueMicrotask = queueMicrotask;
 
-  // We can't easily run all of live.js (too many DOM deps), so extract just the corner functions
-  // by running a minimal extraction
-  const extractSrc = `
-    (function() {
-      var PANEL_DEFAULTS = { liveFeed: 'bl', liveLegend: 'br', liveNodeDetail: 'tr' };
-      var CORNER_CYCLE = ['tl', 'tr', 'br', 'bl'];
-      var CORNER_ARROWS = { tl: '↘', tr: '↙', bl: '↗', br: '↖' };
-      var CORNER_LABELS = { tl: 'top-left', tr: 'top-right', bl: 'bottom-left', br: 'bottom-right' };
-      var PANEL_NAMES = { liveFeed: 'Feed', liveLegend: 'Legend', liveNodeDetail: 'Node detail' };
-
-      function getPanelPositions() {
-        var pos = {};
-        for (var id in PANEL_DEFAULTS) {
-          try { pos[id] = localStorage.getItem('panel-corner-' + id) || PANEL_DEFAULTS[id]; }
-          catch (_) { pos[id] = PANEL_DEFAULTS[id]; }
-        }
-        return pos;
-      }
-
-      function nextAvailableCorner(panelId, desired, allPositions) {
-        var idx = CORNER_CYCLE.indexOf(desired);
-        for (var i = 0; i < 4; i++) {
-          var candidate = CORNER_CYCLE[(idx + i) % 4];
-          var occupied = false;
-          for (var otherId in allPositions) {
-            if (otherId !== panelId && allPositions[otherId] === candidate) { occupied = true; break; }
-          }
-          if (!occupied) return candidate;
-        }
-        return desired;
-      }
-
-      function applyPanelPosition(id, corner) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        el.setAttribute('data-position', corner);
-        var btn = el.querySelector('.panel-corner-btn');
-        if (btn) {
-          btn.textContent = CORNER_ARROWS[corner];
-          btn.setAttribute('aria-label',
-            'Move ' + (PANEL_NAMES[id] || 'panel') + ' to next corner (currently ' + CORNER_LABELS[corner] + ')');
-        }
-      }
-
-      function onCornerClick(panelId) {
-        var positions = getPanelPositions();
-        var current = positions[panelId];
-        var nextIdx = (CORNER_CYCLE.indexOf(current) + 1) % 4;
-        var next = nextAvailableCorner(panelId, CORNER_CYCLE[nextIdx], positions);
-        try { localStorage.setItem('panel-corner-' + panelId, next); } catch (_) {}
-        applyPanelPosition(panelId, next);
-        var announce = document.getElementById('panelPositionAnnounce');
-        if (announce) announce.textContent = (PANEL_NAMES[panelId] || 'Panel') + ' moved to ' + CORNER_LABELS[next];
-      }
-
-      function resetPanelPositions() {
-        for (var id in PANEL_DEFAULTS) {
-          try { localStorage.removeItem('panel-corner-' + id); } catch (_) {}
-          applyPanelPosition(id, PANEL_DEFAULTS[id]);
-        }
-      }
-
-      window._panelCorner = {
-        PANEL_DEFAULTS: PANEL_DEFAULTS, CORNER_CYCLE: CORNER_CYCLE,
-        getPanelPositions: getPanelPositions, nextAvailableCorner: nextAvailableCorner,
-        applyPanelPosition: applyPanelPosition, onCornerClick: onCornerClick,
-        resetPanelPositions: resetPanelPositions
-      };
-    })();
-  `;
+  // Self-references needed for the IIFE
+  ctx.self = ctx;
+  ctx.globalThis = ctx;
 
   vm.createContext(ctx);
-  vm.runInContext(extractSrc, ctx);
+  vm.runInContext(src, ctx, { timeout: 3000 });
   return ctx.window._panelCorner;
 }
 
