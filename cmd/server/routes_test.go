@@ -2451,6 +2451,7 @@ func TestHashAnalyticsZeroHopAdvert(t *testing.T) {
 
 	pk := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'ZeroHop', 'repeater')", pk)
+	store.InvalidateNodeCache()
 
 	decoded := `{"name":"ZeroHop","pubKey":"` + pk + `"}`
 	// header 0x05 → routeType=1 (FLOOD), pathByte=0x00 → hashSize=1
@@ -2503,6 +2504,11 @@ func TestAnalyticsHashSizeSameNameDifferentPubkey(t *testing.T) {
 
 	pk1 := "aaaa111122223333444455556666777788889999aaaabbbbccccddddeeee1111"
 	pk2 := "aaaa111122223333444455556666777788889999aaaabbbbccccddddeeee2222"
+
+	// Insert both nodes as repeaters so they appear in distributionByRepeaters.
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'SameName', 'repeater')", pk1)
+	db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'SameName', 'repeater')", pk2)
+	store.InvalidateNodeCache()
 
 	decoded1 := `{"name":"SameName","pubKey":"` + pk1 + `"}`
 	decoded2 := `{"name":"SameName","pubKey":"` + pk2 + `"}`

@@ -4731,7 +4731,13 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 		regionObs = s.resolveRegionObservers(region)
 	}
 
-	_, pm := s.getCachedNodesAndPM()
+	allNodes, pm := s.getCachedNodesAndPM()
+
+	// Build pubkey→role map for filtering by node type.
+	nodeRoleByPK := make(map[string]string, len(allNodes))
+	for _, n := range allNodes {
+		nodeRoleByPK[n.PublicKey] = n.Role
+	}
 
 	distribution := map[string]int{"1": 0, "2": 0, "3": 0}
 	byHour := map[string]map[string]int{}
@@ -4808,9 +4814,11 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 						}
 					}
 					if byNode[pk] == nil {
+						role := nodeRoleByPK[pk] // empty if unknown
 						byNode[pk] = map[string]interface{}{
 							"hashSize": hashSize, "packets": 0,
 							"lastSeen": tx.FirstSeen, "name": name,
+							"role": role,
 						}
 					}
 					byNode[pk]["packets"] = byNode[pk]["packets"].(int) + 1
@@ -4902,7 +4910,7 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 			multiByteNodes = append(multiByteNodes, map[string]interface{}{
 				"name": data["name"], "hashSize": data["hashSize"],
 				"packets": data["packets"], "lastSeen": data["lastSeen"],
-				"pubkey": pk,
+				"pubkey": pk, "role": data["role"],
 			})
 		}
 	}
@@ -4910,9 +4918,13 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 		return multiByteNodes[i]["packets"].(int) > multiByteNodes[j]["packets"].(int)
 	})
 
-	// Distribution by repeaters: count unique nodes per hash size
+	// Distribution by repeaters: count unique REPEATER nodes per hash size
 	distributionByRepeaters := map[string]int{"1": 0, "2": 0, "3": 0}
 	for _, data := range byNode {
+		role, _ := data["role"].(string)
+		if !strings.Contains(strings.ToLower(role), "repeater") {
+			continue
+		}
 		hs := data["hashSize"].(int)
 		key := strconv.Itoa(hs)
 		distributionByRepeaters[key]++

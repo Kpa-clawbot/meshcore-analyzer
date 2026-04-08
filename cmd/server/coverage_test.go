@@ -2198,6 +2198,53 @@ func TestStoreGetAnalyticsHashSizes(t *testing.T) {
 	})
 }
 
+func TestHashSizesDistributionByRepeatersFiltersRole(t *testing.T) {
+	db := setupRichTestDB(t)
+	defer db.Close()
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	result := store.GetAnalyticsHashSizes("")
+
+	// distributionByRepeaters should only count repeater nodes.
+	// Rich test DB: aabbccdd11223344 = repeater (hash size 2), eeff00112233aabb = companion (hash size 3).
+	dbr, ok := result["distributionByRepeaters"].(map[string]int)
+	if !ok {
+		t.Fatal("expected distributionByRepeaters map")
+	}
+	// Only the repeater node should be counted.
+	if dbr["3"] != 0 {
+		t.Errorf("distributionByRepeaters[3] = %d, want 0 (companion should be excluded)", dbr["3"])
+	}
+	if dbr["2"] != 1 {
+		t.Errorf("distributionByRepeaters[2] = %d, want 1 (repeater)", dbr["2"])
+	}
+
+	// multiByteNodes should include role field for frontend filtering.
+	mbn, ok := result["multiByteNodes"].([]map[string]interface{})
+	if !ok {
+		t.Fatal("expected multiByteNodes slice")
+	}
+	for _, node := range mbn {
+		if _, hasRole := node["role"]; !hasRole {
+			t.Errorf("multiByteNodes entry missing 'role' field: %v", node)
+		}
+	}
+	// Verify companion is included in multiByteNodes (it's multi-byte) with correct role.
+	foundCompanion := false
+	for _, node := range mbn {
+		if node["pubkey"] == "eeff00112233aabb" {
+			foundCompanion = true
+			if node["role"] != "companion" {
+				t.Errorf("companion node role = %v, want 'companion'", node["role"])
+			}
+		}
+	}
+	if !foundCompanion {
+		t.Error("expected companion node in multiByteNodes (multi-byte adopters should include all roles)")
+	}
+}
+
 func TestStoreGetAnalyticsSubpaths(t *testing.T) {
 	db := setupRichTestDB(t)
 	defer db.Close()
