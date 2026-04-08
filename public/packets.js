@@ -2174,6 +2174,12 @@
         html += kv(k, String(v));
       }
     }
+    // Special handling for advert signature validation
+    if (h.payloadType === 4 && p.signatureValid !== undefined) {
+      const status = p.signatureValid ? 'Valid' : 'Invalid';
+      const badgeClass = p.signatureValid ? 'badge-success' : 'badge-danger';
+      html += kv('Signature', `<span class="badge ${badgeClass}">${status}</span>`);
+    }
     html += '</div></div>';
 
     // Raw hex

@@ -453,7 +453,7 @@ func TestDecodeAdvertLocationTruncated(t *testing.T) {
 	buf[100] = 0x11
 	// Only 4 bytes after flags — not enough for full location (needs 8)
 
-	p := decodeAdvert(buf[:105])
+	p := decodeAdvert(buf[:105], false)
 	if p.Error != "" {
 		t.Fatalf("error: %s", p.Error)
 	}
@@ -475,7 +475,7 @@ func TestDecodeAdvertFeat1Truncated(t *testing.T) {
 	buf[100] = 0x21
 	// Only 1 byte after flags — not enough for feat1 (needs 2)
 
-	p := decodeAdvert(buf[:102])
+	p := decodeAdvert(buf[:102], false)
 	if p.Feat1 != nil {
 		t.Error("feat1 should be nil with truncated data")
 	}
@@ -496,7 +496,7 @@ func TestDecodeAdvertFeat2Truncated(t *testing.T) {
 	buf[102] = 0x00
 	// Only 1 byte left — not enough for feat2
 
-	p := decodeAdvert(buf[:104])
+	p := decodeAdvert(buf[:104], false)
 	if p.Feat1 == nil {
 		t.Error("feat1 should be set")
 	}
@@ -536,7 +536,7 @@ func TestDecodeAdvertSensorBadTelemetry(t *testing.T) {
 	buf[105] = 0x20
 	buf[106] = 0x4E
 
-	p := decodeAdvert(buf[:107])
+	p := decodeAdvert(buf[:107], false)
 	if p.BatteryMv != nil {
 		t.Error("battery_mv=0 should be nil")
 	}
@@ -732,7 +732,7 @@ func TestDecodeAdvertSensorNoName(t *testing.T) {
 	buf[103] = 0xC4
 	buf[104] = 0x09
 
-	p := decodeAdvert(buf[:105])
+	p := decodeAdvert(buf[:105], false)
 	if p.Error != "" {
 		t.Fatalf("error: %s", p.Error)
 	}
@@ -827,7 +827,7 @@ func TestDecodePacketNoPathByteAfterHeader(t *testing.T) {
 	// Non-transport route, but only header byte (no path byte)
 	// Actually 0A alone = 1 byte, but we need >= 2
 	// Header + exactly at offset boundary
-	_, err := DecodePacket("0A", nil)
+	_, err := DecodePacket("0A", nil, false)
 	if err == nil {
 		t.Error("should error - too short")
 	}
@@ -848,7 +848,7 @@ func TestDecodeAdvertNameNoNull(t *testing.T) {
 	// Name without null terminator — goes to end of buffer
 	copy(buf[101:], []byte("LongNameNoNull"))
 
-	p := decodeAdvert(buf[:115])
+	p := decodeAdvert(buf[:115], false)
 	if p.Name != "LongNameNoNull" {
 		t.Errorf("name=%q, want LongNameNoNull", p.Name)
 	}

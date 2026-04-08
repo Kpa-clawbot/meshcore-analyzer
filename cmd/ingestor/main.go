@@ -248,7 +248,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 	// Format 1: Raw packet (meshcoretomqtt / Cisien format)
 	rawHex, _ := msg["raw"].(string)
 	if rawHex != "" {
-		decoded, err := DecodePacket(rawHex, channelKeys)
+		decoded, err := DecodePacket(rawHex, channelKeys, false)
 		if err != nil {
 			log.Printf("MQTT [%s] decode error: %v", tag, err)
 			return

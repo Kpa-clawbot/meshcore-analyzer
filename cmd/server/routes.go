@@ -930,7 +930,7 @@ func (s *Server) handleDecode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "hex is required")
 		return
 	}
-	decoded, err := DecodePacket(hexStr)
+	decoded, err := DecodePacket(hexStr, true)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return
@@ -962,7 +962,7 @@ func (s *Server) handlePostPacket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "hex is required")
 		return
 	}
-	decoded, err := DecodePacket(hexStr)
+	decoded, err := DecodePacket(hexStr, false)
 	if err != nil {
 		writeError(w, 400, err.Error())
 		return

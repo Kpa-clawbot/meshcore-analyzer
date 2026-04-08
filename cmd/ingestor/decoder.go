@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/aes"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -109,6 +110,7 @@ type Payload struct {
 	Timestamp     uint32       `json:"timestamp,omitempty"`
 	TimestampISO  string       `json:"timestampISO,omitempty"`
 	Signature     string       `json:"signature,omitempty"`
+	SignatureValid *bool       `json:"signatureValid,omitempty"`
 	Flags         *AdvertFlags `json:"flags,omitempty"`
 	Lat           *float64     `json:"lat,omitempty"`
 	Lon           *float64     `json:"lon,omitempty"`
@@ -215,7 +217,27 @@ func decodeAck(buf []byte) Payload {
 	}
 }
 
-func decodeAdvert(buf []byte) Payload {
+func validateAdvertSignature(pubKeyHex, signatureHex string, timestamp uint32, appdata []byte) (bool, error) {
+	pubKey, err := hex.DecodeString(pubKeyHex)
+	if err != nil || len(pubKey) != 32 {
+		return false, fmt.Errorf("invalid pubkey")
+	}
+
+	signature, err := hex.DecodeString(signatureHex)
+	if err != nil || len(signature) != 64 {
+		return false, fmt.Errorf("invalid signature")
+	}
+
+	// Signed data: pubKey (32) + timestamp (4 LE) + appdata
+	message := make([]byte, 32+4+len(appdata))
+	copy(message[0:32], pubKey)
+	binary.LittleEndian.PutUint32(message[32:36], timestamp)
+	copy(message[36:], appdata)
+
+	return ed25519.Verify(ed25519.PublicKey(pubKey), message, signature), nil
+}
+
+func decodeAdvert(buf []byte, validateSignatures bool) Payload {
 	if len(buf) < 100 {
 		return Payload{Type: "ADVERT", Error: "too short for advert", RawHex: hex.EncodeToString(buf)}
 	}
@@ -231,6 +253,15 @@ func decodeAdvert(buf []byte) Payload {
 		Timestamp:    timestamp,
 		TimestampISO: fmt.Sprintf("%s", epochToISO(timestamp)),
 		Signature:    signature,
+	}
+
+	if validateSignatures {
+		valid, err := validateAdvertSignature(pubKey, signature, timestamp, appdata)
+		if err != nil {
+			p.SignatureValid = &[]bool{false}[0] // false
+		} else {
+			p.SignatureValid = &valid
+		}
 	}
 
 	if len(appdata) > 0 {
@@ -506,7 +537,7 @@ func decodeTrace(buf []byte) Payload {
 	return p
 }
 
-func decodePayload(payloadType int, buf []byte, channelKeys map[string]string) Payload {
+func decodePayload(payloadType int, buf []byte, channelKeys map[string]string, validateSignatures bool) Payload {
 	switch payloadType {
 	case PayloadREQ:
 		return decodeEncryptedPayload("REQ", buf)
@@ -517,7 +548,7 @@ func decodePayload(payloadType int, buf []byte, channelKeys map[string]string) P
 	case PayloadACK:
 		return decodeAck(buf)
 	case PayloadADVERT:
-		return decodeAdvert(buf)
+		return decodeAdvert(buf, validateSignatures)
 	case PayloadGRP_TXT:
 		return decodeGrpTxt(buf, channelKeys)
 	case PayloadANON_REQ:
@@ -532,7 +563,7 @@ func decodePayload(payloadType int, buf []byte, channelKeys map[string]string) P
 }
 
 // DecodePacket decodes a hex-encoded MeshCore packet.
-func DecodePacket(hexString string, channelKeys map[string]string) (*DecodedPacket, error) {
+func DecodePacket(hexString string, channelKeys map[string]string, validateSignatures bool) (*DecodedPacket, error) {
 	hexString = strings.ReplaceAll(hexString, " ", "")
 	hexString = strings.ReplaceAll(hexString, "\n", "")
 	hexString = strings.ReplaceAll(hexString, "\r", "")
@@ -570,7 +601,7 @@ func DecodePacket(hexString string, channelKeys map[string]string) (*DecodedPack
 	offset += bytesConsumed
 
 	payloadBuf := buf[offset:]
-	payload := decodePayload(header.PayloadType, payloadBuf, channelKeys)
+	payload := decodePayload(header.PayloadType, payloadBuf, channelKeys, validateSignatures)
 
 	// TRACE packets store hop IDs in the payload (buf[9:]) rather than the header
 	// path field. The header path byte still encodes hashSize in bits 6-7, which
