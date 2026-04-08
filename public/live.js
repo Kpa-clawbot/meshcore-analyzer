@@ -1904,6 +1904,12 @@
   }
 
   function resolveHopPositions(hops, payload, resolvedPath) {
+    // Hoist sender GPS guard once — reject (0,0) as "no GPS"
+    const hasValidGps = payload.lat != null && payload.lon != null
+      && !(payload.lat === 0 && payload.lon === 0);
+    const senderLat = hasValidGps ? payload.lat : null;
+    const senderLon = hasValidGps ? payload.lon : null;
+
     // Prefer server-side resolved_path when available
     var resolvedMap;
     if (resolvedPath && resolvedPath.length === hops.length && window.HopResolver && HopResolver.ready()) {
@@ -1911,19 +1917,14 @@
       // Fill in any null entries from client-side fallback, preserving sender GPS context
       var nullHops = hops.filter(function(h, i) { return !resolvedPath[i] && !resolvedMap[h]; });
       if (nullHops.length) {
-        const originLat = payload.lat != null && !(payload.lat === 0 && payload.lon === 0) ? payload.lat : null;
-        const originLon = payload.lon != null && !(payload.lon === 0 && payload.lon === 0) ? payload.lon : null;
-        var fallback = HopResolver.resolve(nullHops, originLat, originLon, null, null, null);
+        var fallback = HopResolver.resolve(nullHops, senderLat, senderLon, null, null, null);
         for (var k in fallback) resolvedMap[k] = fallback[k];
       }
     } else {
       // Delegate to shared HopResolver (from hop-resolver.js) instead of reimplementing
-      const originLat = payload.lat != null && !(payload.lat === 0 && payload.lon === 0) ? payload.lat : null;
-      const originLon = payload.lon != null && !(payload.lon === 0 && payload.lon === 0) ? payload.lon : null;
-
       // Use HopResolver if available and initialized, otherwise fall back to simple lookup
       resolvedMap = (window.HopResolver && HopResolver.ready())
-        ? HopResolver.resolve(hops, originLat, originLon, null, null, null)
+        ? HopResolver.resolve(hops, senderLat, senderLon, null, null, null)
         : {};
     }
 
@@ -1942,7 +1943,7 @@
     });
 
     // Add sender position as anchor if available
-    if (payload.pubKey && originLat != null) {
+    if (payload.pubKey && senderLat != null) {
       const existing = raw.find(p => p.key === payload.pubKey);
       if (!existing) {
         raw.unshift({ key: payload.pubKey, pos: [payload.lat, payload.lon], name: payload.name || payload.pubKey.slice(0, 8), known: true });
