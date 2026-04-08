@@ -140,7 +140,6 @@ function formatDistanceRound(km) {
 }
 window.formatDistanceRound = formatDistanceRound;
 
-
 function getTimestampMode() {
   const saved = localStorage.getItem('meshcore-timestamp-mode');
   if (saved === 'ago' || saved === 'absolute') return saved;
