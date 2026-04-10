@@ -1187,6 +1187,8 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .hash-bar-value { min-width: 120px; text-align: right; font-size: 13px; font-weight: 600; }
 .badge-hash-1 { background: #ef444420; color: var(--status-red); }
 .badge-hash-2 { background: #22c55e20; color: var(--status-green); }
+.badge-success { background: #22c55e20; color: var(--status-green); }
+.badge-danger { background: #ef444420; color: var(--status-red); }
 .badge-hash-3 { background: #3b82f620; color: var(--accent); }
 .timeline-legend { display: flex; gap: 16px; justify-content: center; margin-top: 8px; font-size: 12px; }
 .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
