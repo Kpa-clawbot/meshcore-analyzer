@@ -206,6 +206,9 @@ func BuildFromStoreWithLog(store *PacketStore, enableLog bool) *NeighborGraph {
 		}
 	}
 
+	// Phase 1.5: Resolve ambiguous edges using full graph context.
+	resolveAmbiguousEdges(pm, g)
+
 	// Phase 2: Disambiguation via Jaccard similarity.
 	g.disambiguate()
 
@@ -341,6 +344,71 @@ func (g *NeighborGraph) upsertEdgeWithCandidates(knownPK, prefix string, candida
 	if observer != "" {
 		e.Observers[observer] = true
 	}
+}
+
+// ─── Phase 1.5: Context-based resolution of ambiguous edges ────────────────────
+
+// resolveAmbiguousEdges attempts to resolve ambiguous prefix edges using the
+// fully-built graph context. Called after Phase 1 (edge collection) completes
+// so that affinity and geo proximity tiers have full neighbor data.
+func resolveAmbiguousEdges(pm *prefixMap, graph *NeighborGraph) {
+	// Step 1: Collect ambiguous edges under read lock.
+	graph.mu.RLock()
+	type ambiguousEntry struct {
+		key       edgeKey
+		edge      *NeighborEdge
+		knownNode string
+		prefix    string
+	}
+	var ambiguous []ambiguousEntry
+	for key, e := range graph.edges {
+		if !e.Ambiguous {
+			continue
+		}
+		knownNode := e.NodeA
+		if strings.HasPrefix(e.NodeA, "prefix:") {
+			knownNode = e.NodeB
+		}
+		if knownNode == "" {
+			continue
+		}
+		ambiguous = append(ambiguous, ambiguousEntry{key, e, knownNode, e.Prefix})
+	}
+	graph.mu.RUnlock()
+
+	// Step 2: Resolve each (no lock needed — resolveWithContext takes its own RLock).
+	type resolution struct {
+		ambiguousEntry
+		resolvedPK string
+	}
+	var resolutions []resolution
+	for _, ae := range ambiguous {
+		resolved, confidence, _ := pm.resolveWithContext(ae.prefix, []string{ae.knownNode}, graph)
+		if resolved == nil || confidence == "no_match" || confidence == "first_match" || confidence == "gps_preference" {
+			continue
+		}
+		rpk := strings.ToLower(resolved.PublicKey)
+		if rpk == ae.knownNode {
+			continue // self-edge guard
+		}
+		resolutions = append(resolutions, resolution{ae, rpk})
+	}
+
+	// Step 3: Apply resolutions under write lock.
+	if len(resolutions) == 0 {
+		return
+	}
+	graph.mu.Lock()
+	for _, r := range resolutions {
+		// Verify edge still exists and is still ambiguous (could have been
+		// resolved by a prior iteration if two ambiguous edges resolve to same target).
+		e, ok := graph.edges[r.key]
+		if !ok || !e.Ambiguous {
+			continue
+		}
+		graph.resolveEdge(r.key, e, r.knownNode, r.resolvedPK)
+	}
+	graph.mu.Unlock()
 }
 
 // ─── Disambiguation ────────────────────────────────────────────────────────────

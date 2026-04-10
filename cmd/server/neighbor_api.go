@@ -187,6 +187,10 @@ func (s *Server) handleNodeNeighbors(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, entry)
 	}
 
+	// Defense-in-depth: deduplicate unresolved prefix entries that match
+	// resolved pubkey entries in the same neighbor set (fixes #698).
+	entries = dedupPrefixEntries(entries)
+
 	// Sort by score descending.
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Score > entries[j].Score
@@ -370,4 +374,64 @@ func (s *Server) buildNodeInfoMap() map[string]nodeInfo {
 		m[strings.ToLower(n.PublicKey)] = n
 	}
 	return m
+}
+
+// dedupPrefixEntries merges unresolved prefix entries with resolved pubkey entries
+// where the prefix is a prefix of the resolved pubkey. Defense-in-depth for #698.
+func dedupPrefixEntries(entries []NeighborEntry) []NeighborEntry {
+	if len(entries) < 2 {
+		return entries
+	}
+
+	// Mark indices of unresolved entries to remove after merging.
+	remove := make(map[int]bool)
+
+	for i := range entries {
+		if entries[i].Pubkey != nil {
+			continue // only check unresolved (no pubkey)
+		}
+		prefix := strings.ToLower(entries[i].Prefix)
+		if prefix == "" {
+			continue
+		}
+		for j := range entries {
+			if i == j || entries[j].Pubkey == nil {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(*entries[j].Pubkey), prefix) {
+				// Merge counts from unresolved into resolved.
+				entries[j].Count += entries[i].Count
+
+				// Preserve higher LastSeen.
+				if entries[i].LastSeen > entries[j].LastSeen {
+					entries[j].LastSeen = entries[i].LastSeen
+				}
+
+				// Merge observers.
+				obsSet := make(map[string]bool)
+				for _, o := range entries[j].Observers {
+					obsSet[o] = true
+				}
+				for _, o := range entries[i].Observers {
+					obsSet[o] = true
+				}
+				entries[j].Observers = observerList(obsSet)
+
+				remove[i] = true
+				break // this unresolved entry is consumed
+			}
+		}
+	}
+
+	if len(remove) == 0 {
+		return entries
+	}
+
+	result := make([]NeighborEntry, 0, len(entries)-len(remove))
+	for i, e := range entries {
+		if !remove[i] {
+			result = append(result, e)
+		}
+	}
+	return result
 }
