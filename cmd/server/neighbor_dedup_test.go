@@ -476,3 +476,52 @@ func hexPK(i int) string {
 	}
 	return string(b[:])
 }
+
+// Test: API dedup does NOT merge when prefix matches multiple resolved entries.
+func TestDedupPrefixEntries_MultiMatchNoMerge(t *testing.T) {
+	pk1 := "b0b1eeeeb0b1eeee"
+	pk2 := "b0c2ffffb0c2ffff"
+	name1 := "NodeB1"
+	name2 := "NodeB2"
+	entries := []NeighborEntry{
+		{
+			Pubkey:    nil, // unresolved
+			Prefix:    "b0",
+			Count:     100,
+			LastSeen:  "2026-04-10T12:00:00Z",
+			Observers: []string{"obs1"},
+			Ambiguous: true,
+		},
+		{
+			Pubkey:    &pk1,
+			Prefix:    "b0b1",
+			Name:      &name1,
+			Count:     5,
+			LastSeen:  "2026-04-09T12:00:00Z",
+			Observers: []string{"obs2"},
+		},
+		{
+			Pubkey:    &pk2,
+			Prefix:    "b0c2",
+			Name:      &name2,
+			Count:     3,
+			LastSeen:  "2026-04-08T12:00:00Z",
+			Observers: []string{"obs3"},
+		},
+	}
+
+	result := dedupPrefixEntries(entries)
+
+	if len(result) != 3 {
+		t.Fatalf("expected 3 entries (no merge for ambiguous prefix), got %d", len(result))
+	}
+	// Counts should be unchanged.
+	for _, e := range result {
+		if e.Pubkey != nil && *e.Pubkey == pk1 && e.Count != 5 {
+			t.Errorf("pk1 count should be unchanged at 5, got %d", e.Count)
+		}
+		if e.Pubkey != nil && *e.Pubkey == pk2 && e.Count != 3 {
+			t.Errorf("pk2 count should be unchanged at 3, got %d", e.Count)
+		}
+	}
+}

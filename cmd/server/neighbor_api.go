@@ -394,33 +394,45 @@ func dedupPrefixEntries(entries []NeighborEntry) []NeighborEntry {
 		if prefix == "" {
 			continue
 		}
+		// Find all resolved entries matching this prefix.
+		matchIdx := -1
+		matchCount := 0
 		for j := range entries {
 			if i == j || entries[j].Pubkey == nil {
 				continue
 			}
 			if strings.HasPrefix(strings.ToLower(*entries[j].Pubkey), prefix) {
-				// Merge counts from unresolved into resolved.
-				entries[j].Count += entries[i].Count
-
-				// Preserve higher LastSeen.
-				if entries[i].LastSeen > entries[j].LastSeen {
-					entries[j].LastSeen = entries[i].LastSeen
-				}
-
-				// Merge observers.
-				obsSet := make(map[string]bool)
-				for _, o := range entries[j].Observers {
-					obsSet[o] = true
-				}
-				for _, o := range entries[i].Observers {
-					obsSet[o] = true
-				}
-				entries[j].Observers = observerList(obsSet)
-
-				remove[i] = true
-				break // this unresolved entry is consumed
+				matchIdx = j
+				matchCount++
 			}
 		}
+		// Only merge when exactly one resolved entry matches — ambiguous
+		// prefixes that match multiple resolved neighbors must not be
+		// arbitrarily assigned to one of them.
+		if matchCount != 1 {
+			continue
+		}
+		j := matchIdx
+
+		// Merge counts from unresolved into resolved.
+		entries[j].Count += entries[i].Count
+
+		// Preserve higher LastSeen.
+		if entries[i].LastSeen > entries[j].LastSeen {
+			entries[j].LastSeen = entries[i].LastSeen
+		}
+
+		// Merge observers.
+		obsSet := make(map[string]bool)
+		for _, o := range entries[j].Observers {
+			obsSet[o] = true
+		}
+		for _, o := range entries[i].Observers {
+			obsSet[o] = true
+		}
+		entries[j].Observers = observerList(obsSet)
+
+		remove[i] = true
 	}
 
 	if len(remove) == 0 {
