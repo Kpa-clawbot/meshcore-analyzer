@@ -258,7 +258,8 @@ func decodeAdvert(buf []byte, validateSignatures bool) Payload {
 	if validateSignatures {
 		valid, err := validateAdvertSignature(pubKey, signature, timestamp, appdata)
 		if err != nil {
-			p.SignatureValid = &[]bool{false}[0] // false
+			f := false
+			p.SignatureValid = &f
 		} else {
 			p.SignatureValid = &valid
 		}
