@@ -805,8 +805,8 @@
 /* Corner positions — applied via data-position attribute on .live-overlay panels */
 .live-overlay[data-position="tl"] { top: 64px; left: 12px; bottom: auto; right: auto; }
 .live-overlay[data-position="tr"] { top: 64px; right: 12px; bottom: auto; left: auto; }
-.live-overlay[data-position="bl"] { bottom: 12px; left: 12px; top: auto; right: auto; }
-.live-overlay[data-position="br"] { bottom: 12px; right: 12px; top: auto; left: auto; }
+.live-overlay[data-position="bl"] { bottom: 58px; left: 12px; top: auto; right: auto; }
+.live-overlay[data-position="br"] { bottom: 58px; right: 12px; top: auto; left: auto; }
 
 /* Override hide animations for positioned panels — slide toward nearest edge */
 .live-overlay[data-position="tl"].hidden,
