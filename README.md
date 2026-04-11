@@ -80,15 +80,26 @@ No build step required — just run:
 
 ```bash
 docker run -d --name corescope \
-  -p 80:80 \
-  -v corescope-data:/app/data \
+  --restart=unless-stopped \
+  -p 80:80 -p 1883:1883 \
+  -v /your/data:/app/data \
   ghcr.io/kpa-clawbot/corescope:latest
 ```
 
 Open `http://localhost` — done. No config file needed; CoreScope starts with sensible defaults.
 
-See [DEPLOY.md](DEPLOY.md) for image tags, Docker Compose, and migration from `manage.sh`.
-See [docs/deployment.md](docs/deployment.md) for the full deployment guide — MQTT setup, HTTPS options, backups, monitoring, and troubleshooting.
+For HTTPS with a custom domain, add `-p 443:443` and mount your Caddyfile:
+```bash
+docker run -d --name corescope \
+  --restart=unless-stopped \
+  -p 80:80 -p 443:443 -p 1883:1883 \
+  -v /your/data:/app/data \
+  -v /your/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v /your/caddy-data:/data/caddy \
+  ghcr.io/kpa-clawbot/corescope:latest
+```
+
+Disable built-in services with `-e DISABLE_MOSQUITTO=true` or `-e DISABLE_CADDY=true`, or drop a `.env` file in your data volume. See [docs/deployment.md](docs/deployment.md) for the full reference.
 
 ### Build from Source
 

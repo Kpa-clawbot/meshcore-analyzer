@@ -48,9 +48,52 @@ No `config.json` is required. The server starts with sensible defaults:
 - Ingestor connects to `mqtt://localhost:1883` automatically
 - SQLite database at `/app/data/meshcore.db`
 
-### Docker Compose (recommended for production)
+### Full `docker run` Reference (recommended)
 
-Download the example compose file:
+The bare `docker run` command is the primary deployment method. One image, documented parameters — run it however you want.
+
+```bash
+docker run -d --name corescope \
+  --restart=unless-stopped \
+  -p 80:80 -p 443:443 -p 1883:1883 \
+  -e DISABLE_MOSQUITTO=false \
+  -e DISABLE_CADDY=false \
+  -v /your/data:/app/data \
+  -v /your/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v /your/caddy-data:/data/caddy \
+  ghcr.io/kpa-clawbot/corescope:latest
+```
+
+#### Parameters
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-p 80:80` | Yes | HTTP web UI |
+| `-p 443:443` | No | HTTPS (only if using built-in Caddy with a domain) |
+| `-p 1883:1883` | No | MQTT broker (expose if external gateways connect directly) |
+| `-v /your/data:/app/data` | Yes | Persistent data: SQLite DB, config.json, theme.json |
+| `-v /your/Caddyfile:/etc/caddy/Caddyfile:ro` | No | Custom Caddyfile for HTTPS |
+| `-v /your/caddy-data:/data/caddy` | No | Caddy TLS certificate storage |
+| `-e DISABLE_MOSQUITTO=true` | No | Skip the internal Mosquitto broker (use your own) |
+| `-e DISABLE_CADDY=true` | No | Skip the built-in Caddy reverse proxy |
+| `-e MQTT_BROKER=mqtt://host:1883` | No | Override MQTT broker URL |
+
+#### `/app/data/.env` convenience file
+
+Instead of passing `-e` flags, you can drop a `.env` file in your data volume:
+
+```bash
+# /your/data/.env
+DISABLE_MOSQUITTO=true
+DISABLE_CADDY=true
+MQTT_BROKER=mqtt://my-broker:1883
+```
+
+The entrypoint sources this file before starting services. This works with any launch method (`docker run`, compose, or manage.sh).
+
+### Docker Compose (legacy alternative)
+
+Docker Compose files are maintained for backward compatibility but are no longer the recommended approach.
 
 ```bash
 curl -sL https://raw.githubusercontent.com/Kpa-clawbot/CoreScope/master/docker-compose.example.yml \
@@ -65,6 +108,11 @@ docker compose up -d
 | `HTTP_PORT` | `80` | Host port for the web UI |
 | `DATA_DIR` | `./data` | Host path for persistent data |
 | `DISABLE_MOSQUITTO` | `false` | Set `true` to use an external MQTT broker |
+| `DISABLE_CADDY` | `false` | Set `true` to skip the built-in Caddy proxy |
+
+### manage.sh (legacy alternative)
+
+The `manage.sh` wrapper script provides a setup wizard and convenience commands. It uses Docker Compose internally. See [DEPLOY.md](../DEPLOY.md) for usage. New deployments should prefer bare `docker run`.
 
 ### Image tags
 
@@ -111,6 +159,7 @@ CoreScope uses a layered configuration system (highest priority wins):
 | `MQTT_TOPIC` | `meshcore/#` | MQTT topic subscription pattern |
 | `DB_PATH` | `data/meshcore.db` | SQLite database path |
 | `DISABLE_MOSQUITTO` | `false` | Skip the internal Mosquitto broker |
+| `DISABLE_CADDY` | `false` | Skip the built-in Caddy reverse proxy |
 
 ### config.json
 

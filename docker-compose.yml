@@ -29,6 +29,7 @@ services:
     environment:
       - NODE_ENV=production
       - DISABLE_MOSQUITTO=${DISABLE_MOSQUITTO:-false}
+      - DISABLE_CADDY=${DISABLE_CADDY:-false}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/stats"]
       interval: 30s
