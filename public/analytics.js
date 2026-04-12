@@ -946,25 +946,9 @@
         </div>
       </div>
 
-      <div class="analytics-row">
-        <div class="analytics-card flex-1">
-          <h3>Multi-Byte Hash Adopters</h3>
-          <p class="text-muted">Nodes advertising with 2+ byte hash paths</p>
-        ${data.multiByteNodes.length ? `
-          <table class="analytics-table">
-            <thead><tr><th scope="col">Node</th><th scope="col">Hash Size</th><th scope="col">Adverts</th><th scope="col">Last Seen</th></tr></thead>
-            <tbody>
-              ${data.multiByteNodes.map(n => `<tr class="clickable-row" data-action="navigate" data-value="#/nodes/${n.pubkey ? encodeURIComponent(n.pubkey) : ''}" tabindex="0" role="row">
-                <td><strong>${esc(n.name)}</strong></td>
-                <td><span class="badge badge-hash-${n.hashSize}">${n.hashSize}-byte</span></td>
-                <td>${n.packets}</td>
-                <td>${timeAgo(n.lastSeen)}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        ` : '<div class="text-muted" style="padding:16px">No multi-byte adopters found</div>'}
-        </div>
+      ${renderMultiByteAdopters(data.multiByteNodes, data.multiByteCapability || [])}
 
+      <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>Top Path Hops</h3>
         <table class="analytics-table">
@@ -983,109 +967,134 @@
         </table>
         </div>
       </div>
-      ${renderMultiByteCapability(data.multiByteCapability || [])}
     `;
   }
 
-  function renderMultiByteCapability(caps) {
-    if (!caps.length) return '';
+  function renderMultiByteAdopters(nodes, caps) {
+    // Merge capability status into adopter nodes
+    var capByPubkey = {};
+    (caps || []).forEach(function(c) { capByPubkey[c.pubkey] = c; });
 
     var statusIcon = { confirmed: '✅', suspected: '⚠️', unknown: '❓' };
     var statusLabel = { confirmed: 'Confirmed', suspected: 'Suspected', unknown: 'Unknown' };
     var statusColor = { confirmed: 'var(--success, #22c55e)', suspected: 'var(--warning, #eab308)', unknown: 'var(--text-muted, #888)' };
-    var evidenceLabel = { advert: 'Advert with multi-byte hash', path: 'Path appearance', '': '—' };
 
-    function buildTable(caps, filter) {
-      var filtered = filter === 'all' ? caps : caps.filter(function(c) { return c.status === filter; });
-      var counts = { confirmed: 0, suspected: 0, unknown: 0 };
-      caps.forEach(function(c) { counts[c.status]++; });
+    // Build merged rows: each adopter node gets a capability status
+    var rows = (nodes || []).map(function(n) {
+      var cap = capByPubkey[n.pubkey] || {};
+      return {
+        name: n.name, pubkey: n.pubkey || '', role: n.role || '',
+        hashSize: n.hashSize, packets: n.packets, lastSeen: n.lastSeen,
+        status: cap.status || 'unknown', evidence: cap.evidence || ''
+      };
+    });
 
-      return '<div class="analytics-card" id="multibyteCapSection">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
-          '<div>' +
-            '<h3 style="margin:0">🔧 Repeater Multi-Byte Capability</h3>' +
-            '<p class="text-muted" style="margin:4px 0 0;font-size:0.8em">Inferred multi-byte hash capability for each repeater. ' +
-            '<strong>Confirmed</strong> = seen advertising with multi-byte hash (100% reliable). ' +
-            '<strong>Suspected</strong> = prefix appeared in a multi-byte path (&lt;100%, possible prefix collision). ' +
-            '<strong>Unknown</strong> = no multi-byte evidence.</p>' +
-          '</div>' +
-          '<div style="display:flex;gap:4px;flex-wrap:wrap" id="mbCapFilters">' +
-            '<button class="tab-btn' + (filter === 'all' ? ' active' : '') + '" data-mb-filter="all">All (' + caps.length + ')</button>' +
-            '<button class="tab-btn' + (filter === 'confirmed' ? ' active' : '') + '" data-mb-filter="confirmed" style="--filter-color:var(--success, #22c55e)">✅ ' + counts.confirmed + '</button>' +
-            '<button class="tab-btn' + (filter === 'suspected' ? ' active' : '') + '" data-mb-filter="suspected" style="--filter-color:var(--warning, #eab308)">⚠️ ' + counts.suspected + '</button>' +
-            '<button class="tab-btn' + (filter === 'unknown' ? ' active' : '') + '" data-mb-filter="unknown" style="--filter-color:var(--text-muted, #888)">❓ ' + counts.unknown + '</button>' +
-          '</div>' +
-        '</div>' +
-        (filtered.length ? '<table class="analytics-table" id="mbCapTable" style="margin-top:12px">' +
+    // Count statuses
+    var counts = { confirmed: 0, suspected: 0, unknown: 0 };
+    rows.forEach(function(r) { counts[r.status] = (counts[r.status] || 0) + 1; });
+
+    function buildTableContent(rows, filter) {
+      var filtered = filter === 'all' ? rows : rows.filter(function(r) { return r.status === filter; });
+      return (filtered.length ? '<table class="analytics-table" id="mbAdoptersTable" style="margin-top:12px">' +
           '<thead><tr>' +
-            '<th scope="col" data-sort="name">Name</th>' +
-            '<th scope="col" data-sort="role">Role</th>' +
+            '<th scope="col" data-sort="name">Node</th>' +
             '<th scope="col" data-sort="status">Status</th>' +
-            '<th scope="col" data-sort="evidence">Evidence</th>' +
-            '<th scope="col" data-sort="maxHashSize">Max Hash Size</th>' +
+            '<th scope="col" data-sort="hashSize">Hash Size</th>' +
+            '<th scope="col" data-sort="packets">Adverts</th>' +
             '<th scope="col" data-sort="lastSeen">Last Seen</th>' +
           '</tr></thead>' +
           '<tbody>' +
-            filtered.map(function(c) {
-              return '<tr class="clickable-row" data-action="navigate" data-value="#/nodes/' + encodeURIComponent(c.pubkey) + '" tabindex="0" role="row">' +
-                '<td><strong>' + esc(c.name) + '</strong></td>' +
-                '<td>' + esc(c.role) + '</td>' +
-                '<td><span style="color:' + statusColor[c.status] + '">' + statusIcon[c.status] + ' ' + statusLabel[c.status] + '</span></td>' +
-                '<td>' + (evidenceLabel[c.evidence] || '—') + '</td>' +
-                '<td><span class="badge badge-hash-' + c.maxHashSize + '">' + c.maxHashSize + '-byte</span></td>' +
-                '<td>' + (c.lastSeen ? timeAgo(c.lastSeen) : '—') + '</td>' +
+            filtered.map(function(r) {
+              return '<tr class="clickable-row" data-action="navigate" data-value="#/nodes/' + encodeURIComponent(r.pubkey) + '" tabindex="0" role="row">' +
+                '<td><strong>' + esc(r.name) + '</strong></td>' +
+                '<td><span style="color:' + (statusColor[r.status] || statusColor.unknown) + '">' +
+                  (statusIcon[r.status] || '❓') + ' ' + (statusLabel[r.status] || 'Unknown') + '</span></td>' +
+                '<td><span class="badge badge-hash-' + r.hashSize + '">' + r.hashSize + '-byte</span></td>' +
+                '<td>' + r.packets + '</td>' +
+                '<td>' + (r.lastSeen ? timeAgo(r.lastSeen) : '—') + '</td>' +
               '</tr>';
             }).join('') +
           '</tbody>' +
-        '</table>' : '<div class="text-muted" style="padding:16px">No repeaters match this filter.</div>') +
-      '</div>';
+        '</table>' : '<div class="text-muted" style="padding:16px">No adopters match this filter.</div>');
     }
 
+    if (!rows.length) return '<div class="analytics-row"><div class="analytics-card flex-1">' +
+      '<h3>Multi-Byte Hash Adopters</h3>' +
+      '<div class="text-muted" style="padding:16px">No multi-byte adopters found</div></div></div>';
+
+    var html = '<div class="analytics-row"><div class="analytics-card flex-1" id="mbAdoptersSection">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
+        '<div>' +
+          '<h3 style="margin:0">Multi-Byte Hash Adopters</h3>' +
+          '<p class="text-muted" style="margin:4px 0 0;font-size:0.8em">Nodes advertising with 2+ byte hash paths. ' +
+          '<strong>Confirmed</strong> = seen advertising with multi-byte hash. ' +
+          '<strong>Suspected</strong> = prefix appeared in a multi-byte path. ' +
+          '<strong>Unknown</strong> = no multi-byte evidence yet.</p>' +
+        '</div>' +
+        '<div style="display:flex;gap:4px;flex-wrap:wrap" id="mbCapFilters">' +
+          '<button class="tab-btn active" data-mb-filter="all">All (' + rows.length + ')</button>' +
+          '<button class="tab-btn" data-mb-filter="confirmed" style="--filter-color:var(--success, #22c55e)">✅ Confirmed (' + counts.confirmed + ')</button>' +
+          '<button class="tab-btn" data-mb-filter="suspected" style="--filter-color:var(--warning, #eab308)">⚠️ Suspected (' + counts.suspected + ')</button>' +
+          '<button class="tab-btn" data-mb-filter="unknown" style="--filter-color:var(--text-muted, #888)">❓ Unknown (' + counts.unknown + ')</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="mbAdoptersTableWrap">' + buildTableContent(rows, 'all') + '</div>' +
+    '</div></div>';
+
+    // Use setTimeout for event delegation on the stable section container
     setTimeout(function() {
-      var section = document.getElementById('multibyteCapSection');
+      var section = document.getElementById('mbAdoptersSection');
       if (!section) return;
       var currentFilter = 'all';
 
-      section.addEventListener('click', function(e) {
+      section.addEventListener('click', function handler(e) {
         var btn = e.target.closest('[data-mb-filter]');
         if (btn) {
           currentFilter = btn.dataset.mbFilter;
-          var parent = section.parentElement;
-          var tmp = document.createElement('div');
-          tmp.innerHTML = buildTable(caps, currentFilter);
-          var newSection = tmp.querySelector('#multibyteCapSection');
-          if (newSection) {
-            section.replaceWith(newSection);
-            section = newSection;
-          }
+          // Update active state on buttons (no DOM replacement needed)
+          var buttons = section.querySelectorAll('[data-mb-filter]');
+          buttons.forEach(function(b) { b.classList.toggle('active', b.dataset.mbFilter === currentFilter); });
+          // Replace only the table content, not the whole section
+          var wrap = section.querySelector('#mbAdoptersTableWrap');
+          if (wrap) wrap.innerHTML = buildTableContent(rows, currentFilter);
           return;
         }
         var th = e.target.closest('[data-sort]');
         if (th) {
           var tbody = section.querySelector('tbody');
           if (!tbody) return;
-          var rows = Array.from(tbody.querySelectorAll('tr'));
+          var sortRows = Array.from(tbody.querySelectorAll('tr'));
           var col = th.dataset.sort;
-          var colIdx = { name: 0, role: 1, status: 2, evidence: 3, maxHashSize: 4, lastSeen: 5 };
+          var colIdx = { name: 0, status: 1, hashSize: 2, packets: 3, lastSeen: 4 };
           var statusWeight = { 'confirmed': 0, 'suspected': 1, 'unknown': 2 };
-          rows.sort(function(a, b) {
+          sortRows.sort(function(a, b) {
             var va = a.children[colIdx[col]] ? a.children[colIdx[col]].textContent.trim() : '';
             var vb = b.children[colIdx[col]] ? b.children[colIdx[col]].textContent.trim() : '';
             if (col === 'status') {
               va = statusWeight[va.toLowerCase().split(' ').pop()] !== undefined ? statusWeight[va.toLowerCase().split(' ').pop()] : 2;
               vb = statusWeight[vb.toLowerCase().split(' ').pop()] !== undefined ? statusWeight[vb.toLowerCase().split(' ').pop()] : 2;
             }
-            if (col === 'maxHashSize') { va = parseInt(va) || 0; vb = parseInt(vb) || 0; }
+            if (col === 'hashSize' || col === 'packets') { va = parseInt(va) || 0; vb = parseInt(vb) || 0; }
             if (va < vb) return -1;
             if (va > vb) return 1;
             return 0;
           });
-          rows.forEach(function(r) { tbody.appendChild(r); });
+          sortRows.forEach(function(r) { tbody.appendChild(r); });
         }
       });
     }, 100);
 
-    return buildTable(caps, 'all');
+    return html;
+  }
+
+  // Legacy alias for tests — delegates to renderMultiByteAdopters with empty nodes
+  function renderMultiByteCapability(caps) {
+    if (!caps.length) return '';
+    // Convert caps to adopter-style rows for backward compat
+    var fakeNodes = caps.map(function(c) {
+      return { name: c.name, pubkey: c.pubkey, role: c.role, hashSize: c.maxHashSize, packets: 0, lastSeen: c.lastSeen };
+    });
+    return renderMultiByteAdopters(fakeNodes, caps);
   }
 
   async function renderCollisionTab(el, data, collisionData) {
@@ -1985,6 +1994,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     window._analyticsChannelTheadHtml = channelTheadHtml;
     window._analyticsRfNFColumnChart = rfNFColumnChart;
     window._analyticsRenderMultiByteCapability = renderMultiByteCapability;
+    window._analyticsRenderMultiByteAdopters = renderMultiByteAdopters;
   }
 
   // ─── Neighbor Graph Tab ─────────────────────────────────────────────────────

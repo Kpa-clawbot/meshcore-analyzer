@@ -4979,20 +4979,20 @@ console.log('\n=== analytics.js: renderMultiByteCapability ===');
       ];
       const html = render(caps);
       assert.ok(html.includes('All (4)'), 'should show total count 4');
-      assert.ok(html.includes('✅ 2'), 'should show 2 confirmed');
-      assert.ok(html.includes('⚠️ 1'), 'should show 1 suspected');
-      assert.ok(html.includes('❓ 1'), 'should show 1 unknown');
+      assert.ok(html.includes('Confirmed (2)'), 'should show 2 confirmed');
+      assert.ok(html.includes('Suspected (1)'), 'should show 1 suspected');
+      assert.ok(html.includes('Unknown (1)'), 'should show 1 unknown');
     });
 
-    test('evidence labels are correct', () => {
+    test('evidence labels map to status display', () => {
       const html = render([
         { pubkey: 'a1', name: 'R1', role: 'repeater', status: 'confirmed', evidence: 'advert', maxHashSize: 2, lastSeen: '' },
         { pubkey: 'b1', name: 'R2', role: 'repeater', status: 'suspected', evidence: 'path', maxHashSize: 2, lastSeen: '' },
         { pubkey: 'c1', name: 'R3', role: 'repeater', status: 'unknown', evidence: '', maxHashSize: 1, lastSeen: '' },
       ]);
-      assert.ok(html.includes('Advert with multi-byte hash'), 'confirmed should show advert evidence');
-      assert.ok(html.includes('Path appearance'), 'suspected should show path evidence');
-      // unknown has empty evidence → '—'
+      assert.ok(html.includes('Confirmed'), 'confirmed status should be shown');
+      assert.ok(html.includes('Suspected'), 'suspected status should be shown');
+      assert.ok(html.includes('Unknown'), 'unknown status should be shown');
     });
 
     test('table rows link to node detail', () => {
@@ -5009,7 +5009,72 @@ console.log('\n=== analytics.js: renderMultiByteCapability ===');
       const html = render([{ pubkey: 'a1', name: 'R1', role: 'repeater', status: 'confirmed', evidence: 'advert', maxHashSize: 2, lastSeen: '' }]);
       assert.ok(html.includes('data-sort="status"'), 'status column should be sortable');
       assert.ok(html.includes('data-sort="name"'), 'name column should be sortable');
-      assert.ok(html.includes('data-sort="maxHashSize"'), 'maxHashSize column should be sortable');
+    });
+  }
+}
+
+// ===== analytics.js: renderMultiByteAdopters (integrated) =====
+console.log('\n=== analytics.js: renderMultiByteAdopters ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/app.js');
+  try { loadInCtx(ctx, 'public/analytics.js'); } catch (e) { /* IIFE side-effects ok */ }
+
+  const renderAdopters = ctx.window._analyticsRenderMultiByteAdopters;
+  test('renderMultiByteAdopters is exposed', () => assert.ok(renderAdopters, '_analyticsRenderMultiByteAdopters must be exposed'));
+
+  if (renderAdopters) {
+    test('empty nodes returns no-adopters message', () => {
+      const html = renderAdopters([], []);
+      assert.ok(html.includes('No multi-byte adopters found'), 'should show empty message');
+    });
+
+    test('integrates capability status into adopter rows', () => {
+      const nodes = [
+        { name: 'NodeA', pubkey: 'aa11', role: 'repeater', hashSize: 2, packets: 5, lastSeen: '2026-01-01T00:00:00Z' },
+      ];
+      const caps = [
+        { pubkey: 'aa11', name: 'NodeA', role: 'repeater', status: 'confirmed', evidence: 'advert', maxHashSize: 2, lastSeen: '' },
+      ];
+      const html = renderAdopters(nodes, caps);
+      assert.ok(html.includes('✅'), 'should show confirmed icon');
+      assert.ok(html.includes('Confirmed'), 'should show Confirmed label');
+      assert.ok(html.includes('2-byte'), 'should show hash size badge');
+    });
+
+    test('filter buttons have text labels with counts', () => {
+      const nodes = [
+        { name: 'N1', pubkey: 'a1', role: 'repeater', hashSize: 2, packets: 3, lastSeen: '' },
+        { name: 'N2', pubkey: 'b1', role: 'repeater', hashSize: 2, packets: 1, lastSeen: '' },
+      ];
+      const caps = [
+        { pubkey: 'a1', name: 'N1', role: 'repeater', status: 'confirmed', evidence: 'advert', maxHashSize: 2, lastSeen: '' },
+        { pubkey: 'b1', name: 'N2', role: 'repeater', status: 'suspected', evidence: 'path', maxHashSize: 2, lastSeen: '' },
+      ];
+      const html = renderAdopters(nodes, caps);
+      assert.ok(html.includes('Confirmed (1)'), 'should show "Confirmed (1)"');
+      assert.ok(html.includes('Suspected (1)'), 'should show "Suspected (1)"');
+      assert.ok(html.includes('Unknown (0)'), 'should show "Unknown (0)"');
+      assert.ok(html.includes('All (2)'), 'should show total "All (2)"');
+    });
+
+    test('nodes without capability data default to unknown', () => {
+      const nodes = [
+        { name: 'Orphan', pubkey: 'zz99', role: 'repeater', hashSize: 2, packets: 1, lastSeen: '' },
+      ];
+      const html = renderAdopters(nodes, []); // no caps
+      assert.ok(html.includes('❓'), 'should show unknown icon');
+      assert.ok(html.includes('Unknown'), 'should show Unknown label');
+    });
+
+    test('integrated table has Status column', () => {
+      const nodes = [
+        { name: 'R1', pubkey: 'a1', role: 'repeater', hashSize: 2, packets: 1, lastSeen: '' },
+      ];
+      const html = renderAdopters(nodes, []);
+      assert.ok(html.includes('Status'), 'should have Status column header');
+      assert.ok(html.includes('data-sort="status"'), 'Status should be sortable');
     });
   }
 }
