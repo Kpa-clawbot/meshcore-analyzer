@@ -584,7 +584,7 @@ func extractEdgesFromObs(obs *StoreObs, tx *StoreTx, pm *prefixMap) []edgeCandid
 
 // openRW opens a read-write SQLite connection (same pattern as PruneOldPackets).
 func openRW(dbPath string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000", dbPath)
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL", dbPath)
 	rw, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
