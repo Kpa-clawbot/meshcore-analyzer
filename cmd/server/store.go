@@ -193,6 +193,10 @@ type PacketStore struct {
 	// Updated incrementally during Load/Ingest/Evict — avoids JSON parsing in GetPerfStoreStats.
 	advertPubkeys map[string]int // pubkey → number of advert packets referencing it
 
+	// Debounce map for touchRelayLastSeen: pubkey → last time we wrote last_seen to DB.
+	// Limits DB writes to at most 1 per node per 5 minutes.
+	lastSeenTouched map[string]time.Time
+
 	// Persisted neighbor graph for hop resolution at ingest time.
 	graph *NeighborGraph
 
@@ -297,7 +301,8 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		invCooldown:       10 * time.Second,
 		spIndex:       make(map[string]int, 4096),
 		spTxIndex:     make(map[string][]*StoreTx, 4096),
-		advertPubkeys: make(map[string]int),
+		advertPubkeys:   make(map[string]int),
+		lastSeenTouched: make(map[string]time.Time),
 	}
 	if cfg != nil {
 		ps.retentionHours = cfg.RetentionHours
@@ -567,6 +572,50 @@ func (s *PacketStore) addToByNode(tx *StoreTx, pubkey string) {
 	}
 	s.nodeHashes[pubkey][tx.Hash] = true
 	s.byNode[pubkey] = append(s.byNode[pubkey], tx)
+}
+
+// touchRelayLastSeen updates last_seen in the DB for relay nodes that appear
+// in resolved_path entries. Debounced to at most 1 write per node per 5 minutes.
+// Must be called under s.mu write lock (reads/writes lastSeenTouched).
+func (s *PacketStore) touchRelayLastSeen(tx *StoreTx, now time.Time) {
+	if s.db == nil {
+		return
+	}
+	const debounceInterval = 5 * time.Minute
+
+	seen := make(map[string]bool)
+	// Collect unique non-nil resolved pubkeys from all observations.
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			if rp == nil {
+				continue
+			}
+			pk := *rp
+			if pk != "" {
+				seen[pk] = true
+			}
+		}
+	}
+	// Also check tx.ResolvedPath (best observation, used after Load).
+	for _, rp := range tx.ResolvedPath {
+		if rp == nil {
+			continue
+		}
+		pk := *rp
+		if pk != "" {
+			seen[pk] = true
+		}
+	}
+
+	ts := now.UTC().Format(time.RFC3339)
+	for pk := range seen {
+		if last, ok := s.lastSeenTouched[pk]; ok && now.Sub(last) < debounceInterval {
+			continue
+		}
+		if err := s.db.TouchNodeLastSeen(pk, ts); err == nil {
+			s.lastSeenTouched[pk] = now
+		}
+	}
 }
 
 // trackAdvertPubkey increments the advertPubkeys refcount for ADVERT packets.
@@ -1387,6 +1436,12 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 	// Pick best observation for new transmissions
 	for _, tx := range broadcastTxs {
 		pickBestObservation(tx)
+	}
+
+	// Phase 2 of #660: update last_seen in DB for relay nodes seen in resolved_path.
+	now := time.Now()
+	for _, tx := range broadcastTxs {
+		s.touchRelayLastSeen(tx, now)
 	}
 
 	// Incrementally update precomputed subpath index with new transmissions
