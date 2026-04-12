@@ -1417,7 +1417,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
 		// so the frontend can distinguish completed vs remaining hops (#683).
 		if tx.PayloadType != nil && *tx.PayloadType == PayloadTRACE && tx.RawHex != "" {
-			if dp, err := DecodePacket(tx.RawHex); err == nil {
+			if dp, err := DecodePacket(tx.RawHex, false); err == nil {
 				decoded["path"] = dp.Path
 			}
 		}
@@ -1674,7 +1674,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
 		// so the frontend can distinguish completed vs remaining hops (#683).
 		if tx.PayloadType != nil && *tx.PayloadType == PayloadTRACE && tx.RawHex != "" {
-			if dp, err := DecodePacket(tx.RawHex); err == nil {
+			if dp, err := DecodePacket(tx.RawHex, false); err == nil {
 				decoded["path"] = dp.Path
 			}
 		}
