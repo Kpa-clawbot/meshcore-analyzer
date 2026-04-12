@@ -4763,6 +4763,11 @@ func (s *PacketStore) GetAnalyticsHashSizes(region string) map[string]interface{
 
 	result := s.computeAnalyticsHashSizes(region)
 
+	// Add multi-byte capability data (only for unfiltered/global view)
+	if region == "" {
+		result["multiByteCapability"] = s.computeMultiByteCapability()
+	}
+
 	s.cacheMu.Lock()
 	s.hashCache[region] = &cachedResult{data: result, expiresAt: time.Now().Add(s.rfCacheTTL)}
 	s.cacheMu.Unlock()
@@ -5450,6 +5455,197 @@ func EnrichNodeWithHashSize(node map[string]interface{}, info *hashSizeNodeInfo)
 		sort.Ints(sizes)
 		node["hash_sizes_seen"] = sizes
 	}
+}
+
+// --- Multi-Byte Capability Inference ---
+
+// MultiByteCapEntry represents a repeater's inferred multi-byte capability.
+type MultiByteCapEntry struct {
+	PublicKey   string `json:"pubkey"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`      // "confirmed", "suspected", "unknown"
+	Evidence    string `json:"evidence"`     // "advert", "path", ""
+	MaxHashSize int    `json:"maxHashSize"`
+	LastSeen    string `json:"lastSeen"`
+}
+
+// computeMultiByteCapability determines multi-byte capability for each
+// repeater using two methods:
+//
+// 1. Confirmed: the node has advertised with hash_size >= 2 (from advert
+//    path byte). This is 100% reliable because the full public key is
+//    received in adverts — no prefix collision ambiguity.
+//
+// 2. Suspected: the node's prefix appears as a hop in a packet whose path
+//    header indicates hash_size >= 2. This is <100% reliable because
+//    2-byte prefixes can collide — two different nodes may share the same
+//    prefix. If one is confirmed multi-byte and the other is not, the
+//    non-confirmed one could be a false positive.
+//
+// 3. Unknown: node has only been seen with 1-byte adverts and no
+//    multi-byte path appearances. Could be pre-1.14 firmware or 1.14+
+//    with default (1-byte) settings.
+//
+// Caller must hold NO locks — this method acquires mu.RLock internally.
+func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
+	// Get hash size info from adverts (has its own locking)
+	hashInfo := s.GetNodeHashSizeInfo()
+
+	// Get all nodes for name/role lookup
+	allNodes := s.getAllNodes()
+	nodeByPK := make(map[string]nodeInfo, len(allNodes))
+	for _, n := range allNodes {
+		nodeByPK[n.PublicKey] = n
+	}
+
+	// Build set of confirmed multi-byte pubkeys (advert hash_size >= 2)
+	confirmed := make(map[string]int) // pubkey → max hash size from adverts
+	for pk, info := range hashInfo {
+		maxHS := 1
+		for sz := range info.AllSizes {
+			if sz > maxHS {
+				maxHS = sz
+			}
+		}
+		if maxHS >= 2 {
+			confirmed[pk] = maxHS
+		}
+	}
+
+	// Scan path-hop index for suspected multi-byte nodes.
+	// For each repeater, check if any packet in byPathHop has that
+	// node as a hop with hash_size >= 2 in the path header.
+	s.mu.RLock()
+
+	// Build prefix→pubkey mapping for repeaters
+	type prefixEntry struct {
+		pubkey string
+		prefix string
+	}
+	repeaterPrefixes := make(map[string][]prefixEntry) // prefix → entries
+	for pk, n := range nodeByPK {
+		if !strings.Contains(strings.ToLower(n.Role), "repeater") {
+			continue
+		}
+		// Generate 1-byte, 2-byte, 3-byte prefixes
+		pkLower := strings.ToLower(pk)
+		for byteLen := 1; byteLen <= 3; byteLen++ {
+			hexLen := byteLen * 2
+			if len(pkLower) >= hexLen {
+				pfx := pkLower[:hexLen]
+				repeaterPrefixes[pfx] = append(repeaterPrefixes[pfx], prefixEntry{pk, pfx})
+			}
+		}
+	}
+
+	suspected := make(map[string]int) // pubkey → max hash size from path appearances
+	for pfx, entries := range repeaterPrefixes {
+		txList := s.byPathHop[pfx]
+		for _, tx := range txList {
+			if tx.RawHex == "" || len(tx.RawHex) < 4 {
+				continue
+			}
+			header, err := strconv.ParseUint(tx.RawHex[:2], 16, 8)
+			if err != nil {
+				continue
+			}
+			routeType := header & 0x03
+			pathByteIdx := 1
+			if routeType == 0 || routeType == 3 {
+				pathByteIdx = 5
+			}
+			hexStart := pathByteIdx * 2
+			hexEnd := hexStart + 2
+			if hexEnd > len(tx.RawHex) {
+				continue
+			}
+			actualPathByte, err := strconv.ParseUint(tx.RawHex[hexStart:hexEnd], 16, 8)
+			if err != nil {
+				continue
+			}
+			hs := int((actualPathByte>>6)&0x3) + 1
+			if hs < 2 {
+				continue
+			}
+			// This packet uses multi-byte hashes and contains this prefix as a hop
+			for _, e := range entries {
+				if hs > suspected[e.pubkey] {
+					suspected[e.pubkey] = hs
+				}
+			}
+			break // one match is enough per prefix
+		}
+	}
+	s.mu.RUnlock()
+
+	// Build result for all repeaters
+	// Also find last_seen from DB
+	type dbNode struct {
+		lastSeen string
+	}
+	dbLastSeen := make(map[string]string)
+	rows, err := s.db.conn.Query("SELECT public_key, last_seen FROM nodes WHERE role LIKE '%repeater%'")
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var pk string
+			var ls sql.NullString
+			rows.Scan(&pk, &ls)
+			if ls.Valid {
+				dbLastSeen[pk] = ls.String
+			}
+		}
+	}
+
+	var result []MultiByteCapEntry
+	for pk, n := range nodeByPK {
+		if !strings.Contains(strings.ToLower(n.Role), "repeater") {
+			continue
+		}
+		entry := MultiByteCapEntry{
+			PublicKey:   pk,
+			Name:        n.Name,
+			Role:        n.Role,
+			MaxHashSize: 1,
+			LastSeen:    dbLastSeen[pk],
+		}
+
+		if maxHS, ok := confirmed[pk]; ok {
+			entry.Status = "confirmed"
+			entry.Evidence = "advert"
+			entry.MaxHashSize = maxHS
+		} else if maxHS, ok := suspected[pk]; ok {
+			entry.Status = "suspected"
+			entry.Evidence = "path"
+			entry.MaxHashSize = maxHS
+		} else {
+			entry.Status = "unknown"
+		}
+
+		// Check advert hash info for max even if not confirmed multi-byte
+		if info, ok := hashInfo[pk]; ok && entry.MaxHashSize == 1 {
+			for sz := range info.AllSizes {
+				if sz > entry.MaxHashSize {
+					entry.MaxHashSize = sz
+				}
+			}
+		}
+
+		result = append(result, entry)
+	}
+
+	// Sort: confirmed first, then suspected, then unknown; within each group by name
+	statusOrder := map[string]int{"confirmed": 0, "suspected": 1, "unknown": 2}
+	sort.Slice(result, func(i, j int) bool {
+		oi, oj := statusOrder[result[i].Status], statusOrder[result[j].Status]
+		if oi != oj {
+			return oi < oj
+		}
+		return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name)
+	})
+
+	return result
 }
 
 // --- Bulk Health (in-memory) ---

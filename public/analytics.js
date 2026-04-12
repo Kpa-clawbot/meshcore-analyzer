@@ -983,7 +983,109 @@
         </table>
         </div>
       </div>
+      ${renderMultiByteCapability(data.multiByteCapability || [])}
     `;
+  }
+
+  function renderMultiByteCapability(caps) {
+    if (!caps.length) return '';
+
+    var statusIcon = { confirmed: '✅', suspected: '⚠️', unknown: '❓' };
+    var statusLabel = { confirmed: 'Confirmed', suspected: 'Suspected', unknown: 'Unknown' };
+    var statusColor = { confirmed: 'var(--success, #22c55e)', suspected: 'var(--warning, #eab308)', unknown: 'var(--text-muted, #888)' };
+    var evidenceLabel = { advert: 'Advert with multi-byte hash', path: 'Path appearance', '': '—' };
+
+    function buildTable(caps, filter) {
+      var filtered = filter === 'all' ? caps : caps.filter(function(c) { return c.status === filter; });
+      var counts = { confirmed: 0, suspected: 0, unknown: 0 };
+      caps.forEach(function(c) { counts[c.status]++; });
+
+      return '<div class="analytics-card" id="multibyteCapSection">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
+          '<div>' +
+            '<h3 style="margin:0">🔧 Repeater Multi-Byte Capability</h3>' +
+            '<p class="text-muted" style="margin:4px 0 0;font-size:0.8em">Inferred multi-byte hash capability for each repeater. ' +
+            '<strong>Confirmed</strong> = seen advertising with multi-byte hash (100% reliable). ' +
+            '<strong>Suspected</strong> = prefix appeared in a multi-byte path (&lt;100%, possible prefix collision). ' +
+            '<strong>Unknown</strong> = no multi-byte evidence.</p>' +
+          '</div>' +
+          '<div style="display:flex;gap:4px;flex-wrap:wrap" id="mbCapFilters">' +
+            '<button class="filter-btn' + (filter === 'all' ? ' active' : '') + '" data-mb-filter="all">All (' + caps.length + ')</button>' +
+            '<button class="filter-btn' + (filter === 'confirmed' ? ' active' : '') + '" data-mb-filter="confirmed" style="--filter-color:var(--success, #22c55e)">✅ ' + counts.confirmed + '</button>' +
+            '<button class="filter-btn' + (filter === 'suspected' ? ' active' : '') + '" data-mb-filter="suspected" style="--filter-color:var(--warning, #eab308)">⚠️ ' + counts.suspected + '</button>' +
+            '<button class="filter-btn' + (filter === 'unknown' ? ' active' : '') + '" data-mb-filter="unknown" style="--filter-color:var(--text-muted, #888)">❓ ' + counts.unknown + '</button>' +
+          '</div>' +
+        '</div>' +
+        (filtered.length ? '<table class="analytics-table" id="mbCapTable" style="margin-top:12px">' +
+          '<thead><tr>' +
+            '<th scope="col" data-sort="name">Name</th>' +
+            '<th scope="col" data-sort="role">Role</th>' +
+            '<th scope="col" data-sort="status">Status</th>' +
+            '<th scope="col" data-sort="evidence">Evidence</th>' +
+            '<th scope="col" data-sort="maxHashSize">Max Hash Size</th>' +
+            '<th scope="col" data-sort="lastSeen">Last Seen</th>' +
+          '</tr></thead>' +
+          '<tbody>' +
+            filtered.map(function(c) {
+              return '<tr class="clickable-row" data-action="navigate" data-value="#/nodes/' + encodeURIComponent(c.pubkey) + '" tabindex="0" role="row">' +
+                '<td><strong>' + esc(c.name) + '</strong></td>' +
+                '<td>' + esc(c.role) + '</td>' +
+                '<td><span style="color:' + statusColor[c.status] + '">' + statusIcon[c.status] + ' ' + statusLabel[c.status] + '</span></td>' +
+                '<td>' + (evidenceLabel[c.evidence] || '—') + '</td>' +
+                '<td><span class="badge badge-hash-' + c.maxHashSize + '">' + c.maxHashSize + '-byte</span></td>' +
+                '<td>' + (c.lastSeen ? timeAgo(c.lastSeen) : '—') + '</td>' +
+              '</tr>';
+            }).join('') +
+          '</tbody>' +
+        '</table>' : '<div class="text-muted" style="padding:16px">No repeaters match this filter.</div>') +
+      '</div>';
+    }
+
+    setTimeout(function() {
+      var section = document.getElementById('multibyteCapSection');
+      if (!section) return;
+      var currentFilter = 'all';
+
+      section.addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-mb-filter]');
+        if (btn) {
+          currentFilter = btn.dataset.mbFilter;
+          var parent = section.parentElement;
+          var tmp = document.createElement('div');
+          tmp.innerHTML = buildTable(caps, currentFilter);
+          var newSection = tmp.querySelector('#multibyteCapSection');
+          if (newSection) {
+            section.replaceWith(newSection);
+            section = newSection;
+          }
+          return;
+        }
+        var th = e.target.closest('[data-sort]');
+        if (th) {
+          var tbody = section.querySelector('tbody');
+          if (!tbody) return;
+          var rows = Array.from(tbody.querySelectorAll('tr'));
+          var col = th.dataset.sort;
+          var colIdx = { name: 0, role: 1, status: 2, evidence: 3, maxHashSize: 4, lastSeen: 5 };
+          var statusWeight = { 'confirmed': 0, 'suspected': 1, 'unknown': 2 };
+          rows.sort(function(a, b) {
+            var va = a.children[colIdx[col]] ? a.children[colIdx[col]].textContent.trim() : '';
+            var vb = b.children[colIdx[col]] ? b.children[colIdx[col]].textContent.trim() : '';
+            if (col === 'status') {
+              va = statusWeight[va.toLowerCase().split(' ').pop()] !== undefined ? statusWeight[va.toLowerCase().split(' ').pop()] : 2;
+              vb = statusWeight[vb.toLowerCase().split(' ').pop()] !== undefined ? statusWeight[vb.toLowerCase().split(' ').pop()] : 2;
+            }
+            if (col === 'maxHashSize') { va = parseInt(va) || 0; vb = parseInt(vb) || 0; }
+            if (va < vb) return -1;
+            if (va > vb) return 1;
+            return 0;
+          });
+          rows.forEach(function(r) { tbody.appendChild(r); });
+        }
+      });
+    }, 100);
+
+    return buildTable(caps, 'all');
   }
 
   async function renderCollisionTab(el, data, collisionData) {
