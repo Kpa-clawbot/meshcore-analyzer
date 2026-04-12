@@ -1161,6 +1161,48 @@
     // Populate role legend from shared roles.js
     // Initialize panel corner positions (#608 M0)
     initPanelPositions();
+
+    // Initialize DragManager for free-form panel dragging (#608 M1)
+    if (window.DragManager) {
+      var dragMgr = new DragManager();
+      var dragPanels = ['liveFeed', 'liveLegend', 'liveNodeDetail'];
+      for (var di = 0; di < dragPanels.length; di++) {
+        dragMgr.register(document.getElementById(dragPanels[di]));
+      }
+      dragMgr.restorePositions();
+
+      // Responsive gate: disable drag below medium breakpoint or on touch
+      var dragMql = window.matchMedia('(pointer: fine) and (min-width: 768px)');
+      function onDragMediaChange(e) {
+        if (!e.matches) {
+          // Revert dragged panels to corner positions
+          document.querySelectorAll('.live-overlay[data-dragged="true"]').forEach(function (p) {
+            delete p.dataset.dragged;
+            p.style.transform = '';
+            p.style.top = '';
+            p.style.left = '';
+            p.style.right = '';
+            p.style.bottom = '';
+          });
+          initPanelPositions();
+          dragMgr.disable();
+        } else {
+          dragMgr.enable();
+          dragMgr.restorePositions();
+        }
+      }
+      dragMql.addEventListener('change', onDragMediaChange);
+      // Initial check
+      if (!dragMql.matches) dragMgr.disable();
+
+      // Resize clamping (debounced)
+      var resizeTimer = null;
+      window.addEventListener('resize', function () {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () { dragMgr.handleResize(); }, 200);
+      });
+    }
+
     const roleLegendList = document.getElementById('roleLegendList');
     if (roleLegendList) {
       for (const role of (window.ROLE_SORT || ['repeater', 'companion', 'room', 'sensor', 'observer'])) {

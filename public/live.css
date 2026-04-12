@@ -849,3 +849,40 @@
   }
 }
 
+
+/* ── Drag Manager (#608 M1) ── */
+
+/* Panel header as drag handle — desktop pointer devices only */
+@media (pointer: fine) {
+  .live-overlay .panel-header {
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+  }
+  .live-overlay.is-dragging .panel-header {
+    cursor: grabbing;
+  }
+  .live-overlay .panel-header:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.03));
+  }
+}
+
+/* Panel during drag */
+.live-overlay.is-dragging {
+  opacity: 0.92;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  will-change: transform;
+  transition: none !important;
+}
+
+/* Freely placed panel — no corner transition animations */
+.live-overlay[data-dragged="true"] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-overlay.is-dragging,
+  .live-overlay[data-dragged="true"] {
+    transition: none;
+  }
+}
