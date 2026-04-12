@@ -208,9 +208,10 @@ type PacketStore struct {
 
 	// Eviction config and stats
 	retentionHours   float64        // 0 = unlimited
-	maxMemoryMB      int            // 0 = unlimited
+	maxMemoryMB      int            // 0 = unlimited (packet store memory budget)
 	evicted          int64          // total packets evicted
-	memoryEstimator  func() float64 // injectable for tests; nil = use runtime.ReadMemStats
+	trackedBytes     int64          // running total of estimated packet store memory
+	memoryEstimator  func() float64 // injectable for tests; nil = use runtime.ReadMemStats (stats only)
 }
 
 // Precomputed distance records for fast analytics aggregation.
@@ -407,6 +408,7 @@ func (s *PacketStore) Load() error {
 				s.byPayloadType[pt] = append(s.byPayloadType[pt], tx)
 			}
 			s.trackAdvertPubkey(tx)
+			s.trackedBytes += estimateStoreTxBytes(tx)
 		}
 
 		if obsID.Valid {
@@ -455,6 +457,7 @@ func (s *PacketStore) Load() error {
 			}
 
 			s.totalObs++
+			s.trackedBytes += estimateStoreObsBytes(obs)
 		}
 	}
 
@@ -474,8 +477,8 @@ func (s *PacketStore) Load() error {
 
 	s.loaded = true
 	elapsed := time.Since(t0)
-	log.Printf("[store] Loaded %d transmissions (%d observations) in %v (heap ~%.0fMB)",
-		len(s.packets), s.totalObs, elapsed, s.estimatedMemoryMB())
+	log.Printf("[store] Loaded %d transmissions (%d observations) in %v (tracked ~%.0fMB, heap ~%.0fMB)",
+		len(s.packets), s.totalObs, elapsed, s.trackedMemoryMB(), s.estimatedMemoryMB())
 	return nil
 }
 
@@ -887,6 +890,7 @@ func (s *PacketStore) GetPerfStoreStats() map[string]interface{} {
 	s.mu.RUnlock()
 
 	estimatedMB := math.Round(s.estimatedMemoryMB()*10) / 10
+	trackedMB := math.Round(s.trackedMemoryMB()*10) / 10
 
 	evicted := atomic.LoadInt64(&s.evicted)
 
@@ -901,6 +905,7 @@ func (s *PacketStore) GetPerfStoreStats() map[string]interface{} {
 		"retentionHours":    s.retentionHours,
 		"maxMemoryMB":       s.maxMemoryMB,
 		"estimatedMB":       estimatedMB,
+		"trackedMB":         trackedMB,
 		"indexes": map[string]interface{}{
 			"byHash":           hashIdx,
 			"byTxID":           txIdx,
@@ -1058,6 +1063,7 @@ func (s *PacketStore) GetPerfStoreStatsTyped() PerfPacketStoreStats {
 	s.mu.RUnlock()
 
 	estimatedMB := math.Round(s.estimatedMemoryMB()*10) / 10
+	trackedMB := math.Round(s.trackedMemoryMB()*10) / 10
 
 	return PerfPacketStoreStats{
 		TotalLoaded:       totalLoaded,
@@ -1069,6 +1075,7 @@ func (s *PacketStore) GetPerfStoreStatsTyped() PerfPacketStoreStats {
 		SqliteOnly:        false,
 		MaxPackets:        2386092,
 		EstimatedMB:       estimatedMB,
+		TrackedMB:         trackedMB,
 		MaxMB:             s.maxMemoryMB,
 		Indexes: PacketStoreIndexes{
 			ByHash:           hashIdx,
@@ -1374,6 +1381,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				s.byPayloadType[pt] = append(s.byPayloadType[pt], tx)
 			}
 			s.trackAdvertPubkey(tx)
+			s.trackedBytes += estimateStoreTxBytes(tx)
 
 			if _, exists := broadcastTxs[r.txID]; !exists {
 				broadcastTxs[r.txID] = tx
@@ -1430,6 +1438,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				s.byObserver[r.observerID] = append(s.byObserver[r.observerID], obs)
 			}
 			s.totalObs++
+			s.trackedBytes += estimateStoreObsBytes(obs)
 		}
 	}
 
@@ -1744,6 +1753,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			s.byObserver[r.observerID] = append(s.byObserver[r.observerID], obs)
 		}
 		s.totalObs++
+		s.trackedBytes += estimateStoreObsBytes(obs)
 		updatedTxs[r.txID] = tx
 
 		decoded := map[string]interface{}{
@@ -2557,9 +2567,36 @@ func (s *PacketStore) buildDistanceIndex() {
 		len(s.distHops), len(s.distPaths))
 }
 
+// Self-accounting memory estimation constants.
+// These estimate the in-memory cost of StoreTx and StoreObs structs including
+// map/index overhead. They don't need to be exact — just proportional to actual
+// usage and independent of GC state.
+const (
+	storeTxBaseBytes  = 384 // StoreTx struct fields + map headers + sync.Once + string headers
+	storeObsBaseBytes = 192 // StoreObs struct fields + string headers
+	indexEntryBytes   = 48  // average cost of one index map entry (key + pointer + bucket overhead)
+	numIndexesPerTx   = 5   // byHash, byTxID, byNode, byPayloadType, nodeHashes entries
+	numIndexesPerObs  = 2   // byObsID, byObserver entries
+)
+
+// estimateStoreTxBytes returns the estimated memory cost of a StoreTx (excluding observations).
+func estimateStoreTxBytes(tx *StoreTx) int64 {
+	base := int64(storeTxBaseBytes)
+	base += int64(len(tx.RawHex) + len(tx.Hash) + len(tx.DecodedJSON) + len(tx.PathJSON))
+	base += int64(numIndexesPerTx * indexEntryBytes)
+	return base
+}
+
+// estimateStoreObsBytes returns the estimated memory cost of a StoreObs.
+func estimateStoreObsBytes(obs *StoreObs) int64 {
+	base := int64(storeObsBaseBytes)
+	base += int64(len(obs.PathJSON) + len(obs.ObserverID))
+	base += int64(numIndexesPerObs * indexEntryBytes)
+	return base
+}
+
 // estimatedMemoryMB returns current Go heap allocation in MB.
-// Uses runtime.ReadMemStats so it accounts for all data structures
-// (distHops, distPaths, spIndex, map overhead) not just packets/observations.
+// Kept for stats/debug endpoints only — NOT used in eviction decisions.
 // In tests, memoryEstimator can be set to inject a deterministic value.
 func (s *PacketStore) estimatedMemoryMB() float64 {
 	if s.memoryEstimator != nil {
@@ -2568,6 +2605,11 @@ func (s *PacketStore) estimatedMemoryMB() float64 {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	return float64(ms.HeapAlloc) / 1048576.0
+}
+
+// trackedMemoryMB returns the self-accounted packet store memory in MB.
+func (s *PacketStore) trackedMemoryMB() float64 {
+	return float64(s.trackedBytes) / 1048576.0
 }
 
 // EvictStale removes packets older than the retention window and/or exceeding
@@ -2588,24 +2630,34 @@ func (s *PacketStore) EvictStale() int {
 		}
 	}
 
-	// Memory-based eviction: if heap exceeds budget, trim proportionally from head.
-	// All major data structures (distHops, distPaths, spIndex) scale with packet count,
-	// so evicting a fraction of packets frees roughly the same fraction of total heap.
-	// A 10% buffer avoids immediately re-triggering on the next ingest cycle.
+	// Memory-based eviction: use self-accounted trackedBytes with watermark hysteresis.
+	// High watermark = maxMemoryMB (trigger), low watermark = 85% (stop).
+	// Safety cap: never evict more than 25% of packets in a single pass.
 	if s.maxMemoryMB > 0 {
-		currentMB := s.estimatedMemoryMB()
-		if currentMB > float64(s.maxMemoryMB) && len(s.packets) > 0 {
-			fractionToKeep := (float64(s.maxMemoryMB) / currentMB) * 0.9
-			keepCount := int(float64(len(s.packets)) * fractionToKeep)
-			if keepCount < 0 {
-				keepCount = 0
+		highWatermark := int64(s.maxMemoryMB) * 1048576
+		lowWatermark := int64(float64(highWatermark) * 0.85)
+		if s.trackedBytes > highWatermark && len(s.packets) > 0 {
+			// Evict from head until trackedBytes would drop below low watermark
+			var bytesToEvict int64
+			memCutoff := cutoffIdx
+			for memCutoff < len(s.packets) && (s.trackedBytes-bytesToEvict) > lowWatermark {
+				tx := s.packets[memCutoff]
+				bytesToEvict += estimateStoreTxBytes(tx)
+				for _, obs := range tx.Observations {
+					bytesToEvict += estimateStoreObsBytes(obs)
+				}
+				memCutoff++
 			}
-			newCutoff := len(s.packets) - keepCount
-			if newCutoff > cutoffIdx {
-				cutoffIdx = newCutoff
+			// Safety cap: never evict more than 25% in a single pass
+			maxEvict := len(s.packets) / 4
+			if maxEvict < 1 {
+				maxEvict = 1
 			}
-			if cutoffIdx > len(s.packets) {
-				cutoffIdx = len(s.packets)
+			if memCutoff > maxEvict {
+				memCutoff = maxEvict
+			}
+			if memCutoff > cutoffIdx {
+				cutoffIdx = memCutoff
 			}
 		}
 	}
@@ -2619,6 +2671,7 @@ func (s *PacketStore) EvictStale() int {
 
 	evicting := s.packets[:cutoffIdx]
 	evictedObs := 0
+	var evictedBytes int64
 
 	// Build sets of evicted IDs for batch removal from secondary indexes
 	evictedTxIDs := make(map[int]struct{}, cutoffIdx)
@@ -2634,10 +2687,12 @@ func (s *PacketStore) EvictStale() int {
 		delete(s.byHash, tx.Hash)
 		delete(s.byTxID, tx.ID)
 		evictedTxIDs[tx.ID] = struct{}{}
+		evictedBytes += estimateStoreTxBytes(tx)
 
 		for _, obs := range tx.Observations {
 			delete(s.byObsID, obs.ID)
 			evictedObsIDs[obs.ID] = struct{}{}
+			evictedBytes += estimateStoreObsBytes(obs)
 			if obs.ObserverID != "" {
 				affectedObservers[obs.ObserverID] = struct{}{}
 			}
@@ -2789,7 +2844,12 @@ func (s *PacketStore) EvictStale() int {
 
 	evictCount := cutoffIdx
 	atomic.AddInt64(&s.evicted, int64(evictCount))
-	log.Printf("[store] Evicted %d packets (%d obs)", evictCount, evictedObs)
+	s.trackedBytes -= evictedBytes
+	if s.trackedBytes < 0 {
+		s.trackedBytes = 0
+	}
+	log.Printf("[store] Evicted %d packets (%d obs, freed ~%.1fMB, tracked ~%.1fMB)",
+		evictCount, evictedObs, float64(evictedBytes)/1048576.0, s.trackedMemoryMB())
 
 	// Eviction removes data — all caches may be affected
 	s.invalidateCachesFor(cacheInvalidation{eviction: true})

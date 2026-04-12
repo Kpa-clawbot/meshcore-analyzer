@@ -174,6 +174,7 @@ type PerfPacketStoreStats struct {
 	SqliteOnly        bool               `json:"sqliteOnly"`
 	MaxPackets        int                `json:"maxPackets"`
 	EstimatedMB       float64            `json:"estimatedMB"`
+	TrackedMB         float64            `json:"trackedMB"`
 	MaxMB             int                `json:"maxMB"`
 	Indexes           PacketStoreIndexes `json:"indexes"`
 }

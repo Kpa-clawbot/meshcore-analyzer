@@ -85,6 +85,12 @@ func makeTestStore(count int, startTime time.Time, intervalMin int) *PacketStore
 
 		// Subpath index
 		addTxToSubpathIndex(store.spIndex, tx)
+
+		// Track bytes for self-accounting
+		store.trackedBytes += estimateStoreTxBytes(tx)
+		for _, obs := range tx.Observations {
+			store.trackedBytes += estimateStoreObsBytes(obs)
+		}
 	}
 
 	return store
@@ -166,43 +172,43 @@ func TestEvictStale_MemoryBasedEviction(t *testing.T) {
 	// All packets are recent (1h old) so time-based won't trigger.
 	store.retentionHours = 24
 	store.maxMemoryMB = 3
-	// Inject deterministic estimator: simulates 6MB (over 3MB limit).
-	// Uses packet count so it scales correctly after eviction.
-	store.memoryEstimator = func() float64 {
-		return float64(len(store.packets)*5120+store.totalObs*500) / 1048576.0
-	}
+	// Set trackedBytes to simulate 6MB (over 3MB limit).
+	store.trackedBytes = 6 * 1048576
 
 	evicted := store.EvictStale()
 	if evicted == 0 {
 		t.Fatal("expected some evictions for memory cap")
 	}
-	estMB := store.estimatedMemoryMB()
-	if estMB > 3.5 {
-		t.Fatalf("expected <=3.5MB after eviction, got %.1fMB", estMB)
+	// 25% safety cap should limit to 250 per pass
+	if evicted > 250 {
+		t.Fatalf("25%% safety cap violated: evicted %d", evicted)
+	}
+	// trackedBytes should have decreased
+	if store.trackedBytes >= 6*1048576 {
+		t.Fatal("trackedBytes should have decreased after eviction")
 	}
 }
 
-// TestEvictStale_MemoryBasedEviction_UnderestimatedHeap verifies that eviction
-// fires correctly when actual heap is much larger than a formula-based estimate
-// would report — the scenario that caused OOM kills in production.
+// TestEvictStale_MemoryBasedEviction_UnderestimatedHeap verifies that the 25%
+// safety cap prevents cascading eviction even when trackedBytes is very high.
 func TestEvictStale_MemoryBasedEviction_UnderestimatedHeap(t *testing.T) {
 	now := time.Now().UTC()
 	store := makeTestStore(1000, now.Add(-1*time.Hour), 0)
 	store.retentionHours = 24
 	store.maxMemoryMB = 500
-	// Simulate actual heap 5x over budget (like production: ~5GB actual vs ~1GB limit).
-	store.memoryEstimator = func() float64 {
-		return 2500.0 // 2500MB actual vs 500MB limit
-	}
+	// Simulate trackedBytes 5x over budget.
+	store.trackedBytes = 2500 * 1048576
 
 	evicted := store.EvictStale()
 	if evicted == 0 {
-		t.Fatal("expected evictions when heap is 5x over limit")
+		t.Fatal("expected evictions when tracked is 5x over limit")
 	}
-	// Should keep roughly 500/2500 * 0.9 = 18% of packets → ~180 of 1000.
-	remaining := len(store.packets)
-	if remaining > 250 {
-		t.Fatalf("expected most packets evicted (heap 5x over), but %d of 1000 remain", remaining)
+	// Safety cap: max 25% per pass = 250
+	if evicted > 250 {
+		t.Fatalf("25%% safety cap violated: evicted %d of 1000", evicted)
+	}
+	if evicted != 250 {
+		t.Fatalf("expected exactly 250 evicted (25%% cap), got %d", evicted)
 	}
 }
 
@@ -373,5 +379,198 @@ func TestCacheTTLDefaults(t *testing.T) {
 	}
 	if store.rfCacheTTL != 15*time.Second {
 		t.Fatalf("expected default rfCacheTTL=15s, got %v", store.rfCacheTTL)
+	}
+}
+
+// --- Self-accounting memory tracking tests ---
+
+func TestTrackedBytes_IncreasesOnInsert(t *testing.T) {
+	now := time.Now().UTC()
+	store := makeTestStore(0, now, 0)
+	if store.trackedBytes != 0 {
+		t.Fatalf("expected 0 trackedBytes for empty store, got %d", store.trackedBytes)
+	}
+
+	store2 := makeTestStore(10, now, 1)
+	if store2.trackedBytes <= 0 {
+		t.Fatal("expected positive trackedBytes after inserting 10 packets")
+	}
+	// Each packet has 2 observations; should be roughly 10*(384+5*48) + 20*(192+2*48) = 10*624 + 20*288 = 12000
+	expectedMin := int64(10*600 + 20*250) // rough lower bound
+	if store2.trackedBytes < expectedMin {
+		t.Fatalf("trackedBytes %d seems too low (expected > %d)", store2.trackedBytes, expectedMin)
+	}
+}
+
+func TestTrackedBytes_DecreasesOnEvict(t *testing.T) {
+	now := time.Now().UTC()
+	store := makeTestStore(100, now.Add(-48*time.Hour), 0)
+	store.retentionHours = 24
+
+	beforeBytes := store.trackedBytes
+	if beforeBytes <= 0 {
+		t.Fatal("expected positive trackedBytes before eviction")
+	}
+
+	evicted := store.EvictStale()
+	if evicted != 100 {
+		t.Fatalf("expected 100 evicted, got %d", evicted)
+	}
+	if store.trackedBytes != 0 {
+		t.Fatalf("expected 0 trackedBytes after evicting all, got %d", store.trackedBytes)
+	}
+}
+
+func TestTrackedBytes_MatchesExpectedAfterMixedInsertEvict(t *testing.T) {
+	now := time.Now().UTC()
+	// Create 100 packets, 50 old + 50 recent
+	store := makeTestStore(100, now.Add(-48*time.Hour), 0)
+	for i := 50; i < 100; i++ {
+		store.packets[i].FirstSeen = now.Add(-1 * time.Hour).Format(time.RFC3339)
+	}
+	store.retentionHours = 24
+
+	totalBefore := store.trackedBytes
+
+	// Calculate expected bytes for first 50 packets (to be evicted)
+	var evictedBytes int64
+	for i := 0; i < 50; i++ {
+		tx := store.packets[i]
+		evictedBytes += estimateStoreTxBytes(tx)
+		for _, obs := range tx.Observations {
+			evictedBytes += estimateStoreObsBytes(obs)
+		}
+	}
+
+	store.EvictStale()
+
+	expectedAfter := totalBefore - evictedBytes
+	if store.trackedBytes != expectedAfter {
+		t.Fatalf("trackedBytes %d != expected %d (before=%d, evicted=%d)",
+			store.trackedBytes, expectedAfter, totalBefore, evictedBytes)
+	}
+}
+
+func TestWatermarkHysteresis(t *testing.T) {
+	now := time.Now().UTC()
+	store := makeTestStore(1000, now.Add(-1*time.Hour), 0)
+	store.retentionHours = 0 // no time-based eviction
+	store.maxMemoryMB = 1    // 1MB budget
+
+	// Set trackedBytes to just above high watermark
+	highWatermark := int64(1 * 1048576)
+	lowWatermark := int64(float64(highWatermark) * 0.85)
+	store.trackedBytes = highWatermark + 1
+
+	evicted := store.EvictStale()
+	if evicted == 0 {
+		t.Fatal("expected eviction when above high watermark")
+	}
+	if store.trackedBytes > lowWatermark+1024 {
+		t.Fatalf("expected trackedBytes near low watermark after eviction, got %d (low=%d)",
+			store.trackedBytes, lowWatermark)
+	}
+
+	// Now set trackedBytes to just below high watermark — should NOT trigger
+	store.trackedBytes = highWatermark - 1
+	evicted2 := store.EvictStale()
+	if evicted2 != 0 {
+		t.Fatalf("expected no eviction below high watermark, got %d", evicted2)
+	}
+}
+
+func TestSafetyCap25Percent(t *testing.T) {
+	now := time.Now().UTC()
+	store := makeTestStore(1000, now.Add(-1*time.Hour), 0)
+	store.retentionHours = 0
+	store.maxMemoryMB = 1
+
+	// Set trackedBytes way over limit to force maximum eviction
+	store.trackedBytes = 100 * 1048576 // 100MB vs 1MB limit
+
+	evicted := store.EvictStale()
+	// 25% of 1000 = 250
+	if evicted > 250 {
+		t.Fatalf("25%% safety cap violated: evicted %d of 1000 (max should be 250)", evicted)
+	}
+	if evicted != 250 {
+		t.Fatalf("expected exactly 250 evicted (25%% cap), got %d", evicted)
+	}
+	if len(store.packets) != 750 {
+		t.Fatalf("expected 750 remaining, got %d", len(store.packets))
+	}
+}
+
+func TestMultiplePassesConverge(t *testing.T) {
+	now := time.Now().UTC()
+	store := makeTestStore(1000, now.Add(-1*time.Hour), 0)
+	store.retentionHours = 0
+	// Set budget to half the actual tracked bytes — requires ~2 passes
+	actualBytes := store.trackedBytes
+	store.maxMemoryMB = int(float64(actualBytes) / 1048576.0 / 2)
+	if store.maxMemoryMB < 1 {
+		store.maxMemoryMB = 1
+	}
+
+	totalEvicted := 0
+	for pass := 0; pass < 20; pass++ {
+		evicted := store.EvictStale()
+		if evicted == 0 {
+			break
+		}
+		totalEvicted += evicted
+	}
+
+	// After convergence, trackedBytes should be at or below high watermark
+	// (may be between low and high due to hysteresis — that's fine)
+	highWatermark := int64(store.maxMemoryMB) * 1048576
+	if store.trackedBytes > highWatermark {
+		t.Fatalf("did not converge: trackedBytes=%d (%.1fMB) > highWatermark=%d after multiple passes",
+			store.trackedBytes, float64(store.trackedBytes)/1048576.0, highWatermark)
+	}
+	if totalEvicted == 0 {
+		t.Fatal("expected some evictions across multiple passes")
+	}
+}
+
+func TestEstimateStoreTxBytes(t *testing.T) {
+	tx := &StoreTx{
+		RawHex:      "aabbcc",
+		Hash:        "hash1234",
+		DecodedJSON: `{"pubKey":"pk1"}`,
+		PathJSON:    `["aa","bb"]`,
+	}
+	est := estimateStoreTxBytes(tx)
+	// Verify the function returns a reasonable value matching our manual calculation
+	manualCalc := int64(storeTxBaseBytes) + int64(len(tx.RawHex)+len(tx.Hash)+len(tx.DecodedJSON)+len(tx.PathJSON)) + int64(numIndexesPerTx*indexEntryBytes)
+	if est != manualCalc {
+		t.Fatalf("estimateStoreTxBytes = %d, want %d (manual calc)", est, manualCalc)
+	}
+	if est < 600 || est > 800 {
+		t.Fatalf("estimateStoreTxBytes = %d, expected in range [600, 800]", est)
+	}
+}
+
+func TestEstimateStoreObsBytes(t *testing.T) {
+	obs := &StoreObs{
+		ObserverID: "obs123",
+		PathJSON:   `["aa"]`,
+	}
+	est := estimateStoreObsBytes(obs)
+	// storeObsBaseBytes(192) + len(ObserverID=6) + len(PathJSON=6) + 2*48(96) = 300
+	expected := int64(192 + 6 + 6 + 2*48)
+	if est != expected {
+		t.Fatalf("estimateStoreObsBytes = %d, want %d", est, expected)
+	}
+}
+
+func BenchmarkEviction100K(b *testing.B) {
+	now := time.Now().UTC()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		store := makeTestStore(100000, now.Add(-48*time.Hour), 0)
+		store.retentionHours = 24
+		b.StartTimer()
+		store.EvictStale()
 	}
 }
