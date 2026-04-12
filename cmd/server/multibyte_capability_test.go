@@ -211,3 +211,104 @@ func TestMultiByteCapability_PrefixCollision(t *testing.T) {
 		t.Errorf("RepOther expected suspected, got %s", capByName["RepOther"].Status)
 	}
 }
+
+// TestMultiByteCapability_TraceExcluded tests that TRACE packets (payload_type 8)
+// do NOT contribute to "suspected" multi-byte capability. TRACE packets carry
+// hash size in their own flags, so pre-1.14 repeaters can forward multi-byte
+// TRACEs without actually supporting multi-byte hashes. See #714.
+func TestMultiByteCapability_TraceExcluded(t *testing.T) {
+	db := setupCapabilityTestDB(t)
+	defer db.conn.Close()
+
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"aabbccdd11223344", "RepTrace", "repeater", "2026-04-10T00:00:00Z")
+
+	store := NewPacketStore(db, nil)
+
+	// TRACE packet (payload_type 8) with 2-byte hash in path
+	pathByte := buildPathByte(2, 1)
+	rawHex := "01" + pathByte + "aabb"
+	pt := 8
+	pkt := &StoreTx{
+		RawHex:      rawHex,
+		PayloadType: &pt,
+		PathJSON:    `["aabb"]`,
+		FirstSeen:   "2026-04-10T00:00:00.000Z",
+	}
+	addTestPacket(store, pkt)
+
+	caps := store.computeMultiByteCapability()
+	if len(caps) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(caps))
+	}
+	if caps[0].Status != "unknown" {
+		t.Errorf("expected unknown (TRACE excluded), got %s", caps[0].Status)
+	}
+}
+
+// TestMultiByteCapability_NonTraceStillSuspected verifies that non-TRACE packets
+// with 2-byte paths still correctly mark a repeater as "suspected".
+func TestMultiByteCapability_NonTraceStillSuspected(t *testing.T) {
+	db := setupCapabilityTestDB(t)
+	defer db.conn.Close()
+
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"aabbccdd11223344", "RepNonTrace", "repeater", "2026-04-10T00:00:00Z")
+
+	store := NewPacketStore(db, nil)
+
+	// GRP_TXT packet (payload_type 1) with 2-byte hash in path
+	pathByte := buildPathByte(2, 1)
+	rawHex := "01" + pathByte + "aabb"
+	pt := 1
+	pkt := &StoreTx{
+		RawHex:      rawHex,
+		PayloadType: &pt,
+		PathJSON:    `["aabb"]`,
+		FirstSeen:   "2026-04-10T00:00:00.000Z",
+	}
+	addTestPacket(store, pkt)
+
+	caps := store.computeMultiByteCapability()
+	if len(caps) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(caps))
+	}
+	if caps[0].Status != "suspected" {
+		t.Errorf("expected suspected, got %s", caps[0].Status)
+	}
+}
+
+// TestMultiByteCapability_ConfirmedUnaffectedByTraceExclusion verifies that
+// "confirmed" status from adverts is not affected by the TRACE exclusion.
+func TestMultiByteCapability_ConfirmedUnaffectedByTraceExclusion(t *testing.T) {
+	db := setupCapabilityTestDB(t)
+	defer db.conn.Close()
+
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"aabbccdd11223344", "RepConfirmedTrace", "repeater", "2026-04-11T00:00:00Z")
+
+	store := NewPacketStore(db, nil)
+
+	// Advert with 2-byte hash (confirms capability)
+	addTestPacket(store, makeTestAdvert("aabbccdd11223344", 2))
+
+	// TRACE packet also present — should not downgrade confirmed status
+	pathByte := buildPathByte(2, 1)
+	rawHex := "01" + pathByte + "aabb"
+	pt := 8
+	pkt := &StoreTx{
+		RawHex:      rawHex,
+		PayloadType: &pt,
+		PathJSON:    `["aabb"]`,
+		FirstSeen:   "2026-04-10T00:00:00.000Z",
+	}
+	addTestPacket(store, pkt)
+
+	caps := store.computeMultiByteCapability()
+	if len(caps) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(caps))
+	}
+	if caps[0].Status != "confirmed" {
+		t.Errorf("expected confirmed (unaffected by TRACE), got %s", caps[0].Status)
+	}
+}

@@ -5672,6 +5672,13 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 			if tx.RawHex == "" || len(tx.RawHex) < 4 {
 				continue
 			}
+			// Skip TRACE packets (payload_type 8) — they carry hash size in
+			// TRACE flags, not the repeater's compile-time PATH_HASH_SIZE.
+			// Pre-1.14 repeaters can forward multi-byte TRACEs, creating
+			// false positives for "suspected" capability. See #714.
+			if tx.PayloadType != nil && *tx.PayloadType == 8 {
+				continue
+			}
 			header, err := strconv.ParseUint(tx.RawHex[:2], 16, 8)
 			if err != nil {
 				continue
