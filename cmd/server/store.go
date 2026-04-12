@@ -2649,7 +2649,9 @@ func (s *PacketStore) EvictStale() int {
 			affectedPayloadTypes[*tx.PayloadType] = struct{}{}
 		}
 
-		// Remove from nodeHashes and collect affected node keys
+		// Remove from nodeHashes and collect affected node keys.
+		// Must mirror indexByNode: process decoded JSON fields AND resolved_path pubkeys.
+		evictedFromNode := make(map[string]bool)
 		if tx.DecodedJSON != "" {
 			var decoded map[string]interface{}
 			if json.Unmarshal([]byte(tx.DecodedJSON), &decoded) == nil {
@@ -2662,9 +2664,47 @@ func (s *PacketStore) EvictStale() int {
 							}
 						}
 						affectedNodes[v] = struct{}{}
+						evictedFromNode[v] = true
 					}
 				}
 			}
+		}
+		// Clean up resolved_path pubkeys from byNode/nodeHashes
+		for _, obs := range tx.Observations {
+			for _, rp := range obs.ResolvedPath {
+				if rp == nil {
+					continue
+				}
+				pk := *rp
+				if pk == "" || evictedFromNode[pk] {
+					continue
+				}
+				if hashes, ok := s.nodeHashes[pk]; ok {
+					delete(hashes, tx.Hash)
+					if len(hashes) == 0 {
+						delete(s.nodeHashes, pk)
+					}
+				}
+				affectedNodes[pk] = struct{}{}
+				evictedFromNode[pk] = true
+			}
+		}
+		for _, rp := range tx.ResolvedPath {
+			if rp == nil {
+				continue
+			}
+			pk := *rp
+			if pk == "" || evictedFromNode[pk] {
+				continue
+			}
+			if hashes, ok := s.nodeHashes[pk]; ok {
+				delete(hashes, tx.Hash)
+				if len(hashes) == 0 {
+					delete(s.nodeHashes, pk)
+				}
+			}
+			affectedNodes[pk] = struct{}{}
+			evictedFromNode[pk] = true
 		}
 
 		// Remove from subpath index
