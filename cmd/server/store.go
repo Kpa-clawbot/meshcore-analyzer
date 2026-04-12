@@ -512,30 +512,61 @@ func pathLen(pathJSON string) int {
 
 // indexByNode extracts pubkeys from decoded_json and indexes the transmission.
 func (s *PacketStore) indexByNode(tx *StoreTx) {
-	if tx.DecodedJSON == "" {
-		return
-	}
-	// All three target fields ("pubKey", "destPubKey", "srcPubKey") share the
-	// common suffix "ubKey" — skip JSON parse for packets that have none of them.
-	if !strings.Contains(tx.DecodedJSON, "ubKey") {
-		return
-	}
-	decoded := tx.ParsedDecoded()
-	if decoded == nil {
-		return
-	}
-	for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
-		if v, ok := decoded[field].(string); ok && v != "" {
-			if s.nodeHashes[v] == nil {
-				s.nodeHashes[v] = make(map[string]bool)
+	// Track which pubkeys have been indexed for this packet to avoid duplicates
+	// when the same pubkey appears in both decoded JSON and resolved path.
+	indexed := make(map[string]bool)
+
+	// Index by decoded JSON fields (pubKey, destPubKey, srcPubKey).
+	if tx.DecodedJSON != "" && strings.Contains(tx.DecodedJSON, "ubKey") {
+		if decoded := tx.ParsedDecoded(); decoded != nil {
+			for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
+				if v, ok := decoded[field].(string); ok && v != "" {
+					s.addToByNode(tx, v)
+					indexed[v] = true
+				}
 			}
-			if s.nodeHashes[v][tx.Hash] {
-				continue
-			}
-			s.nodeHashes[v][tx.Hash] = true
-			s.byNode[v] = append(s.byNode[v], tx)
 		}
 	}
+
+	// Index by resolved path entries — relay nodes that forwarded this packet.
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			if rp == nil {
+				continue
+			}
+			pk := *rp
+			if pk == "" || indexed[pk] {
+				continue
+			}
+			s.addToByNode(tx, pk)
+			indexed[pk] = true
+		}
+	}
+	// Also check tx.ResolvedPath (best observation's resolved path) for packets
+	// loaded from DB where Observations may be empty.
+	for _, rp := range tx.ResolvedPath {
+		if rp == nil {
+			continue
+		}
+		pk := *rp
+		if pk == "" || indexed[pk] {
+			continue
+		}
+		s.addToByNode(tx, pk)
+		indexed[pk] = true
+	}
+}
+
+// addToByNode adds tx to byNode[pubkey] with dedup via nodeHashes.
+func (s *PacketStore) addToByNode(tx *StoreTx, pubkey string) {
+	if s.nodeHashes[pubkey] == nil {
+		s.nodeHashes[pubkey] = make(map[string]bool)
+	}
+	if s.nodeHashes[pubkey][tx.Hash] {
+		return
+	}
+	s.nodeHashes[pubkey][tx.Hash] = true
+	s.byNode[pubkey] = append(s.byNode[pubkey], tx)
 }
 
 // trackAdvertPubkey increments the advertPubkeys refcount for ADVERT packets.

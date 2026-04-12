@@ -4133,6 +4133,90 @@ func TestIndexByNodePreCheck(t *testing.T) {
 	})
 }
 
+// TestIndexByNodeResolvedPath tests that resolved_path entries are indexed in byNode.
+func TestIndexByNodeResolvedPath(t *testing.T) {
+	store := &PacketStore{
+		byNode:     make(map[string][]*StoreTx),
+		nodeHashes: make(map[string]map[string]bool),
+	}
+
+	t.Run("indexes resolved path pubkeys from observations", func(t *testing.T) {
+		relayPK := "aabb1122334455ff"
+		tx := &StoreTx{
+			Hash:        "rp1",
+			DecodedJSON: `{"type":"CHAN","text":"hello"}`, // no pubKey fields
+			Observations: []*StoreObs{
+				{ResolvedPath: []*string{&relayPK}},
+			},
+		}
+		store.indexByNode(tx)
+		if len(store.byNode[relayPK]) != 1 {
+			t.Errorf("expected relay pubkey indexed, got %d", len(store.byNode[relayPK]))
+		}
+	})
+
+	t.Run("skips null entries in resolved path", func(t *testing.T) {
+		pk := "cc11dd22ee33ff44"
+		tx := &StoreTx{
+			Hash: "rp2",
+			Observations: []*StoreObs{
+				{ResolvedPath: []*string{nil, &pk, nil}},
+			},
+		}
+		store.indexByNode(tx)
+		if len(store.byNode[pk]) != 1 {
+			t.Errorf("expected resolved pubkey indexed, got %d", len(store.byNode[pk]))
+		}
+		// Verify nil entries didn't create empty-string keys
+		if _, exists := store.byNode[""]; exists {
+			t.Error("nil/empty resolved path entries should not create byNode entries")
+		}
+	})
+
+	t.Run("relay-only node appears in byNode", func(t *testing.T) {
+		// A packet with no decoded pubkey fields, only a relay in resolved path
+		relayOnly := "relay0only0pubkey"
+		tx := &StoreTx{
+			Hash: "rp3",
+			// No DecodedJSON at all — pure relay
+			Observations: []*StoreObs{
+				{ResolvedPath: []*string{&relayOnly}},
+			},
+		}
+		store.indexByNode(tx)
+		if len(store.byNode[relayOnly]) != 1 {
+			t.Errorf("expected relay-only node indexed, got %d", len(store.byNode[relayOnly]))
+		}
+	})
+
+	t.Run("dedup between decoded JSON and resolved path", func(t *testing.T) {
+		pk := "dedup0test0pk1234"
+		tx := &StoreTx{
+			Hash:        "rp4",
+			DecodedJSON: `{"pubKey":"` + pk + `"}`,
+			Observations: []*StoreObs{
+				{ResolvedPath: []*string{&pk}},
+			},
+		}
+		store.indexByNode(tx)
+		if len(store.byNode[pk]) != 1 {
+			t.Errorf("expected dedup to keep 1 entry, got %d", len(store.byNode[pk]))
+		}
+	})
+
+	t.Run("indexes tx.ResolvedPath when observations empty", func(t *testing.T) {
+		rpPK := "txlevel0resolved1"
+		tx := &StoreTx{
+			Hash:         "rp5",
+			ResolvedPath: []*string{&rpPK},
+		}
+		store.indexByNode(tx)
+		if len(store.byNode[rpPK]) != 1 {
+			t.Errorf("expected tx-level resolved path indexed, got %d", len(store.byNode[rpPK]))
+		}
+	})
+}
+
 // BenchmarkIndexByNode measures indexByNode performance with and without pubkey
 // fields to demonstrate the strings.Contains pre-check optimization.
 func BenchmarkIndexByNode(b *testing.B) {
