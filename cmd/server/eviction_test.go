@@ -239,6 +239,79 @@ func TestEvictStale_CleansNodeIndexes(t *testing.T) {
 	}
 }
 
+func TestEvictStale_CleansResolvedPathNodeIndexes(t *testing.T) {
+	now := time.Now().UTC()
+	store := &PacketStore{
+		packets:       make([]*StoreTx, 0),
+		byHash:        make(map[string]*StoreTx),
+		byTxID:        make(map[int]*StoreTx),
+		byObsID:       make(map[int]*StoreObs),
+		byObserver:    make(map[string][]*StoreObs),
+		byNode:        make(map[string][]*StoreTx),
+		nodeHashes:    make(map[string]map[string]bool),
+		byPayloadType: make(map[int][]*StoreTx),
+		spIndex:       make(map[string]int),
+		distHops:      make([]distHopRecord, 0),
+		distPaths:     make([]distPathRecord, 0),
+		rfCache:       make(map[string]*cachedResult),
+		topoCache:     make(map[string]*cachedResult),
+		hashCache:     make(map[string]*cachedResult),
+		chanCache:     make(map[string]*cachedResult),
+		distCache:     make(map[string]*cachedResult),
+		subpathCache:  make(map[string]*cachedResult),
+		rfCacheTTL:    15 * time.Second,
+		retentionHours: 24,
+	}
+
+	// Create a packet indexed only via resolved_path (no decoded JSON pubkeys)
+	relayPK := "relay0001abcdef"
+	tx := &StoreTx{
+		ID:        1,
+		Hash:      "hash_rp_001",
+		FirstSeen: now.Add(-48 * time.Hour).UTC().Format(time.RFC3339),
+	}
+	rpPtr := &relayPK
+	obs := &StoreObs{
+		ID:             100,
+		TransmissionID: 1,
+		ObserverID:     "obs0",
+		Timestamp:      tx.FirstSeen,
+		ResolvedPath:   []*string{rpPtr},
+	}
+	tx.Observations = append(tx.Observations, obs)
+	tx.ResolvedPath = []*string{rpPtr}
+
+	store.packets = append(store.packets, tx)
+	store.byHash[tx.Hash] = tx
+	store.byTxID[tx.ID] = tx
+	store.byObsID[obs.ID] = obs
+	store.byObserver["obs0"] = append(store.byObserver["obs0"], obs)
+
+	// Index via resolved_path
+	store.indexByNode(tx)
+
+	// Verify indexed
+	if len(store.byNode[relayPK]) != 1 {
+		t.Fatalf("expected 1 entry in byNode[%s], got %d", relayPK, len(store.byNode[relayPK]))
+	}
+	if !store.nodeHashes[relayPK][tx.Hash] {
+		t.Fatalf("expected nodeHashes[%s] to contain %s", relayPK, tx.Hash)
+	}
+
+	evicted := store.EvictStale()
+	if evicted != 1 {
+		t.Fatalf("expected 1 evicted, got %d", evicted)
+	}
+
+	// Verify resolved_path entries are cleaned up
+	if len(store.byNode[relayPK]) != 0 {
+		t.Fatalf("expected byNode[%s] to be empty after eviction, got %d", relayPK, len(store.byNode[relayPK]))
+	}
+	if _, exists := store.nodeHashes[relayPK]; exists {
+		t.Fatalf("expected nodeHashes[%s] to be deleted after eviction", relayPK)
+	}
+}
+
 func TestEvictStale_RunEvictionThreadSafe(t *testing.T) {
 	now := time.Now().UTC()
 	store := makeTestStore(20, now.Add(-48*time.Hour), 0)

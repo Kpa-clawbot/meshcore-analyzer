@@ -193,6 +193,10 @@ type PacketStore struct {
 	// Updated incrementally during Load/Ingest/Evict — avoids JSON parsing in GetPerfStoreStats.
 	advertPubkeys map[string]int // pubkey → number of advert packets referencing it
 
+	// Debounce map for touchRelayLastSeen: pubkey → last time we wrote last_seen to DB.
+	// Limits DB writes to at most 1 per node per 5 minutes.
+	lastSeenTouched map[string]time.Time
+
 	// Persisted neighbor graph for hop resolution at ingest time.
 	graph *NeighborGraph
 
@@ -297,7 +301,8 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		invCooldown:       10 * time.Second,
 		spIndex:       make(map[string]int, 4096),
 		spTxIndex:     make(map[string][]*StoreTx, 4096),
-		advertPubkeys: make(map[string]int),
+		advertPubkeys:   make(map[string]int),
+		lastSeenTouched: make(map[string]time.Time),
 	}
 	if cfg != nil {
 		ps.retentionHours = cfg.RetentionHours
@@ -512,28 +517,103 @@ func pathLen(pathJSON string) int {
 
 // indexByNode extracts pubkeys from decoded_json and indexes the transmission.
 func (s *PacketStore) indexByNode(tx *StoreTx) {
-	if tx.DecodedJSON == "" {
-		return
-	}
-	// All three target fields ("pubKey", "destPubKey", "srcPubKey") share the
-	// common suffix "ubKey" — skip JSON parse for packets that have none of them.
-	if !strings.Contains(tx.DecodedJSON, "ubKey") {
-		return
-	}
-	decoded := tx.ParsedDecoded()
-	if decoded == nil {
-		return
-	}
-	for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
-		if v, ok := decoded[field].(string); ok && v != "" {
-			if s.nodeHashes[v] == nil {
-				s.nodeHashes[v] = make(map[string]bool)
+	// Track which pubkeys have been indexed for this packet to avoid duplicates
+	// when the same pubkey appears in both decoded JSON and resolved path.
+	indexed := make(map[string]bool)
+
+	// Index by decoded JSON fields (pubKey, destPubKey, srcPubKey).
+	if tx.DecodedJSON != "" && strings.Contains(tx.DecodedJSON, "ubKey") {
+		if decoded := tx.ParsedDecoded(); decoded != nil {
+			for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
+				if v, ok := decoded[field].(string); ok && v != "" {
+					s.addToByNode(tx, v)
+					indexed[v] = true
+				}
 			}
-			if s.nodeHashes[v][tx.Hash] {
+		}
+	}
+
+	// Index by resolved path entries — relay nodes that forwarded this packet.
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			if rp == nil {
 				continue
 			}
-			s.nodeHashes[v][tx.Hash] = true
-			s.byNode[v] = append(s.byNode[v], tx)
+			pk := *rp
+			if pk == "" || indexed[pk] {
+				continue
+			}
+			s.addToByNode(tx, pk)
+			indexed[pk] = true
+		}
+	}
+	// Also check tx.ResolvedPath (best observation's resolved path) for packets
+	// loaded from DB where Observations may be empty.
+	for _, rp := range tx.ResolvedPath {
+		if rp == nil {
+			continue
+		}
+		pk := *rp
+		if pk == "" || indexed[pk] {
+			continue
+		}
+		s.addToByNode(tx, pk)
+		indexed[pk] = true
+	}
+}
+
+// addToByNode adds tx to byNode[pubkey] with dedup via nodeHashes.
+func (s *PacketStore) addToByNode(tx *StoreTx, pubkey string) {
+	if s.nodeHashes[pubkey] == nil {
+		s.nodeHashes[pubkey] = make(map[string]bool)
+	}
+	if s.nodeHashes[pubkey][tx.Hash] {
+		return
+	}
+	s.nodeHashes[pubkey][tx.Hash] = true
+	s.byNode[pubkey] = append(s.byNode[pubkey], tx)
+}
+
+// touchRelayLastSeen updates last_seen in the DB for relay nodes that appear
+// in resolved_path entries. Debounced to at most 1 write per node per 5 minutes.
+// Must be called under s.mu write lock (reads/writes lastSeenTouched).
+func (s *PacketStore) touchRelayLastSeen(tx *StoreTx, now time.Time) {
+	if s.db == nil {
+		return
+	}
+	const debounceInterval = 5 * time.Minute
+
+	seen := make(map[string]bool)
+	// Collect unique non-nil resolved pubkeys from all observations.
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			if rp == nil {
+				continue
+			}
+			pk := *rp
+			if pk != "" {
+				seen[pk] = true
+			}
+		}
+	}
+	// Also check tx.ResolvedPath (best observation, used after Load).
+	for _, rp := range tx.ResolvedPath {
+		if rp == nil {
+			continue
+		}
+		pk := *rp
+		if pk != "" {
+			seen[pk] = true
+		}
+	}
+
+	ts := now.UTC().Format(time.RFC3339)
+	for pk := range seen {
+		if last, ok := s.lastSeenTouched[pk]; ok && now.Sub(last) < debounceInterval {
+			continue
+		}
+		if err := s.db.TouchNodeLastSeen(pk, ts); err == nil {
+			s.lastSeenTouched[pk] = now
 		}
 	}
 }
@@ -1356,6 +1436,12 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 	// Pick best observation for new transmissions
 	for _, tx := range broadcastTxs {
 		pickBestObservation(tx)
+	}
+
+	// Phase 2 of #660: update last_seen in DB for relay nodes seen in resolved_path.
+	now := time.Now()
+	for _, tx := range broadcastTxs {
+		s.touchRelayLastSeen(tx, now)
 	}
 
 	// Incrementally update precomputed subpath index with new transmissions
@@ -2563,7 +2649,9 @@ func (s *PacketStore) EvictStale() int {
 			affectedPayloadTypes[*tx.PayloadType] = struct{}{}
 		}
 
-		// Remove from nodeHashes and collect affected node keys
+		// Remove from nodeHashes and collect affected node keys.
+		// Must mirror indexByNode: process decoded JSON fields AND resolved_path pubkeys.
+		evictedFromNode := make(map[string]bool)
 		if tx.DecodedJSON != "" {
 			var decoded map[string]interface{}
 			if json.Unmarshal([]byte(tx.DecodedJSON), &decoded) == nil {
@@ -2576,9 +2664,47 @@ func (s *PacketStore) EvictStale() int {
 							}
 						}
 						affectedNodes[v] = struct{}{}
+						evictedFromNode[v] = true
 					}
 				}
 			}
+		}
+		// Clean up resolved_path pubkeys from byNode/nodeHashes
+		for _, obs := range tx.Observations {
+			for _, rp := range obs.ResolvedPath {
+				if rp == nil {
+					continue
+				}
+				pk := *rp
+				if pk == "" || evictedFromNode[pk] {
+					continue
+				}
+				if hashes, ok := s.nodeHashes[pk]; ok {
+					delete(hashes, tx.Hash)
+					if len(hashes) == 0 {
+						delete(s.nodeHashes, pk)
+					}
+				}
+				affectedNodes[pk] = struct{}{}
+				evictedFromNode[pk] = true
+			}
+		}
+		for _, rp := range tx.ResolvedPath {
+			if rp == nil {
+				continue
+			}
+			pk := *rp
+			if pk == "" || evictedFromNode[pk] {
+				continue
+			}
+			if hashes, ok := s.nodeHashes[pk]; ok {
+				delete(hashes, tx.Hash)
+				if len(hashes) == 0 {
+					delete(s.nodeHashes, pk)
+				}
+			}
+			affectedNodes[pk] = struct{}{}
+			evictedFromNode[pk] = true
 		}
 
 		// Remove from subpath index
