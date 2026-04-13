@@ -299,7 +299,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		subpathCache:  make(map[string]*cachedResult),
 		rfCacheTTL:         15 * time.Second,
 		collisionCacheTTL: 3600 * time.Second,
-		invCooldown:       10 * time.Second,
+		invCooldown:       300 * time.Second,
 		spIndex:       make(map[string]int, 4096),
 		spTxIndex:     make(map[string][]*StoreTx, 4096),
 		advertPubkeys:   make(map[string]int),
@@ -317,6 +317,9 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		}
 		if v, ok := cacheTTLSec(ct, "analyticsRF"); ok {
 			ps.rfCacheTTL = v
+		}
+		if v, ok := cacheTTLSec(ct, "invalidationDebounce"); ok {
+			ps.invCooldown = v
 		}
 	}
 	return ps
@@ -519,17 +522,22 @@ func pathLen(pathJSON string) int {
 }
 
 // indexByNode extracts pubkeys from decoded_json and indexes the transmission.
-func (s *PacketStore) indexByNode(tx *StoreTx) {
+// indexByNode indexes a transmission under all pubkeys found in its decoded
+// JSON and resolved paths. Returns true if any genuinely new node was discovered.
+func (s *PacketStore) indexByNode(tx *StoreTx) bool {
 	// Track which pubkeys have been indexed for this packet to avoid duplicates
 	// when the same pubkey appears in both decoded JSON and resolved path.
 	indexed := make(map[string]bool)
+	foundNew := false
 
 	// Index by decoded JSON fields (pubKey, destPubKey, srcPubKey).
 	if tx.DecodedJSON != "" && strings.Contains(tx.DecodedJSON, "ubKey") {
 		if decoded := tx.ParsedDecoded(); decoded != nil {
 			for _, field := range []string{"pubKey", "destPubKey", "srcPubKey"} {
 				if v, ok := decoded[field].(string); ok && v != "" {
-					s.addToByNode(tx, v)
+					if s.addToByNode(tx, v) {
+						foundNew = true
+					}
 					indexed[v] = true
 				}
 			}
@@ -546,7 +554,9 @@ func (s *PacketStore) indexByNode(tx *StoreTx) {
 			if pk == "" || indexed[pk] {
 				continue
 			}
-			s.addToByNode(tx, pk)
+			if s.addToByNode(tx, pk) {
+				foundNew = true
+			}
 			indexed[pk] = true
 		}
 	}
@@ -560,21 +570,27 @@ func (s *PacketStore) indexByNode(tx *StoreTx) {
 		if pk == "" || indexed[pk] {
 			continue
 		}
-		s.addToByNode(tx, pk)
+		if s.addToByNode(tx, pk) {
+			foundNew = true
+		}
 		indexed[pk] = true
 	}
+	return foundNew
 }
 
 // addToByNode adds tx to byNode[pubkey] with dedup via nodeHashes.
-func (s *PacketStore) addToByNode(tx *StoreTx, pubkey string) {
-	if s.nodeHashes[pubkey] == nil {
+// Returns true if this is a genuinely new node (pubkey not seen before).
+func (s *PacketStore) addToByNode(tx *StoreTx, pubkey string) bool {
+	isNew := s.nodeHashes[pubkey] == nil
+	if isNew {
 		s.nodeHashes[pubkey] = make(map[string]bool)
 	}
 	if s.nodeHashes[pubkey][tx.Hash] {
-		return
+		return false
 	}
 	s.nodeHashes[pubkey][tx.Hash] = true
 	s.byNode[pubkey] = append(s.byNode[pubkey], tx)
+	return isNew
 }
 
 // touchRelayLastSeen updates last_seen in the DB for relay nodes that appear
@@ -968,11 +984,12 @@ func (s *PacketStore) GetCacheStatsTyped() CacheStats {
 // cacheInvalidation flags indicate what kind of data changed during ingestion.
 // Used by invalidateCachesFor to selectively clear only affected caches.
 type cacheInvalidation struct {
-	hasNewObservations bool // new SNR/RSSI data → rfCache
-	hasNewPaths        bool // new/changed path data → topoCache, distCache, subpathCache
+	hasNewObservations  bool // new SNR/RSSI data → rfCache
+	hasNewPaths         bool // new/changed path data → topoCache, distCache, subpathCache
 	hasNewTransmissions bool // new transmissions → hashCache
-	hasChannelData     bool // new GRP_TXT (payload_type 5) → chanCache
-	eviction           bool // data removed → all caches
+	hasNewNodes         bool // genuinely new node pubkey discovered → collisionCache
+	hasChannelData      bool // new GRP_TXT (payload_type 5) → chanCache
+	eviction            bool // data removed → all caches
 }
 
 // invalidateCachesFor selectively clears only the analytics caches affected
@@ -1010,6 +1027,7 @@ func (s *PacketStore) invalidateCachesFor(inv cacheInvalidation) {
 		s.pendingInv.hasNewObservations = s.pendingInv.hasNewObservations || inv.hasNewObservations
 		s.pendingInv.hasNewPaths = s.pendingInv.hasNewPaths || inv.hasNewPaths
 		s.pendingInv.hasNewTransmissions = s.pendingInv.hasNewTransmissions || inv.hasNewTransmissions
+		s.pendingInv.hasNewNodes = s.pendingInv.hasNewNodes || inv.hasNewNodes
 		s.pendingInv.hasChannelData = s.pendingInv.hasChannelData || inv.hasChannelData
 		return
 	}
@@ -1019,6 +1037,7 @@ func (s *PacketStore) invalidateCachesFor(inv cacheInvalidation) {
 		inv.hasNewObservations = inv.hasNewObservations || s.pendingInv.hasNewObservations
 		inv.hasNewPaths = inv.hasNewPaths || s.pendingInv.hasNewPaths
 		inv.hasNewTransmissions = inv.hasNewTransmissions || s.pendingInv.hasNewTransmissions
+		inv.hasNewNodes = inv.hasNewNodes || s.pendingInv.hasNewNodes
 		inv.hasChannelData = inv.hasChannelData || s.pendingInv.hasChannelData
 		s.pendingInv = nil
 	}
@@ -1040,6 +1059,8 @@ func (s *PacketStore) applyCacheInvalidation(inv cacheInvalidation) {
 	}
 	if inv.hasNewTransmissions {
 		s.hashCache = make(map[string]*cachedResult)
+	}
+	if inv.hasNewNodes {
 		s.collisionCache = make(map[string]*cachedResult)
 	}
 	if inv.hasChannelData {
@@ -1342,6 +1363,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 
 	newMaxID := sinceID
 	broadcastTxs := make(map[int]*StoreTx) // track new transmissions for broadcast
+	hasNewNodes := false                    // track genuinely new node pubkeys
 	var broadcastOrder []int
 
 	// Hoist getCachedNodesAndPM() once before the observation loop to avoid
@@ -1373,7 +1395,9 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			if r.txID > s.maxTxID {
 				s.maxTxID = r.txID
 			}
-			s.indexByNode(tx)
+			if s.indexByNode(tx) {
+				hasNewNodes = true
+			}
 			if tx.PayloadType != nil {
 				pt := *tx.PayloadType
 				// Append to maintain oldest-first order (matches Load ordering)
@@ -1554,6 +1578,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 	if len(result) > 0 {
 		inv := cacheInvalidation{
 			hasNewTransmissions: len(broadcastTxs) > 0,
+			hasNewNodes:         hasNewNodes,
 		}
 		for _, tx := range broadcastTxs {
 			if len(tx.Observations) > 0 {

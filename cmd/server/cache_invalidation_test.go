@@ -9,14 +9,15 @@ import (
 func newTestStore(t *testing.T) *PacketStore {
 	t.Helper()
 	return &PacketStore{
-		rfCache:      make(map[string]*cachedResult),
-		topoCache:    make(map[string]*cachedResult),
-		hashCache:    make(map[string]*cachedResult),
-		chanCache:    make(map[string]*cachedResult),
-		distCache:    make(map[string]*cachedResult),
-		subpathCache: make(map[string]*cachedResult),
-		rfCacheTTL:   15 * time.Second,
-		invCooldown:  10 * time.Second,
+		rfCache:        make(map[string]*cachedResult),
+		topoCache:      make(map[string]*cachedResult),
+		hashCache:      make(map[string]*cachedResult),
+		collisionCache: make(map[string]*cachedResult),
+		chanCache:      make(map[string]*cachedResult),
+		distCache:      make(map[string]*cachedResult),
+		subpathCache:   make(map[string]*cachedResult),
+		rfCacheTTL:     15 * time.Second,
+		invCooldown:    10 * time.Second,
 	}
 }
 
@@ -29,6 +30,7 @@ func populateAllCaches(s *PacketStore) {
 	s.rfCache["global"] = dummy
 	s.topoCache["global"] = dummy
 	s.hashCache["global"] = dummy
+	s.collisionCache["global"] = dummy
 	s.chanCache["global"] = dummy
 	s.distCache["global"] = dummy
 	s.subpathCache["global"] = dummy
@@ -39,12 +41,13 @@ func cachePopulated(s *PacketStore) map[string]bool {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
 	return map[string]bool{
-		"rf":      len(s.rfCache) > 0,
-		"topo":    len(s.topoCache) > 0,
-		"hash":    len(s.hashCache) > 0,
-		"chan":     len(s.chanCache) > 0,
-		"dist":    len(s.distCache) > 0,
-		"subpath": len(s.subpathCache) > 0,
+		"rf":        len(s.rfCache) > 0,
+		"topo":      len(s.topoCache) > 0,
+		"hash":      len(s.hashCache) > 0,
+		"collision": len(s.collisionCache) > 0,
+		"chan":       len(s.chanCache) > 0,
+		"dist":      len(s.distCache) > 0,
+		"subpath":   len(s.subpathCache) > 0,
 	}
 }
 
@@ -90,7 +93,8 @@ func TestInvalidateCachesFor_NewTransmissionsOnly(t *testing.T) {
 	if pop["hash"] {
 		t.Error("hash cache should be cleared on new transmissions")
 	}
-	for _, name := range []string{"rf", "topo", "chan", "dist", "subpath"} {
+	// collisionCache should NOT be cleared by transmissions alone (only by hasNewNodes)
+	for _, name := range []string{"rf", "topo", "collision", "chan", "dist", "subpath"} {
 		if !pop[name] {
 			t.Errorf("%s cache should NOT be cleared on transmission-only ingest", name)
 		}
@@ -330,4 +334,181 @@ func BenchmarkCacheHitDuringIngestion(b *testing.B) {
 		b.Errorf("expected cache hits > 0 with rate-limited invalidation, got 0 hits / %d misses", misses)
 	}
 	b.ReportMetric(float64(hits)/float64(hits+misses)*100, "hit%")
+}
+
+// TestInvCooldownFromConfig verifies that invalidationDebounce from config
+// is wired to invCooldown on PacketStore.
+func TestInvCooldownFromConfig(t *testing.T) {
+	// Default without config
+	ps := NewPacketStore(nil, nil)
+	if ps.invCooldown != 300*time.Second {
+		t.Errorf("default invCooldown = %v, want 300s", ps.invCooldown)
+	}
+
+	// With config override
+	ct := map[string]interface{}{"invalidationDebounce": float64(60)}
+	ps2 := NewPacketStore(nil, nil, ct)
+	if ps2.invCooldown != 60*time.Second {
+		t.Errorf("configured invCooldown = %v, want 60s", ps2.invCooldown)
+	}
+}
+
+// TestCollisionCacheNotClearedByTransmissions verifies that collisionCache
+// is only cleared by hasNewNodes, not hasNewTransmissions (fixes #720).
+func TestCollisionCacheNotClearedByTransmissions(t *testing.T) {
+	s := newTestStore(t)
+	populateAllCaches(s)
+
+	s.invalidateCachesFor(cacheInvalidation{hasNewTransmissions: true})
+
+	pop := cachePopulated(s)
+	if !pop["collision"] {
+		t.Error("collisionCache should NOT be cleared by hasNewTransmissions alone")
+	}
+	if pop["hash"] {
+		t.Error("hashCache should be cleared by hasNewTransmissions")
+	}
+}
+
+// TestCollisionCacheClearedByNewNodes verifies that collisionCache IS cleared
+// when genuinely new nodes are discovered.
+func TestCollisionCacheClearedByNewNodes(t *testing.T) {
+	s := newTestStore(t)
+	populateAllCaches(s)
+
+	s.invalidateCachesFor(cacheInvalidation{hasNewNodes: true})
+
+	pop := cachePopulated(s)
+	if pop["collision"] {
+		t.Error("collisionCache should be cleared by hasNewNodes")
+	}
+	// Other caches should survive
+	for _, name := range []string{"rf", "topo", "hash", "chan", "dist", "subpath"} {
+		if !pop[name] {
+			t.Errorf("%s cache should NOT be cleared on new-nodes-only ingest", name)
+		}
+	}
+}
+
+// TestCacheSurvivesMultipleIngestCyclesWithinCooldown verifies that caches
+// survive repeated ingest cycles during the cooldown period.
+func TestCacheSurvivesMultipleIngestCyclesWithinCooldown(t *testing.T) {
+	s := newTestStore(t)
+	s.invCooldown = 200 * time.Millisecond
+
+	// First invalidation goes through (starts cooldown)
+	populateAllCaches(s)
+	s.invalidateCachesFor(cacheInvalidation{hasNewObservations: true})
+	pop := cachePopulated(s)
+	if pop["rf"] {
+		t.Error("rf should be cleared on first invalidation")
+	}
+
+	// Repopulate and simulate 5 rapid ingest cycles
+	populateAllCaches(s)
+	for i := 0; i < 5; i++ {
+		s.invalidateCachesFor(cacheInvalidation{
+			hasNewObservations:  true,
+			hasNewTransmissions: true,
+			hasNewPaths:         true,
+		})
+	}
+
+	// All caches should survive during cooldown
+	pop = cachePopulated(s)
+	for name, has := range pop {
+		if !has {
+			t.Errorf("%s cache should survive during cooldown period (ingest cycle %d)", name, 5)
+		}
+	}
+}
+
+// TestNewNodesAccumulatedDuringCooldown verifies that hasNewNodes flags
+// accumulated during cooldown are applied when cooldown expires.
+func TestNewNodesAccumulatedDuringCooldown(t *testing.T) {
+	s := newTestStore(t)
+	s.invCooldown = 100 * time.Millisecond
+
+	// First call starts cooldown
+	s.invalidateCachesFor(cacheInvalidation{hasNewObservations: true})
+
+	// During cooldown, accumulate hasNewNodes
+	s.invalidateCachesFor(cacheInvalidation{hasNewNodes: true})
+
+	// Verify accumulated
+	s.cacheMu.Lock()
+	if s.pendingInv == nil || !s.pendingInv.hasNewNodes {
+		t.Error("hasNewNodes should be accumulated in pendingInv")
+	}
+	s.cacheMu.Unlock()
+
+	// Wait for cooldown
+	time.Sleep(150 * time.Millisecond)
+
+	// Trigger flush
+	populateAllCaches(s)
+	s.invalidateCachesFor(cacheInvalidation{})
+
+	pop := cachePopulated(s)
+	if pop["collision"] {
+		t.Error("collisionCache should be cleared after pending hasNewNodes is flushed")
+	}
+}
+
+// BenchmarkAnalyticsLatencyCacheHitVsMiss benchmarks cache hit vs miss
+// for analytics endpoints to demonstrate the performance impact.
+func BenchmarkAnalyticsLatencyCacheHitVsMiss(b *testing.B) {
+	s := &PacketStore{
+		rfCache:        make(map[string]*cachedResult),
+		topoCache:      make(map[string]*cachedResult),
+		hashCache:      make(map[string]*cachedResult),
+		collisionCache: make(map[string]*cachedResult),
+		chanCache:      make(map[string]*cachedResult),
+		distCache:      make(map[string]*cachedResult),
+		subpathCache:   make(map[string]*cachedResult),
+		rfCacheTTL:     1800 * time.Second,
+		invCooldown:    300 * time.Second,
+	}
+
+	// Pre-populate cache
+	s.cacheMu.Lock()
+	s.rfCache["global"] = &cachedResult{
+		data:      map[string]interface{}{"bins": make([]int, 100)},
+		expiresAt: time.Now().Add(time.Hour),
+	}
+	s.cacheMu.Unlock()
+
+	// Trigger initial invalidation to start cooldown
+	s.invalidateCachesFor(cacheInvalidation{hasNewObservations: true})
+
+	var hits, misses int64
+	for i := 0; i < b.N; i++ {
+		// Re-populate (simulates query filling cache)
+		s.cacheMu.Lock()
+		if len(s.rfCache) == 0 {
+			s.rfCache["global"] = &cachedResult{
+				data:      map[string]interface{}{"bins": make([]int, 100)},
+				expiresAt: time.Now().Add(time.Hour),
+			}
+		}
+		s.cacheMu.Unlock()
+
+		// Simulate ingest (rate-limited)
+		s.invalidateCachesFor(cacheInvalidation{hasNewObservations: true})
+
+		// Check hit
+		s.cacheMu.Lock()
+		if len(s.rfCache) > 0 {
+			hits++
+		} else {
+			misses++
+		}
+		s.cacheMu.Unlock()
+	}
+
+	hitRate := float64(hits) / float64(hits+misses) * 100
+	b.ReportMetric(hitRate, "hit%")
+	if hitRate < 50 {
+		b.Errorf("hit rate %.1f%% is below 50%% target", hitRate)
+	}
 }
