@@ -1260,6 +1260,119 @@ func (db *DB) GetChannels(region ...string) ([]map[string]interface{}, error) {
 	return channels, nil
 }
 
+// GetEncryptedChannels returns channels where all messages are undecryptable (no key).
+// These have decoded_json with type "GRP_TXT" and decryptionStatus "no_key".
+func (db *DB) GetEncryptedChannels(region ...string) ([]map[string]interface{}, error) {
+	regionParam := ""
+	if len(region) > 0 {
+		regionParam = region[0]
+	}
+	regionCodes := normalizeRegionCodes(regionParam)
+
+	var querySQL string
+	args := make([]interface{}, 0, len(regionCodes))
+
+	if len(regionCodes) > 0 {
+		placeholders := make([]string, len(regionCodes))
+		for i, code := range regionCodes {
+			placeholders[i] = "?"
+			args = append(args, code)
+		}
+		regionPlaceholder := strings.Join(placeholders, ",")
+		if db.isV3 {
+			querySQL = fmt.Sprintf(`SELECT DISTINCT t.decoded_json, t.first_seen
+				FROM transmissions t
+				JOIN observations o ON o.transmission_id = t.id
+				LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+				WHERE t.payload_type = 5
+				AND obs.rowid IS NOT NULL AND UPPER(TRIM(obs.iata)) IN (%s)
+				ORDER BY t.first_seen ASC`, regionPlaceholder)
+		} else {
+			querySQL = fmt.Sprintf(`SELECT DISTINCT t.decoded_json, t.first_seen
+				FROM transmissions t
+				JOIN observations o ON o.transmission_id = t.id
+				WHERE t.payload_type = 5
+				AND EXISTS (
+					SELECT 1 FROM observers obs
+					WHERE obs.id = o.observer_id
+					AND UPPER(TRIM(obs.iata)) IN (%s)
+				)
+				ORDER BY t.first_seen ASC`, regionPlaceholder)
+		}
+	} else {
+		querySQL = `SELECT decoded_json, first_seen FROM transmissions WHERE payload_type = 5 ORDER BY first_seen ASC`
+	}
+
+	rows, err := db.conn.Query(querySQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type encChanInfo struct {
+		hash         string
+		messageCount int
+		lastActivity string
+	}
+	channelMap := map[string]*encChanInfo{}
+
+	for rows.Next() {
+		var dj, fs sql.NullString
+		rows.Scan(&dj, &fs)
+		if !dj.Valid {
+			continue
+		}
+		var decoded map[string]interface{}
+		if json.Unmarshal([]byte(dj.String), &decoded) != nil {
+			continue
+		}
+		dtype, _ := decoded["type"].(string)
+		// Only include undecryptable GRP_TXT packets (not CHAN)
+		if dtype != "GRP_TXT" {
+			continue
+		}
+		ds, _ := decoded["decryptionStatus"].(string)
+		if ds != "no_key" {
+			continue
+		}
+		// Group by channelHashHex
+		chHash, _ := decoded["channelHashHex"].(string)
+		if chHash == "" {
+			if chNum, ok := decoded["channelHash"].(float64); ok {
+				chHash = fmt.Sprintf("%02X", int(chNum))
+			}
+		}
+		if chHash == "" {
+			chHash = "?"
+		}
+		key := chHash
+
+		ch, exists := channelMap[key]
+		if !exists {
+			ch = &encChanInfo{hash: key, lastActivity: nullStrVal(fs)}
+			channelMap[key] = ch
+		}
+		ch.messageCount++
+		if fs.Valid {
+			ch.lastActivity = fs.String
+		}
+	}
+
+	channels := make([]map[string]interface{}, 0, len(channelMap))
+	for _, ch := range channelMap {
+		channels = append(channels, map[string]interface{}{
+			"hash":         "enc_" + ch.hash,
+			"name":         "Encrypted (0x" + ch.hash + ")",
+			"lastMessage":  nil,
+			"lastSender":   nil,
+			"messageCount": ch.messageCount,
+			"lastActivity": ch.lastActivity,
+			"encrypted":    true,
+		})
+	}
+	return channels, nil
+}
+
 // GetChannelMessages returns messages for a specific channel.
 // Uses transmission-level ordering (first_seen) to ensure correct message
 // sequence even when observations arrive out of order.

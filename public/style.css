@@ -463,6 +463,14 @@ fieldset.mc-section legend.mc-label { padding: 0; }
 .ch-sidebar-title {
   display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; margin-bottom: 8px;
 }
+.ch-encrypted-toggle {
+  display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted);
+  cursor: pointer; user-select: none; margin-bottom: 4px;
+}
+.ch-encrypted-toggle input { margin: 0; cursor: pointer; }
+.ch-toggle-label { white-space: nowrap; }
+.ch-item.ch-encrypted { opacity: 0.55; }
+.ch-item.ch-encrypted .ch-item-name { font-style: italic; }
 .ch-icon { font-size: 20px; }
 .ch-sidebar-controls { display: flex; align-items: center; gap: 6px; }
 .ch-region-select {

@@ -3155,6 +3155,84 @@ func (s *PacketStore) GetChannels(region string) []map[string]interface{} {
 	return channels
 }
 
+// GetEncryptedChannels returns undecryptable GRP_TXT channels from in-memory packets.
+func (s *PacketStore) GetEncryptedChannels(region string) []map[string]interface{} {
+	s.mu.RLock()
+	var regionObs map[string]bool
+	if region != "" {
+		regionObs = s.resolveRegionObservers(region)
+	}
+	grpTxts := s.byPayloadType[5]
+
+	type encInfo struct {
+		hash         string
+		messageCount int
+		lastActivity string
+	}
+	channelMap := map[string]*encInfo{}
+
+	for _, tx := range grpTxts {
+		if regionObs != nil {
+			match := false
+			for _, obs := range tx.Observations {
+				if regionObs[obs.ObserverID] {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		type grpDec struct {
+			Type             string      `json:"type"`
+			ChannelHash      interface{} `json:"channelHash"`
+			ChannelHashHex   string      `json:"channelHashHex"`
+			DecryptionStatus string      `json:"decryptionStatus"`
+		}
+		var decoded grpDec
+		if json.Unmarshal([]byte(tx.DecodedJSON), &decoded) != nil {
+			continue
+		}
+		if decoded.Type != "GRP_TXT" || decoded.DecryptionStatus != "no_key" {
+			continue
+		}
+		chHash := decoded.ChannelHashHex
+		if chHash == "" {
+			if num, ok := decoded.ChannelHash.(float64); ok {
+				chHash = fmt.Sprintf("%02X", int(num))
+			}
+		}
+		if chHash == "" {
+			chHash = "?"
+		}
+		ch := channelMap[chHash]
+		if ch == nil {
+			ch = &encInfo{hash: chHash, lastActivity: tx.FirstSeen}
+			channelMap[chHash] = ch
+		}
+		ch.messageCount++
+		if tx.FirstSeen >= ch.lastActivity {
+			ch.lastActivity = tx.FirstSeen
+		}
+	}
+	s.mu.RUnlock()
+
+	channels := make([]map[string]interface{}, 0, len(channelMap))
+	for _, ch := range channelMap {
+		channels = append(channels, map[string]interface{}{
+			"hash":         "enc_" + ch.hash,
+			"name":         "Encrypted (0x" + ch.hash + ")",
+			"lastMessage":  nil,
+			"lastSender":   nil,
+			"messageCount": ch.messageCount,
+			"lastActivity": ch.lastActivity,
+			"encrypted":    true,
+		})
+	}
+	return channels
+}
+
 // GetChannelMessages returns deduplicated messages for a channel from in-memory packets.
 func (s *PacketStore) GetChannelMessages(channelHash string, limit, offset int, region ...string) ([]map[string]interface{}, int) {
 	s.mu.RLock()

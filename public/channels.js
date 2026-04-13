@@ -530,6 +530,9 @@
       <div class="ch-sidebar" aria-label="Channel list">
         <div class="ch-sidebar-header">
           <div class="ch-sidebar-title"><span class="ch-icon">💬</span> Channels</div>
+          <label class="ch-encrypted-toggle" title="Show encrypted channels (no key configured)">
+            <input type="checkbox" id="chShowEncrypted"> <span class="ch-toggle-label">🔒 No key</span>
+          </label>
         </div>
         <div class="ch-key-input-wrap" style="padding:4px 8px">
           <form id="chKeyForm" autocomplete="off">
@@ -556,6 +559,17 @@
     </div>`;
 
     RegionFilter.init(document.getElementById('chRegionFilter'));
+
+    // Encrypted channels toggle (#727)
+    var showEncryptedCb = document.getElementById('chShowEncrypted');
+    var showEncrypted = localStorage.getItem('channels-show-encrypted') === 'true';
+    showEncryptedCb.checked = showEncrypted;
+    showEncryptedCb.addEventListener('change', function () {
+      showEncrypted = showEncryptedCb.checked;
+      localStorage.setItem('channels-show-encrypted', showEncrypted ? 'true' : 'false');
+      loadChannels(true);
+    });
+
     regionChangeHandler = RegionFilter.onChange(function () {
       loadChannels(true).then(async function () {
         if (!selectedHash) return;
@@ -876,7 +890,11 @@
   async function loadChannels(silent) {
     try {
       const rp = RegionFilter.getRegionParam();
-      const qs = rp ? '?region=' + encodeURIComponent(rp) : '';
+      var showEnc = localStorage.getItem('channels-show-encrypted') === 'true';
+      var params = [];
+      if (rp) params.push('region=' + encodeURIComponent(rp));
+      if (showEnc) params.push('includeEncrypted=true');
+      const qs = params.length ? '?' + params.join('&') : '';
       const data = await api('/channels' + qs, { ttl: CLIENT_TTL.channels });
       channels = (data.channels || []).map(ch => {
         ch.lastActivityMs = ch.lastActivity ? new Date(ch.lastActivity).getTime() : 0;
@@ -903,22 +921,26 @@
     });
 
     el.innerHTML = sorted.map(ch => {
-      const name = ch.name || `Channel ${formatHashHex(ch.hash)}`;
-      const color = getChannelColor(ch.hash);
+      const isEncrypted = ch.encrypted === true;
+      const name = isEncrypted ? (ch.name || 'Unknown') : (ch.name || `Channel ${formatHashHex(ch.hash)}`);
+      const color = isEncrypted ? 'var(--text-muted, #6b7280)' : getChannelColor(ch.hash);
       const time = ch.lastActivityMs ? formatSecondsAgo(Math.floor((Date.now() - ch.lastActivityMs) / 1000)) : '';
-      const preview = ch.lastSender && ch.lastMessage
-        ? `${ch.lastSender}: ${truncate(ch.lastMessage, 28)}`
-        : `${ch.messageCount} messages`;
+      const preview = isEncrypted
+        ? `${ch.messageCount} encrypted messages (no key configured)`
+        : ch.lastSender && ch.lastMessage
+          ? `${ch.lastSender}: ${truncate(ch.lastMessage, 28)}`
+          : `${ch.messageCount} messages`;
       const sel = selectedHash === ch.hash ? ' selected' : '';
-      const abbr = name.startsWith('#') ? name.slice(0, 3) : name.slice(0, 2).toUpperCase();
+      const encClass = isEncrypted ? ' ch-encrypted' : '';
+      const abbr = isEncrypted ? '🔒' : (name.startsWith('#') ? name.slice(0, 3) : name.slice(0, 2).toUpperCase());
       // Channel color dot for color picker (#674)
       const chColor = window.ChannelColors ? window.ChannelColors.get(ch.hash) : null;
       const dotStyle = chColor ? ` style="background:${chColor}"` : '';
       // Left border for assigned color
       const borderStyle = chColor ? ` style="border-left:3px solid ${chColor}"` : '';
 
-      return `<button class="ch-item${sel}" data-hash="${ch.hash}"${borderStyle} type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}">
-        <div class="ch-badge" style="background:${color}" aria-hidden="true">${escapeHtml(abbr)}</div>
+      return `<button class="ch-item${sel}${encClass}" data-hash="${ch.hash}"${borderStyle} type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}"${isEncrypted ? ' data-encrypted="true"' : ''}>
+        <div class="ch-badge" style="background:${color}" aria-hidden="true">${isEncrypted ? '🔒' : escapeHtml(abbr)}</div>
         <div class="ch-item-body">
           <div class="ch-item-top">
             <span class="ch-item-name">${escapeHtml(name)}</span>

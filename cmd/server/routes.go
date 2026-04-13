@@ -1656,6 +1656,7 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 	region := r.URL.Query().Get("region")
+	includeEncrypted := r.URL.Query().Get("includeEncrypted") == "true"
 	// Prefer DB for full history (in-memory store has limited retention)
 	if s.db != nil {
 		channels, err := s.db.GetChannels(region)
@@ -1663,11 +1664,20 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, err.Error())
 			return
 		}
+		if includeEncrypted {
+			encrypted, err := s.db.GetEncryptedChannels(region)
+			if err == nil {
+				channels = append(channels, encrypted...)
+			}
+		}
 		writeJSON(w, ChannelListResponse{Channels: channels})
 		return
 	}
 	if s.store != nil {
 		channels := s.store.GetChannels(region)
+		if includeEncrypted {
+			channels = append(channels, s.store.GetEncryptedChannels(region)...)
+		}
 		writeJSON(w, ChannelListResponse{Channels: channels})
 		return
 	}
