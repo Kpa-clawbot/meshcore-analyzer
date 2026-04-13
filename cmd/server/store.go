@@ -177,7 +177,8 @@ type PacketStore struct {
 	// Built during Load(), incrementally updated on ingest. Avoids full
 	// packet iteration at query time (O(unique_subpaths) vs O(total_packets)).
 	spIndex      map[string]int        // "hop1,hop2" → count
-	spTxIndex    map[string][]*StoreTx // "hop1,hop2" → transmissions containing this subpath
+	// spTxIndex removed to save memory - we scan packets instead for subpath detail queries
+	// spTxIndex map[string][]*StoreTx // "hop1,hop2" → transmissions containing this subpath
 	spTotalPaths int                   // transmissions with paths >= 2 hops
 	// Precomputed distance analytics: hop distances and path totals
 	// computed during Load() and incrementally updated on ingest.
@@ -301,7 +302,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		collisionCacheTTL: 3600 * time.Second,
 		invCooldown:       300 * time.Second,
 		spIndex:       make(map[string]int, 4096),
-		spTxIndex:     make(map[string][]*StoreTx, 4096),
+		// spTxIndex removed for memory optimization
 		advertPubkeys:   make(map[string]int),
 		lastSeenTouched: make(map[string]time.Time),
 	}
@@ -1479,7 +1480,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 
 	// Incrementally update precomputed subpath index with new transmissions
 	for _, tx := range broadcastTxs {
-		if addTxToSubpathIndexFull(s.spIndex, s.spTxIndex, tx) {
+		if addTxToSubpathIndex(s.spIndex, tx) {
 			s.spTotalPaths++
 		}
 		addTxToPathHopIndex(s.byPathHop, tx)
@@ -1848,7 +1849,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 				// Temporarily set parsedPath to old hops for removal.
 				saved, savedFlag := tx.parsedPath, tx.pathParsed
 				tx.parsedPath, tx.pathParsed = oldHops, true
-				if removeTxFromSubpathIndexFull(s.spIndex, s.spTxIndex, tx) {
+				if removeTxFromSubpathIndex(s.spIndex, tx) {
 					s.spTotalPaths--
 				}
 				tx.parsedPath, tx.pathParsed = saved, savedFlag
@@ -1865,7 +1866,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			}
 			// pickBestObservation already set pathParsed=false so
 			// addTxToSubpathIndex will re-parse the new path.
-			if addTxToSubpathIndexFull(s.spIndex, s.spTxIndex, tx) {
+			if addTxToSubpathIndex(s.spIndex, tx) {
 				s.spTotalPaths++
 			}
 			addTxToPathHopIndex(s.byPathHop, tx)
@@ -2406,10 +2407,10 @@ func removeTxFromSubpathIndexFull(idx map[string]int, txIdx map[string][]*StoreT
 // Must be called with s.mu held.
 func (s *PacketStore) buildSubpathIndex() {
 	s.spIndex = make(map[string]int, 4096)
-	s.spTxIndex = make(map[string][]*StoreTx, 4096)
+	// spTxIndex removed for memory optimization
 	s.spTotalPaths = 0
 	for _, tx := range s.packets {
-		if addTxToSubpathIndexFull(s.spIndex, s.spTxIndex, tx) {
+		if addTxToSubpathIndex(s.spIndex, tx) {
 			s.spTotalPaths++
 		}
 	}
@@ -2788,7 +2789,7 @@ func (s *PacketStore) EvictStale() int {
 		}
 
 		// Remove from subpath index
-		removeTxFromSubpathIndexFull(s.spIndex, s.spTxIndex, tx)
+		removeTxFromSubpathIndex(s.spIndex, tx)
 		// Remove from path-hop index
 		removeTxFromPathHopIndex(s.byPathHop, tx)
 	}
@@ -6848,8 +6849,8 @@ func (s *PacketStore) GetSubpathDetail(rawHops []string) map[string]interface{} 
 	// Build the subpath key the same way the index does (lowercase, comma-joined)
 	spKey := strings.ToLower(strings.Join(rawHops, ","))
 
-	// Direct lookup instead of scanning all packets
-	matchedTxs := s.spTxIndex[spKey]
+	// Scan packets matching this subpath (spTxIndex removed for memory optimization)
+	matchedTxs := s.filterPacketsBySubpath(rawHops, spKey)
 
 	hourBuckets := make([]int, 24)
 	var snrSum, rssiSum float64
@@ -6944,4 +6945,45 @@ func (s *PacketStore) GetSubpathDetail(rawHops []string) map[string]interface{} 
 		"parentPaths":      topParents,
 		"observers":        topObs,
 	}
+}
+
+// filterPacketsBySubpath scans packets to find those containing the given subpath.
+// This replaces the spTxIndex lookup to save ~72 MB of memory.
+// The subpathKey is the lowercase comma-joined hops.
+func (s *PacketStore) filterPacketsBySubpath(rawHops []string, subpathKey string) []*StoreTx {
+	// Use byPathHop index to narrow down candidates (if first hop exists)
+	var candidates []*StoreTx
+	if len(rawHops) > 0 {
+		firstHop := strings.ToLower(rawHops[0])
+		candidates = s.byPathHop[firstHop]
+	}
+	// If no first hop match, scan all packets (rare case)
+	if candidates == nil {
+		candidates = s.packets
+	}
+
+	// Filter candidates that contain the full subpath
+	var matched []*StoreTx
+	subpathLen := len(rawHops)
+	for _, tx := range candidates {
+		hops := txGetParsedPath(tx)
+		if len(hops) < subpathLen {
+			continue
+		}
+		// Check if subpath appears anywhere in the path
+		for start := 0; start <= len(hops)-subpathLen; start++ {
+			match := true
+			for i, h := range rawHops {
+				if strings.ToLower(hops[start+i]) != strings.ToLower(h) {
+					match = false
+					break
+				}
+			}
+			if match {
+				matched = append(matched, tx)
+				break
+			}
+		}
+	}
+	return matched
 }
