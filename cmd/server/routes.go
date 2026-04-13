@@ -1655,18 +1655,23 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
+	region := r.URL.Query().Get("region")
+	// Prefer DB for full history (in-memory store has limited retention)
+	if s.db != nil {
+		channels, err := s.db.GetChannels(region)
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, ChannelListResponse{Channels: channels})
+		return
+	}
 	if s.store != nil {
-		region := r.URL.Query().Get("region")
 		channels := s.store.GetChannels(region)
 		writeJSON(w, ChannelListResponse{Channels: channels})
 		return
 	}
-	channels, err := s.db.GetChannels()
-	if err != nil {
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, ChannelListResponse{Channels: channels})
+	writeJSON(w, ChannelListResponse{Channels: []map[string]interface{}{}})
 }
 
 func (s *Server) handleChannelMessages(w http.ResponseWriter, r *http.Request) {
@@ -1674,17 +1679,22 @@ func (s *Server) handleChannelMessages(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 100)
 	offset := queryInt(r, "offset", 0)
 	region := r.URL.Query().Get("region")
+	// Prefer DB for full history (in-memory store has limited retention)
+	if s.db != nil {
+		messages, total, err := s.db.GetChannelMessages(hash, limit, offset, region)
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, ChannelMessagesResponse{Messages: messages, Total: total})
+		return
+	}
 	if s.store != nil {
 		messages, total := s.store.GetChannelMessages(hash, limit, offset, region)
 		writeJSON(w, ChannelMessagesResponse{Messages: messages, Total: total})
 		return
 	}
-	messages, total, err := s.db.GetChannelMessages(hash, limit, offset, region)
-	if err != nil {
-		writeError(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, ChannelMessagesResponse{Messages: messages, Total: total})
+	writeJSON(w, ChannelMessagesResponse{Messages: []map[string]interface{}{}, Total: 0})
 }
 
 func (s *Server) handleObservers(w http.ResponseWriter, r *http.Request) {

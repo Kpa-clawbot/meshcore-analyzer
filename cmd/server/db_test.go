@@ -1504,6 +1504,61 @@ func TestGetChannelsStaleMessage(t *testing.T) {
 	}
 }
 
+func TestGetChannelsRegionFiltering(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Observer1', 'SJC')`)
+	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs2', 'Observer2', 'SFO')`)
+
+	// Channel message seen only in SJC
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('AA', 'hash1', '2026-01-15T10:00:00Z', 1, 5,
+		'{"type":"CHAN","channel":"#sjc-only","text":"Alice: Hello SJC","sender":"Alice"}')`)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, timestamp)
+		VALUES (1, 1, 12.0, -90, 1736935200)`)
+
+	// Channel message seen only in SFO
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('BB', 'hash2', '2026-01-15T10:05:00Z', 1, 5,
+		'{"type":"CHAN","channel":"#sfo-only","text":"Bob: Hello SFO","sender":"Bob"}')`)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, timestamp)
+		VALUES (2, 2, 14.0, -88, 1736935500)`)
+
+	// No region filter — both channels
+	all, err := db.GetChannels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 channels without region filter, got %d", len(all))
+	}
+
+	// Filter SJC — only #sjc-only
+	sjc, err := db.GetChannels("SJC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sjc) != 1 {
+		t.Fatalf("expected 1 channel for SJC, got %d", len(sjc))
+	}
+	if sjc[0]["name"] != "#sjc-only" {
+		t.Errorf("expected channel '#sjc-only', got %q", sjc[0]["name"])
+	}
+
+	// Filter SFO — only #sfo-only
+	sfo, err := db.GetChannels("SFO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sfo) != 1 {
+		t.Fatalf("expected 1 channel for SFO, got %d", len(sfo))
+	}
+	if sfo[0]["name"] != "#sfo-only" {
+		t.Errorf("expected channel '#sfo-only', got %q", sfo[0]["name"])
+	}
+}
+
 func TestNodeTelemetryFields(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
