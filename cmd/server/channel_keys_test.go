@@ -244,6 +244,15 @@ func TestHandleAddChannelKeyValidation(t *testing.T) {
 		t.Errorf("expected 400 for empty name, got %d", w.Code)
 	}
 
+	// Name too long
+	body = `{"name":"#` + "abcdefghijklmnopqrstuvwxyz0123456" + `"}`
+	req = httptest.NewRequest("POST", "/api/channels/keys", bytes.NewBufferString(body))
+	w = httptest.NewRecorder()
+	srv.handleAddChannelKey(w, req)
+	if w.Code != 400 {
+		t.Errorf("expected 400 for long name, got %d", w.Code)
+	}
+
 	// Invalid key length
 	body = `{"name":"#test","key":"abc"}`
 	req = httptest.NewRequest("POST", "/api/channels/keys", bytes.NewBufferString(body))

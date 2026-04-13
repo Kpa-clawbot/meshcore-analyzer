@@ -165,9 +165,9 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 
 	// Other endpoints
 	r.HandleFunc("/api/resolve-hops", s.handleResolveHops).Methods("GET")
-	r.HandleFunc("/api/channels/keys", s.handleAddChannelKey).Methods("POST")
+	r.Handle("/api/channels/keys", s.requireAPIKey(http.HandlerFunc(s.handleAddChannelKey))).Methods("POST")
 	r.HandleFunc("/api/channels/keys", s.handleListChannelKeys).Methods("GET")
-	r.HandleFunc("/api/channels/keys/{name}", s.handleDeleteChannelKey).Methods("DELETE")
+	r.Handle("/api/channels/keys/{name}", s.requireAPIKey(http.HandlerFunc(s.handleDeleteChannelKey))).Methods("DELETE")
 	r.HandleFunc("/api/channels/{hash}/messages", s.handleChannelMessages).Methods("GET")
 	r.HandleFunc("/api/channels", s.handleChannels).Methods("GET")
 	r.HandleFunc("/api/observers/metrics/summary", s.handleMetricsSummary).Methods("GET")
@@ -1719,6 +1719,12 @@ func (s *Server) handleAddChannelKey(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		writeError(w, 400, "name is required")
+		return
+	}
+
+	// Limit channel name length (32 chars max, consistent with MeshCore)
+	if len(name) > 32 {
+		writeError(w, 400, "channel name too long (max 32 characters)")
 		return
 	}
 

@@ -379,9 +379,10 @@
         feedback.textContent = 'Adding ' + val + '…';
         feedback.className = 'ch-add-feedback';
         try {
+          var apiKey = localStorage.getItem('meshcore-api-key') || '';
           var resp = await fetch('/api/channels/keys', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
             body: JSON.stringify({ name: val })
           });
           var data = await resp.json();
