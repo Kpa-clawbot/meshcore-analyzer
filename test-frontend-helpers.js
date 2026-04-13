@@ -2345,7 +2345,9 @@ console.log('\n=== channels.js: shouldProcessWSMessageForRegion ===');
   ctx.history = { replaceState() {} };
   ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
   ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
-  loadInCtx(ctx, 'public/channels.js');
+  ctx.crypto = { subtle: require('crypto').webcrypto.subtle }; ctx.TextEncoder = TextEncoder; ctx.TextDecoder = TextDecoder; ctx.Uint8Array = Uint8Array;
+    loadInCtx(ctx, 'public/channel-decrypt.js');
+    loadInCtx(ctx, 'public/channels.js');
   const shouldProcess = ctx.window._channelsShouldProcessWSMessageForRegion;
 
   test('helper is exported', () => assert.ok(typeof shouldProcess === 'function'));
@@ -2467,6 +2469,8 @@ console.log('\n=== channels.js: WS batch + region snapshot integration ===');
     ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
     ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
 
+    ctx.crypto = { subtle: require('crypto').webcrypto.subtle }; ctx.TextEncoder = TextEncoder; ctx.TextDecoder = TextDecoder; ctx.Uint8Array = Uint8Array;
+    loadInCtx(ctx, 'public/channel-decrypt.js');
     loadInCtx(ctx, 'public/channels.js');
     ctx._pageHandlers.init(appEl);
     return { ctx, dom };
@@ -2586,6 +2590,8 @@ console.log('\n=== channels.js: WS batch + region snapshot integration ===');
     ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
     ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
 
+    ctx.crypto = { subtle: require('crypto').webcrypto.subtle }; ctx.TextEncoder = TextEncoder; ctx.TextDecoder = TextDecoder; ctx.Uint8Array = Uint8Array;
+    loadInCtx(ctx, 'public/channel-decrypt.js');
     loadInCtx(ctx, 'public/channels.js');
     ctx._pageHandlers.init(appEl);
     await Promise.resolve();
@@ -2681,6 +2687,8 @@ console.log('\n=== channels.js: WS batch + region snapshot integration ===');
     ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
     ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
 
+    ctx.crypto = { subtle: require('crypto').webcrypto.subtle }; ctx.TextEncoder = TextEncoder; ctx.TextDecoder = TextDecoder; ctx.Uint8Array = Uint8Array;
+    loadInCtx(ctx, 'public/channel-decrypt.js');
     loadInCtx(ctx, 'public/channels.js');
     ctx._pageHandlers.init(appEl);
     await Promise.resolve();
@@ -5112,6 +5120,107 @@ console.log('\n=== live.js: anomaly icon in feed ===');
       'live.js should have anomalyIcon variable for feed items');
     assert.ok(liveSource.includes('pkt.decoded && pkt.decoded.anomaly'),
       'live.js should check pkt.decoded.anomaly');
+  });
+}
+
+// ===== channel-decrypt.js: client-side crypto =====
+console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===');
+{
+  const cryptoModule = require('crypto');
+  const ctx = makeSandbox();
+  // Provide Web Crypto API in sandbox
+  ctx.crypto = { subtle: cryptoModule.webcrypto.subtle };
+  ctx.TextEncoder = TextEncoder;
+  ctx.TextDecoder = TextDecoder;
+  ctx.Uint8Array = Uint8Array;
+  loadInCtx(ctx, 'public/channel-decrypt.js');
+  const CD = ctx.ChannelDecrypt;
+
+  test('deriveKey: SHA256("#test")[:16] matches known value', async () => {
+    const key = await CD.deriveKey('#test');
+    const hex = CD.bytesToHex(key);
+    // Verify against Node.js crypto
+    const expected = cryptoModule.createHash('sha256').update('#test').digest('hex').substring(0, 32);
+    assert.strictEqual(hex, expected, 'deriveKey should produce SHA256("#test")[:16]');
+  });
+
+  test('deriveKey: returns 16 bytes', async () => {
+    const key = await CD.deriveKey('#LongFast');
+    assert.strictEqual(key.length, 16);
+  });
+
+  test('computeChannelHash: SHA256(key)[0]', async () => {
+    const key = await CD.deriveKey('#test');
+    const hashByte = await CD.computeChannelHash(key);
+    const keyHex = CD.bytesToHex(key);
+    const expected = cryptoModule.createHash('sha256').update(Buffer.from(keyHex, 'hex')).digest()[0];
+    assert.strictEqual(hashByte, expected);
+  });
+
+  test('verifyMAC: valid MAC passes', async () => {
+    // Create a known ciphertext and compute MAC using Node.js
+    const key = await CD.deriveKey('#test');
+    const secret = Buffer.alloc(32);
+    Buffer.from(CD.bytesToHex(key), 'hex').copy(secret, 0);
+    const ciphertext = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
+    const mac = cryptoModule.createHmac('sha256', secret).update(ciphertext).digest();
+    const macHex = mac.slice(0, 2).toString('hex');
+    const result = await CD.verifyMAC(key, new Uint8Array(ciphertext), macHex);
+    assert.strictEqual(result, true, 'valid MAC should pass');
+  });
+
+  test('verifyMAC: invalid MAC fails', async () => {
+    const key = await CD.deriveKey('#test');
+    const ciphertext = new Uint8Array(16);
+    const result = await CD.verifyMAC(key, ciphertext, 'ffff');
+    assert.strictEqual(result, false, 'invalid MAC should fail');
+  });
+
+  test('parsePlaintext: extracts sender and message', () => {
+    // Build plaintext: timestamp(4 LE) + flags(1) + "alice: hello\0"
+    const msg = 'alice: hello\0';
+    const buf = new Uint8Array(5 + msg.length);
+    // timestamp = 1000 (LE)
+    buf[0] = 0xe8; buf[1] = 0x03; buf[2] = 0; buf[3] = 0;
+    buf[4] = 0; // flags
+    const enc = new TextEncoder();
+    const msgBytes = enc.encode(msg);
+    buf.set(msgBytes, 5);
+    const parsed = CD.parsePlaintext(buf);
+    assert.ok(parsed, 'should parse successfully');
+    assert.strictEqual(parsed.sender, 'alice');
+    assert.strictEqual(parsed.message, 'hello');
+    assert.strictEqual(parsed.timestamp, 1000);
+  });
+
+  test('parsePlaintext: no sender prefix returns empty sender', () => {
+    const msg = 'just a message\0';
+    const buf = new Uint8Array(5 + msg.length);
+    buf[0] = 1; buf[1] = 0; buf[2] = 0; buf[3] = 0; buf[4] = 0;
+    buf.set(new TextEncoder().encode(msg), 5);
+    const parsed = CD.parsePlaintext(buf);
+    assert.ok(parsed);
+    assert.strictEqual(parsed.sender, '');
+    assert.strictEqual(parsed.message, 'just a message');
+  });
+
+  test('parsePlaintext: returns null for too-short input', () => {
+    assert.strictEqual(CD.parsePlaintext(new Uint8Array(3)), null);
+  });
+
+  test('localStorage persistence: save/get/remove keys', () => {
+    CD.saveKey('#test', 'abcd1234abcd1234abcd1234abcd1234');
+    const keys = CD.getKeys();
+    assert.strictEqual(keys['#test'], 'abcd1234abcd1234abcd1234abcd1234');
+    CD.removeKey('#test');
+    const keys2 = CD.getKeys();
+    assert.strictEqual(keys2['#test'], undefined);
+  });
+
+  test('bytesToHex and hexToBytes roundtrip', () => {
+    const hex = 'deadbeef01020304';
+    const bytes = CD.hexToBytes(hex);
+    assert.strictEqual(CD.bytesToHex(bytes), hex);
   });
 }
 

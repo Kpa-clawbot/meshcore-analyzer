@@ -1097,6 +1097,27 @@ button.ch-item.ch-item-encrypted:hover { opacity: 0.7; }
 button.ch-item.ch-item-encrypted.selected { opacity: 0.8; }
 button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 
+/* Channel key input (#725 M2) */
+.ch-key-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+.ch-key-input:focus {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: -1px;
+  border-color: var(--accent, #3b82f6);
+}
+.ch-key-input::placeholder { color: var(--text-muted); }
+.ch-key-input-wrap { margin-bottom: 4px; }
+.ch-wrong-key { color: var(--danger, #ef4444); font-weight: 500; }
+
 /* Touch-friendly tappable elements */
 .ch-tappable {
   cursor: pointer;
