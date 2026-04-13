@@ -454,7 +454,6 @@
     var decrypted = [];
     var macFailCount = 0;
     var macCheckCount = 0;
-    var CHUNK_SIZE = 50;
 
     for (var j = 0; j < candidates.length; j++) {
       var c = candidates[j];
@@ -948,18 +947,18 @@
 
     const msgEl = document.getElementById('chMessages');
 
-    // Client-side decryption path (#725 M2)
-    if (decryptOpts && decryptOpts.userKey) {
+    // Shared helper: fetch, decrypt, and render messages for a channel key
+    async function decryptAndRender(keyHex, channelHashByte, channelName) {
       msgEl.innerHTML = '<div class="ch-loading">Decrypting messages…</div>';
-      var result = await fetchAndDecryptChannel(decryptOpts.userKey, decryptOpts.channelHashByte, decryptOpts.channelName);
-      if (isStaleMessageRequest(request)) return;
+      var result = await fetchAndDecryptChannel(keyHex, channelHashByte, channelName);
+      if (isStaleMessageRequest(request)) return true;
       if (result.wrongKey) {
         msgEl.innerHTML = '<div class="ch-empty ch-wrong-key">🔒 Key does not match — no messages could be decrypted</div>';
-        return;
+        return true;
       }
       if (result.error) {
         msgEl.innerHTML = '<div class="ch-empty">' + escapeHtml(result.error) + '</div>';
-        return;
+        return true;
       }
       messages = result.messages || [];
       if (messages.length === 0) {
@@ -969,33 +968,24 @@
         renderMessages();
         scrollToBottom();
       }
+      return true;
+    }
+
+    // Client-side decryption path (#725 M2)
+    if (decryptOpts && decryptOpts.userKey) {
+      await decryptAndRender(decryptOpts.userKey, decryptOpts.channelHashByte, decryptOpts.channelName);
       return;
     }
 
     // Check if this is a user-added channel that needs decryption
     var storedKeys = typeof ChannelDecrypt !== 'undefined' ? ChannelDecrypt.getStoredKeys() : {};
-    var userChannelMatch = null;
     if (hash.startsWith('user:')) {
       var chName = hash.substring(5);
       if (storedKeys[chName]) {
         var keyHex = storedKeys[chName];
         var keyBytes = ChannelDecrypt.hexToBytes(keyHex);
         var hashByte = await ChannelDecrypt.computeChannelHash(keyBytes);
-        msgEl.innerHTML = '<div class="ch-loading">Decrypting messages…</div>';
-        var result2 = await fetchAndDecryptChannel(keyHex, hashByte, chName);
-        if (isStaleMessageRequest(request)) return;
-        if (result2.wrongKey) {
-          msgEl.innerHTML = '<div class="ch-empty ch-wrong-key">🔒 Key does not match — no messages could be decrypted</div>';
-          return;
-        }
-        messages = result2.messages || [];
-        if (messages.length === 0) {
-          msgEl.innerHTML = '<div class="ch-empty">No encrypted messages found for this channel</div>';
-        } else {
-          header.querySelector('.ch-header-text').textContent = `${name} — ${messages.length} messages (decrypted)`;
-          renderMessages();
-          scrollToBottom();
-        }
+        await decryptAndRender(keyHex, hashByte, chName);
         return;
       }
     }
@@ -1007,21 +997,7 @@
         var kb = ChannelDecrypt.hexToBytes(kh);
         var hb = await ChannelDecrypt.computeChannelHash(kb);
         if (String(hb) === String(hash) || String(ch.hash) === String(hb)) {
-          msgEl.innerHTML = '<div class="ch-loading">Decrypting messages…</div>';
-          var result3 = await fetchAndDecryptChannel(kh, hb, kn);
-          if (isStaleMessageRequest(request)) return;
-          if (result3.wrongKey) {
-            msgEl.innerHTML = '<div class="ch-empty ch-wrong-key">🔒 Key does not match — no messages could be decrypted</div>';
-            return;
-          }
-          messages = result3.messages || [];
-          if (messages.length === 0) {
-            msgEl.innerHTML = '<div class="ch-empty">No encrypted messages found for this channel</div>';
-          } else {
-            header.querySelector('.ch-header-text').textContent = `${name} — ${messages.length} messages (decrypted)`;
-            renderMessages();
-            scrollToBottom();
-          }
+          await decryptAndRender(kh, hb, kn);
           return;
         }
       }
