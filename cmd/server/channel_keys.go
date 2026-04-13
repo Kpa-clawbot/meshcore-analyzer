@@ -19,7 +19,7 @@ import (
 type UserChannelKey struct {
 	Name      string `json:"name"`
 	KeyHex    string `json:"key"`
-	Source    string `json:"source"` // "hashtag" or "psk"
+	Source    string `json:"source"`             // "hashtag" or "psk"
 	CreatedAt string `json:"created_at,omitempty"`
 }
 
@@ -263,6 +263,11 @@ func retroactiveDecrypt(dbPath string, readDB *DB, channelName, keyHex string) (
 	}
 	defer rw.Close()
 
+	tx, err := rw.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+
 	decrypted := 0
 	for _, c := range candidates {
 		if !c.decodedJSON.Valid || c.decodedJSON.String == "" {
@@ -309,12 +314,16 @@ func retroactiveDecrypt(dbPath string, readDB *DB, channelName, keyHex string) (
 			continue
 		}
 
-		_, err = rw.Exec(`UPDATE transmissions SET decoded_json = ? WHERE id = ?`, string(updatedJSON), c.id)
+		_, err = tx.Exec(`UPDATE transmissions SET decoded_json = ? WHERE id = ?`, string(updatedJSON), c.id)
 		if err != nil {
 			log.Printf("[channels] retroactive decrypt update failed for id=%d: %v", c.id, err)
 			continue
 		}
 		decrypted++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit retroactive decrypt: %w", err)
 	}
 
 	return decrypted, nil

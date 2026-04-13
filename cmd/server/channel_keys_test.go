@@ -282,11 +282,19 @@ func TestHandleListChannelKeys(t *testing.T) {
 	srv.handleListChannelKeys(w, req)
 
 	var resp struct {
-		Keys []UserChannelKey `json:"keys"`
+		Keys []struct {
+			Name      string `json:"name"`
+			Source    string `json:"source"`
+			CreatedAt string `json:"created_at"`
+		} `json:"keys"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if len(resp.Keys) != 1 || resp.Keys[0].Name != "#a" {
 		t.Errorf("unexpected keys response: %+v", resp)
+	}
+	// Verify key_hex is NOT in the response (security: PSK keys are secrets)
+	if bytes.Contains(w.Body.Bytes(), []byte("aaaa")) {
+		t.Error("response should not contain key_hex")
 	}
 }
 

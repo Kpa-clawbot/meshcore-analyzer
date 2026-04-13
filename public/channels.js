@@ -329,7 +329,7 @@
         </div>
         <div class="ch-add-channel" id="chAddChannel">
           <form id="chAddForm" class="ch-add-form" autocomplete="off">
-            <input type="text" id="chAddInput" class="ch-add-input" placeholder="Enter #channelname" aria-label="Add channel" />
+            <input type="text" id="chAddInput" class="ch-add-input" placeholder="Enter #channelname" aria-label="Add channel" maxlength="32" />
             <button type="submit" class="ch-add-btn" title="Add channel">+</button>
           </form>
           <div id="chAddFeedback" class="ch-add-feedback" style="display:none"></div>

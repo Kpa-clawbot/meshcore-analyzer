@@ -1786,10 +1786,10 @@ func (s *Server) handleAddChannelKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListChannelKeys returns all user-added channel keys.
+// handleListChannelKeys returns all user-added channel keys (without key material).
 func (s *Server) handleListChannelKeys(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
-		writeJSON(w, map[string]interface{}{"keys": []UserChannelKey{}})
+		writeJSON(w, map[string]interface{}{"keys": []map[string]string{}})
 		return
 	}
 	keys, err := loadUserChannelKeys(s.db)
@@ -1797,10 +1797,17 @@ func (s *Server) handleListChannelKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	if keys == nil {
-		keys = []UserChannelKey{}
+	// Strip key_hex from response — PSK keys are secrets
+	type safeKey struct {
+		Name      string `json:"name"`
+		Source    string `json:"source"`
+		CreatedAt string `json:"created_at,omitempty"`
 	}
-	writeJSON(w, map[string]interface{}{"keys": keys})
+	safe := make([]safeKey, 0, len(keys))
+	for _, k := range keys {
+		safe = append(safe, safeKey{Name: k.Name, Source: k.Source, CreatedAt: k.CreatedAt})
+	}
+	writeJSON(w, map[string]interface{}{"keys": safe})
 }
 
 // handleDeleteChannelKey removes a user-added channel key.
