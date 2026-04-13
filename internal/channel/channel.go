@@ -12,14 +12,6 @@ import (
 	"unicode/utf8"
 )
 
-// DecryptedMessage holds the parsed result of a successfully decrypted channel message.
-type DecryptedMessage struct {
-	Timestamp uint32
-	Flags     byte
-	Sender    string
-	Message   string
-}
-
 // DeriveKey derives an AES-128 key from a channel name (e.g. "#wardriving").
 // Returns 16 bytes: SHA-256(channelName)[:16].
 func DeriveKey(channelName string) []byte {

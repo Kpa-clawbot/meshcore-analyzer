@@ -254,6 +254,11 @@ func extractGRPPayload(rawHex string) ([]byte, error) {
 	routeType := int(header & 0x03)
 	offset := 1
 
+	// Transport codes (2 codes × 2 bytes) come BEFORE path for transport routes
+	if routeType == 0 || routeType == 3 {
+		offset += 4
+	}
+
 	// Path byte
 	if offset >= len(buf) {
 		return nil, fmt.Errorf("too short for path")
@@ -263,11 +268,6 @@ func extractGRPPayload(rawHex string) ([]byte, error) {
 	hashSize := int(pathByte>>6) + 1
 	hashCount := int(pathByte & 0x3F)
 	offset += hashSize * hashCount
-
-	// Transport codes (2 bytes each) for transport routes
-	if routeType == 0 || routeType == 3 {
-		offset += 2
-	}
 
 	if offset >= len(buf) {
 		return nil, fmt.Errorf("too short for payload")

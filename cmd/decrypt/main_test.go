@@ -28,10 +28,11 @@ func TestExtractGRPPayload(t *testing.T) {
 }
 
 func TestExtractGRPPayloadTransport(t *testing.T) {
-	// Transport flood: route=0, adds 2 bytes transport codes
+	// Transport flood: route=0, 4 bytes transport codes BEFORE path byte
 	// header: (5<<2)|0 = 0x14
 	payload := []byte{0xAA, 0xBB, 0xCC}
-	pkt := append([]byte{0x14, 0x00, 0xFF, 0xFF}, payload...) // 2 transport bytes
+	// header + 4 transport bytes + path(0 hops) + payload
+	pkt := append([]byte{0x14, 0xFF, 0xFF, 0xFF, 0xFF, 0x00}, payload...)
 	rawHex := hex.EncodeToString(pkt)
 
 	result, err := extractGRPPayload(rawHex)
