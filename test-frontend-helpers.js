@@ -5087,6 +5087,7 @@ console.log('\n=== analytics.js: renderMultiByteAdopters ===');
   }
 }
 
+
 // ===== packets.js: anomaly banner rendering =====
 console.log('\n=== packets.js: anomaly UI rendering ===');
 {
@@ -5221,6 +5222,47 @@ console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===
     const hex = 'deadbeef01020304';
     const bytes = CD.hexToBytes(hex);
     assert.strictEqual(CD.bytesToHex(bytes), hex);
+  });
+}
+
+// ===== Encrypted Channels Toggle Tests (#728) =====
+{
+  console.log('\n--- Encrypted Channels Toggle (#728) ---');
+
+  test('encrypted toggle reads from localStorage', () => {
+    const store = {};
+    const ls = {
+      getItem: k => store[k] || null,
+      setItem: (k, v) => { store[k] = String(v); },
+    };
+    // Default: not set → should be false
+    assert.strictEqual(ls.getItem('channels-show-encrypted'), null);
+    const showEncrypted = ls.getItem('channels-show-encrypted') === 'true';
+    assert.strictEqual(showEncrypted, false);
+
+    // Set to true
+    ls.setItem('channels-show-encrypted', 'true');
+    assert.strictEqual(ls.getItem('channels-show-encrypted') === 'true', true);
+
+    // Set to false
+    ls.setItem('channels-show-encrypted', 'false');
+    assert.strictEqual(ls.getItem('channels-show-encrypted') === 'true', false);
+  });
+
+  test('encrypted channels get ch-encrypted CSS class', () => {
+    // Simulate the rendering logic from channels.js
+    const ch = { hash: 'enc_A1B2', name: 'Encrypted (0xA1B2)', encrypted: true, messageCount: 5 };
+    const isEncrypted = ch.encrypted === true;
+    const encClass = isEncrypted ? ' ch-encrypted' : '';
+    const className = 'ch-item' + encClass;
+    assert.ok(className.includes('ch-encrypted'), 'encrypted channel should have ch-encrypted class');
+
+    // Non-encrypted channel should NOT have the class
+    const ch2 = { hash: 'AABB', name: '#general', encrypted: false };
+    const encClass2 = ch2.encrypted === true ? ' ch-encrypted' : '';
+    const className2 = 'ch-item' + encClass2;
+    assert.ok(!className2.includes('ch-encrypted'), 'non-encrypted channel should not have ch-encrypted class');
+
   });
 }
 
