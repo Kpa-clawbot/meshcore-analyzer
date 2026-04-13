@@ -357,6 +357,10 @@ func TestDecodePacket_TraceHopsCompleted(t *testing.T) {
 	if *pkt.Path.HopsCompleted != 2 {
 		t.Errorf("expected HopsCompleted=2, got %d", *pkt.Path.HopsCompleted)
 	}
+	// FLOOD routing for TRACE is anomalous
+	if pkt.Anomaly == "" {
+		t.Error("expected anomaly flag for FLOOD-routed TRACE")
+	}
 }
 
 func TestDecodePacket_TraceNoSNR(t *testing.T) {
@@ -408,7 +412,7 @@ func TestDecodePacket_TraceFullyCompleted(t *testing.T) {
 }
 
 func TestDecodePacket_TraceFlags1_TwoBytePathSz(t *testing.T) {
-	// TRACE with flags=1 → path_sz = (1 & 0x03) + 1 = 2-byte hashes
+	// TRACE with flags=1 → path_sz = 1 << (1 & 0x03) = 2-byte hashes
 	// Firmware always sends TRACE as DIRECT (route_type=2), so header byte =
 	// (0<<6)|(9<<2)|2 = 0x26. path_length 0x00 = 0 SNR bytes.
 	hex := "2600" + // header (DIRECT+TRACE) + path_length (0 SNR)
@@ -427,26 +431,29 @@ func TestDecodePacket_TraceFlags1_TwoBytePathSz(t *testing.T) {
 	if pkt.Path.HashSize != 2 {
 		t.Errorf("expected HashSize=2, got %d", pkt.Path.HashSize)
 	}
+	if pkt.Anomaly != "" {
+		t.Errorf("expected no anomaly for DIRECT TRACE, got %q", pkt.Anomaly)
+	}
 }
 
-func TestDecodePacket_TraceFlags2_ThreeBytePathSz(t *testing.T) {
-	// TRACE with flags=2 → path_sz = (2 & 0x03) + 1 = 3-byte hashes
+func TestDecodePacket_TraceFlags2_FourBytePathSz(t *testing.T) {
+	// TRACE with flags=2 → path_sz = 1 << (2 & 0x03) = 4-byte hashes
 	// DIRECT route_type (0x26)
 	hex := "2600" + // header (DIRECT+TRACE) + path_length (0 SNR)
 		"01000000" + // tag
 		"02000000" + // authCode
-		"02" + // flags = 2 → path_sz = 3
-		"AABBCCDDEEFF" // 6 bytes = 2 hops of 3-byte each
+		"02" + // flags = 2 → path_sz = 4
+		"AABBCCDD11223344" // 8 bytes = 2 hops of 4-byte each
 
 	pkt, err := DecodePacket(hex, false)
 	if err != nil {
 		t.Fatalf("DecodePacket error: %v", err)
 	}
 	if len(pkt.Path.Hops) != 2 {
-		t.Errorf("expected 2 hops (3-byte path_sz), got %d: %v", len(pkt.Path.Hops), pkt.Path.Hops)
+		t.Errorf("expected 2 hops (4-byte path_sz), got %d: %v", len(pkt.Path.Hops), pkt.Path.Hops)
 	}
-	if pkt.Path.HashSize != 3 {
-		t.Errorf("expected HashSize=3, got %d", pkt.Path.HashSize)
+	if pkt.Path.HashSize != 4 {
+		t.Errorf("expected HashSize=4, got %d", pkt.Path.HashSize)
 	}
 }
 
@@ -496,12 +503,14 @@ func TestDecodePacket_TraceTransportDirect(t *testing.T) {
 	if pkt.Path.HopsCompleted == nil || *pkt.Path.HopsCompleted != 2 {
 		t.Errorf("expected HopsCompleted=2, got %v", pkt.Path.HopsCompleted)
 	}
+	if pkt.Anomaly != "" {
+		t.Errorf("expected no anomaly for TRANSPORT_DIRECT TRACE, got %q", pkt.Anomaly)
+	}
 }
 
-func TestDecodePacket_TraceFloodRouteGraceful(t *testing.T) {
-	// TRACE via FLOOD (route_type=1) — anomalous per firmware (firmware rejects
-	// TRACE via flood), but we handle it gracefully without crashing.
-	// Existing test packets use 0x25 (FLOOD+TRACE) from legacy/anomalous data.
+func TestDecodePacket_TraceFloodRouteAnomaly(t *testing.T) {
+	// TRACE via FLOOD (route_type=1) — anomalous per firmware (firmware only
+	// sends TRACE as DIRECT). Should still parse but flag the anomaly.
 	hex := "2500" + // header (FLOOD+TRACE) + path_length (0 SNR)
 		"01000000" + // tag
 		"02000000" + // authCode
@@ -514,6 +523,9 @@ func TestDecodePacket_TraceFloodRouteGraceful(t *testing.T) {
 	}
 	if len(pkt.Path.Hops) != 2 {
 		t.Errorf("expected 2 hops even for anomalous FLOOD route, got %d", len(pkt.Path.Hops))
+	}
+	if pkt.Anomaly == "" {
+		t.Error("expected anomaly flag for FLOOD-routed TRACE, got empty string")
 	}
 }
 

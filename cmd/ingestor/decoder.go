@@ -144,6 +144,7 @@ type DecodedPacket struct {
 	Path           Path            `json:"path"`
 	Payload        Payload         `json:"payload"`
 	Raw            string          `json:"raw"`
+	Anomaly        string          `json:"anomaly,omitempty"`
 }
 
 func decodeHeader(b byte) Header {
@@ -588,25 +589,33 @@ func DecodePacket(hexString string, channelKeys map[string]string, validateSigna
 
 	// TRACE packets store hop IDs in the payload (buf[9:]) rather than the header
 	// path field. Firmware always sends TRACE as DIRECT (route_type 2 or 3);
-	// FLOOD-routed TRACEs are anomalous but handled gracefully.
-	// The TRACE flags byte (payload offset 8) encodes path_sz in bits 0-1,
-	// NOT the header path byte's hash_size bits.
+	// FLOOD-routed TRACEs are anomalous but handled gracefully (parsed, but
+	// flagged). The TRACE flags byte (payload offset 8) encodes path_sz in
+	// bits 0-1 as a power-of-two exponent: hash_bytes = 1 << path_sz.
+	// NOT the header path byte's hash_size bits. The header path contains SNR
+	// bytes — one per hop that actually forwarded.
+	// We expose hopsCompleted (count of SNR bytes) so consumers can distinguish
+	// how far the trace got vs the full intended route.
+	var anomaly string
 	if header.PayloadType == PayloadTRACE && payload.PathData != "" {
+		// Flag anomalous routing — firmware only sends TRACE as DIRECT
+		if header.RouteType != RouteDirect && header.RouteType != RouteTransportDirect {
+			anomaly = "TRACE packet with non-DIRECT routing (expected DIRECT or TRANSPORT_DIRECT)"
+		}
 		// The header path hops count represents SNR entries = completed hops
 		hopsCompleted := path.HashCount
 		pathBytes, err := hex.DecodeString(payload.PathData)
 		if err == nil && payload.TraceFlags != nil {
-			// TRACE route hashes use path_sz from flags byte, not header hash_size
-			pathSz := (*payload.TraceFlags & 0x03) + 1
-			if pathSz > 0 {
-				hops := make([]string, 0, len(pathBytes)/pathSz)
-				for i := 0; i+pathSz <= len(pathBytes); i += pathSz {
-					hops = append(hops, strings.ToUpper(hex.EncodeToString(pathBytes[i:i+pathSz])))
-				}
-				path.Hops = hops
-				path.HashCount = len(hops)
-				path.HashSize = pathSz
+			// path_sz from flags byte is a power-of-two exponent per firmware:
+			// hash_bytes = 1 << (flags & 0x03)
+			pathSz := 1 << (*payload.TraceFlags & 0x03)
+			hops := make([]string, 0, len(pathBytes)/pathSz)
+			for i := 0; i+pathSz <= len(pathBytes); i += pathSz {
+				hops = append(hops, strings.ToUpper(hex.EncodeToString(pathBytes[i:i+pathSz])))
 			}
+			path.Hops = hops
+			path.HashCount = len(hops)
+			path.HashSize = pathSz
 			path.HopsCompleted = &hopsCompleted
 		}
 	}
@@ -627,6 +636,7 @@ func DecodePacket(hexString string, channelKeys map[string]string, validateSigna
 		Path:           path,
 		Payload:        payload,
 		Raw:            strings.ToUpper(hexString),
+		Anomaly:        anomaly,
 	}, nil
 }
 
