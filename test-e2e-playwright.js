@@ -398,8 +398,9 @@ async function run() {
       }
     }, { timeout: 10000 });
 
-    // Full reload on the packets page — scripts re-execute, IIFE reads localStorage
-    await page.reload({ waitUntil: 'load' });
+    // Navigate to clean #/packets URL — avoids leftover filter params from a previous
+    // test being re-read from the URL and overriding the localStorage value we just set (#682).
+    await page.goto(`${BASE}/#/packets`, { waitUntil: 'load' });
     await page.waitForSelector('#fTimeWindow', { timeout: 10000 });
     const timeWindowValue = await page.$eval('#fTimeWindow', (el) => el.value);
     assert(timeWindowValue === '60', `Expected time window dropdown to restore 60, got ${timeWindowValue}`);
