@@ -3997,3 +3997,175 @@ func TestSaveGeoFilter(t *testing.T) {
 		}
 	})
 }
+
+// --- prune-geo-filter endpoint tests ---
+
+func setupPruneGeoFilterServer(t *testing.T, apiKey string, gf *GeoFilterConfig) (*Server, *mux.Router) {
+	t.Helper()
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	// Add a node clearly outside the geo filter (high lat/lon in Europe)
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+		VALUES ('aaaa111122223333', 'OutsideNode', 'repeater', 51.5, 4.5, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`)
+	// Add a node with no GPS (should always be kept)
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role, last_seen, first_seen, advert_count)
+		VALUES ('bbbb111122223333', 'NoGPSNode', 'companion', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 1)`)
+
+	cfg := &Config{Port: 3000, APIKey: apiKey, GeoFilter: gf}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	store := NewPacketStore(db, nil)
+	store.Load()
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+	return srv, router
+}
+
+func TestPruneGeoFilterEndpoint(t *testing.T) {
+	const apiKey = "a-strong-api-key-for-testing"
+
+	// Polygon around San Jose — seed nodes are at 37.4–37.6, -122.1 to -121.9 (inside)
+	// OutsideNode is at 51.5, 4.5 (Europe — outside)
+	gf := &GeoFilterConfig{
+		Polygon:  [][2]float64{{37.0, -123.0}, {38.0, -123.0}, {38.0, -121.0}, {37.0, -121.0}},
+		BufferKm: 0,
+	}
+
+	t.Run("dry run returns outside nodes without deleting", func(t *testing.T) {
+		_, router := setupPruneGeoFilterServer(t, apiKey, gf)
+
+		req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter", nil)
+		req.Header.Set("X-API-Key", apiKey)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		if body["dryRun"] != true {
+			t.Error("expected dryRun=true")
+		}
+		count, _ := body["count"].(float64)
+		if count != 1 {
+			t.Errorf("expected 1 outside node (OutsideNode), got %v", count)
+		}
+		nodes, _ := body["nodes"].([]interface{})
+		if len(nodes) != 1 {
+			t.Fatalf("expected 1 node in preview, got %d", len(nodes))
+		}
+		n, _ := nodes[0].(map[string]interface{})
+		if n["name"] != "OutsideNode" {
+			t.Errorf("expected OutsideNode, got %v", n["name"])
+		}
+	})
+
+	t.Run("confirm=true deletes outside nodes", func(t *testing.T) {
+		srv, router := setupPruneGeoFilterServer(t, apiKey, gf)
+
+		req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter?confirm=true", nil)
+		req.Header.Set("X-API-Key", apiKey)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		if body["dryRun"] != false {
+			t.Error("expected dryRun=false")
+		}
+		deleted, _ := body["deleted"].(float64)
+		if deleted != 1 {
+			t.Errorf("expected 1 deleted, got %v", deleted)
+		}
+
+		// Verify node is actually gone from DB
+		var count int
+		srv.db.conn.QueryRow("SELECT COUNT(*) FROM nodes WHERE public_key = 'aaaa111122223333'").Scan(&count)
+		if count != 0 {
+			t.Error("expected OutsideNode to be deleted from DB")
+		}
+		// No-GPS node must still exist
+		srv.db.conn.QueryRow("SELECT COUNT(*) FROM nodes WHERE public_key = 'bbbb111122223333'").Scan(&count)
+		if count != 1 {
+			t.Error("expected NoGPSNode to be kept")
+		}
+	})
+
+	t.Run("returns 400 when no geo filter configured", func(t *testing.T) {
+		_, router := setupPruneGeoFilterServer(t, apiKey, nil)
+
+		req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter", nil)
+		req.Header.Set("X-API-Key", apiKey)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("returns 401 without API key", func(t *testing.T) {
+		_, router := setupPruneGeoFilterServer(t, apiKey, gf)
+
+		req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", w.Code)
+		}
+	})
+}
+
+func TestGetNodesForGeoPrune(t *testing.T) {
+	db := setupTestDB(t)
+	seedTestData(t, db)
+
+	nodes, err := db.GetNodesForGeoPrune()
+	if err != nil {
+		t.Fatalf("GetNodesForGeoPrune: %v", err)
+	}
+	if len(nodes) == 0 {
+		t.Error("expected nodes to be returned")
+	}
+	// Check that nodes with lat/lon have non-nil fields
+	for _, n := range nodes {
+		if n.PubKey == "" {
+			t.Error("expected non-empty pubkey")
+		}
+	}
+}
+
+func TestDeleteNodesByPubkeys(t *testing.T) {
+	db := setupTestDB(t)
+	seedTestData(t, db)
+
+	// Count before
+	var before int
+	db.conn.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&before)
+	if before == 0 {
+		t.Skip("no nodes to delete")
+	}
+
+	// Delete one node
+	var pk string
+	db.conn.QueryRow("SELECT public_key FROM nodes LIMIT 1").Scan(&pk)
+	n, err := db.DeleteNodesByPubkeys([]string{pk})
+	if err != nil {
+		t.Fatalf("DeleteNodesByPubkeys: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 deleted, got %d", n)
+	}
+
+	var after int
+	db.conn.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&after)
+	if after != before-1 {
+		t.Errorf("expected %d nodes after delete, got %d", before-1, after)
+	}
+}

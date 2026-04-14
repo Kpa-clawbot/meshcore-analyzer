@@ -101,9 +101,33 @@ Request body:
 
 To clear the filter, send `{"polygon": null}`.
 
+```
+POST /api/admin/prune-geo-filter
+POST /api/admin/prune-geo-filter?confirm=true
+```
+
+Requires `X-API-Key` header. Without `?confirm=true`, performs a dry run and returns the list of nodes that would be deleted. With `?confirm=true`, permanently deletes them from the database.
+
+Response (dry run or confirmed):
+```json
+{"deleted": 5, "nodes": [{"pubKey": "...", "name": "NodeName", "lat": 51.12, "lon": 4.50}]}
+```
+
 ## Cleaning up historical nodes
 
-The ingestor prevents new out-of-bounds nodes from being ingested, but it does not retroactively remove nodes stored before the filter was configured. For that, use the prune script:
+The ingestor prevents new out-of-bounds nodes from being ingested, but it does not retroactively remove nodes stored before the filter was configured.
+
+### One-click prune from the Customizer (recommended)
+
+If `writeEnabled` is true (server has a write-capable `apiKey`), the GeoFilter tab shows a **Prune nodes** section at the bottom:
+
+1. Click **Preview** — the server dry-runs the deletion and lists every node that falls outside the current polygon + buffer. No data is deleted yet.
+2. Review the list. It shows the node name (or public key) and coordinates.
+3. Click **Confirm delete** to permanently remove those nodes from the database.
+
+Nodes without GPS coordinates are always kept.
+
+### CLI alternative (Python script)
 
 **File:** `scripts/prune-nodes-outside-geo-filter.py`
 
@@ -125,4 +149,4 @@ docker exec -it meshcore-analyzer \
 
 The script reads `geo_filter.polygon` and `geo_filter.bufferKm` from config, lists nodes that fall outside, then asks for `yes` confirmation before deleting. Nodes without coordinates are always kept.
 
-This is a **one-time migration tool** — run it once after first configuring `geo_filter` to clean up pre-filter data. The ingestor handles all subsequent filtering automatically.
+Both the UI button and the script are **one-time migration tools** — run once after first configuring `geo_filter` to clean up pre-filter data. The ingestor handles all subsequent filtering automatically.

@@ -1187,6 +1187,17 @@
           '<button id="cv2-gf-remove" style="padding:7px 14px;background:var(--surface-1);color:var(--status-red);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">Remove filter</button>' +
         '</div>' +
         '<div id="cv2-gf-msg" style="margin-top:8px;font-size:12px;display:none"></div>' +
+        // Prune section — only shown when a polygon is active (toggled in _initGeoFilterTab)
+        '<div id="cv2-gf-prune-section" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:14px">' +
+          '<p class="cust-section-title" style="font-size:13px;margin-bottom:6px">Prune historical nodes</p>' +
+          '<p style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Remove nodes already in the database that fall outside the current filter. Run once after first enabling geo filtering.</p>' +
+          '<button id="cv2-gf-prune-preview" style="padding:6px 14px;background:var(--surface-1);color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px">Preview prune</button>' +
+          '<div id="cv2-gf-prune-result" style="display:none;margin-top:10px">' +
+            '<div id="cv2-gf-prune-list" style="font-size:11px;color:var(--text-muted);max-height:100px;overflow-y:auto;margin-bottom:8px;background:var(--surface-1);border:1px solid var(--border);border-radius:4px;padding:6px 8px"></div>' +
+            '<button id="cv2-gf-prune-confirm" style="padding:6px 14px;background:var(--status-red);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500">Delete nodes</button>' +
+          '</div>' +
+          '<div id="cv2-gf-prune-msg" style="margin-top:8px;font-size:12px;display:none"></div>' +
+        '</div>' +
       '</div>' +
     '</div>';
   }
@@ -1258,6 +1269,73 @@
     }).catch(function (e) { _gfMsg(container, 'Error: ' + e.message, false); });
   }
 
+  var _gfPruneNodes = []; // nodes returned by last dry-run preview
+
+  function _gfPruneMsg(container, msg, ok) {
+    var el = container.querySelector('#cv2-gf-prune-msg');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = msg ? '' : 'none';
+    el.style.color = ok ? 'var(--status-green)' : 'var(--status-red)';
+  }
+
+  function _gfPrunePreview(container) {
+    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
+    if (!apiKey) { _gfPruneMsg(container, 'API key required.', false); return; }
+    var btn = container.querySelector('#cv2-gf-prune-preview');
+    if (btn) btn.textContent = 'Loading…';
+    fetch('/api/admin/prune-geo-filter', {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey }
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+      return r.json();
+    }).then(function (data) {
+      if (btn) btn.textContent = 'Preview prune';
+      _gfPruneNodes = data.nodes || [];
+      var count = data.count || 0;
+      var resultEl = container.querySelector('#cv2-gf-prune-result');
+      var listEl = container.querySelector('#cv2-gf-prune-list');
+      var confirmBtn = container.querySelector('#cv2-gf-prune-confirm');
+      if (!resultEl || !listEl || !confirmBtn) return;
+      if (count === 0) {
+        _gfPruneMsg(container, 'No nodes outside the filter. Nothing to prune.', true);
+        resultEl.style.display = 'none';
+        return;
+      }
+      listEl.innerHTML = _gfPruneNodes.map(function (n) {
+        var coords = n.lat != null ? (' · ' + n.lat.toFixed(4) + ', ' + n.lon.toFixed(4)) : '';
+        return '<div>' + (n.name || n.pubkey.slice(0, 12)) + coords + '</div>';
+      }).join('');
+      confirmBtn.textContent = 'Delete ' + count + ' node' + (count !== 1 ? 's' : '');
+      resultEl.style.display = '';
+      _gfPruneMsg(container, '', true);
+    }).catch(function (e) {
+      if (btn) btn.textContent = 'Preview prune';
+      _gfPruneMsg(container, 'Error: ' + e.message, false);
+    });
+  }
+
+  function _gfPruneConfirm(container) {
+    if (!_gfPruneNodes.length) { _gfPruneMsg(container, 'Run preview first.', false); return; }
+    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
+    if (!apiKey) { _gfPruneMsg(container, 'API key required.', false); return; }
+    var count = _gfPruneNodes.length;
+    if (!confirm('Delete ' + count + ' node' + (count !== 1 ? 's' : '') + ' from the database? This cannot be undone.')) return;
+    fetch('/api/admin/prune-geo-filter?confirm=true', {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey }
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+      return r.json();
+    }).then(function (data) {
+      _gfPruneNodes = [];
+      var resultEl = container.querySelector('#cv2-gf-prune-result');
+      if (resultEl) resultEl.style.display = 'none';
+      _gfPruneMsg(container, 'Deleted ' + data.deleted + ' node' + (data.deleted !== 1 ? 's' : '') + '.', true);
+    }).catch(function (e) { _gfPruneMsg(container, 'Error: ' + e.message, false); });
+  }
+
   function _initGeoFilterTab(container) {
     var mapEl = container.querySelector('#cv2-gf-map');
     if (!mapEl || typeof L === 'undefined') return;
@@ -1281,6 +1359,11 @@
           _gfRender();
           if (_gfPolygon) _gfMap.fitBounds(_gfPolygon.getBounds(), { padding: [20, 20] });
           _gfStatus(container, gf.polygon.length + ' points · bufferKm=' + (gf.bufferKm || 0));
+          // Show prune section when a polygon is active and write access is available
+          if (gf.writeEnabled) {
+            var pruneEl = container.querySelector('#cv2-gf-prune-section');
+            if (pruneEl) pruneEl.style.display = '';
+          }
         } else {
           _gfPoints = [];
           _gfStatus(container, gf && gf.writeEnabled ? 'No geo filter. Click the map to draw a polygon.' : 'No geo filter configured.');
@@ -1326,6 +1409,11 @@
     });
     container.querySelector('#cv2-gf-save').addEventListener('click', function () { _gfSave(container); });
     container.querySelector('#cv2-gf-remove').addEventListener('click', function () { _gfRemove(container); });
+
+    var prunePreviewBtn = container.querySelector('#cv2-gf-prune-preview');
+    var pruneConfirmBtn = container.querySelector('#cv2-gf-prune-confirm');
+    if (prunePreviewBtn) prunePreviewBtn.addEventListener('click', function () { _gfPrunePreview(container); });
+    if (pruneConfirmBtn) pruneConfirmBtn.addEventListener('click', function () { _gfPruneConfirm(container); });
   }
 
   function _renderExport() {

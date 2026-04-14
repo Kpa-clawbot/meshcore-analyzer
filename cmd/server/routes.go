@@ -125,6 +125,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
 	r.Handle("/api/admin/prune", s.requireAPIKey(http.HandlerFunc(s.handleAdminPrune))).Methods("POST")
+	r.Handle("/api/admin/prune-geo-filter", s.requireAPIKey(http.HandlerFunc(s.handlePruneGeoFilter))).Methods("POST")
 	r.Handle("/api/debug/affinity", s.requireAPIKey(http.HandlerFunc(s.handleDebugAffinity))).Methods("GET")
 
 	// Packet endpoints
@@ -2400,6 +2401,69 @@ func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
 	writeJSON(w, map[string]interface{}{"deleted": n, "days": days})
+}
+
+// handlePruneGeoFilter identifies (dry_run=true, default) or deletes (confirm=true)
+// nodes whose GPS coordinates fall outside the currently configured geo_filter.
+// Nodes with no GPS fix are always kept. Requires geo_filter to be configured.
+func (s *Server) handlePruneGeoFilter(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.GeoFilter == nil || len(s.cfg.GeoFilter.Polygon) < 3 {
+		writeError(w, http.StatusBadRequest, "no geo_filter configured")
+		return
+	}
+
+	nodes, err := s.db.GetNodesForGeoPrune()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	type nodeResult struct {
+		PubKey string   `json:"pubkey"`
+		Name   string   `json:"name"`
+		Lat    *float64 `json:"lat"`
+		Lon    *float64 `json:"lon"`
+	}
+
+	var outside []nodeResult
+	for _, n := range nodes {
+		var lat, lon float64
+		if n.Lat != nil {
+			lat = *n.Lat
+		}
+		if n.Lon != nil {
+			lon = *n.Lon
+		}
+		if !NodePassesGeoFilter(lat, lon, s.cfg.GeoFilter) {
+			outside = append(outside, nodeResult{PubKey: n.PubKey, Name: n.Name, Lat: n.Lat, Lon: n.Lon})
+		}
+	}
+
+	if r.URL.Query().Get("confirm") != "true" {
+		// Dry run — return preview without deleting
+		writeJSON(w, map[string]interface{}{
+			"dryRun": true,
+			"count":  len(outside),
+			"nodes":  outside,
+		})
+		return
+	}
+
+	// Confirmed — delete the nodes
+	pubkeys := make([]string, len(outside))
+	for i, n := range outside {
+		pubkeys[i] = n.PubKey
+	}
+	deleted, err := s.db.DeleteNodesByPubkeys(pubkeys)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	log.Printf("[geo-prune] deleted %d nodes outside geo filter", deleted)
+	writeJSON(w, map[string]interface{}{
+		"dryRun":  false,
+		"deleted": deleted,
+	})
 }
 
 // constantTimeEqual compares two strings in constant time to prevent timing attacks.
