@@ -94,6 +94,10 @@ func (s *Server) getNeighborGraph() *NeighborGraph {
 
 func (s *Server) handleNodeNeighbors(w http.ResponseWriter, r *http.Request) {
 	pubkey := strings.ToLower(mux.Vars(r)["pubkey"])
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 
 	minCount := 1
 	if v := r.URL.Query().Get("min_count"); v != "" {

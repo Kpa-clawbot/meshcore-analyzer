@@ -16,6 +16,17 @@ type Config struct {
 	APIKey  string `json:"apiKey"`
 	DBPath  string `json:"dbPath"`
 
+	// NodeBlacklist is a list of public keys to exclude from all API responses.
+	// Blacklisted nodes are hidden from node lists, search, detail, map, and stats.
+	// Use this to filter out trolls, nodes with offensive names, or nodes
+	// reporting deliberately false data (e.g. wrong GPS position) that the
+	// operator refuses to fix.
+	NodeBlacklist []string `json:"nodeBlacklist"`
+
+	// blacklistSetCached is the lazily-built set version of NodeBlacklist.
+	blacklistSetCached map[string]bool
+	blacklistSetBuilt   bool
+
 	Branding   map[string]interface{} `json:"branding"`
 	Theme      map[string]interface{} `json:"theme"`
 	ThemeDark  map[string]interface{} `json:"themeDark"`
@@ -337,4 +348,32 @@ func (c *Config) PropagationBufferMs() int {
 		return c.LiveMap.PropagationBufferMs
 	}
 	return 5000
+}
+
+// blacklistSet lazily builds and caches the nodeBlacklist as a set for O(1) lookups.
+func (c *Config) blacklistSet() map[string]bool {
+	if c.blacklistSetBuilt {
+		return c.blacklistSetCached
+	}
+	c.blacklistSetBuilt = true
+	if len(c.NodeBlacklist) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(c.NodeBlacklist))
+	for _, pk := range c.NodeBlacklist {
+		trimmed := strings.ToLower(strings.TrimSpace(pk))
+		if trimmed != "" {
+			m[trimmed] = true
+		}
+	}
+	c.blacklistSetCached = m
+	return m
+}
+
+// IsBlacklisted returns true if the given public key is in the nodeBlacklist.
+func (c *Config) IsBlacklisted(pubkey string) bool {
+	if c == nil || len(c.NodeBlacklist) == 0 {
+		return false
+	}
+	return c.blacklistSet()[strings.ToLower(strings.TrimSpace(pubkey))]
 }

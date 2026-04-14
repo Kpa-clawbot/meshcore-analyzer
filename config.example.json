@@ -1,6 +1,8 @@
 {
   "port": 3000,
   "apiKey": "your-secret-api-key-here",
+  "nodeBlacklist": [],
+  "_comment_nodeBlacklist": "Public keys of nodes to hide from all API responses. Use for trolls, offensive names, or nodes reporting false data that operators refuse to fix.",
   "retention": {
     "nodeDays": 7,
     "packetDays": 30,
