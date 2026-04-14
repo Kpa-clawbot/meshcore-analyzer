@@ -398,8 +398,12 @@ async function run() {
       }
     }, { timeout: 10000 });
 
-    // Navigate to clean #/packets URL — avoids leftover filter params from a previous
-    // test being re-read from the URL and overriding the localStorage value we just set (#682).
+    // Force a full page reload to reset module-level state (savedTimeWindowMin is
+    // read from localStorage once at IIFE time). Navigating from /#/packets to /#/packets
+    // is a hash-only change — no reload, so the IIFE never re-reads localStorage.
+    // Going to / first forces a fresh page load, then the hash change to /#/packets
+    // calls init() with the freshly-read savedTimeWindowMin = 60.
+    await page.goto(`${BASE}/`, { waitUntil: 'load' });
     await page.goto(`${BASE}/#/packets`, { waitUntil: 'load' });
     await page.waitForSelector('#fTimeWindow', { timeout: 10000 });
     const timeWindowValue = await page.$eval('#fTimeWindow', (el) => el.value);
