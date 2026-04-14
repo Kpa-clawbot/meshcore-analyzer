@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -2839,6 +2841,34 @@ func TestConfigGeoFilterEndpoint(t *testing.T) {
 		if body["bufferKm"] == nil {
 			t.Error("expected bufferKm in response")
 		}
+		if _, ok := body["writeEnabled"]; !ok {
+			t.Error("expected writeEnabled field in response")
+		}
+		// No apiKey configured → writeEnabled should be false
+		if body["writeEnabled"] != false {
+			t.Errorf("expected writeEnabled=false when no apiKey, got %v", body["writeEnabled"])
+		}
+	})
+
+	t.Run("writeEnabled true when strong apiKey configured", func(t *testing.T) {
+		db := setupTestDB(t)
+		cfg := &Config{Port: 3000, APIKey: "a-strong-api-key-1234"}
+		hub := NewHub()
+		srv := NewServer(db, cfg, hub)
+		srv.store = NewPacketStore(db, nil)
+		srv.store.Load()
+		router := mux.NewRouter()
+		srv.RegisterRoutes(router)
+
+		req := httptest.NewRequest("GET", "/api/config/geo-filter", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		if body["writeEnabled"] != true {
+			t.Errorf("expected writeEnabled=true when strong apiKey configured, got %v", body["writeEnabled"])
+		}
 	})
 }
 
@@ -3807,4 +3837,163 @@ func TestMetricsAPIEndpoints(t *testing.T) {
 	if !ok || len(observers) != 1 {
 		t.Errorf("expected 1 observer in summary, got %v", resp2["observers"])
 	}
+}
+
+// --- geo-filter write-back tests ---
+
+func setupGeoFilterServer(t *testing.T, apiKey string) (*Server, *mux.Router, string) {
+	t.Helper()
+	dir := t.TempDir()
+	cfgJSON := `{"port":3000,"apiKey":"` + apiKey + `"}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	cfg := &Config{Port: 3000, APIKey: apiKey}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	srv.configDir = dir
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	srv.store = store
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+	return srv, router, dir
+}
+
+func TestPutConfigGeoFilter(t *testing.T) {
+	const apiKey = "a-strong-api-key-for-testing"
+
+	t.Run("saves valid polygon and updates in-memory config", func(t *testing.T) {
+		srv, router, dir := setupGeoFilterServer(t, apiKey)
+
+		body := `{"polygon":[[51.0,4.0],[51.0,5.0],[50.5,5.0],[50.5,4.0]],"bufferKm":15}`
+		req := httptest.NewRequest("PUT", "/api/config/geo-filter", strings.NewReader(body))
+		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// In-memory config updated
+		if srv.cfg.GeoFilter == nil {
+			t.Fatal("expected in-memory GeoFilter to be set")
+		}
+		if len(srv.cfg.GeoFilter.Polygon) != 4 {
+			t.Errorf("expected 4 polygon points, got %d", len(srv.cfg.GeoFilter.Polygon))
+		}
+		if srv.cfg.GeoFilter.BufferKm != 15 {
+			t.Errorf("expected bufferKm=15, got %v", srv.cfg.GeoFilter.BufferKm)
+		}
+
+		// config.json updated on disk
+		data, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+		if !bytes.Contains(data, []byte("geo_filter")) {
+			t.Error("expected geo_filter key in saved config.json")
+		}
+	})
+
+	t.Run("clears filter when polygon is empty", func(t *testing.T) {
+		srv, router, dir := setupGeoFilterServer(t, apiKey)
+		// Pre-set a filter so we can clear it
+		srv.cfg.GeoFilter = &GeoFilterConfig{Polygon: [][2]float64{{51.0, 4.0}, {51.0, 5.0}, {50.5, 4.0}}, BufferKm: 10}
+
+		req := httptest.NewRequest("PUT", "/api/config/geo-filter", strings.NewReader(`{"polygon":null}`))
+		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		if srv.cfg.GeoFilter != nil {
+			t.Error("expected in-memory GeoFilter to be cleared")
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+		if bytes.Contains(data, []byte("geo_filter")) {
+			t.Error("expected geo_filter to be removed from config.json")
+		}
+	})
+
+	t.Run("rejects polygon with fewer than 3 points", func(t *testing.T) {
+		_, router, _ := setupGeoFilterServer(t, apiKey)
+
+		body := `{"polygon":[[51.0,4.0],[51.0,5.0]],"bufferKm":0}`
+		req := httptest.NewRequest("PUT", "/api/config/geo-filter", strings.NewReader(body))
+		req.Header.Set("X-API-Key", apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("rejects missing API key", func(t *testing.T) {
+		_, router, _ := setupGeoFilterServer(t, apiKey)
+
+		body := `{"polygon":[[51.0,4.0],[51.0,5.0],[50.5,4.0]],"bufferKm":0}`
+		req := httptest.NewRequest("PUT", "/api/config/geo-filter", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", w.Code)
+		}
+	})
+}
+
+func TestSaveGeoFilter(t *testing.T) {
+	t.Run("saves and reads back", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"port":3000}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		gf := &GeoFilterConfig{
+			Polygon:  [][2]float64{{51.0, 4.0}, {51.0, 5.0}, {50.5, 4.0}},
+			BufferKm: 20,
+		}
+		if err := SaveGeoFilter(dir, gf); err != nil {
+			t.Fatalf("SaveGeoFilter: %v", err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+		if !bytes.Contains(data, []byte("geo_filter")) {
+			t.Error("expected geo_filter in saved config")
+		}
+		if !bytes.Contains(data, []byte(`"bufferKm"`)) {
+			t.Error("expected bufferKm in saved config")
+		}
+	})
+
+	t.Run("removes geo_filter key when gf is nil", func(t *testing.T) {
+		dir := t.TempDir()
+		initial := `{"port":3000,"geo_filter":{"polygon":[[1,2],[3,4],[5,6]],"bufferKm":5}}`
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(initial), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveGeoFilter(dir, nil); err != nil {
+			t.Fatalf("SaveGeoFilter: %v", err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+		if bytes.Contains(data, []byte("geo_filter")) {
+			t.Error("expected geo_filter to be removed")
+		}
+	})
+
+	t.Run("returns error when config.json not found", func(t *testing.T) {
+		dir := t.TempDir()
+		err := SaveGeoFilter(dir, nil)
+		if err == nil {
+			t.Error("expected error when config.json not found")
+		}
+	})
 }

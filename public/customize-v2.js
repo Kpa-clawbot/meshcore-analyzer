@@ -780,6 +780,14 @@
   var _activeTab = 'branding';
   var _styleEl = null;
 
+  // GeoFilter tab state
+  var _gfMap = null;
+  var _gfPoints = [];
+  var _gfMarkers = [];
+  var _gfPolygon = null;
+  var _gfClosingLine = null;
+  var _gfLoaded = false; // true after initial server load
+
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
   function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 
@@ -906,6 +914,7 @@
       { id: 'nodes', label: '🎯', title: 'Colors', badge: (function () { var n = _countOverrides('nodeColors') + _countOverrides('typeColors'); return n ? ' <span class="cv2-tab-badge">' + n + '</span>' : ''; })() },
       { id: 'home', label: '🏠', title: 'Home', badge: _tabBadge('home') },
       { id: 'display', label: '🖥️', title: 'Display', badge: (function () { var n = _countOverrides('timestamps') + (_isOverridden(null, 'distanceUnit') ? 1 : 0); return n ? ' <span class="cv2-tab-badge">' + n + '</span>' : ''; })() },
+      { id: 'geofilter', label: '🗺️', title: 'GeoFilter' },
       { id: 'export', label: '📤', title: 'Export' }
     ];
     return '<div class="cust-tabs">' + tabs.map(function (t) {
@@ -1155,6 +1164,170 @@
     '</div>';
   }
 
+  function _renderGeoFilter() {
+    return '<div class="cust-panel' + (_activeTab === 'geofilter' ? ' active' : '') + '" data-panel="geofilter">' +
+      '<p class="cust-section-title">Geographic Filter</p>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Shows the active geographic filter. Nodes outside this area are excluded at ingest time and in API responses.</p>' +
+      '<div id="cv2-gf-map" style="height:220px;border-radius:6px;border:1px solid var(--border);margin-bottom:8px;background:var(--surface-1)"></div>' +
+      '<div id="cv2-gf-status" style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Loading current filter…</div>' +
+      // Edit controls — hidden until server confirms write access (writeEnabled=true)
+      '<div id="cv2-gf-edit" style="display:none">' +
+        '<p style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Click the map to add polygon points. Need at least 3 points.</p>' +
+        '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">' +
+          '<button id="cv2-gf-undo" style="padding:5px 10px;background:var(--surface-1);color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px">↩ Undo</button>' +
+          '<button id="cv2-gf-clear-pts" style="padding:5px 10px;background:var(--surface-1);color:var(--text-muted);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px">✕ Clear</button>' +
+          '<label style="font-size:12px;color:var(--text-muted);margin-left:auto">Buffer km:</label>' +
+          '<input type="number" id="cv2-gf-buffer" value="20" min="0" max="500" style="width:64px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px">' +
+        '</div>' +
+        '<div class="cust-field"><label>Server API Key</label>' +
+          '<input type="password" id="cv2-gf-apikey" placeholder="apiKey from config.json" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px">' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button id="cv2-gf-save" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500">Save to server</button>' +
+          '<button id="cv2-gf-remove" style="padding:7px 14px;background:var(--surface-1);color:var(--status-red);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">Remove filter</button>' +
+        '</div>' +
+        '<div id="cv2-gf-msg" style="margin-top:8px;font-size:12px;display:none"></div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function _gfRender() {
+    if (!_gfMap) return;
+    if (_gfPolygon) { _gfMap.removeLayer(_gfPolygon); _gfPolygon = null; }
+    if (_gfClosingLine) { _gfMap.removeLayer(_gfClosingLine); _gfClosingLine = null; }
+    _gfMarkers.forEach(function (m) { _gfMap.removeLayer(m); });
+    _gfMarkers = [];
+
+    _gfPoints.forEach(function (pt, i) {
+      var m = L.circleMarker(pt, { radius: 6, color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.9 })
+        .addTo(_gfMap)
+        .bindTooltip(String(i + 1), { permanent: true, direction: 'top', offset: [0, -8] });
+      _gfMarkers.push(m);
+    });
+
+    if (_gfPoints.length >= 3) {
+      _gfPolygon = L.polygon(_gfPoints, { color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.12 }).addTo(_gfMap);
+    } else if (_gfPoints.length === 2) {
+      _gfClosingLine = L.polyline(_gfPoints, { color: '#4a9eff', weight: 2, dashArray: '5,5' }).addTo(_gfMap);
+    }
+  }
+
+  function _gfStatus(container, msg) {
+    var el = container.querySelector('#cv2-gf-status');
+    if (el) el.textContent = msg;
+  }
+
+  function _gfMsg(container, msg, ok) {
+    var el = container.querySelector('#cv2-gf-msg');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = msg ? '' : 'none';
+    el.style.color = ok ? 'var(--status-green)' : 'var(--status-red)';
+  }
+
+  function _gfSave(container) {
+    if (_gfPoints.length < 3) { _gfMsg(container, 'Need at least 3 polygon points.', false); return; }
+    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
+    if (!apiKey) { _gfMsg(container, 'API key required to save.', false); return; }
+    var bufferKm = parseFloat((container.querySelector('#cv2-gf-buffer') || {}).value) || 0;
+    fetch('/api/config/geo-filter', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ polygon: _gfPoints, bufferKm: bufferKm })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+      _gfMsg(container, 'Saved. Filter is active immediately.', true);
+      _gfStatus(container, _gfPoints.length + ' points · bufferKm=' + bufferKm + ' · saved');
+    }).catch(function (e) { _gfMsg(container, 'Error: ' + e.message, false); });
+  }
+
+  function _gfRemove(container) {
+    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
+    if (!apiKey) { _gfMsg(container, 'API key required.', false); return; }
+    if (!confirm('Remove geo filter? All nodes will be allowed through.')) return;
+    fetch('/api/config/geo-filter', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ polygon: null })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+      _gfPoints = []; _gfLoaded = true;
+      _gfRender();
+      _gfStatus(container, 'No geo filter. Click the map to draw a polygon.');
+      _gfMsg(container, 'Geo filter removed.', true);
+    }).catch(function (e) { _gfMsg(container, 'Error: ' + e.message, false); });
+  }
+
+  function _initGeoFilterTab(container) {
+    var mapEl = container.querySelector('#cv2-gf-map');
+    if (!mapEl || typeof L === 'undefined') return;
+
+    _gfMap = L.map(mapEl, { zoomControl: true });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap © CartoDB', maxZoom: 19
+    }).addTo(_gfMap);
+
+    if (!_gfLoaded) {
+      api('/config/geo-filter', { ttl: 0 }).then(function (gf) {
+        // Show edit controls only on servers that have a write-capable API key configured
+        if (gf && gf.writeEnabled) {
+          var editEl = container.querySelector('#cv2-gf-edit');
+          if (editEl) editEl.style.display = '';
+        }
+        if (gf && gf.polygon && gf.polygon.length >= 3) {
+          _gfPoints = gf.polygon.map(function (p) { return [p[0], p[1]]; });
+          var buf = container.querySelector('#cv2-gf-buffer');
+          if (buf) buf.value = gf.bufferKm || 0;
+          _gfRender();
+          if (_gfPolygon) _gfMap.fitBounds(_gfPolygon.getBounds(), { padding: [20, 20] });
+          _gfStatus(container, gf.polygon.length + ' points · bufferKm=' + (gf.bufferKm || 0));
+        } else {
+          _gfPoints = [];
+          _gfStatus(container, gf && gf.writeEnabled ? 'No geo filter. Click the map to draw a polygon.' : 'No geo filter configured.');
+          _gfMap.setView([50.5, 4.4], 5);
+        }
+        _gfLoaded = true;
+        setTimeout(function () { if (_gfMap) _gfMap.invalidateSize(); }, 100);
+      }).catch(function () {
+        _gfStatus(container, 'Could not load current filter.');
+        _gfMap.setView([50.5, 4.4], 5);
+        _gfLoaded = true;
+        setTimeout(function () { if (_gfMap) _gfMap.invalidateSize(); }, 100);
+      });
+    } else {
+      if (_gfPoints.length >= 3) {
+        _gfRender();
+        if (_gfPolygon) _gfMap.fitBounds(_gfPolygon.getBounds(), { padding: [20, 20] });
+        _gfStatus(container, _gfPoints.length + ' points.');
+      } else {
+        _gfMap.setView([50.5, 4.4], 5);
+        _gfStatus(container, _gfPoints.length ? _gfPoints.length + ' points (need at least 3).' : 'Click the map to draw a polygon.');
+        _gfRender();
+      }
+      setTimeout(function () { if (_gfMap) _gfMap.invalidateSize(); }, 100);
+    }
+
+    _gfMap.on('click', function (e) {
+      _gfPoints.push([parseFloat(e.latlng.lat.toFixed(6)), parseFloat(e.latlng.lng.toFixed(6))]);
+      _gfRender();
+      _gfStatus(container, _gfPoints.length + ' point' + (_gfPoints.length !== 1 ? 's' : '') + '.');
+    });
+
+    container.querySelector('#cv2-gf-undo').addEventListener('click', function () {
+      if (!_gfPoints.length) return;
+      _gfPoints.pop();
+      _gfRender();
+      _gfStatus(container, _gfPoints.length + ' point' + (_gfPoints.length !== 1 ? 's' : '') + '.');
+    });
+    container.querySelector('#cv2-gf-clear-pts').addEventListener('click', function () {
+      _gfPoints = [];
+      _gfRender();
+      _gfStatus(container, 'Cleared. Click the map to draw a polygon.');
+    });
+    container.querySelector('#cv2-gf-save').addEventListener('click', function () { _gfSave(container); });
+    container.querySelector('#cv2-gf-remove').addEventListener('click', function () { _gfRemove(container); });
+  }
+
   function _renderExport() {
     var delta = readOverrides();
     var json = JSON.stringify(delta, null, 2);
@@ -1185,6 +1358,7 @@
         _renderNodes() +
         _renderHome() +
         _renderDisplay() +
+        _renderGeoFilter() +
         _renderExport() +
       '</div>';
     _bindEvents(container);
@@ -1253,10 +1427,14 @@
     // Tab switching
     container.querySelectorAll('.cust-tab').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        if (_gfMap) { _gfMap.remove(); _gfMap = null; _gfMarkers = []; _gfPolygon = null; _gfClosingLine = null; }
         _activeTab = btn.dataset.tab;
         _renderPanel(container);
       });
     });
+
+    // GeoFilter tab init
+    if (_activeTab === 'geofilter') _initGeoFilterTab(container);
 
     // Preset buttons
     container.querySelectorAll('.cust-preset-btn').forEach(function (btn) {
@@ -1522,7 +1700,10 @@
       '<div class="cv2-footer"><span id="cv2-save-status">All changes saved</span></div>';
     document.body.appendChild(_panelEl);
 
-    _panelEl.querySelector('.cust-close').addEventListener('click', function () { _panelEl.classList.add('hidden'); });
+    _panelEl.querySelector('.cust-close').addEventListener('click', function () {
+      if (_gfMap) { _gfMap.remove(); _gfMap = null; _gfMarkers = []; _gfPolygon = null; _gfClosingLine = null; }
+      _panelEl.classList.add('hidden');
+    });
 
     // Drag support
     var header = _panelEl.querySelector('.cust-header');

@@ -66,6 +66,14 @@ Click **Import JSON** and paste a previously exported theme. The customizer load
 
 Click **Reset to Defaults** to restore all settings to the built-in defaults.
 
+## GeoFilter (admin only)
+
+The **🗺️ GeoFilter** tab lets operators configure geographic filtering directly from the customizer. It shows the active polygon on a Leaflet map and — on servers with a write-capable `apiKey` — allows editing the polygon and saving back to `config.json` without a restart.
+
+The editing controls are only revealed after the server confirms write access. On public deployments without an `apiKey`, the tab is read-only.
+
+See [Geographic Filtering](geofilter.md) for the full guide, including the API, the prune script, and the standalone GeoFilter Builder.
+
 ## How it works
 
 The customizer writes CSS custom properties (variables) to override the defaults. Exported JSON maps directly to the `theme`, `nodeColors`, `branding`, and `home` sections of [config.json](configuration.md).

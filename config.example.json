@@ -153,6 +153,16 @@
     ],
     "zoom": 9
   },
+  "geo_filter": {
+    "polygon": [
+      [37.80, -122.52],
+      [37.80, -121.80],
+      [37.20, -121.80],
+      [37.20, -122.52]
+    ],
+    "bufferKm": 20,
+    "_comment": "Optional. Restricts ingestion and API responses to nodes within the polygon + bufferKm. Polygon is an array of [lat, lon] pairs (minimum 3). Use the GeoFilter tab in the Customizer (requires apiKey) or tools/geofilter-builder.html to draw a polygon visually. Remove this section to disable filtering. Nodes with no GPS fix are always allowed through."
+  },
   "regions": {
     "SJC": "San Jose, US",
     "SFO": "San Francisco, US",

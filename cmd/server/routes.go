@@ -24,6 +24,7 @@ type Server struct {
 	cfg       *Config
 	hub       *Hub
 	store     *PacketStore // in-memory packet store (nil = fallback to DB)
+	configDir string       // directory containing config.json (for write-back)
 	startedAt time.Time
 	perfStats *PerfStats
 	version   string
@@ -116,6 +117,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/config/theme", s.handleConfigTheme).Methods("GET")
 	r.HandleFunc("/api/config/map", s.handleConfigMap).Methods("GET")
 	r.HandleFunc("/api/config/geo-filter", s.handleConfigGeoFilter).Methods("GET")
+	r.Handle("/api/config/geo-filter", s.requireAPIKey(http.HandlerFunc(s.handlePutConfigGeoFilter))).Methods("PUT")
 
 	// System endpoints
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
@@ -425,11 +427,50 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfigGeoFilter(w http.ResponseWriter, r *http.Request) {
 	gf := s.cfg.GeoFilter
+	writeEnabled := s.cfg != nil && s.cfg.APIKey != "" && !IsWeakAPIKey(s.cfg.APIKey)
 	if gf == nil || len(gf.Polygon) == 0 {
-		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0})
+		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0, "writeEnabled": writeEnabled})
 		return
 	}
-	writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm})
+	writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm, "writeEnabled": writeEnabled})
+}
+
+func (s *Server) handlePutConfigGeoFilter(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Polygon  [][2]float64 `json:"polygon"`
+		BufferKm float64      `json:"bufferKm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Allow clearing (empty/null polygon) or a valid polygon with ≥ 3 points.
+	if len(body.Polygon) > 0 && len(body.Polygon) < 3 {
+		writeError(w, http.StatusBadRequest, "polygon must have at least 3 points")
+		return
+	}
+
+	var gf *GeoFilterConfig
+	if len(body.Polygon) >= 3 {
+		gf = &GeoFilterConfig{Polygon: body.Polygon, BufferKm: body.BufferKm}
+	}
+
+	if s.configDir != "" {
+		if err := SaveGeoFilter(s.configDir, gf); err != nil {
+			log.Printf("[geofilter] save failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to save config")
+			return
+		}
+	}
+
+	s.cfg.GeoFilter = gf
+
+	if gf != nil {
+		writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm})
+	} else {
+		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0})
+	}
 }
 
 // --- System Handlers ---

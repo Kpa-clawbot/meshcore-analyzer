@@ -176,6 +176,21 @@ Lower values = fresher data but more server load.
 
 Provide cert and key paths to enable HTTPS.
 
+## Geographic filtering
+
+```json
+"geo_filter": {
+  "polygon": [[51.55, 3.80], [51.55, 5.90], [50.65, 5.90], [50.65, 3.80]],
+  "bufferKm": 20
+}
+```
+
+Restricts ingestion and API responses to nodes within the polygon plus a buffer margin. Remove the block to disable filtering. Nodes with no GPS fix always pass through.
+
+Can also be configured live via the **🗺️ GeoFilter** tab in the Customizer (requires `apiKey`).
+
+See [Geographic Filtering](geofilter.md) for the full guide.
+
 ## Home page
 
 The `home` section customizes the onboarding experience. See `config.example.json` for the full structure including `steps`, `checklist`, and `footerLinks`.
