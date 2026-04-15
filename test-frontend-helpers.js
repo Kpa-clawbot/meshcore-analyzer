@@ -346,6 +346,19 @@ console.log('\n=== nodes.js: getStatusTooltip / getStatusInfo (extracted) ===');
       const info = gsi({ role: 'repeater', last_heard: d });
       assert.strictEqual(info.status, 'active');
     });
+    test('relaying repeater statusLabel and explanation', () => {
+      const info = gsi({ role: 'repeater', last_heard: new Date().toISOString(),
+        stats: { relay_count_24h: 42, relay_count_1h: 5, last_relayed: new Date().toISOString() } });
+      assert.strictEqual(info.status, 'relaying');
+      assert.ok(info.statusLabel.includes('Relaying'), 'statusLabel should include Relaying');
+      assert.ok(info.explanation.includes('42 packet'), 'explanation should include packet count');
+    });
+    test('relaying repeater with relay_count_24h === 1 uses singular', () => {
+      const info = gsi({ role: 'repeater', last_heard: new Date().toISOString(),
+        stats: { relay_count_24h: 1 } });
+      assert.ok(info.explanation.includes('1 packet'), 'should have singular');
+      assert.ok(!info.explanation.includes('1 packets'), 'should not have plural');
+    });
   }
 
   if (ex.renderNodeBadges) {
