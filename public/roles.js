@@ -394,4 +394,64 @@
     });
     return html;
   };
+
+  // #690 — Clock Skew shared helpers
+  var SKEW_SEVERITY_COLORS = {
+    ok: 'var(--status-green)',
+    warning: 'var(--status-yellow)',
+    critical: 'var(--status-orange)',
+    absurd: 'var(--status-purple)'
+  };
+  var SKEW_SEVERITY_LABELS = {
+    ok: 'OK', warning: 'Warning', critical: 'Critical', absurd: 'Absurd'
+  };
+  var SKEW_SEVERITY_ORDER = { absurd: 0, critical: 1, warning: 2, ok: 3 };
+
+  window.SKEW_SEVERITY_COLORS = SKEW_SEVERITY_COLORS;
+  window.SKEW_SEVERITY_LABELS = SKEW_SEVERITY_LABELS;
+  window.SKEW_SEVERITY_ORDER = SKEW_SEVERITY_ORDER;
+
+  /** Format skew seconds into human-readable string like "+2m 34s" or "-15h 22m" */
+  window.formatSkew = function(sec) {
+    if (sec == null) return '—';
+    var abs = Math.abs(sec);
+    var sign = sec >= 0 ? '+' : '-';
+    if (abs < 60) return sign + Math.round(abs) + 's';
+    if (abs < 3600) return sign + Math.floor(abs / 60) + 'm ' + Math.round(abs % 60) + 's';
+    if (abs < 86400) return sign + Math.floor(abs / 3600) + 'h ' + Math.round((abs % 3600) / 60) + 'm';
+    return sign + Math.floor(abs / 86400) + 'd ' + Math.round((abs % 86400) / 3600) + 'h';
+  };
+
+  /** Format drift rate as "+X.Xs/day" or "—" if falsy */
+  window.formatDrift = function(secPerDay) {
+    if (!secPerDay) return '—';
+    return (secPerDay >= 0 ? '+' : '') + secPerDay.toFixed(1) + ' s/day';
+  };
+
+  /** Render a clock skew badge HTML */
+  window.renderSkewBadge = function(severity, skewSec) {
+    if (!severity) return '';
+    var cls = 'skew-badge skew-badge--' + severity;
+    var label = severity === 'ok' ? '⏰' : '⏰ ' + window.formatSkew(skewSec);
+    return '<span class="' + cls + '" title="Clock skew: ' + window.formatSkew(skewSec) + ' (' + (SKEW_SEVERITY_LABELS[severity] || severity) + ')">' + label + '</span>';
+  };
+
+  /** Render a skew sparkline SVG (inline, word-sized) */
+  window.renderSkewSparkline = function(samples, w, h) {
+    w = w || 120; h = h || 24;
+    if (!samples || samples.length < 2) return '';
+    var values = samples.map(function(s) { return s.skew; });
+    var max = Math.max.apply(null, values.map(function(v) { return Math.abs(v); }).concat([1]));
+    var pts = values.map(function(v, i) {
+      var x = i * (w / Math.max(values.length - 1, 1));
+      var y = h / 2 - (v / max) * (h / 2 - 2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    // Zero line
+    var zeroY = h / 2;
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:' + w + 'px;height:' + h + 'px" role="img" aria-label="Clock skew sparkline">' +
+      '<title>Clock skew over time</title>' +
+      '<line x1="0" y1="' + zeroY + '" x2="' + w + '" y2="' + zeroY + '" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2"/>' +
+      '<polyline points="' + pts + '" fill="none" stroke="var(--accent)" stroke-width="1.5"/></svg>';
+  };
 })();

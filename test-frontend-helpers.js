@@ -5266,6 +5266,76 @@ console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===
   });
 }
 
+// ===== #690 — Clock Skew UI Tests =====
+{
+  console.log('\n--- Clock Skew UI (roles.js helpers) ---');
+  const ctx = makeSandbox();
+  vm.runInContext(fs.readFileSync('public/roles.js', 'utf8'), ctx);
+
+  test('formatSkew handles seconds', () => {
+    assert.strictEqual(ctx.window.formatSkew(30), '+30s');
+    assert.strictEqual(ctx.window.formatSkew(-45), '-45s');
+  });
+
+  test('formatSkew handles minutes', () => {
+    assert.strictEqual(ctx.window.formatSkew(154), '+2m 34s');
+    assert.strictEqual(ctx.window.formatSkew(-900), '-15m 0s');
+  });
+
+  test('formatSkew handles hours', () => {
+    assert.strictEqual(ctx.window.formatSkew(3661), '+1h 1m');
+    assert.strictEqual(ctx.window.formatSkew(-55320), '-15h 22m');
+  });
+
+  test('formatSkew handles days', () => {
+    assert.strictEqual(ctx.window.formatSkew(90000), '+1d 1h');
+  });
+
+  test('formatSkew handles null', () => {
+    assert.strictEqual(ctx.window.formatSkew(null), '—');
+  });
+
+  test('renderSkewBadge renders correct severity class', () => {
+    var html = ctx.window.renderSkewBadge('warning', 400);
+    assert.ok(html.includes('skew-badge--warning'), 'should contain warning class');
+    assert.ok(html.includes('⏰'), 'should contain clock emoji');
+  });
+
+  test('renderSkewBadge renders ok badge (icon only)', () => {
+    var html = ctx.window.renderSkewBadge('ok', 10);
+    assert.ok(html.includes('skew-badge--ok'), 'should contain ok class');
+  });
+
+  test('renderSkewBadge returns empty for null severity', () => {
+    assert.strictEqual(ctx.window.renderSkewBadge(null, 0), '');
+  });
+
+  test('renderSkewSparkline returns SVG with data points', () => {
+    var samples = [
+      { ts: 1000, skew: 10 },
+      { ts: 2000, skew: 20 },
+      { ts: 3000, skew: -5 }
+    ];
+    var svg = ctx.window.renderSkewSparkline(samples, 120, 24);
+    assert.ok(svg.includes('<svg'), 'should return SVG element');
+    assert.ok(svg.includes('polyline'), 'should contain polyline');
+    assert.ok(svg.includes('points='), 'should have points attribute');
+  });
+
+  test('renderSkewSparkline returns empty for insufficient data', () => {
+    assert.strictEqual(ctx.window.renderSkewSparkline([], 120, 24), '');
+    assert.strictEqual(ctx.window.renderSkewSparkline([{ ts: 1, skew: 5 }], 120, 24), '');
+    assert.strictEqual(ctx.window.renderSkewSparkline(null, 120, 24), '');
+  });
+
+  test('SKEW_SEVERITY_ORDER sorts worst first', () => {
+    var order = ctx.window.SKEW_SEVERITY_ORDER;
+    assert.ok(order.absurd < order.critical, 'absurd should sort before critical');
+    assert.ok(order.critical < order.warning, 'critical should sort before warning');
+    assert.ok(order.warning < order.ok, 'warning should sort before ok');
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);

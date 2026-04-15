@@ -70,6 +70,15 @@ type NodeClockSkew struct {
 	Calibrated      bool         `json:"calibrated"`      // true if observer calibration was applied
 	LastAdvertTS    int64        `json:"lastAdvertTS"`     // most recent advert timestamp
 	LastObservedTS  int64        `json:"lastObservedTS"`   // most recent observation timestamp
+	Samples         []SkewSample `json:"samples,omitempty"` // time-series for sparklines
+	NodeName        string       `json:"nodeName,omitempty"` // populated in fleet responses
+	NodeRole        string       `json:"nodeRole,omitempty"` // populated in fleet responses
+}
+
+// SkewSample is a single (timestamp, skew) point for sparkline rendering.
+type SkewSample struct {
+	Timestamp int64   `json:"ts"`   // Unix epoch of observation
+	SkewSec   float64 `json:"skew"` // corrected skew in seconds
 }
 
 // txSkewResult maps tx hash → per-transmission skew stats. This is an
@@ -401,6 +410,13 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 	absMedian := math.Abs(medSkew)
 	drift := computeDrift(tsSkews)
 
+	// Build sparkline samples from tsSkews (sorted by time).
+	sort.Slice(tsSkews, func(i, j int) bool { return tsSkews[i].ts < tsSkews[j].ts })
+	samples := make([]SkewSample, len(tsSkews))
+	for i, p := range tsSkews {
+		samples[i] = SkewSample{Timestamp: p.ts, SkewSec: round(p.skew, 1)}
+	}
+
 	return &NodeClockSkew{
 		Pubkey:         pubkey,
 		MeanSkewSec:    round(meanSkew, 1),
@@ -412,7 +428,39 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		Calibrated:     anyCal,
 		LastAdvertTS:   lastAdvTS,
 		LastObservedTS: lastObsTS,
+		Samples:        samples,
 	}
+}
+
+// GetFleetClockSkew returns clock skew data for all nodes that have skew data.
+// Must NOT be called with s.mu held.
+func (s *PacketStore) GetFleetClockSkew() []*NodeClockSkew {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Build name/role lookup from DB cache (requires s.mu held).
+	allNodes, _ := s.getCachedNodesAndPM()
+	nameMap := make(map[string]nodeInfo, len(allNodes))
+	for _, ni := range allNodes {
+		nameMap[ni.PublicKey] = ni
+	}
+
+	var results []*NodeClockSkew
+	for pubkey := range s.byNode {
+		cs := s.getNodeClockSkewLocked(pubkey)
+		if cs == nil {
+			continue
+		}
+		// Enrich with node name/role.
+		if ni, ok := nameMap[pubkey]; ok {
+			cs.NodeName = ni.Name
+			cs.NodeRole = ni.Role
+		}
+		// Omit samples in fleet response (too much data).
+		cs.Samples = nil
+		results = append(results, cs)
+	}
+	return results
 }
 
 // GetObserverCalibrations returns the current observer clock offsets.

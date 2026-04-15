@@ -87,6 +87,7 @@
             <button class="tab-btn" data-tab="distance">Distance</button>
             <button class="tab-btn" data-tab="neighbor-graph">Neighbor Graph</button>
             <button class="tab-btn" data-tab="rf-health">RF Health</button>
+            <button class="tab-btn" data-tab="clock-health">Clock Health</button>
             <button class="tab-btn" data-tab="prefix-tool">Prefix Tool</button>
           </div>
         </div>
@@ -181,6 +182,7 @@
       case 'distance': await renderDistanceTab(el); break;
       case 'neighbor-graph': await renderNeighborGraphTab(el); break;
       case 'rf-health': await renderRFHealthTab(el); break;
+      case 'clock-health': await renderClockHealthTab(el); break;
       case 'prefix-tool': await renderPrefixTool(el); break;
     }
     // Auto-apply column resizing to all analytics tables
@@ -3400,6 +3402,110 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
 
     svg += '</svg>';
     return svg;
+  }
+
+  // #690 — Clock Health fleet view (M3)
+  async function renderClockHealthTab(el) {
+    el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading clock health data…</div>';
+    try {
+      var data = await (await fetch('/api/nodes/clock-skew')).json();
+      if (!Array.isArray(data) || !data.length) {
+        el.innerHTML = '<div class="text-center text-muted" style="padding:40px">No clock skew data available. Nodes need recent adverts for clock analysis.</div>';
+        return;
+      }
+
+      // State
+      var activeFilter = 'all';
+      var sortKey = 'severity';
+      var sortDir = 'asc'; // severity worst-first
+
+      function render() {
+        // Filter
+        var filtered = activeFilter === 'all' ? data : data.filter(function(n) { return n.severity === activeFilter; });
+
+        // Sort
+        filtered = filtered.slice().sort(function(a, b) {
+          var v;
+          if (sortKey === 'severity') {
+            v = (SKEW_SEVERITY_ORDER[a.severity] || 9) - (SKEW_SEVERITY_ORDER[b.severity] || 9);
+          } else if (sortKey === 'skew') {
+            v = Math.abs(b.medianSkewSec || 0) - Math.abs(a.medianSkewSec || 0);
+          } else if (sortKey === 'name') {
+            v = (a.nodeName || '').localeCompare(b.nodeName || '');
+          } else if (sortKey === 'drift') {
+            v = Math.abs(b.driftPerDaySec || 0) - Math.abs(a.driftPerDaySec || 0);
+          }
+          return sortDir === 'desc' ? -v : v;
+        });
+
+        // Summary
+        var counts = { ok: 0, warning: 0, critical: 0, absurd: 0 };
+        data.forEach(function(n) { if (counts[n.severity] !== undefined) counts[n.severity]++; });
+
+        // Filter buttons (also serve as summary — no separate stats pills needed)
+        var filterColors = { ok: 'var(--status-green)', warning: 'var(--status-yellow)', critical: 'var(--status-orange)', absurd: 'var(--status-purple)' };
+        var filters = ['all', 'ok', 'warning', 'critical', 'absurd'];
+        var filterHtml = '<div style="margin-bottom:10px">' + filters.map(function(f) {
+          var dot = f !== 'all' ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + filterColors[f] + ';margin-right:4px;vertical-align:middle"></span>' : '';
+          return '<button class="clock-filter-btn' + (activeFilter === f ? ' active' : '') + '" data-filter="' + f + '">' +
+            dot + (f === 'all' ? 'All (' + data.length + ')' : (SKEW_SEVERITY_LABELS[f] || f) + ' (' + (counts[f] || 0) + ')') +
+            '</button>';
+        }).join('') + '</div>';
+
+        // Table
+        var rowsHtml = filtered.map(function(n) {
+          var rowClass = 'clock-fleet-row--' + (n.severity || 'ok');
+          var lastAdv = n.lastObservedTS ? new Date(n.lastObservedTS * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC') : '—';
+          return '<tr class="' + rowClass + '" data-pubkey="' + esc(n.pubkey) + '" style="cursor:pointer">' +
+            '<td><strong>' + esc(n.nodeName || n.pubkey.slice(0, 12)) + '</strong></td>' +
+            '<td style="font-family:var(--mono,monospace)">' + formatSkew(n.medianSkewSec) + '</td>' +
+            '<td>' + renderSkewBadge(n.severity, n.medianSkewSec) + '</td>' +
+            '<td style="font-family:var(--mono,monospace)">' + formatDrift(n.driftPerDaySec) + '</td>' +
+            '<td style="font-size:11px">' + lastAdv + '</td>' +
+            '</tr>';
+        }).join('');
+
+        el.innerHTML = '<h3 style="margin:0 0 10px">⏰ Clock Health</h3>' +
+          filterHtml +
+          '<table class="data-table analytics-table" id="clock-health-table">' +
+          '<thead><tr>' +
+          '<th data-sort-col="name" style="cursor:pointer">Name</th>' +
+          '<th data-sort-col="skew" style="cursor:pointer">Skew</th>' +
+          '<th data-sort-col="severity" style="cursor:pointer">Severity</th>' +
+          '<th data-sort-col="drift" style="cursor:pointer">Drift Rate</th>' +
+          '<th>Last Advert</th>' +
+          '</tr></thead><tbody>' + rowsHtml + '</tbody></table>';
+
+        // Bind filter clicks
+        el.querySelectorAll('.clock-filter-btn').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            activeFilter = btn.dataset.filter;
+            render();
+          });
+        });
+
+        // Bind header sort clicks
+        el.querySelectorAll('[data-sort-col]').forEach(function(th) {
+          th.addEventListener('click', function() {
+            var col = th.dataset.sortCol;
+            if (sortKey === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+            else { sortKey = col; sortDir = 'asc'; }
+            render();
+          });
+        });
+
+        // Bind row clicks → navigate to node
+        el.querySelectorAll('tr[data-pubkey]').forEach(function(tr) {
+          tr.addEventListener('click', function() {
+            location.hash = '#/nodes/' + encodeURIComponent(tr.dataset.pubkey);
+          });
+        });
+      }
+
+      render();
+    } catch (err) {
+      el.innerHTML = '<div class="text-center" style="color:var(--status-red);padding:40px">Failed to load clock health data: ' + esc(String(err)) + '</div>';
+    }
   }
 
   registerPage('analytics', { init, destroy });

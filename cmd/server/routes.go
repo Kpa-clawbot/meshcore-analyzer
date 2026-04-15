@@ -142,6 +142,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/nodes/{pubkey}/health", s.handleNodeHealth).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/paths", s.handleNodePaths).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/analytics", s.handleNodeAnalytics).Methods("GET")
+	r.HandleFunc("/api/nodes/clock-skew", s.handleFleetClockSkew).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/clock-skew", s.handleNodeClockSkew).Methods("GET")
 	r.HandleFunc("/api/observers/clock-skew", s.handleObserverClockSkew).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/neighbors", s.handleNodeNeighbors).Methods("GET")
@@ -1337,6 +1338,14 @@ func (s *Server) handleObserverClockSkew(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, s.store.GetObserverCalibrations())
+}
+
+func (s *Server) handleFleetClockSkew(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, []*NodeClockSkew{})
+		return
+	}
+	writeJSON(w, s.store.GetFleetClockSkew())
 }
 
 // --- Analytics Handlers ---

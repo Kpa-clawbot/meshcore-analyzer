@@ -11,6 +11,8 @@
   --status-green: #22c55e;
   --status-yellow: #eab308;
   --status-red: #ef4444;
+  --status-orange: #f97316;
+  --status-purple: #a855f7;
   --accent-hover: #6db3ff;
   --text: #1a1a2e;
   --text-muted: #5b6370;
@@ -41,6 +43,8 @@
     --status-green: #22c55e;
     --status-yellow: #eab308;
     --status-red: #ef4444;
+    --status-orange: #f97316;
+    --status-purple: #a855f7;
     --surface-0: #0f0f23;
     --surface-1: #1a1a2e;
     --surface-2: #232340;
@@ -65,6 +69,8 @@
   --status-green: #22c55e;
   --status-yellow: #eab308;
   --status-red: #ef4444;
+  --status-orange: #f97316;
+  --status-purple: #a855f7;
   --surface-0: #0f0f23;
   --surface-1: #1a1a2e;
   --surface-2: #232340;
@@ -2243,3 +2249,22 @@ th[data-sort-key] { cursor: pointer; user-select: none; }
 th[data-sort-key]:hover { background: var(--hover-bg, rgba(255,255,255,0.05)); }
 th.sort-active { color: var(--accent, #60a5fa); }
 .sort-arrow { font-size: 0.75em; opacity: 0.8; }
+
+/* #690 — Clock Skew badges & fleet table */
+.skew-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 4px; font-weight: 600; white-space: nowrap; }
+.skew-badge--ok { background: var(--status-green); color: #fff; }
+.skew-badge--warning { background: var(--status-yellow); color: #000; }
+.skew-badge--critical { background: var(--status-orange); color: #fff; }
+.skew-badge--absurd { background: var(--status-purple); color: #fff; }
+
+.skew-detail-section { padding: 10px 16px; margin-bottom: 8px; }
+.skew-sparkline-wrap { margin-top: 6px; }
+.skew-sparkline-wrap svg { display: block; }
+
+
+.clock-fleet-row--warning { background: color-mix(in srgb, var(--status-yellow) 10%, transparent); }
+.clock-fleet-row--critical { background: color-mix(in srgb, var(--status-orange) 10%, transparent); }
+.clock-fleet-row--absurd { background: color-mix(in srgb, var(--status-purple) 10%, transparent); }
+
+.clock-filter-btn { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card-bg, #fff); color: var(--text); cursor: pointer; margin-right: 4px; }
+.clock-filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
