@@ -6268,7 +6268,7 @@ func (s *PacketStore) GetBulkHealth(limit int, region string) []map[string]inter
 			"lastHeard":          lhVal,
 		}
 		if strings.ToLower(n.role) == "repeater" {
-			c1h, c24h, lastRel := relayMetrics(s.relayTimes[n.pk], time.Now().UnixMilli())
+			c1h, c24h, lastRel := relayMetrics(s.relayTimes[strings.ToLower(n.pk)], time.Now().UnixMilli())
 			statsMap["relay_count_1h"] = c1h
 			statsMap["relay_count_24h"] = c24h
 			if lastRel != "" {

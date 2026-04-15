@@ -295,3 +295,43 @@ func TestAddTxToRelayTimeIndex_LowercasesKey(t *testing.T) {
 		t.Errorf("expected no entry at uppercase key")
 	}
 }
+
+func TestGetNodeHealthRepeaterRelayFields(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	pk := "relay662node0001"
+	_, err := srv.db.conn.Exec(`INSERT OR IGNORE INTO nodes (public_key, name, role, last_seen, first_seen, advert_count)
+		VALUES ('relay662node0001', 'TestRepeaterNode662', 'repeater', datetime('now'), datetime('now'), 1)`)
+	if err != nil {
+		t.Fatalf("insert test node: %v", err)
+	}
+
+	now := time.Now().UnixMilli()
+	recentMs := now - 15*60*1000 // 15 min ago
+	srv.store.mu.Lock()
+	srv.store.relayTimes[pk] = []int64{recentMs}
+	srv.store.mu.Unlock()
+
+	result, err := srv.store.GetNodeHealth(pk)
+	if err != nil {
+		t.Fatalf("GetNodeHealth error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("GetNodeHealth returned nil")
+	}
+
+	stats, ok := result["stats"].(map[string]interface{})
+	if !ok {
+		t.Fatal("missing stats map in GetNodeHealth result")
+	}
+
+	if v, ok := stats["relay_count_1h"].(int); !ok || v != 1 {
+		t.Errorf("relay_count_1h: expected 1, got %v", stats["relay_count_1h"])
+	}
+	if v, ok := stats["relay_count_24h"].(int); !ok || v != 1 {
+		t.Errorf("relay_count_24h: expected 1, got %v", stats["relay_count_24h"])
+	}
+	if _, ok := stats["last_relayed"].(string); !ok {
+		t.Errorf("last_relayed: expected string, got %T", stats["last_relayed"])
+	}
+}
