@@ -174,6 +174,9 @@ func TestRelayTimesWiredIntoIngest(t *testing.T) {
 	if srv.store.relayTimes == nil {
 		t.Fatal("relayTimes map is nil after load")
 	}
+	if relayKeys == 0 {
+		t.Fatalf("relayTimes not populated: byPathHop has %d keys but relayTimes has 0", hopKeys)
+	}
 	t.Logf("byPathHop keys: %d, relayTimes keys: %d", hopKeys, relayKeys)
 }
 
