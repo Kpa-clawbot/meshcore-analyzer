@@ -114,7 +114,13 @@
     const isInfra = role === 'repeater' || role === 'room';
     const threshMs = isInfra ? HEALTH_THRESHOLDS.infraSilentMs : HEALTH_THRESHOLDS.nodeSilentMs;
     const threshold = threshMs >= 3600000 ? Math.round(threshMs / 3600000) + 'h' : Math.round(threshMs / 60000) + 'm';
+    if (status === 'relaying') {
+      return 'Relaying \u2014 actively forwarding traffic within the last 24h.';
+    }
     if (status === 'active') {
+      if (role === 'repeater') {
+        return 'Idle \u2014 alive (heard within ' + threshold + ') but no relay traffic observed in the last 24h. May be in a quiet area or have RF issues.';
+      }
       return 'Active \u2014 heard within the last ' + threshold + '.' + (isInfra ? ' Repeaters typically advertise every 12-24h.' : '');
     }
     if (role === 'companion') {
@@ -133,13 +139,27 @@
     // Prefer last_heard (from in-memory packets) > _lastHeard (health API) > last_seen (DB)
     const lastHeardTime = n._lastHeard || n.last_heard || n.last_seen;
     const lastHeardMs = lastHeardTime ? new Date(lastHeardTime).getTime() : 0;
-    const status = getNodeStatus(role, lastHeardMs);
+    const relayCount24h = (n.stats && typeof n.stats.relay_count_24h === 'number') ? n.stats.relay_count_24h : undefined;
+    const relayCount1h  = (n.stats && typeof n.stats.relay_count_1h  === 'number') ? n.stats.relay_count_1h  : undefined;
+    const lastRelayed   = n.stats && n.stats.last_relayed;
+    const status = getNodeStatus(role, lastHeardMs, relayCount24h);
     const statusTooltip = getStatusTooltip(role, status);
-    const statusLabel = status === 'active' ? '🟢 Active' : '⚪ Stale';
     const statusAge = lastHeardMs ? (Date.now() - lastHeardMs) : Infinity;
 
+    let statusLabel;
+    if (role === 'repeater') {
+      statusLabel = status === 'relaying' ? '🟢 Relaying' : status === 'active' ? '🟡 Idle' : '⚪ Stale';
+    } else {
+      statusLabel = status === 'active' ? '🟢 Active' : '⚪ Stale';
+    }
+
     let explanation = '';
-    if (status === 'active') {
+    if (status === 'relaying') {
+      explanation = 'Relayed ' + relayCount24h + ' packet' + (relayCount24h === 1 ? '' : 's') + ' in last 24h'
+        + (lastRelayed ? ', last ' + renderNodeTimestampText(lastRelayed) : '');
+    } else if (status === 'active' && role === 'repeater') {
+      explanation = 'Alive but no relay traffic observed in last 24h';
+    } else if (status === 'active') {
       explanation = 'Last heard ' + (lastHeardTime ? renderNodeTimestampText(lastHeardTime) : 'unknown');
     } else {
       const ageDays = Math.floor(statusAge / 86400000);
@@ -152,7 +172,7 @@
       explanation = 'Not heard for ' + ageStr + ' — ' + reason;
     }
 
-    return { status, statusLabel, statusTooltip, statusAge, explanation, roleColor, lastHeardMs, role };
+    return { status, statusLabel, statusTooltip, statusAge, explanation, roleColor, lastHeardMs, role, relayCount1h, relayCount24h, lastRelayed };
   }
 
   function renderNodeBadges(n, roleColor) {
@@ -491,6 +511,11 @@
           <tr><td>Packets Today</td><td>${stats.packetsToday || 0}</td></tr>
           ${stats.avgSnr != null ? `<tr><td>Avg SNR</td><td>${Number(stats.avgSnr).toFixed(1)} dB</td></tr>` : ''}
           ${stats.avgHops ? `<tr><td>Avg Hops</td><td>${stats.avgHops}</td></tr>` : ''}
+          ${si.role === 'repeater' ? `
+  <tr><td>Relay (1h)</td><td>${typeof si.relayCount1h === 'number' ? si.relayCount1h + ' packet' + (si.relayCount1h === 1 ? '' : 's') : '—'}</td></tr>
+  <tr><td>Relay (24h)</td><td>${typeof si.relayCount24h === 'number' ? si.relayCount24h + ' packet' + (si.relayCount24h === 1 ? '' : 's') : '—'}</td></tr>
+  ${si.lastRelayed ? `<tr><td>Last Relayed</td><td>${renderNodeTimestampHtml(si.lastRelayed)}</td></tr>` : ''}
+` : ''}
           ${hasLoc ? `<tr><td>Location</td><td>${Number(n.lat).toFixed(5)}, ${Number(n.lon).toFixed(5)}</td></tr>` : ''}
           <tr><td>Hash Prefix</td><td>${n.hash_size ? '<code style="font-family:var(--mono);font-weight:700">' + n.public_key.slice(0, n.hash_size * 2).toUpperCase() + '</code> (' + n.hash_size + '-byte)' : 'Unknown'}${n.hash_size_inconsistent ? ' <span style="color:var(--status-yellow);cursor:help" title="Seen: ' + (Array.isArray(n.hash_sizes_seen) ? n.hash_sizes_seen : []).join(', ') + '-byte">⚠️ varies</span>' : ''}</td></tr>
         </table>
@@ -1081,8 +1106,9 @@
       const roleColor = ROLE_COLORS[n.role] || '#6b7280';
       const isClaimed = myKeys.has(n.public_key);
       const lastSeenTime = n.last_heard || n.last_seen;
-      const status = getNodeStatus(n.role || 'companion', lastSeenTime ? new Date(lastSeenTime).getTime() : 0);
-      const lastSeenClass = status === 'active' ? 'last-seen-active' : 'last-seen-stale';
+      const relayCount24h = (n.stats && typeof n.stats.relay_count_24h === 'number') ? n.stats.relay_count_24h : undefined;
+      const status = getNodeStatus((n.role || 'companion').toLowerCase(), lastSeenTime ? new Date(lastSeenTime).getTime() : 0, relayCount24h);
+      const lastSeenClass = status === 'relaying' ? 'last-seen-active' : status === 'active' ? ((n.role || '').toLowerCase() === 'repeater' ? 'last-seen-idle' : 'last-seen-active') : 'last-seen-stale';
       const cs = _fleetSkew && _fleetSkew[n.public_key];
       const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, cs.medianSkewSec) : '';
       return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}${isClaimed ? ' claimed-row' : ''}">
@@ -1166,6 +1192,11 @@
             <dt>Packets Today</dt><dd>${stats.packetsToday || 0}</dd>
             ${stats.avgSnr != null ? `<dt>Avg SNR</dt><dd>${Number(stats.avgSnr).toFixed(1)} dB</dd>` : ''}
             ${stats.avgHops ? `<dt>Avg Hops</dt><dd>${stats.avgHops}</dd>` : ''}
+            ${si.role === 'repeater' ? `
+  <dt>Relay (1h)</dt><dd>${typeof si.relayCount1h === 'number' ? si.relayCount1h + ' packet' + (si.relayCount1h === 1 ? '' : 's') : '—'}</dd>
+  <dt>Relay (24h)</dt><dd>${typeof si.relayCount24h === 'number' ? si.relayCount24h + ' packet' + (si.relayCount24h === 1 ? '' : 's') : '—'}</dd>
+  ${si.lastRelayed ? `<dt>Last Relayed</dt><dd>${renderNodeTimestampHtml(si.lastRelayed)}</dd>` : ''}
+` : ''}
             ${hasLoc ? `<dt>Location</dt><dd>${Number(n.lat).toFixed(5)}, ${Number(n.lon).toFixed(5)}</dd>` : ''}
           </dl>
         </div>

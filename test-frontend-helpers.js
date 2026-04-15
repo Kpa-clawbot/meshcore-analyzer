@@ -326,10 +326,10 @@ console.log('\n=== nodes.js: getStatusTooltip / getStatusInfo (extracted) ===');
 
   if (ex.getStatusInfo) {
     const gsi = ex.getStatusInfo;
-    test('active repeater status', () => {
+    test('active repeater status (idle — heard but no relay traffic)', () => {
       const info = gsi({ role: 'repeater', last_heard: new Date().toISOString() });
       assert.strictEqual(info.status, 'active');
-      assert.ok(info.statusLabel.includes('Active'));
+      assert.ok(info.statusLabel.includes('Idle'));
     });
     test('stale companion status (old date)', () => {
       const old = new Date(Date.now() - 48 * 3600000).toISOString();
@@ -3796,9 +3796,9 @@ console.log('\n=== nodes.js: getStatusInfo edge cases ===');
     assert.strictEqual(info.status, 'stale');
   });
 
-  test('getStatusInfo returns explanation for active node', () => {
+  test('getStatusInfo returns explanation for active repeater (idle)', () => {
     const info = gsi({ role: 'repeater', last_heard: new Date().toISOString() });
-    assert.ok(info.explanation.includes('Last heard'));
+    assert.ok(info.explanation.includes('no relay traffic'));
   });
 
   test('getStatusInfo returns explanation for stale companion', () => {

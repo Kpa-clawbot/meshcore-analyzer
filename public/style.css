@@ -1620,6 +1620,7 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .marker-stale { opacity: 0.7; filter: grayscale(90%) brightness(0.8); }
 .last-seen-active { color: var(--status-green); }
 .last-seen-stale { color: var(--text-muted); }
+.last-seen-idle   { color: var(--status-yellow); }
 
 /* === Node Analytics === */
 .analytics-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
