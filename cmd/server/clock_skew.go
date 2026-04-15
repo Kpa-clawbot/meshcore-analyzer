@@ -250,18 +250,8 @@ func calibrateObservers(samples []skewSample) (map[string]float64, map[string]in
 
 // computeNodeSkew calculates corrected skew statistics for each node.
 func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) map[string]*NodeClockSkew {
-	// Group samples by node pubkey (extracted from advert).
-	// We need to figure out which node each sample belongs to.
-	// The advert's public key is in the decoded JSON. Since we don't carry it
-	// in skewSample, we group by hash first to get the node pubkey from the
-	// transmission's byNode index. But we don't have that here.
-	//
-	// Actually, let's re-derive: each ADVERT transmission is indexed under
-	// its advertised pubkey in store.byNode. We need the pubkey.
-	// We'll compute skew keyed by hash and group later.
-	//
-	// Simpler approach: compute corrected skew per sample, group by hash
-	// (each hash = one node's advert), then aggregate.
+	// Compute corrected skew per sample, grouped by hash (each hash = one
+	// node's advert transmission). The caller maps hash → pubkey via byNode.
 	type correctedSample struct {
 		skew       float64
 		observedTS int64
@@ -288,25 +278,8 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) map[st
 		hashAdvertTS[s.hash] = s.advertTS
 	}
 
-	// Each hash represents one advert from one node. Get the median corrected
-	// skew per hash (if multiple observers saw it).
-	type advertSkew struct {
-		medianSkew  float64
-		observedTS  int64
-		calibrated  bool
-	}
-
-	// We need to group by node pubkey. Since samples don't carry pubkey,
-	// we can't group here. We'll return keyed by hash and let the caller
-	// resolve to pubkey. But that's awkward.
-	//
-	// Better: add pubkey to skewSample. Let's refactor.
-	// For now, since each hash in byPayloadType[ADVERT] corresponds to one
-	// node's advert, and the store.byNode index maps pubkey → txs, we
-	// should collect pubkey at sample collection time.
-	//
-	// This is a design issue. Let me return per-hash results.
-	// The caller (GetNodeClockSkew) will map hash → pubkey.
+	// Each hash represents one advert from one node. Compute median corrected
+	// skew per hash (across multiple observers).
 
 	result := make(map[string]*NodeClockSkew) // keyed by hash for now
 	for hash, cs := range byHash {

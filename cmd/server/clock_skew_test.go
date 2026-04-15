@@ -165,35 +165,17 @@ func TestCalibrateObservers_MultiObserver(t *testing.T) {
 // ── computeNodeSkew ────────────────────────────────────────────────────────────
 
 func TestComputeNodeSkew_BasicCorrection(t *testing.T) {
-	// Node clock is 60 seconds ahead. Observer obs2 has +10s offset.
-	// Raw skew from obs1 = 60 (advert 1060 - obs 1000). Corrected = 60 - 0 = 60.
-	// Raw skew from obs2 = 50 (advert 1060 - obs 1010). Corrected = 50 - 10 = 40.
-	// Wait, that's wrong. Let me reconsider.
+	// Validates observer offset correction direction.
 	//
-	// If node is 60s ahead: advertTS = realTime + 60.
-	// obs1 (accurate): observedTS = realTime. raw = (realTime+60) - realTime = 60. corrected = 60.
-	// obs2 (10s ahead): observedTS = realTime + 10. raw = (realTime+60) - (realTime+10) = 50.
-	//   corrected = 50 - 10 = 40. That's wrong — should still be 60.
-	//
-	// The correction should ADD the observer offset: corrected = raw + obsOffset.
-	// No wait: obsOffset = obs_ts - median. If obs2 is ahead, its ts is higher,
-	// so obsOffset = +10. raw = advert - obs_ts = lower because obs_ts is higher.
-	// corrected = raw - obsOffset??? That makes it even lower.
-	//
-	// Actually: raw_skew = advert_ts - obs_ts. If observer is ahead by 10s,
-	// obs_ts is inflated by 10s, so raw_skew is deflated by 10s.
-	// corrected = raw_skew + obsOffset = raw_skew + 10 fixes it.
-	//
-	// But the code does: corrected = raw - obsOffset. That's wrong!
-	// Let me verify: if obsOffset = obs_ts - median = +10,
-	// and raw = advert - obs_ts = advert - (true_obs + 10) = (advert - true_obs) - 10
-	// So raw = true_raw - 10.
-	// corrected = raw - obsOffset = (true_raw - 10) - 10 = true_raw - 20. Wrong!
-	// Should be: corrected = raw + obsOffset = (true_raw - 10) + 10 = true_raw. Correct!
-	//
-	// This is a bug in the implementation! Let's test for the correct behavior
-	// and fix the code.
-	t.Log("This test validates observer offset correction direction")
+	// Setup: node is 60s ahead, obs1 accurate, obs2 is 10s ahead.
+	// With 2 observers, median obs_ts = 1005.
+	//   obs1 offset = 1000 - 1005 = -5
+	//   obs2 offset = 1010 - 1005 = +5
+	// Correction: corrected = raw_skew + obsOffset
+	//   obs1: raw=60, corrected = 60 + (-5) = 55
+	//   obs2: raw=50, corrected = 50 + 5 = 55
+	// Both converge to 55 (not exact 60 because with only 2 observers,
+	// the median can't fully distinguish which observer is drifted).
 
 	samples := []skewSample{
 		// Same packet seen by accurate obs1 and obs2 (+10s ahead)
