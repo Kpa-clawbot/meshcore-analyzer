@@ -1090,6 +1090,11 @@ func (s *PacketStore) GetPerfStoreStatsTyped() PerfPacketStoreStats {
 	estimatedMB := math.Round(s.estimatedMemoryMB()*10) / 10
 	trackedMB := math.Round(s.trackedMemoryMB()*10) / 10
 
+	var avgBytesPerPacket int64
+	if totalLoaded > 0 {
+		avgBytesPerPacket = s.trackedBytes / int64(totalLoaded)
+	}
+
 	return PerfPacketStoreStats{
 		TotalLoaded:       totalLoaded,
 		TotalObservations: totalObs,
@@ -1101,6 +1106,7 @@ func (s *PacketStore) GetPerfStoreStatsTyped() PerfPacketStoreStats {
 		MaxPackets:        2386092,
 		EstimatedMB:       estimatedMB,
 		TrackedMB:         trackedMB,
+		AvgBytesPerPacket: avgBytesPerPacket,
 		MaxMB:             s.maxMemoryMB,
 		Indexes: PacketStoreIndexes{
 			ByHash:           hashIdx,
@@ -2600,27 +2606,68 @@ func (s *PacketStore) buildDistanceIndex() {
 // These estimate the in-memory cost of StoreTx and StoreObs structs including
 // map/index overhead. They don't need to be exact — just proportional to actual
 // usage and independent of GC state.
+//
+// Issue #743: Previous estimates missed major per-packet allocations:
+// - spTxIndex: O(path²) entries per tx (50-150MB at scale)
+// - ResolvedPath on observations (~25MB at scale)
+// - Per-tx maps: obsKeys, observerSet (~11MB at scale)
+// - byPathHop index entries (20-40MB at scale)
 const (
 	storeTxBaseBytes  = 384 // StoreTx struct fields + map headers + sync.Once + string headers
 	storeObsBaseBytes = 192 // StoreObs struct fields + string headers
 	indexEntryBytes   = 48  // average cost of one index map entry (key + pointer + bucket overhead)
 	numIndexesPerTx   = 5   // byHash, byTxID, byNode, byPayloadType, nodeHashes entries
 	numIndexesPerObs  = 2   // byObsID, byObserver entries
+
+	// Per-tx map overhead (obsKeys + observerSet): map header + initial buckets
+	perTxMapsBytes = 200
+
+	// Per path hop: byPathHop index entry (pointer + map bucket)
+	perPathHopBytes = 50
+
+	// Per subpath entry in spTxIndex: string key + slice append + pointer
+	perSubpathEntryBytes = 40
+
+	// Per resolved path element on an observation
+	perResolvedPathElemBytes = 24 // *string pointer + string header + avg pubkey length
 )
 
 // estimateStoreTxBytes returns the estimated memory cost of a StoreTx (excluding observations).
+// Includes per-tx maps (obsKeys, observerSet), byPathHop entries, and spTxIndex subpath entries.
 func estimateStoreTxBytes(tx *StoreTx) int64 {
 	base := int64(storeTxBaseBytes)
 	base += int64(len(tx.RawHex) + len(tx.Hash) + len(tx.DecodedJSON) + len(tx.PathJSON))
 	base += int64(numIndexesPerTx * indexEntryBytes)
+
+	// Per-tx maps: obsKeys + observerSet
+	base += perTxMapsBytes
+
+	// Path-dependent costs
+	hops := int64(len(txGetParsedPath(tx)))
+	base += hops * perPathHopBytes
+
+	// spTxIndex: O(path²) subpath combinations
+	if hops > 1 {
+		subpaths := hops * (hops - 1) / 2
+		base += subpaths * perSubpathEntryBytes
+	}
+
 	return base
 }
 
 // estimateStoreObsBytes returns the estimated memory cost of a StoreObs.
+// Includes ResolvedPath slice overhead.
 func estimateStoreObsBytes(obs *StoreObs) int64 {
 	base := int64(storeObsBaseBytes)
 	base += int64(len(obs.PathJSON) + len(obs.ObserverID))
 	base += int64(numIndexesPerObs * indexEntryBytes)
+
+	// ResolvedPath: slice header + per-element pointer/string
+	if obs.ResolvedPath != nil {
+		base += 24 // slice header
+		base += int64(len(obs.ResolvedPath)) * perResolvedPathElemBytes
+	}
+
 	return base
 }
 
