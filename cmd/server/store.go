@@ -5155,16 +5155,26 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 							name = pk
 						}
 					}
+					// Skip zero-hop direct adverts for hash_size — the
+					// path byte is locally generated and unreliable.
+					// Still count the packet and update lastSeen.
+					isZeroHop := (routeType == uint64(RouteDirect) || routeType == uint64(RouteTransportDirect)) && (actualPathByte&0x3F) == 0
 					if byNode[pk] == nil {
 						role := nodeRoleByPK[pk] // empty if unknown
+						initHS := hashSize
+						if isZeroHop {
+							initHS = 0
+						}
 						byNode[pk] = map[string]interface{}{
-							"hashSize": hashSize, "packets": 0,
+							"hashSize": initHS, "packets": 0,
 							"lastSeen": tx.FirstSeen, "name": name,
 							"role": role,
 						}
 					}
 					byNode[pk]["packets"] = byNode[pk]["packets"].(int) + 1
-					byNode[pk]["hashSize"] = hashSize
+					if !isZeroHop {
+						byNode[pk]["hashSize"] = hashSize
+					}
 					byNode[pk]["lastSeen"] = tx.FirstSeen
 				}
 			}
@@ -5669,13 +5679,22 @@ func (s *PacketStore) computeNodeHashSizeInfo() map[string]*hashSizeNodeInfo {
 			continue
 		}
 		routeType := int(header & 0x03)
-		pathByte, err := strconv.ParseUint(tx.RawHex[2:4], 16, 8)
+		// Transport routes (0, 3) have 4 transport code bytes before the path
+		// byte, so the path byte is at offset 5 instead of 1.
+		pbOffset := 1
+		if routeType == RouteTransportFlood || routeType == RouteTransportDirect {
+			pbOffset = 5
+		}
+		if len(tx.RawHex) < (pbOffset+1)*2 {
+			continue
+		}
+		pathByte, err := strconv.ParseUint(tx.RawHex[pbOffset*2:pbOffset*2+2], 16, 8)
 		if err != nil {
 			continue
 		}
-		// DIRECT zero-hop adverts use path byte 0x00 locally and can misreport
-		// multibyte repeater hash mode as 1-byte.
-		if routeType == RouteDirect && (pathByte&0x3F) == 0 {
+		// Direct zero-hop adverts (route types 2 and 3) use path byte 0x00
+		// locally and can misreport multibyte hash mode as 1-byte.
+		if (routeType == RouteDirect || routeType == RouteTransportDirect) && (pathByte&0x3F) == 0 {
 			continue
 		}
 		hs := int((pathByte>>6)&0x3) + 1
