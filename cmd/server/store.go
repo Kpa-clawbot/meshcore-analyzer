@@ -200,6 +200,9 @@ type PacketStore struct {
 	// Persisted neighbor graph for hop resolution at ingest time.
 	graph *NeighborGraph
 
+	// Clock skew detection engine.
+	clockSkew *ClockSkewEngine
+
 	// Async backfill state: set after backfillResolvedPathsAsync completes.
 	backfillComplete atomic.Bool
 	// Progress tracking for async backfill (total pending and processed so far).
@@ -304,6 +307,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		spTxIndex:     make(map[string][]*StoreTx, 4096),
 		advertPubkeys:   make(map[string]int),
 		lastSeenTouched: make(map[string]time.Time),
+		clockSkew:       NewClockSkewEngine(),
 	}
 	if cfg != nil {
 		ps.retentionHours = cfg.RetentionHours
@@ -6602,6 +6606,9 @@ func (s *PacketStore) GetNodeAnalytics(pubkey string, days int) (*NodeAnalyticsR
 		relayPct = round(float64(relayedCount)*100.0/float64(totalWithPath), 1)
 	}
 
+	// Compute clock skew (already under RLock).
+	clockSkew := s.getNodeClockSkewLocked(pubkey)
+
 	return &NodeAnalyticsResponse{
 		Node:                node,
 		TimeRange:           TimeRangeResp{From: fromISO, To: toISO, Days: days},
@@ -6625,6 +6632,7 @@ func (s *PacketStore) GetNodeAnalytics(pubkey string, days int) (*NodeAnalyticsR
 			UniquePeers:         len(peerSlice),
 			AvgPacketsPerDay:    avgPacketsPerDay,
 		},
+		ClockSkew: clockSkew,
 	}, nil
 }
 

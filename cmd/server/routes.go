@@ -142,6 +142,8 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/nodes/{pubkey}/health", s.handleNodeHealth).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/paths", s.handleNodePaths).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/analytics", s.handleNodeAnalytics).Methods("GET")
+	r.HandleFunc("/api/nodes/{pubkey}/clock-skew", s.handleNodeClockSkew).Methods("GET")
+	r.HandleFunc("/api/observers/clock-skew", s.handleObserverClockSkew).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/neighbors", s.handleNodeNeighbors).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}", s.handleNodeDetail).Methods("GET")
 	r.HandleFunc("/api/nodes", s.handleNodes).Methods("GET")
@@ -1313,6 +1315,28 @@ func (s *Server) handleNodeAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeError(w, 404, "Not found")
+}
+
+func (s *Server) handleNodeClockSkew(w http.ResponseWriter, r *http.Request) {
+	pubkey := mux.Vars(r)["pubkey"]
+	if s.store == nil {
+		writeError(w, 404, "Not found")
+		return
+	}
+	result := s.store.GetNodeClockSkew(pubkey)
+	if result == nil {
+		writeError(w, 404, "No clock skew data for this node")
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleObserverClockSkew(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, []ObserverCalibration{})
+		return
+	}
+	writeJSON(w, s.store.GetObserverCalibrations())
 }
 
 // --- Analytics Handlers ---

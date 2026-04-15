@@ -468,6 +468,7 @@ type NodeAnalyticsResponse struct {
 	PeerInteractions    []PeerInteraction       `json:"peerInteractions"`
 	UptimeHeatmap       []HeatmapCell           `json:"uptimeHeatmap"`
 	ComputedStats       ComputedNodeStats       `json:"computedStats"`
+	ClockSkew           *NodeClockSkew          `json:"clockSkew,omitempty"`
 }
 
 // ─── Analytics — RF ────────────────────────────────────────────────────────────
