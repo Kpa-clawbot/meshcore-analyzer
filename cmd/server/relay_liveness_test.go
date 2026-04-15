@@ -158,6 +158,25 @@ func TestRelayMetrics_AllOutsideWindow(t *testing.T) {
 	}
 }
 
+func TestRelayTimesWiredIntoIngest(t *testing.T) {
+	srv, _ := setupTestServer(t)
+
+	srv.store.mu.RLock()
+	hopKeys := len(srv.store.byPathHop)
+	relayKeys := len(srv.store.relayTimes)
+	srv.store.mu.RUnlock()
+
+	if hopKeys == 0 {
+		t.Skip("no path-hop data in test store — skipping relay wiring test")
+	}
+	// relayTimes will only be populated if test packets have ResolvedPath entries.
+	// At minimum it must not panic and must be initialised.
+	if srv.store.relayTimes == nil {
+		t.Fatal("relayTimes map is nil after load")
+	}
+	t.Logf("byPathHop keys: %d, relayTimes keys: %d", hopKeys, relayKeys)
+}
+
 func TestAddTxToRelayTimeIndex_LowercasesKey(t *testing.T) {
 	idx := make(map[string][]int64)
 	pkUpper := "AABBCCDD11223344"
