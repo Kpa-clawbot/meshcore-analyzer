@@ -75,6 +75,7 @@ type NodeClockSkew struct {
 type ClockSkewEngine struct {
 	mu               sync.RWMutex
 	observerOffsets  map[string]float64 // observerID → calibrated offset (seconds)
+	observerSamples  map[string]int     // observerID → number of multi-observer packets used
 	nodeSkew         map[string]*NodeClockSkew
 	lastComputed     time.Time
 	computeInterval  time.Duration
@@ -82,7 +83,8 @@ type ClockSkewEngine struct {
 
 func NewClockSkewEngine() *ClockSkewEngine {
 	return &ClockSkewEngine{
-		observerOffsets: make(map[string]float64),
+		observerOffsets:  make(map[string]float64),
+		observerSamples: make(map[string]int),
 		nodeSkew:       make(map[string]*NodeClockSkew),
 		computeInterval: 30 * time.Second,
 	}
@@ -106,7 +108,7 @@ func (e *ClockSkewEngine) Recompute(store *PacketStore) {
 	}
 
 	// Phase 2: Observer calibration via multi-observer cross-check.
-	e.observerOffsets = calibrateObservers(samples)
+	e.observerOffsets, e.observerSamples = calibrateObservers(samples)
 
 	// Phase 3: Compute per-node corrected skew.
 	e.nodeSkew = computeNodeSkew(samples, e.observerOffsets)
@@ -208,10 +210,8 @@ func parseISO(s string) int64 {
 // ── Phase 2: Observer Calibration ──────────────────────────────────────────────
 
 // calibrateObservers computes each observer's clock offset using multi-observer
-// packets. For each packet seen by multiple observers, the median observation
-// timestamp is the reference. Each observer's offset is the median of its
-// deviations from the per-packet medians.
-func calibrateObservers(samples []skewSample) map[string]float64 {
+// packets. Returns offset map and sample count map.
+func calibrateObservers(samples []skewSample) (map[string]float64, map[string]int) {
 	// Group observations by packet hash.
 	byHash := make(map[string][]skewSample)
 	for _, s := range samples {
@@ -238,10 +238,12 @@ func calibrateObservers(samples []skewSample) map[string]float64 {
 
 	// Each observer's offset = median of its deviations.
 	offsets := make(map[string]float64, len(deviations))
+	counts := make(map[string]int, len(deviations))
 	for obsID, devs := range deviations {
 		offsets[obsID] = median(devs)
+		counts[obsID] = len(devs)
 	}
-	return offsets
+	return offsets, counts
 }
 
 // ── Phase 3: Per-Node Skew ─────────────────────────────────────────────────────
@@ -430,6 +432,7 @@ func (s *PacketStore) GetObserverCalibrations() []ObserverCalibration {
 		result = append(result, ObserverCalibration{
 			ObserverID: obsID,
 			OffsetSec:  round(offset, 1),
+			Samples:    s.clockSkew.observerSamples[obsID],
 		})
 	}
 	// Sort by absolute offset descending.

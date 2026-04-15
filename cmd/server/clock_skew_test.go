@@ -131,7 +131,7 @@ func TestCalibrateObservers_SingleObserver(t *testing.T) {
 		{advertTS: 1000, observedTS: 1000, observerID: "obs1", hash: "h1"},
 		{advertTS: 2000, observedTS: 2000, observerID: "obs1", hash: "h2"},
 	}
-	offsets := calibrateObservers(samples)
+	offsets, _ := calibrateObservers(samples)
 	if len(offsets) != 0 {
 		t.Errorf("expected no offsets for single-observer, got %v", offsets)
 	}
@@ -150,7 +150,7 @@ func TestCalibrateObservers_MultiObserver(t *testing.T) {
 		{advertTS: 200, observedTS: 210, observerID: "obs2", hash: "h2"},
 		{advertTS: 200, observedTS: 200, observerID: "obs3", hash: "h2"},
 	}
-	offsets := calibrateObservers(samples)
+	offsets, _ := calibrateObservers(samples)
 	if offsets["obs1"] != 0 {
 		t.Errorf("obs1 offset = %v, want 0", offsets["obs1"])
 	}
@@ -200,7 +200,7 @@ func TestComputeNodeSkew_BasicCorrection(t *testing.T) {
 		{advertTS: 1060, observedTS: 1000, observerID: "obs1", hash: "h1"},
 		{advertTS: 1060, observedTS: 1010, observerID: "obs2", hash: "h1"},
 	}
-	offsets := calibrateObservers(samples)
+	offsets, _ := calibrateObservers(samples)
 	// median obs = 1005, obs1 offset = -5, obs2 offset = +5
 	// So the median approach finds obs2 is +5 ahead (relative to median)
 
@@ -228,7 +228,7 @@ func TestComputeNodeSkew_ThreeObservers(t *testing.T) {
 		{advertTS: 1060, observedTS: 1000, observerID: "obs2", hash: "h1"},
 		{advertTS: 1060, observedTS: 1030, observerID: "obs3", hash: "h1"},
 	}
-	offsets := calibrateObservers(samples)
+	offsets, _ := calibrateObservers(samples)
 	// median obs_ts = 1000. obs1=0, obs2=0, obs3=+30
 	if offsets["obs3"] != 30 {
 		t.Errorf("obs3 offset = %v, want 30", offsets["obs3"])
