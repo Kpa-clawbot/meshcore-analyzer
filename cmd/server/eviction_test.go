@@ -541,13 +541,19 @@ func TestEstimateStoreTxBytes(t *testing.T) {
 		PathJSON:    `["aa","bb"]`,
 	}
 	est := estimateStoreTxBytes(tx)
-	// Verify the function returns a reasonable value matching our manual calculation
+	// Manual calculation: base + string lengths + index entries + perTxMaps + path hops + subpaths
+	hops := int64(len(txGetParsedPath(tx)))
 	manualCalc := int64(storeTxBaseBytes) + int64(len(tx.RawHex)+len(tx.Hash)+len(tx.DecodedJSON)+len(tx.PathJSON)) + int64(numIndexesPerTx*indexEntryBytes)
+	manualCalc += perTxMapsBytes
+	manualCalc += hops * perPathHopBytes
+	if hops > 1 {
+		manualCalc += (hops * (hops - 1) / 2) * perSubpathEntryBytes
+	}
 	if est != manualCalc {
 		t.Fatalf("estimateStoreTxBytes = %d, want %d (manual calc)", est, manualCalc)
 	}
-	if est < 600 || est > 800 {
-		t.Fatalf("estimateStoreTxBytes = %d, expected in range [600, 800]", est)
+	if est < 600 || est > 1200 {
+		t.Fatalf("estimateStoreTxBytes = %d, expected in range [600, 1200]", est)
 	}
 }
 

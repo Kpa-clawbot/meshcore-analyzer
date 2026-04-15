@@ -176,6 +176,7 @@ type PerfPacketStoreStats struct {
 	MaxPackets        int                `json:"maxPackets"`
 	EstimatedMB       float64            `json:"estimatedMB"`
 	TrackedMB         float64            `json:"trackedMB"`
+	AvgBytesPerPacket int64              `json:"avgBytesPerPacket"`
 	MaxMB             int                `json:"maxMB"`
 	Indexes           PacketStoreIndexes `json:"indexes"`
 }
