@@ -1192,10 +1192,10 @@
         else matrixDesc.textContent = '3-byte prefix space is too large to visualize as a matrix — collision table is shown below.';
       }
       renderHashMatrixFromServer(cData.by_size[String(bytes)], bytes);
-      // Hide collision risk card for 3-byte — stats are shown in the matrix panel
+      // Show collision risk section for all byte sizes
       const riskCard = document.getElementById('collisionRiskSection');
-      if (riskCard) riskCard.style.display = bytes === 3 ? 'none' : '';
-      if (bytes !== 3) renderCollisionsFromServer(cData.by_size[String(bytes)], bytes);
+      if (riskCard) riskCard.style.display = '';
+      renderCollisionsFromServer(cData.by_size[String(bytes)], bytes);
     }
 
     // Wire up selector
@@ -1287,9 +1287,9 @@
         <div class="analytics-stat-value" style="font-size:16px">${pctStr}%</div>
         <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${usedCount > 256 ? usedCount + ' of ' : 'of '}${spaceLabel} possible</div>
       </div>
-      <div class="analytics-stat-card" style="flex:1;min-width:110px;border-color:${collisionCount > 0 ? 'var(--status-red)' : 'var(--border)'}">
+      <div class="analytics-stat-card" style="flex:1;min-width:110px;border-color:${collisionCount > 0 ? 'var(--status-red)' : 'var(--border)'}${collisionCount > 0 ? ';cursor:pointer' : ''}" ${collisionCount > 0 ? 'onclick="document.getElementById(\'collisionRiskSection\')?.scrollIntoView({behavior:\'smooth\',block:\'start\'})"' : ''} ${collisionCount > 0 ? 'title="Click to see collision details"' : ''}>
         <div class="analytics-stat-label">Prefix collisions</div>
-        <div class="analytics-stat-value" style="color:${collisionCount > 0 ? 'var(--status-red)' : 'var(--status-green)'}">${collisionCount}</div>
+        <div class="analytics-stat-value" style="color:${collisionCount > 0 ? 'var(--status-red)' : 'var(--status-green)'}">${collisionCount}${collisionCount > 0 ? ' <span style="font-size:11px;opacity:0.7">▼</span>' : ''}</div>
       </div>
     </div>`;
   }
@@ -1364,7 +1364,7 @@
     // 3-byte: show a summary panel instead of a matrix
     if (bytes === 3) {
       el.innerHTML = hashStatCardsHtml(totalNodes, stats.using_this_size || 0, '3-byte', 16777216, stats.unique_prefixes || 0, stats.collision_count || 0) +
-        `<p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid.</p>` +
+        `<p class="text-muted" style="margin:0;font-size:0.8em">The 3-byte prefix space (16.7M values) is too large to visualize as a grid. ${(stats.collision_count || 0) > 0 ? 'See collision details below.' : ''}</p>` +
         `<p class="text-muted" style="margin:8px 0 0;font-size:0.8em">ℹ️ This tab only counts collisions among repeaters configured for this hash size. The <a href="#/analytics?tab=prefix-tool" style="color:var(--accent)">Prefix Tool</a> checks all repeaters regardless of configured hash size.</p>`;
       return;
     }
@@ -1997,6 +1997,8 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     window._analyticsRfNFColumnChart = rfNFColumnChart;
     window._analyticsRenderMultiByteCapability = renderMultiByteCapability;
     window._analyticsRenderMultiByteAdopters = renderMultiByteAdopters;
+    window._analyticsHashStatCardsHtml = hashStatCardsHtml;
+    window._analyticsRenderCollisionsFromServer = renderCollisionsFromServer;
   }
 
   // ─── Neighbor Graph Tab ─────────────────────────────────────────────────────

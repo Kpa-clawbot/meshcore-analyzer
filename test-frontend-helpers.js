@@ -5336,6 +5336,97 @@ console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===
   });
 }
 
+// ===== analytics.js: hashStatCardsHtml collision clickability (#757) =====
+console.log('\n=== analytics.js: hashStatCardsHtml collision details ===');
+{
+  function makeAnalyticsSandbox757() {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    try { loadInCtx(ctx, 'public/analytics.js'); } catch (e) {
+      for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    }
+    return ctx;
+  }
+  const ctx = makeAnalyticsSandbox757();
+  const hashStatCardsHtml = ctx.window._analyticsHashStatCardsHtml;
+
+  test('hashStatCardsHtml is exposed', () => assert.ok(hashStatCardsHtml, '_analyticsHashStatCardsHtml must be exposed'));
+
+  test('collision count > 0 renders clickable card with onclick', () => {
+    const html = hashStatCardsHtml(100, 50, '3-byte', 16777216, 48, 3);
+    assert.ok(html.includes('onclick='), 'should have onclick when collisions > 0');
+    assert.ok(html.includes('collisionRiskSection'), 'should scroll to collisionRiskSection');
+    assert.ok(html.includes('cursor:pointer'), 'should show pointer cursor');
+    assert.ok(html.includes('▼'), 'should show expand indicator');
+  });
+
+  test('collision count 0 renders non-clickable card', () => {
+    const html = hashStatCardsHtml(100, 50, '1-byte', 256, 48, 0);
+    assert.ok(!html.includes('onclick='), 'should not have onclick when collisions = 0');
+    assert.ok(!html.includes('cursor:pointer'), 'should not show pointer cursor');
+  });
+}
+
+// ===== analytics.js: renderCollisionsFromServer node links (#757) =====
+console.log('\n=== analytics.js: renderCollisionsFromServer collision table ===');
+{
+  function makeAnalyticsSandbox757b() {
+    const ctx = makeSandbox();
+    const collisionListEl = { innerHTML: '', querySelectorAll: () => [] };
+    const origGetById = ctx.document.getElementById;
+    ctx.document.getElementById = (id) => {
+      if (id === 'collisionList') return collisionListEl;
+      return origGetById ? origGetById(id) : null;
+    };
+    ctx.window.document = ctx.document;
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    try { loadInCtx(ctx, 'public/analytics.js'); } catch (e) {
+      for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    }
+    ctx._collisionListEl = collisionListEl;
+    return ctx;
+  }
+  const ctx = makeAnalyticsSandbox757b();
+  const renderCollisions = ctx.window._analyticsRenderCollisionsFromServer;
+
+  test('renderCollisionsFromServer is exposed', () => assert.ok(renderCollisions, '_analyticsRenderCollisionsFromServer must be exposed'));
+
+  test('renders collision table with node links to correct pubkey', () => {
+    const sizeData = {
+      collisions: [
+        {
+          prefix: 'A3F2C1',
+          byte_size: 3,
+          appearances: 2,
+          nodes: [
+            { public_key: 'abc123def456', name: 'Mountain Repeater', role: 'repeater', lat: 34.0, lon: -118.0 },
+            { public_key: 'def456abc789', name: 'Valley Node', role: 'repeater', lat: 34.5, lon: -118.5 }
+          ],
+          max_dist_km: 45.2,
+          classification: 'local',
+          with_coords: 2
+        }
+      ]
+    };
+    renderCollisions(sizeData, 3);
+    const html = ctx._collisionListEl.innerHTML;
+    assert.ok(html.includes('A3F2C1'), 'should show prefix');
+    assert.ok(html.includes('#/nodes/abc123def456'), 'first node link should point to correct pubkey');
+    assert.ok(html.includes('#/nodes/def456abc789'), 'second node link should point to correct pubkey');
+    assert.ok(html.includes('Mountain Repeater'), 'should show first node name');
+    assert.ok(html.includes('Valley Node'), 'should show second node name');
+  });
+
+  test('renders no-collision message when collisions empty', () => {
+    const sizeData = { collisions: [] };
+    renderCollisions(sizeData, 3);
+    const html = ctx._collisionListEl.innerHTML;
+    assert.ok(html.includes('No 3-byte prefix collisions'), 'should show no-collision message');
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
