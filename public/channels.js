@@ -675,15 +675,6 @@
         await addUserChannel(val);
       };
       chKeyForm.addEventListener('submit', submitHandler);
-      // Fallback click handler on button (#759)
-      var addBtn = chKeyForm.querySelector('.ch-add-btn');
-      if (addBtn) {
-        addBtn.addEventListener('click', function (e) {
-          // If form submit didn't fire, trigger it
-          if (e.defaultPrevented) return;
-          chKeyForm.requestSubmit ? chKeyForm.requestSubmit() : chKeyForm.dispatchEvent(new Event('submit'));
-        });
-      }
     }
 
     // Auto-enable encrypted toggle if deep-linking to an encrypted channel

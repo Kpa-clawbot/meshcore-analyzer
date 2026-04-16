@@ -4,9 +4,7 @@
  */
 'use strict';
 
-const vm = require('vm');
 const fs = require('fs');
-const { subtle } = require('crypto').webcrypto;
 
 let passed = 0;
 let failed = 0;
