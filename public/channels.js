@@ -326,21 +326,22 @@
   }
 
   // Show status message in the add-channel form (#759)
+  var statusTimer = null;
   function showAddStatus(msg, type) {
     var el = document.getElementById('chAddStatus');
     if (!el) return;
     el.textContent = msg;
     el.className = 'ch-add-status ch-add-status--' + (type || 'info');
     el.style.display = '';
-    clearTimeout(el._hideTimer);
+    clearTimeout(statusTimer);
     if (type !== 'loading') {
-      el._hideTimer = setTimeout(function () { el.style.display = 'none'; }, 5000);
+      statusTimer = setTimeout(function () { el.style.display = 'none'; }, 5000);
     }
   }
 
   // Add a user channel by name (#channelname) or hex key
   async function addUserChannel(val) {
-    var displayName = val.startsWith('#') ? val : (isHexKey(val) ? 'psk:' + val.substring(0, 8) : '#' + val);
+    var displayName = val.startsWith('#') ? val : (isHexKey(val) ? val.substring(0, 8) + '…' : '#' + val);
     showAddStatus('Decrypting ' + displayName + ' messages…', 'loading');
     var channelName, keyHex;
     try {
@@ -381,13 +382,14 @@
 
       // Show success feedback (#759)
       var msgCount = document.querySelectorAll('#chMessages .ch-msg').length;
+      var userDisplay = channelName.startsWith('psk:') ? 'Custom channel (' + channelName.substring(4) + ')' : channelName;
       if (msgCount > 0) {
-        showAddStatus('✅ Added ' + channelName + ' — ' + msgCount + ' messages decrypted', 'success');
+        showAddStatus('Added ' + userDisplay + ' — ' + msgCount + ' messages decrypted', 'success');
       } else {
-        showAddStatus('⚠️ No messages found for ' + channelName, 'warn');
+        showAddStatus('No messages found for ' + userDisplay, 'warn');
       }
     } catch (err) {
-      showAddStatus('❌ Failed to decrypt', 'error');
+      showAddStatus('Failed to decrypt', 'error');
     }
   }
 
@@ -614,14 +616,13 @@
         </div>
         <div class="ch-key-input-wrap" style="padding:4px 8px">
           <form id="chKeyForm" autocomplete="off" class="ch-add-form">
-            <label class="ch-add-label">Add Channel</label>
             <div class="ch-add-row">
               <input type="text" id="chKeyInput" class="ch-key-input"
-                     placeholder="e.g. #LongFast or paste hex key"
+                     placeholder="#channelname"
                      aria-label="Channel name or hex key" spellcheck="false">
               <button type="submit" class="ch-add-btn" title="Add channel">+</button>
             </div>
-            <div class="ch-add-hint">Hashtag name or 32-char hex key. Decryption happens in your browser.</div>
+            <div class="ch-add-hint">e.g. #LongFast or 32-char hex key — decrypted in your browser.</div>
             <div id="chAddStatus" class="ch-add-status" style="display:none"></div>
           </form>
         </div>
@@ -675,6 +676,13 @@
         await addUserChannel(val);
       };
       chKeyForm.addEventListener('submit', submitHandler);
+      var chKeyInput = document.getElementById('chKeyInput');
+      if (chKeyInput) {
+        chKeyInput.addEventListener('focus', function () {
+          var st = document.getElementById('chAddStatus');
+          if (st) { st.style.display = 'none'; clearTimeout(statusTimer); statusTimer = null; }
+        });
+      }
     }
 
     // Auto-enable encrypted toggle if deep-linking to an encrypted channel

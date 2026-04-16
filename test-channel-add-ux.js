@@ -35,11 +35,11 @@ assertIncludes(html, '>+</button>', 'Button shows + text');
 // 2. Form has proper structure
 assertIncludes(html, 'class="ch-add-form"', 'Form has ch-add-form class');
 assertIncludes(html, 'class="ch-add-row"', 'Row wrapper present');
-assertIncludes(html, 'class="ch-add-label"', 'Label present');
+assert(!html.includes('class="ch-add-label"'), 'Label removed (redundant with hint)');
 
 // 3. Hint text present
 assertIncludes(html, 'class="ch-add-hint"', 'Hint div present');
-assertIncludes(html, 'Hashtag name or 32-char hex key', 'Hint text correct');
+assertIncludes(html, 'e.g. #LongFast or 32-char hex key', 'Hint text correct');
 
 // 4. Status div present
 assertIncludes(html, 'id="chAddStatus"', 'Status div has correct id');
@@ -58,7 +58,7 @@ assert(css.includes('.ch-add-btn'), 'CSS: .ch-add-btn defined');
 assert(css.includes('.ch-add-hint'), 'CSS: .ch-add-hint defined');
 assert(css.includes('.ch-add-status'), 'CSS: .ch-add-status defined');
 assert(css.includes('.ch-add-row'), 'CSS: .ch-add-row defined');
-assert(css.includes('.ch-add-label'), 'CSS: .ch-add-label defined');
+// .ch-add-label CSS kept for backward compat but label removed from HTML
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed > 0 ? 1 : 0);

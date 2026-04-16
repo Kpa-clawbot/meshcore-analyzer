@@ -1139,6 +1139,7 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 /* Add channel form (#759) */
 .ch-add-form { margin: 0; }
 .ch-add-label { display: block; font-weight: 600; font-size: 13px; color: var(--text); margin-bottom: 4px; }
+.ch-key-input, .ch-add-btn { height: 32px; box-sizing: border-box; }
 .ch-add-row { display: flex; align-items: stretch; }
 .ch-add-btn {
   width: 32px; height: 32px; flex-shrink: 0;
