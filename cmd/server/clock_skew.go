@@ -16,13 +16,23 @@ const (
 	SkewWarning  SkewSeverity = "warning"  // 5 min – 1 hour
 	SkewCritical SkewSeverity = "critical" // 1 hour – 30 days
 	SkewAbsurd   SkewSeverity = "absurd"   // > 30 days
+	SkewNoClock  SkewSeverity = "no_clock" // > 365 days — uninitialized RTC
 )
 
 // Default thresholds in seconds.
 const (
-	skewThresholdWarnSec     = 5 * 60        // 5 minutes
-	skewThresholdCriticalSec = 60 * 60       // 1 hour
-	skewThresholdAbsurdSec   = 30 * 24 * 3600 // 30 days
+	skewThresholdWarnSec     = 5 * 60          // 5 minutes
+	skewThresholdCriticalSec = 60 * 60         // 1 hour
+	skewThresholdAbsurdSec   = 30 * 24 * 3600  // 30 days
+	skewThresholdNoClockSec  = 365 * 24 * 3600 // 365 days — uninitialized RTC
+
+	// minDriftSamples is the minimum number of advert transmissions needed
+	// to compute a meaningful linear drift rate.
+	minDriftSamples = 5
+
+	// maxReasonableDriftPerDay caps drift display. Physically impossible
+	// drift rates (> 1 day/day) indicate insufficient or outlier samples.
+	maxReasonableDriftPerDay = 86400.0
 )
 
 // classifySkew maps absolute skew (seconds) to a severity level.
@@ -30,6 +40,8 @@ const (
 // and thresholds are integer multiples of 60 — no rounding artifacts.
 func classifySkew(absSkewSec float64) SkewSeverity {
 	switch {
+	case absSkewSec >= skewThresholdNoClockSec:
+		return SkewNoClock
 	case absSkewSec >= skewThresholdAbsurdSec:
 		return SkewAbsurd
 	case absSkewSec >= skewThresholdCriticalSec:
@@ -408,7 +420,17 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 	medSkew := median(allSkews)
 	meanSkew := mean(allSkews)
 	absMedian := math.Abs(medSkew)
-	drift := computeDrift(tsSkews)
+	severity := classifySkew(absMedian)
+
+	// For no_clock nodes (uninitialized RTC), skip drift — data is meaningless.
+	var drift float64
+	if severity != SkewNoClock && len(tsSkews) >= minDriftSamples {
+		drift = computeDrift(tsSkews)
+		// Cap physically impossible drift rates.
+		if math.Abs(drift) > maxReasonableDriftPerDay {
+			drift = 0
+		}
+	}
 
 	// Build sparkline samples from tsSkews (sorted by time).
 	sort.Slice(tsSkews, func(i, j int) bool { return tsSkews[i].ts < tsSkews[j].ts })
@@ -423,7 +445,7 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		MedianSkewSec:  round(medSkew, 1),
 		LastSkewSec:    round(lastSkew, 1),
 		DriftPerDaySec: round(drift, 2),
-		Severity:       classifySkew(absMedian),
+		Severity:       severity,
 		SampleCount:    totalSamples,
 		Calibrated:     anyCal,
 		LastAdvertTS:   lastAdvTS,
