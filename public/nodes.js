@@ -471,8 +471,9 @@
       const recent = h.recentPackets || [];
       const lastHeard = stats.lastHeard;
 
-      // Attach health lastHeard for shared helpers
+      // Attach health lastHeard and relay stats for shared helpers
       n._lastHeard = lastHeard || n.last_seen;
+      n.stats = stats;
       const si = getStatusInfo(n);
       const roleColor = si.roleColor;
       const statusLabel = si.statusLabel;
@@ -1157,6 +1158,7 @@
     // Status calculation via shared helper
     const lastHeard = stats.lastHeard;
     n._lastHeard = lastHeard || n.last_seen;
+    n.stats = stats;
     const si = getStatusInfo(n);
     const roleColor = si.roleColor;
     const totalPackets = stats.totalTransmissions || stats.totalPackets || n.advert_count || 0;

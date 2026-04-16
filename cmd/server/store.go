@@ -1884,6 +1884,10 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			}
 			addTxToPathHopIndex(s.byPathHop, tx)
 			addTxToRelayTimeIndex(s.relayTimes, tx)
+		} else {
+			// Path unchanged: new observation may have relay hops in its resolved
+			// path that aren't indexed yet (idempotent — safe to call repeatedly).
+			addTxToRelayTimeIndex(s.relayTimes, tx)
 		}
 	}
 
@@ -2469,58 +2473,71 @@ func addTxToPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
 	}
 }
 
-// addTxToRelayTimeIndex records the relay timestamp for each full pubkey in
-// tx.ResolvedPath. Maintains sorted ascending order for O(log n) window queries.
+// addTxToRelayTimeIndex records the relay timestamp for each full pubkey that
+// appears in ANY observation's resolved path. Scanning all observations (not
+// just the best one) ensures relay activity is captured even when the best
+// observer received the packet directly without a relay hop.
+// Insert is idempotent: if the same timestamp already exists for a pubkey it is
+// not duplicated, so the function may be called multiple times safely.
 // Must be called with s.mu held (or during build before store is live).
 func addTxToRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
-	if len(tx.ResolvedPath) == 0 {
-		return
-	}
 	// Parse FirstSeen on each call. StoreTx has no cached millis field;
-	// RFC3339 parse is cheap relative to the binary-search insert that follows.
+	// RFC3339 parse is cheap relative to the binary-search inserts that follow.
 	ms, err := time.Parse(time.RFC3339, tx.FirstSeen)
 	if err != nil {
 		return
 	}
 	millis := ms.UnixMilli()
-	seen := make(map[string]bool, len(tx.ResolvedPath))
-	for _, rp := range tx.ResolvedPath {
+	seen := make(map[string]bool)
+	insert := func(rp *string) {
 		if rp == nil {
-			continue
+			return
 		}
 		pk := strings.ToLower(*rp)
 		if seen[pk] {
-			continue
+			return
 		}
 		seen[pk] = true
 		slice := idx[pk]
 		i := sort.Search(len(slice), func(j int) bool { return slice[j] >= millis })
+		if i < len(slice) && slice[i] == millis {
+			return // idempotent: already present
+		}
 		slice = append(slice, 0)
 		copy(slice[i+1:], slice[i:])
 		slice[i] = millis
 		idx[pk] = slice
 	}
+	// Scan all observations — relay hops appear in any observation's path.
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			insert(rp)
+		}
+	}
+	// Fallback for DB-loaded packets where Observations slice may be empty
+	// but tx.ResolvedPath (best observation) is populated.
+	for _, rp := range tx.ResolvedPath {
+		insert(rp)
+	}
 }
 
-// removeFromRelayTimeIndex removes the relay timestamp for each full pubkey in
-// tx.ResolvedPath. Inverse of addTxToRelayTimeIndex.
+// removeFromRelayTimeIndex removes the relay timestamp for every full pubkey
+// that appears in any observation's resolved path. Symmetric with
+// addTxToRelayTimeIndex so eviction does not leave orphaned entries.
 func removeFromRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
-	if len(tx.ResolvedPath) == 0 {
-		return
-	}
 	ms, err := time.Parse(time.RFC3339, tx.FirstSeen)
 	if err != nil {
 		return
 	}
 	millis := ms.UnixMilli()
-	seen := make(map[string]bool, len(tx.ResolvedPath))
-	for _, rp := range tx.ResolvedPath {
+	seen := make(map[string]bool)
+	remove := func(rp *string) {
 		if rp == nil {
-			continue
+			return
 		}
 		pk := strings.ToLower(*rp)
 		if seen[pk] {
-			continue
+			return
 		}
 		seen[pk] = true
 		slice := idx[pk]
@@ -2531,6 +2548,14 @@ func removeFromRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
 				delete(idx, pk)
 			}
 		}
+	}
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			remove(rp)
+		}
+	}
+	for _, rp := range tx.ResolvedPath {
+		remove(rp)
 	}
 }
 
