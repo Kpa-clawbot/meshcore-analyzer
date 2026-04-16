@@ -3448,7 +3448,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
         data.forEach(function(n) { if (counts[n.severity] !== undefined) counts[n.severity]++; });
 
         // Filter buttons (also serve as summary — no separate stats pills needed)
-        var filterColors = { ok: 'var(--status-green)', warning: 'var(--status-yellow)', critical: 'var(--status-orange)', absurd: 'var(--status-purple)' };
+        var filterColors = { ok: 'var(--status-green)', warning: 'var(--status-yellow)', critical: 'var(--status-orange)', absurd: 'var(--status-purple)', no_clock: 'var(--text-muted)' };
         var filters = ['all', 'ok', 'warning', 'critical', 'absurd', 'no_clock'];
         var filterHtml = '<div style="margin-bottom:10px">' + filters.map(function(f) {
           var dot = f !== 'all' ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + filterColors[f] + ';margin-right:4px;vertical-align:middle"></span>' : '';
