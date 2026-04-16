@@ -400,12 +400,13 @@
     ok: 'var(--status-green)',
     warning: 'var(--status-yellow)',
     critical: 'var(--status-orange)',
-    absurd: 'var(--status-purple)'
+    absurd: 'var(--status-purple)',
+    no_clock: 'var(--text-muted)'
   };
   var SKEW_SEVERITY_LABELS = {
-    ok: 'OK', warning: 'Warning', critical: 'Critical', absurd: 'Absurd'
+    ok: 'OK', warning: 'Warning', critical: 'Critical', absurd: 'Absurd', no_clock: 'No Clock'
   };
-  var SKEW_SEVERITY_ORDER = { absurd: 0, critical: 1, warning: 2, ok: 3 };
+  var SKEW_SEVERITY_ORDER = { no_clock: 0, absurd: 1, critical: 2, warning: 3, ok: 4 };
 
   window.SKEW_SEVERITY_COLORS = SKEW_SEVERITY_COLORS;
   window.SKEW_SEVERITY_LABELS = SKEW_SEVERITY_LABELS;
@@ -432,6 +433,9 @@
   window.renderSkewBadge = function(severity, skewSec) {
     if (!severity) return '';
     var cls = 'skew-badge skew-badge--' + severity;
+    if (severity === 'no_clock') {
+      return '<span class="' + cls + '" title="Uninitialized RTC — no valid clock">🚫 No Clock</span>';
+    }
     var label = severity === 'ok' ? '⏰' : '⏰ ' + window.formatSkew(skewSec);
     return '<span class="' + cls + '" title="Clock skew: ' + window.formatSkew(skewSec) + ' (' + (SKEW_SEVERITY_LABELS[severity] || severity) + ')">' + label + '</span>';
   };

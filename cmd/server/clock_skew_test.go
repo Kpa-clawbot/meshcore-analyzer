@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"testing"
+	"time"
 )
 
 // ── classifySkew ───────────────────────────────────────────────────────────────
@@ -22,7 +24,9 @@ func TestClassifySkew(t *testing.T) {
 		{86400, SkewCritical},  // 1 day
 		{2592000 - 1, SkewCritical}, // just under 30 days
 		{2592000, SkewAbsurd},  // exactly 30 days
-		{86400 * 365, SkewAbsurd}, // 1 year
+		{86400 * 365 - 1, SkewAbsurd}, // just under 365 days
+		{86400 * 365, SkewNoClock}, // exactly 365 days
+		{86400 * 365 * 10, SkewNoClock}, // 10 years (epoch-0 style)
 	}
 	for _, tc := range tests {
 		got := classifySkew(tc.absSkew)
@@ -366,4 +370,177 @@ func TestGetNodeClockSkew_NoData(t *testing.T) {
 	if result != nil {
 		t.Error("expected nil for nonexistent node")
 	}
+}
+
+// ── Sanity check tests (#XXX — clock skew crazy stats) ────────────────────────
+
+func TestGetNodeClockSkew_NoClock_EpochZero(t *testing.T) {
+	// Node with epoch-0 timestamp produces huge skew → no_clock severity, drift=0.
+	ps := NewPacketStore(nil, nil)
+	pt := 4 // ADVERT
+
+	// Epoch-ish advert: advertTS near start of 2020, observed in 2023 → |skew| > 365 days
+	var txs []*StoreTx
+	baseObs := int64(1700000000) // ~Nov 2023
+	for i := 0; i < 6; i++ {
+		obsTS := baseObs + int64(i)*7200
+		tx := &StoreTx{
+			Hash:        "epoch-h" + string(rune('0'+i)),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":1577836800}}`, // Jan 1 2020 — valid but way off
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+
+	ps.mu.Lock()
+	ps.byNode["EPOCH"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	result := ps.GetNodeClockSkew("EPOCH")
+	if result == nil {
+		t.Fatal("expected clock skew result for epoch-0 node")
+	}
+	if result.Severity != SkewNoClock {
+		t.Errorf("severity = %v, want no_clock", result.Severity)
+	}
+	if result.DriftPerDaySec != 0 {
+		t.Errorf("drift = %v, want 0 for no_clock node", result.DriftPerDaySec)
+	}
+}
+
+func TestGetNodeClockSkew_TooFewSamplesForDrift(t *testing.T) {
+	// Node with only 2 advert samples → drift should not be computed.
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+
+	baseObs := int64(1700000000)
+	var txs []*StoreTx
+	for i := 0; i < 2; i++ {
+		obsTS := baseObs + int64(i)*7200
+		advTS := obsTS + 120 // 120s ahead
+		tx := &StoreTx{
+			Hash:        "few-h" + string(rune('0'+i)),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+
+	ps.mu.Lock()
+	ps.byNode["FEWSAMP"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	result := ps.GetNodeClockSkew("FEWSAMP")
+	if result == nil {
+		t.Fatal("expected clock skew result")
+	}
+	if result.DriftPerDaySec != 0 {
+		t.Errorf("drift = %v, want 0 for 2-sample node (minimum is %d)", result.DriftPerDaySec, minDriftSamples)
+	}
+}
+
+func TestGetNodeClockSkew_AbsurdDriftCapped(t *testing.T) {
+	// Node with wildly varying skew producing |drift| > 86400 s/day → drift capped to 0.
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+
+	// Create 6 samples with extreme skew variation to produce absurd drift.
+	baseObs := int64(1700000000)
+	var txs []*StoreTx
+	for i := 0; i < 6; i++ {
+		obsTS := baseObs + int64(i)*3600
+		// Alternate between huge positive and negative skew offsets
+		skewOffset := int64(50000 * (1 - 2*(i%2))) // +50000 or -50000
+		advTS := obsTS + skewOffset
+		tx := &StoreTx{
+			Hash:        "wild-h" + string(rune('0'+i)),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+
+	ps.mu.Lock()
+	ps.byNode["WILD"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	result := ps.GetNodeClockSkew("WILD")
+	if result == nil {
+		t.Fatal("expected clock skew result")
+	}
+	if math.Abs(result.DriftPerDaySec) > maxReasonableDriftPerDay {
+		t.Errorf("drift = %v, should be capped (|drift| > %v)", result.DriftPerDaySec, maxReasonableDriftPerDay)
+	}
+}
+
+func TestGetNodeClockSkew_NormalNodeWithDrift(t *testing.T) {
+	// Normal node with 6 samples and consistent linear drift → drift computed correctly.
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+
+	baseObs := int64(1700000000)
+	var txs []*StoreTx
+	for i := 0; i < 6; i++ {
+		obsTS := baseObs + int64(i)*7200 // every 2 hours
+		// Drift: 1 sec/hour = 24 sec/day
+		advTS := obsTS + 120 + int64(i) // skew grows by 1s per sample (2h apart)
+		tx := &StoreTx{
+			Hash:        "norm-h" + string(rune('0'+i)),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+
+	ps.mu.Lock()
+	ps.byNode["NORMAL"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	result := ps.GetNodeClockSkew("NORMAL")
+	if result == nil {
+		t.Fatal("expected clock skew result")
+	}
+	if result.Severity != SkewOK {
+		t.Errorf("severity = %v, want ok", result.Severity)
+	}
+	// 1s per 7200s = 12 s/day
+	if result.DriftPerDaySec == 0 {
+		t.Error("expected non-zero drift for linearly drifting node")
+	}
+	if math.Abs(result.DriftPerDaySec) > maxReasonableDriftPerDay {
+		t.Errorf("drift = %v, should be reasonable", result.DriftPerDaySec)
+	}
+}
+
+// formatInt64 is a test helper to format int64 as string for JSON embedding.
+func formatInt64(n int64) string {
+	return fmt.Sprintf("%d", n)
 }

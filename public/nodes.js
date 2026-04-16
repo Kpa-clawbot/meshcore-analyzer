@@ -640,10 +640,13 @@
           var severityLabel = SKEW_SEVERITY_LABELS[cs.severity] || cs.severity;
           var driftHtml = cs.driftPerDaySec ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Drift: ' + formatDrift(cs.driftPerDaySec) + '</div>' : '';
           var sparkHtml = renderSkewSparkline(cs.samples, 200, 32);
+          var skewDisplay = cs.severity === 'no_clock'
+            ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
+            : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(cs.medianSkewSec) + '</span>';
           container.innerHTML =
             '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
             '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
-              '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(cs.medianSkewSec) + '</span>' +
+              skewDisplay +
               renderSkewBadge(cs.severity, cs.medianSkewSec) +
               (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
             '</div>' +
