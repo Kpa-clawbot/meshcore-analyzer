@@ -325,43 +325,70 @@
     return /^[0-9a-fA-F]{32}$/.test(val);
   }
 
+  // Show status message in the add-channel form (#759)
+  function showAddStatus(msg, type) {
+    var el = document.getElementById('chAddStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'ch-add-status ch-add-status--' + (type || 'info');
+    el.style.display = '';
+    clearTimeout(el._hideTimer);
+    if (type !== 'loading') {
+      el._hideTimer = setTimeout(function () { el.style.display = 'none'; }, 5000);
+    }
+  }
+
   // Add a user channel by name (#channelname) or hex key
   async function addUserChannel(val) {
+    var displayName = val.startsWith('#') ? val : (isHexKey(val) ? 'psk:' + val.substring(0, 8) : '#' + val);
+    showAddStatus('Decrypting ' + displayName + ' messages…', 'loading');
     var channelName, keyHex;
-    if (val.startsWith('#')) {
-      channelName = val;
-      var keyBytes = await ChannelDecrypt.deriveKey(channelName);
-      keyHex = ChannelDecrypt.bytesToHex(keyBytes);
-    } else if (isHexKey(val)) {
-      keyHex = val.toLowerCase();
-      channelName = 'psk:' + keyHex.substring(0, 8);
-    } else {
-      // Try with # prefix if user forgot
-      channelName = '#' + val;
-      var keyBytes2 = await ChannelDecrypt.deriveKey(channelName);
-      keyHex = ChannelDecrypt.bytesToHex(keyBytes2);
+    try {
+      if (val.startsWith('#')) {
+        channelName = val;
+        var keyBytes = await ChannelDecrypt.deriveKey(channelName);
+        keyHex = ChannelDecrypt.bytesToHex(keyBytes);
+      } else if (isHexKey(val)) {
+        keyHex = val.toLowerCase();
+        channelName = 'psk:' + keyHex.substring(0, 8);
+      } else {
+        // Try with # prefix if user forgot
+        channelName = '#' + val;
+        var keyBytes2 = await ChannelDecrypt.deriveKey(channelName);
+        keyHex = ChannelDecrypt.bytesToHex(keyBytes2);
+      }
+
+      ChannelDecrypt.storeKey(channelName, keyHex);
+
+      // Compute channel hash byte to find matching encrypted channels
+      var keyBytes3 = ChannelDecrypt.hexToBytes(keyHex);
+      var hashByte = await ChannelDecrypt.computeChannelHash(keyBytes3);
+
+      // Add to sidebar or merge with existing encrypted channel
+      mergeUserChannels();
+      renderChannelList();
+
+      // Auto-select and start decrypting
+      var targetHash = 'user:' + channelName;
+      // Check if there's an existing encrypted channel with this hash byte
+      var existingEncrypted = channels.find(function (ch) {
+        return ch.encrypted && String(ch.hash) === String(hashByte);
+      });
+      if (existingEncrypted) {
+        targetHash = existingEncrypted.hash;
+      }
+      await selectChannel(targetHash, { userKey: keyHex, channelHashByte: hashByte, channelName: channelName });
+
+      // Show success feedback (#759)
+      var msgCount = document.querySelectorAll('#chMessages .ch-msg').length;
+      if (msgCount > 0) {
+        showAddStatus('✅ Added ' + channelName + ' — ' + msgCount + ' messages decrypted', 'success');
+      } else {
+        showAddStatus('⚠️ No messages found for ' + channelName, 'warn');
+      }
+    } catch (err) {
+      showAddStatus('❌ Failed to decrypt', 'error');
     }
-
-    ChannelDecrypt.storeKey(channelName, keyHex);
-
-    // Compute channel hash byte to find matching encrypted channels
-    var keyBytes3 = ChannelDecrypt.hexToBytes(keyHex);
-    var hashByte = await ChannelDecrypt.computeChannelHash(keyBytes3);
-
-    // Add to sidebar or merge with existing encrypted channel
-    mergeUserChannels();
-    renderChannelList();
-
-    // Auto-select and start decrypting
-    var targetHash = 'user:' + channelName;
-    // Check if there's an existing encrypted channel with this hash byte
-    var existingEncrypted = channels.find(function (ch) {
-      return ch.encrypted && String(ch.hash) === String(hashByte);
-    });
-    if (existingEncrypted) {
-      targetHash = existingEncrypted.hash;
-    }
-    await selectChannel(targetHash, { userKey: keyHex, channelHashByte: hashByte, channelName: channelName });
   }
 
   // Merge user-stored keys into the channel list
@@ -586,8 +613,16 @@
           </label>
         </div>
         <div class="ch-key-input-wrap" style="padding:4px 8px">
-          <form id="chKeyForm" autocomplete="off">
-            <input type="text" id="chKeyInput" class="ch-key-input" placeholder="#LongFast or paste hex key" aria-label="Add channel by name or hex key" spellcheck="false">
+          <form id="chKeyForm" autocomplete="off" class="ch-add-form">
+            <label class="ch-add-label">Add Channel</label>
+            <div class="ch-add-row">
+              <input type="text" id="chKeyInput" class="ch-key-input"
+                     placeholder="e.g. #LongFast or paste hex key"
+                     aria-label="Channel name or hex key" spellcheck="false">
+              <button type="submit" class="ch-add-btn" title="Add channel">+</button>
+            </div>
+            <div class="ch-add-hint">Hashtag name or 32-char hex key. Decryption happens in your browser.</div>
+            <div id="chAddStatus" class="ch-add-status" style="display:none"></div>
           </form>
         </div>
         <div id="chRegionFilter" class="region-filter-container" style="padding:0 8px"></div>
@@ -628,17 +663,27 @@
       });
     });
 
-    // Channel key input handler (#725 M2)
+    // Channel key input handler (#725 M2, improved UX #759)
     var chKeyForm = document.getElementById('chKeyForm');
     if (chKeyForm) {
-      chKeyForm.addEventListener('submit', async function (e) {
+      var submitHandler = async function (e) {
         e.preventDefault();
         var input = document.getElementById('chKeyInput');
         var val = (input.value || '').trim();
         if (!val) return;
         input.value = '';
         await addUserChannel(val);
-      });
+      };
+      chKeyForm.addEventListener('submit', submitHandler);
+      // Fallback click handler on button (#759)
+      var addBtn = chKeyForm.querySelector('.ch-add-btn');
+      if (addBtn) {
+        addBtn.addEventListener('click', function (e) {
+          // If form submit didn't fire, trigger it
+          if (e.defaultPrevented) return;
+          chKeyForm.requestSubmit ? chKeyForm.requestSubmit() : chKeyForm.dispatchEvent(new Event('submit'));
+        });
+      }
     }
 
     // Auto-enable encrypted toggle if deep-linking to an encrypted channel
