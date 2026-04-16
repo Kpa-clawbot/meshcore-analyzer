@@ -2460,7 +2460,7 @@ func addTxToPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
 		}
 		// Also index by resolved pubkey if available
 		if tx.ResolvedPath != nil && i < len(tx.ResolvedPath) && tx.ResolvedPath[i] != nil {
-			pk := *tx.ResolvedPath[i]
+			pk := strings.ToLower(*tx.ResolvedPath[i])
 			if !seen[pk] {
 				seen[pk] = true
 				idx[pk] = append(idx[pk], tx)
@@ -2564,7 +2564,7 @@ func removeTxFromPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
 			removeTxFromSlice(idx, key, tx)
 		}
 		if tx.ResolvedPath != nil && i < len(tx.ResolvedPath) && tx.ResolvedPath[i] != nil {
-			pk := *tx.ResolvedPath[i]
+			pk := strings.ToLower(*tx.ResolvedPath[i])
 			if !seen[pk] {
 				seen[pk] = true
 				removeTxFromSlice(idx, pk, tx)
