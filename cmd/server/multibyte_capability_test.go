@@ -85,7 +85,7 @@ func TestMultiByteCapability_Confirmed(t *testing.T) {
 	store := NewPacketStore(db, nil)
 	addTestPacket(store, makeTestAdvert("aabbccdd11223344", 2))
 
-	caps := store.computeMultiByteCapability()
+	caps := store.computeMultiByteCapability(nil)
 	if len(caps) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(caps))
 	}
@@ -123,7 +123,7 @@ func TestMultiByteCapability_Suspected(t *testing.T) {
 	}
 	addTestPacket(store, pkt)
 
-	caps := store.computeMultiByteCapability()
+	caps := store.computeMultiByteCapability(nil)
 	if len(caps) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(caps))
 	}
@@ -152,7 +152,7 @@ func TestMultiByteCapability_Unknown(t *testing.T) {
 	// Advert with 1-byte hash only
 	addTestPacket(store, makeTestAdvert("aabbccdd11223344", 1))
 
-	caps := store.computeMultiByteCapability()
+	caps := store.computeMultiByteCapability(nil)
 	if len(caps) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(caps))
 	}
@@ -194,7 +194,7 @@ func TestMultiByteCapability_PrefixCollision(t *testing.T) {
 	}
 	addTestPacket(store, pkt)
 
-	caps := store.computeMultiByteCapability()
+	caps := store.computeMultiByteCapability(nil)
 	if len(caps) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(caps))
 	}
@@ -237,7 +237,7 @@ func TestMultiByteCapability_TraceExcluded(t *testing.T) {
 	}
 	addTestPacket(store, pkt)
 
-	caps := store.computeMultiByteCapability()
+	caps := store.computeMultiByteCapability(nil)
 	if len(caps) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(caps))
 	}
@@ -269,7 +269,7 @@ func TestMultiByteCapability_NonTraceStillSuspected(t *testing.T) {
 	}
 	addTestPacket(store, pkt)
 
-	caps := store.computeMultiByteCapability()
+	caps := store.computeMultiByteCapability(nil)
 	if len(caps) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(caps))
 	}
@@ -304,11 +304,125 @@ func TestMultiByteCapability_ConfirmedUnaffectedByTraceExclusion(t *testing.T) {
 	}
 	addTestPacket(store, pkt)
 
-	caps := store.computeMultiByteCapability()
+	caps := store.computeMultiByteCapability(nil)
 	if len(caps) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(caps))
 	}
 	if caps[0].Status != "confirmed" {
 		t.Errorf("expected confirmed (unaffected by TRACE), got %s", caps[0].Status)
+	}
+}
+
+// TestMultiByteCapability_CompanionConfirmed tests that a companion with
+// multi-byte advert is classified as "confirmed", not "unknown" (Bug 1, #754).
+func TestMultiByteCapability_CompanionConfirmed(t *testing.T) {
+	db := setupCapabilityTestDB(t)
+	defer db.conn.Close()
+
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"aabbccdd11223344", "CompA", "companion", "2026-04-11T00:00:00Z")
+
+	store := NewPacketStore(db, nil)
+	addTestPacket(store, makeTestAdvert("aabbccdd11223344", 2))
+
+	caps := store.computeMultiByteCapability(nil)
+	if len(caps) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(caps))
+	}
+	if caps[0].Status != "confirmed" {
+		t.Errorf("expected confirmed for companion, got %s", caps[0].Status)
+	}
+	if caps[0].Role != "companion" {
+		t.Errorf("expected role companion, got %s", caps[0].Role)
+	}
+	if caps[0].Evidence != "advert" {
+		t.Errorf("expected advert evidence, got %s", caps[0].Evidence)
+	}
+}
+
+// TestMultiByteCapability_RoleColumnPopulated tests that the Role field is
+// populated for all node types (Bug 2, #754).
+func TestMultiByteCapability_RoleColumnPopulated(t *testing.T) {
+	db := setupCapabilityTestDB(t)
+	defer db.conn.Close()
+
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"aabb000000000001", "Rep1", "repeater", "2026-04-11T00:00:00Z")
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"ccdd000000000002", "Comp1", "companion", "2026-04-11T00:00:00Z")
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"eeff000000000003", "Room1", "room_server", "2026-04-11T00:00:00Z")
+
+	store := NewPacketStore(db, nil)
+	addTestPacket(store, makeTestAdvert("aabb000000000001", 2))
+	addTestPacket(store, makeTestAdvert("ccdd000000000002", 2))
+	addTestPacket(store, makeTestAdvert("eeff000000000003", 1))
+
+	caps := store.computeMultiByteCapability(nil)
+	if len(caps) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(caps))
+	}
+
+	roleByName := map[string]string{}
+	for _, c := range caps {
+		roleByName[c.Name] = c.Role
+	}
+	if roleByName["Rep1"] != "repeater" {
+		t.Errorf("Rep1 role: expected repeater, got %s", roleByName["Rep1"])
+	}
+	if roleByName["Comp1"] != "companion" {
+		t.Errorf("Comp1 role: expected companion, got %s", roleByName["Comp1"])
+	}
+	if roleByName["Room1"] != "room_server" {
+		t.Errorf("Room1 role: expected room_server, got %s", roleByName["Room1"])
+	}
+}
+
+// TestMultiByteCapability_AdopterEvidenceTakesPrecedence tests that when
+// adopter data shows hashSize >= 2 but path evidence says "suspected",
+// the node is upgraded to "confirmed" (Bug 3, #754).
+func TestMultiByteCapability_AdopterEvidenceTakesPrecedence(t *testing.T) {
+	db := setupCapabilityTestDB(t)
+	defer db.conn.Close()
+
+	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
+		"aabbccdd11223344", "RepAdopter", "repeater", "2026-04-11T00:00:00Z")
+
+	store := NewPacketStore(db, nil)
+
+	// Only a path-based packet (no advert) — would normally be "suspected"
+	pathByte := buildPathByte(2, 1)
+	rawHex := "01" + pathByte + "aabb"
+	pt := 1
+	pkt := &StoreTx{
+		RawHex:      rawHex,
+		PayloadType: &pt,
+		PathJSON:    `["aabb"]`,
+		FirstSeen:   "2026-04-10T00:00:00.000Z",
+	}
+	addTestPacket(store, pkt)
+
+	// Without adopter data: should be suspected
+	caps := store.computeMultiByteCapability(nil)
+	capByName := map[string]MultiByteCapEntry{}
+	for _, c := range caps {
+		capByName[c.Name] = c
+	}
+	if capByName["RepAdopter"].Status != "suspected" {
+		t.Errorf("without adopter data: expected suspected, got %s", capByName["RepAdopter"].Status)
+	}
+
+	// With adopter data showing hashSize 2: should be confirmed
+	adopterHS := map[string]int{"aabbccdd11223344": 2}
+	caps = store.computeMultiByteCapability(adopterHS)
+	capByName = map[string]MultiByteCapEntry{}
+	for _, c := range caps {
+		capByName[c.Name] = c
+	}
+	if capByName["RepAdopter"].Status != "confirmed" {
+		t.Errorf("with adopter data: expected confirmed, got %s", capByName["RepAdopter"].Status)
+	}
+	if capByName["RepAdopter"].Evidence != "advert" {
+		t.Errorf("with adopter data: expected advert evidence, got %s", capByName["RepAdopter"].Evidence)
 	}
 }

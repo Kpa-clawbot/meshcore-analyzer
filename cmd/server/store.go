@@ -5105,7 +5105,18 @@ func (s *PacketStore) GetAnalyticsHashSizes(region string) map[string]interface{
 
 	// Add multi-byte capability data (only for unfiltered/global view)
 	if region == "" {
-		result["multiByteCapability"] = s.computeMultiByteCapability()
+		// Pass adopter hash sizes so capability can cross-reference
+		adopterHS := make(map[string]int)
+		if mbNodes, ok := result["multiByteNodes"].([]map[string]interface{}); ok {
+			for _, n := range mbNodes {
+				pk, _ := n["pubkey"].(string)
+				hs, _ := n["hashSize"].(int)
+				if pk != "" && hs >= 2 {
+					adopterHS[pk] = hs
+				}
+			}
+		}
+		result["multiByteCapability"] = s.computeMultiByteCapability(adopterHS)
 	}
 
 	s.cacheMu.Lock()
@@ -5818,7 +5829,7 @@ func EnrichNodeWithHashSize(node map[string]interface{}, info *hashSizeNodeInfo)
 
 // --- Multi-Byte Capability Inference ---
 
-// MultiByteCapEntry represents a repeater's inferred multi-byte capability.
+// MultiByteCapEntry represents a node's inferred multi-byte capability.
 type MultiByteCapEntry struct {
 	PublicKey   string `json:"pubkey"`
 	Name        string `json:"name"`
@@ -5830,7 +5841,7 @@ type MultiByteCapEntry struct {
 }
 
 // computeMultiByteCapability determines multi-byte capability for each
-// repeater using two methods:
+// node (repeaters, companions, rooms, sensors) using two methods:
 //
 // 1. Confirmed: the node has advertised with hash_size >= 2 (from advert
 //    path byte). This is 100% reliable because the full public key is
@@ -5847,7 +5858,7 @@ type MultiByteCapEntry struct {
 //    with default (1-byte) settings.
 //
 // Caller must hold NO locks — this method acquires mu.RLock internally.
-func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
+func (s *PacketStore) computeMultiByteCapability(adopterHashSizes map[string]int) []MultiByteCapEntry {
 	// Get hash size info from adverts (has its own locking)
 	hashInfo := s.GetNodeHashSizeInfo()
 
@@ -5882,24 +5893,21 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 		pubkey string
 		prefix string
 	}
-	repeaterPrefixes := make(map[string][]prefixEntry) // prefix → entries
-	for pk, n := range nodeByPK {
-		if !strings.Contains(strings.ToLower(n.Role), "repeater") {
-			continue
-		}
+	nodePrefixes := make(map[string][]prefixEntry) // prefix → entries
+	for pk := range nodeByPK {
 		// Generate 1-byte, 2-byte, 3-byte prefixes
 		pkLower := strings.ToLower(pk)
 		for byteLen := 1; byteLen <= 3; byteLen++ {
 			hexLen := byteLen * 2
 			if len(pkLower) >= hexLen {
 				pfx := pkLower[:hexLen]
-				repeaterPrefixes[pfx] = append(repeaterPrefixes[pfx], prefixEntry{pk, pfx})
+				nodePrefixes[pfx] = append(nodePrefixes[pfx], prefixEntry{pk, pfx})
 			}
 		}
 	}
 
 	suspected := make(map[string]int) // pubkey → max hash size from path appearances
-	for pfx, entries := range repeaterPrefixes {
+	for pfx, entries := range nodePrefixes {
 		txList := s.byPathHop[pfx]
 		for _, tx := range txList {
 			if tx.RawHex == "" || len(tx.RawHex) < 4 {
@@ -5945,9 +5953,9 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 	}
 	s.mu.RUnlock()
 
-	// Build result for all repeaters — fetch last_seen from DB
+	// Build result for all nodes — fetch last_seen from DB
 	dbLastSeen := make(map[string]string)
-	rows, err := s.db.conn.Query("SELECT public_key, last_seen FROM nodes WHERE role LIKE '%repeater%'")
+	rows, err := s.db.conn.Query("SELECT public_key, last_seen FROM nodes")
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -5962,9 +5970,6 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 
 	var result []MultiByteCapEntry
 	for pk, n := range nodeByPK {
-		if !strings.Contains(strings.ToLower(n.Role), "repeater") {
-			continue
-		}
 		entry := MultiByteCapEntry{
 			PublicKey:   pk,
 			Name:        n.Name,
@@ -5974,6 +5979,12 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 		}
 
 		if maxHS, ok := confirmed[pk]; ok {
+			entry.Status = "confirmed"
+			entry.Evidence = "advert"
+			entry.MaxHashSize = maxHS
+		} else if maxHS, ok := adopterHashSizes[pk]; ok && maxHS >= 2 {
+			// Adopter data (from computeAnalyticsHashSizes) shows hash_size >= 2
+			// from advert analysis — this is advert-based evidence, so confirmed.
 			entry.Status = "confirmed"
 			entry.Evidence = "advert"
 			entry.MaxHashSize = maxHS

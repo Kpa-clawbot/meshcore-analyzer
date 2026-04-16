@@ -1000,6 +1000,7 @@
       return (filtered.length ? '<table class="analytics-table" id="mbAdoptersTable" style="margin-top:12px">' +
           '<thead><tr>' +
             '<th scope="col" data-sort="name">Node</th>' +
+            '<th scope="col" data-sort="role">Role</th>' +
             '<th scope="col" data-sort="status">Status</th>' +
             '<th scope="col" data-sort="hashSize">Hash Size</th>' +
             '<th scope="col" data-sort="packets">Adverts</th>' +
@@ -1007,8 +1008,10 @@
           '</tr></thead>' +
           '<tbody>' +
             filtered.map(function(r) {
+              var roleColor = (window.ROLE_COLORS || {})[r.role] || '#6b7280';
               return '<tr class="clickable-row" data-action="navigate" data-value="#/nodes/' + encodeURIComponent(r.pubkey) + '" tabindex="0" role="row">' +
                 '<td><strong>' + esc(r.name) + '</strong></td>' +
+                '<td><span class="badge" style="background:' + roleColor + '20;color:' + roleColor + '">' + esc(r.role || 'unknown') + '</span></td>' +
                 '<td><span style="color:' + (statusColor[r.status] || statusColor.unknown) + '">' +
                   (statusIcon[r.status] || '❓') + ' ' + (statusLabel[r.status] || 'Unknown') + '</span></td>' +
                 '<td><span class="badge badge-hash-' + r.hashSize + '">' + r.hashSize + '-byte</span></td>' +
