@@ -87,7 +87,7 @@
   // Three-state helper for repeaters: returns 'relaying', 'active', or 'stale'
   window.getNodeStatus = function (role, lastSeenMs, relayCount24h) {
     var isInfra = role === 'repeater' || role === 'room';
-    var staleMs = isInfra ? window.HEALTH_THRESHOLDS.infraSilentMs : window.HEALTH_THRESHOLDS.nodeSilentMs;
+    var staleMs = isInfra ? HEALTH_THRESHOLDS.infraSilentMs : HEALTH_THRESHOLDS.nodeSilentMs;
     var age = typeof lastSeenMs === 'number' ? (Date.now() - lastSeenMs) : Infinity;
     if (age >= staleMs) return 'stale';
     if (role === 'repeater') {

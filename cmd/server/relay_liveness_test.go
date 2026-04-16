@@ -177,6 +177,9 @@ func TestRelayTimesWiredIntoIngest(t *testing.T) {
 	if relayKeys == 0 {
 		t.Fatalf("relayTimes not populated: byPathHop has %d keys but relayTimes has 0", hopKeys)
 	}
+	if relayKeys > hopKeys {
+		t.Errorf("relayTimes has more keys (%d) than byPathHop (%d) — relay index should be a subset", relayKeys, hopKeys)
+	}
 	t.Logf("byPathHop keys: %d, relayTimes keys: %d", hopKeys, relayKeys)
 }
 

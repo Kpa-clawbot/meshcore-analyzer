@@ -2476,6 +2476,8 @@ func addTxToRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
 	if len(tx.ResolvedPath) == 0 {
 		return
 	}
+	// Parse FirstSeen on each call. StoreTx has no cached millis field;
+	// RFC3339 parse is cheap relative to the binary-search insert that follows.
 	ms, err := time.Parse(time.RFC3339, tx.FirstSeen)
 	if err != nil {
 		return
@@ -2524,11 +2526,8 @@ func removeFromRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
 		slice := idx[pk]
 		i := sort.Search(len(slice), func(j int) bool { return slice[j] >= millis })
 		if i < len(slice) && slice[i] == millis {
-			newSlice := make([]int64, 0, len(slice)-1)
-			newSlice = append(newSlice, slice[:i]...)
-			newSlice = append(newSlice, slice[i+1:]...)
-			idx[pk] = newSlice
-			if len(newSlice) == 0 {
+			idx[pk] = append(slice[:i], slice[i+1:]...)
+			if len(idx[pk]) == 0 {
 				delete(idx, pk)
 			}
 		}
@@ -2537,6 +2536,8 @@ func removeFromRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
 
 // relayMetrics computes relay_count_1h, relay_count_24h, and last_relayed from a
 // sorted unix-millis slice. now is time.Now().UnixMilli(). O(log n).
+// last_relayed is always the most recent entry regardless of window age — callers
+// receive it even when both counts are zero (e.g. "last relayed 3 days ago").
 func relayMetrics(times []int64, now int64) (count1h, count24h int, lastRelayed string) {
 	if len(times) == 0 {
 		return 0, 0, ""
