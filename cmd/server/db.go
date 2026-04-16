@@ -1401,33 +1401,7 @@ func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region .
 		regionPlaceholders = strings.Join(placeholders, ",")
 	}
 
-	// Count total unique messages for this channel (for pagination)
-	var countSQL string
-	countArgs := []interface{}{channelHash}
-	if db.isV3 {
-		countSQL = `SELECT COUNT(DISTINCT t.hash) FROM transmissions t
-			JOIN observations o ON o.transmission_id = t.id
-			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
-			WHERE t.channel_hash = ? AND t.payload_type = 5`
-		if len(regionCodes) > 0 {
-			countSQL += fmt.Sprintf(" AND obs.rowid IS NOT NULL AND UPPER(TRIM(obs.iata)) IN (%s)", regionPlaceholders)
-			countArgs = append(countArgs, regionArgs...)
-		}
-	} else {
-		countSQL = `SELECT COUNT(DISTINCT t.hash) FROM transmissions t
-			JOIN observations o ON o.transmission_id = t.id
-			WHERE t.channel_hash = ? AND t.payload_type = 5`
-		if len(regionCodes) > 0 {
-			countSQL += fmt.Sprintf(` AND EXISTS (
-				SELECT 1 FROM observers obs WHERE obs.id = o.observer_id
-				AND UPPER(TRIM(obs.iata)) IN (%s))`, regionPlaceholders)
-			countArgs = append(countArgs, regionArgs...)
-		}
-	}
-	var total int
-	db.conn.QueryRow(countSQL, countArgs...).Scan(&total)
-
-	// Fetch messages with channel_hash filter + pagination at SQL level
+	// Fetch messages with channel_hash filter (pagination applied in Go after dedup)
 	var querySQL string
 	args := []interface{}{channelHash}
 	if db.isV3 {
@@ -1565,7 +1539,7 @@ func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region .
 		messages = append(messages, m.Data)
 	}
 
-	return messages, total, nil
+	return messages, msgTotal, nil
 }
 
 
