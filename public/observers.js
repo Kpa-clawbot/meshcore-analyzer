@@ -18,7 +18,7 @@
         <div class="obs-help">
           <div class="help-box">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;cursor:pointer" data-action="toggle-help">
-              <strong>ℹ️ How to connect your observer</strong>
+              <strong>ℹ️ How to connect your observer to Cornmeister.nl</strong>
               <span class="help-toggle" style="font-size:14px;user-select:none">▶</span>
             </div>
 
@@ -39,7 +39,7 @@
               <div style="margin-top:16px">
                 <strong>Alternative (Meshwiki Community MQTT)</strong>
                 <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
-                  TLS-enabled community endpoint:
+                  Community endpoint shares data with multiple projects:
                 </div>
 
                 <table class="help-table">
@@ -55,7 +55,7 @@
               <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
 
               <div style="margin-bottom:16px">
-                <strong>MQTT Bridge Firmware</strong>
+                <strong>MQTT Bridge Firmware Commands</strong>
                 <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:12px">
                   Paste into your device console:
                 </div>
@@ -64,7 +64,7 @@
                   <strong style="font-size:12px">📍 Your region (IATA code)</strong>
                   <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
                     CoreScope groups observers by the IATA airport code nearest to them.
-                    If your node shows as <strong>Offline</strong> or doesn't appear in the list, you most likely haven't set this yet.
+                    If your observer shows as <strong>Offline</strong> or doesn't appear in the list, you most likely haven't set this yet.
                     Pick your region below — the commands update automatically.
                   </div>
                   <select id="obsIataSelect" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px;cursor:pointer">
@@ -85,19 +85,19 @@
                     Unencrypted non-tls connection uses port 1883
                   </div>
                   <pre class="help-code"><code>set mqtt.server mqtt.cornmeister.nl
-set mqtt.port 1883
+set mqtt.port 8883
 set mqtt.username observer
 set mqtt.password hiermetdiedata
 set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
                 </div>
 
                 <div>
-                  <strong>Meshwiki Community</strong>
+                  <strong>Meshwiki Community (Feeds multiple projects)</strong>
                   <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
                     Unencrypted non-tls connection uses port 1883
                   </div>
                   <pre class="help-code"><code>set mqtt.server mqtt.mwiki.nl
-set mqtt.port 1883 or 1883 for TLS
+set mqtt.port 8883
 set mqtt.username observer
 set mqtt.password 86w7bW9NJxuPcErp2Y5NCQ==
 set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
