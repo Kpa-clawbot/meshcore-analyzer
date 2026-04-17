@@ -2441,9 +2441,12 @@ func (s *PacketStore) buildSubpathIndex() {
 func (s *PacketStore) buildPathHopIndex() {
 	s.byPathHop = make(map[string][]*StoreTx, 4096)
 	s.relayTimes = make(map[string][]int64, 4096)
+	cutoff := time.Now().Add(-24 * time.Hour)
 	for _, tx := range s.packets {
 		addTxToPathHopIndex(s.byPathHop, tx)
-		addTxToRelayTimeIndex(s.relayTimes, tx)
+		if t, err := time.Parse(time.RFC3339, tx.FirstSeen); err == nil && t.After(cutoff) {
+			addTxToRelayTimeIndex(s.relayTimes, tx)
+		}
 	}
 	log.Printf("[store] Built path-hop index: %d unique keys, %d relay-time keys", len(s.byPathHop), len(s.relayTimes))
 }
