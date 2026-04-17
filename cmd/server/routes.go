@@ -2396,15 +2396,16 @@ func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
 	results["packets_deleted"] = n
+	results["deleted"] = n // legacy alias
 
-	// Also prune stale observers if observerDays is configured
+	// Also mark stale observers as inactive if observerDays is configured
 	observerDays := s.cfg.ObserverDaysOrDefault()
 	if observerDays > 0 {
 		obsN, obsErr := s.db.RemoveStaleObservers(observerDays)
 		if obsErr != nil {
 			log.Printf("[prune] observer prune error: %v", obsErr)
 		} else {
-			results["observers_removed"] = obsN
+			results["observers_inactive"] = obsN
 		}
 	}
 

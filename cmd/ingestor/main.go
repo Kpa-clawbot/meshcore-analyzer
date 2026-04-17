@@ -77,9 +77,11 @@ func main() {
 		}
 	}()
 
-	// Daily ticker for observer retention (every 24h)
+	// Daily ticker for observer retention (every 24h, staggered 90s after startup)
 	observerRetentionTicker := time.NewTicker(24 * time.Hour)
 	go func() {
+		time.Sleep(90 * time.Second) // stagger after metrics prune
+		store.RemoveStaleObservers(observerDays)
 		for range observerRetentionTicker.C {
 			store.RemoveStaleObservers(observerDays)
 		}

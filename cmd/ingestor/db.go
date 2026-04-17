@@ -110,7 +110,8 @@ func applySchema(db *sql.DB) error {
 			radio TEXT,
 			battery_mv INTEGER,
 			uptime_secs INTEGER,
-			noise_floor REAL
+			noise_floor REAL,
+			inactive INTEGER DEFAULT 0
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
@@ -195,7 +196,7 @@ func applySchema(db *sql.DB) error {
 				   t.created_at
 			FROM observations o
 			JOIN transmissions t ON t.id = o.transmission_id
-			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+			LEFT JOIN observers obs ON obs.rowid = o.observer_idx AND (obs.inactive IS NULL OR obs.inactive = 0)
 	`)
 	if vErr != nil {
 		return fmt.Errorf("packets_v view: %w", vErr)
@@ -333,6 +334,19 @@ func applySchema(db *sql.DB) error {
 		}
 		db.Exec(`INSERT INTO _migrations (name) VALUES ('observer_metrics_ts_idx')`)
 		log.Println("[migration] observer_metrics timestamp index created")
+	}
+
+	// Migration: add inactive column to observers for soft-delete retention
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'observers_inactive_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Adding inactive column to observers...")
+		_, err := db.Exec(`ALTER TABLE observers ADD COLUMN inactive INTEGER DEFAULT 0`)
+		if err != nil {
+			// Column may already exist (e.g. fresh install with schema above)
+			log.Printf("[migration] observers.inactive: %v (may already exist)", err)
+		}
+		db.Exec(`INSERT INTO _migrations (name) VALUES ('observers_inactive_v1')`)
+		log.Println("[migration] observers.inactive column added")
 	}
 
 	// Migration: add packets_sent and packets_recv columns to observer_metrics
@@ -622,10 +636,13 @@ func (s *Store) UpsertObserver(id, name, iata string, meta *ObserverMeta) error 
 	)
 	if err != nil {
 		s.Stats.WriteErrors.Add(1)
-	} else {
-		s.Stats.ObserverUpserts.Add(1)
+		return err
 	}
-	return err
+	s.Stats.ObserverUpserts.Add(1)
+
+	// Reactivate if this observer was previously marked inactive
+	s.db.Exec(`UPDATE observers SET inactive = 0 WHERE id = ? AND inactive = 1`, id)
+	return nil
 }
 
 // Close checkpoints the WAL and closes the database.
@@ -757,26 +774,25 @@ func (s *Store) MoveStaleNodes(nodeDays int) (int64, error) {
 	return moved, nil
 }
 
-// RemoveStaleObservers removes observers that have not actively sent data in observerDays.
-// Unlike nodes (which are moved to inactive_nodes), observers are simply deleted since
-// they have no separate inactive table. An observer must actively send data to stay listed
-// — being seen by another node does not count.
+// RemoveStaleObservers marks observers that have not actively sent data in observerDays
+// as inactive (soft-delete). This preserves JOIN integrity for observations.observer_idx
+// and observer_metrics.observer_id — historical data still references the correct observer.
+// An observer must actively send data to stay listed — being seen by another node does not count.
 // observerDays <= -1 means never remove (keep forever).
 func (s *Store) RemoveStaleObservers(observerDays int) (int64, error) {
 	if observerDays <= -1 {
 		return 0, nil // keep forever
 	}
-	if observerDays == 0 {
-		observerDays = 14
-	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -observerDays).Format(time.RFC3339)
-	result, err := s.db.Exec(`DELETE FROM observers WHERE last_seen < ?`, cutoff)
+	result, err := s.db.Exec(`UPDATE observers SET inactive = 1 WHERE last_seen < ? AND (inactive IS NULL OR inactive = 0)`, cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("delete stale observers: %w", err)
+		return 0, fmt.Errorf("mark stale observers inactive: %w", err)
 	}
 	removed, _ := result.RowsAffected()
 	if removed > 0 {
-		log.Printf("Removed %d stale observer(s) (not seen in %d days)", removed, observerDays)
+		// Clean up orphaned metrics for now-inactive observers
+		s.db.Exec(`DELETE FROM observer_metrics WHERE observer_id IN (SELECT id FROM observers WHERE inactive = 1)`)
+		log.Printf("Marked %d observer(s) as inactive (not seen in %d days)", removed, observerDays)
 	}
 	return removed, nil
 }
