@@ -4,24 +4,41 @@
 (function () {
   let interval = null;
 
-  // --- History ring buffer (1 hour at 5 s intervals) ---
-  const MAX_SAMPLES = 720;
-  const HISTORY_KEY = 'cs-perf-history';
-  const history = [];
-  const TIMEFRAME_SAMPLES = { '5m': 60, '15m': 180, '30m': 360, '1h': 720 };
+  // --- History ring buffers ---
+  // Short: 5 s resolution, 1 h max  (720 samples)  → 5m / 15m / 30m / 1h views
+  // Long : 1 min resolution, 48 h max (2880 samples) → 6h / 12h / 24h / 48h views
+  const MAX_SAMPLES      = 720;
+  const MAX_LONG_SAMPLES = 2880;
+  const HISTORY_KEY      = 'cs-perf-history';
+  const LONG_HISTORY_KEY = 'cs-perf-history-long';
+  const history          = [];
+  const longHistory      = [];
+  let   lastLongSampleTs = 0;
 
-  // Restore history from sessionStorage so a page refresh doesn't lose the buffer.
-  // Entries older than 1 hour are pruned on load.
+  const TIMEFRAME_SAMPLES      = { '5m': 60, '15m': 180, '30m': 360, '1h': 720 };
+  const LONG_TIMEFRAME_SAMPLES = { '6h': 360, '12h': 720, '24h': 1440, '48h': 2880 };
+
+  // Restore both buffers from sessionStorage on load; prune stale entries.
   (function restoreHistory() {
     try {
       const raw = sessionStorage.getItem(HISTORY_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      const cutoff = Date.now() - 3600000;
-      const fresh = saved.filter(function (s) { return s.ts > cutoff; });
-      var slice = fresh.slice(-MAX_SAMPLES);
-      for (var i = 0; i < slice.length; i++) history.push(slice[i]);
-    } catch (e) { /* quota or parse error — start fresh */ }
+      if (raw) {
+        const saved = JSON.parse(raw);
+        const cutoff = Date.now() - 3600000;
+        const fresh = saved.filter(function (s) { return s.ts > cutoff; }).slice(-MAX_SAMPLES);
+        for (var i = 0; i < fresh.length; i++) history.push(fresh[i]);
+      }
+    } catch (e) { /* start fresh */ }
+    try {
+      const raw = sessionStorage.getItem(LONG_HISTORY_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        const cutoff = Date.now() - 172800000; // 48 h
+        const fresh = saved.filter(function (s) { return s.ts > cutoff; }).slice(-MAX_LONG_SAMPLES);
+        for (var i = 0; i < fresh.length; i++) longHistory.push(fresh[i]);
+        if (longHistory.length > 0) lastLongSampleTs = longHistory[longHistory.length - 1].ts;
+      }
+    } catch (e) { /* start fresh */ }
   }());
 
   // --- View state (persisted across navigations) ---
@@ -45,7 +62,7 @@
     const gr = server.goRuntime;
     const ps = server.packetStore;
     const sq = server.sqlite;
-    history.push({
+    const sample = {
       ts:           Date.now(),
       cpuPercent:   gr ? +gr.cpuPercent                : null,
       totalSysMB:   gr ? +gr.totalSysMB                : null,
@@ -55,12 +72,26 @@
       cacheHitRate: server.cache ? server.cache.hitRate : null,
       avgMs:        server.avgMs  || null,
       dbSizeMB:     sq ? +sq.dbSizeMB                  : null,
-    });
+    };
+
+    // Short buffer (5 s resolution, 1 h)
+    history.push(sample);
     if (history.length > MAX_SAMPLES) history.shift();
     try { sessionStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch (e) { /* quota */ }
+
+    // Long buffer (1 min resolution, 48 h) — one entry per minute
+    if (sample.ts - lastLongSampleTs >= 60000) {
+      lastLongSampleTs = sample.ts;
+      longHistory.push(sample);
+      if (longHistory.length > MAX_LONG_SAMPLES) longHistory.shift();
+      try { sessionStorage.setItem(LONG_HISTORY_KEY, JSON.stringify(longHistory)); } catch (e) { /* quota */ }
+    }
   }
 
   function getSlice() {
+    if (timeframe in LONG_TIMEFRAME_SAMPLES) {
+      return longHistory.slice(-(LONG_TIMEFRAME_SAMPLES[timeframe]));
+    }
     return history.slice(-(TIMEFRAME_SAMPLES[timeframe] || 60));
   }
 
@@ -79,7 +110,7 @@
           <div class="perf-header-controls">
             <button id="perfViewToggle" class="perf-view-btn">${viewMode === 'graphs' ? '📋 Cards' : '📊 Graphs'}</button>
             <div id="perfTfBar" class="perf-tf-bar" style="display:${viewMode === 'graphs' ? 'flex' : 'none'}">
-              ${['5m', '15m', '30m', '1h'].map(function (t) {
+              ${['5m', '15m', '30m', '1h', '6h', '12h', '24h', '48h'].map(function (t) {
                 return `<button class="perf-tf-btn${t === timeframe ? ' active' : ''}" data-tf="${t}">${t}</button>`;
               }).join('')}
             </div>
