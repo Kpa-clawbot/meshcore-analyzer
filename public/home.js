@@ -98,6 +98,14 @@
         ${checklist(homeCfg)}
       </section>`}
 
+      <section class="home-donate">
+        <p class="home-donate-text">The Cornmeister.nl Meshcore Analyzer runs on real hardware, processing tens of thousands of mesh packets around the clock. If it's useful to you, a small donation goes a long way toward keeping the server running.</p>
+        <div class="home-donate-actions">
+          <a href="https://bunq.me/CornmeisterNL" target="_blank" rel="noopener" class="home-donate-btn">❤️ Support the project</a>
+          <a href="https://discord.gg/placeholder" target="_blank" rel="noopener" class="home-discord-btn">💬 Join the Discord</a>
+        </div>
+      </section>
+
       <section class="home-footer">
         <div class="home-footer-links">
           ${homeCfg?.footerLinks ? homeCfg.footerLinks.map(l => `<a href="${escapeAttr(l.url)}" class="home-footer-link" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>`).join('') : `
@@ -529,12 +537,12 @@
     // Fallback: Bay Area defaults when no config at all
     if (!html) {
       const items = [
-        { q: '💬 First: Join the Bay Area MeshCore Discord',
-          a: '<p>The community Discord is the best place to get help and find local mesh enthusiasts.</p><p><a href="https://discord.gg/q59JzsYTst" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">Join the Discord ↗</a></p><p>Start with <strong>#intro-to-meshcore</strong> — it has detailed setup instructions.</p>' },
+        { q: '💬 First: Join the MeshCore Community',
+          a: '<p>Connect with other mesh enthusiasts in the community to get help and share experiences.</p><p><a href="https://discord.gg/q59JzsYTst" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">Join the Discord ↗</a></p>' },
         { q: '🔵 Step 1: Connect via Bluetooth',
           a: '<p>Flash <strong>BLE companion</strong> firmware from <a href="https://flasher.meshcore.co.uk/" target="_blank" rel="noopener" style="color:var(--accent)">MeshCore Flasher</a>.</p><ul><li>Screenless devices: default PIN <code>123456</code></li><li>Screen devices: random PIN shown on display</li><li>If pairing fails: forget device, reboot, re-pair</li></ul>' },
-        { q: '📻 Step 2: Set the right frequency preset',
-          a: '<p><strong>US Recommended:</strong></p><div style="margin:8px 0;padding:8px 12px;background:var(--surface-1);border-radius:6px;font-family:var(--mono);font-size:.85rem">910.525 MHz · BW 62.5 kHz · SF 7 · CR 5</div><p>Select <strong>"US Recommended"</strong> in the app or flasher.</p>' },
+        { q: '📻 Step 2: Set the frequency for Nederland (EU/UK Narrow)',
+          a: '<p><strong>Netherlands Recommended:</strong></p><div style="margin:8px 0;padding:8px 12px;background:var(--surface-1);border-radius:6px;font-family:var(--mono);font-size:.85rem">868 MHz · BW 62.5 kHz · SF 8 · CR 8 · 22 dBm</div><p>Voorbeeld frequentie: <code>869.618 MHz</code></p>' },
         { q: '📡 Step 3: Advertise yourself',
           a: '<p>Tap the signal icon → <strong>Flood</strong> to broadcast your node to the mesh. Companions only advert when you trigger it manually.</p>' },
         { q: '🔁 Step 4: Check "Heard N repeats"',

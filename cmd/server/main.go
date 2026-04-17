@@ -231,6 +231,17 @@ func main() {
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
 
+	// Perf history collector — 1-min resolution, 48 h ring buffer (2880 samples).
+	// Fires immediately so the first sample is available right away, then every minute.
+	go func() {
+		srv.storePerfSample(srv.collectPerfSample())
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			srv.storePerfSample(srv.collectPerfSample())
+		}
+	}()
+
 	// WebSocket endpoint
 	router.HandleFunc("/ws", hub.ServeWS)
 

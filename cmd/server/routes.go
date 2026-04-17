@@ -46,6 +46,15 @@ type Server struct {
 
 	// Router reference for OpenAPI spec generation
 	router *mux.Router
+
+	// CPU usage delta tracking (see cpu_unix.go / cpu_windows.go)
+	cpuMu        sync.Mutex
+	cpuLastWall  time.Time
+	cpuLastCPUNs int64
+
+	// Server-side perf history ring buffer (1-min resolution, 48 h max)
+	perfHistoryMu sync.Mutex
+	perfHistory   []PerfSample
 }
 
 // PerfStats tracks request performance.
@@ -121,6 +130,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
+	r.HandleFunc("/api/perf/history", s.handlePerfHistory).Methods("GET")
 	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
 	r.Handle("/api/admin/prune", s.requireAPIKey(http.HandlerFunc(s.handleAdminPrune))).Methods("POST")
 	r.Handle("/api/debug/affinity", s.requireAPIKey(http.HandlerFunc(s.handleDebugAffinity))).Methods("GET")
@@ -705,6 +715,8 @@ func (s *Server) handlePerf(w http.ResponseWriter, r *http.Request) {
 				HeapInuseMB:  float64(ms.HeapInuse) / 1024 / 1024,
 				HeapIdleMB:   float64(ms.HeapIdle) / 1024 / 1024,
 				NumCPU:       runtime.NumCPU(),
+				CpuPercent:   s.getCPUPercent(),
+				TotalSysMB:   float64(ms.Sys) / 1024 / 1024,
 			}
 		}(),
 	})
@@ -719,6 +731,76 @@ func (s *Server) handlePerfReset(w http.ResponseWriter, r *http.Request) {
 	s.perfStats.StartedAt = time.Now()
 	s.perfStats.mu.Unlock()
 	writeJSON(w, OkResp{Ok: true})
+}
+
+// --- Perf History ---
+
+// collectPerfSample snapshots the current server metrics into a PerfSample.
+// It is called by the background perf-history goroutine every minute and
+// optionally in tests.
+func (s *Server) collectPerfSample() PerfSample {
+	ms := s.getMemStats()
+
+	var packetsInRAM int
+	var cacheHitRate float64
+	var trackedMB float64
+	if s.store != nil {
+		ps := s.store.GetPerfStoreStatsTyped()
+		packetsInRAM = ps.InMemory
+		trackedMB = ps.TrackedMB
+		cs := s.store.GetCacheStatsTyped()
+		cacheHitRate = cs.HitRate
+	}
+
+	var dbSizeMB float64
+	var walSizeMB float64
+	if s.db != nil {
+		ss := s.db.GetDBSizeStatsTyped()
+		dbSizeMB = ss.DbSizeMB
+		walSizeMB = ss.WalSizeMB
+	}
+
+	s.perfStats.mu.Lock()
+	avgMs := safeAvg(s.perfStats.TotalMs, float64(s.perfStats.Requests))
+	s.perfStats.mu.Unlock()
+
+	return PerfSample{
+		Ts:           time.Now().UnixMilli(),
+		CpuPercent:   s.getCPUPercent(),
+		TotalSysMB:   float64(ms.Sys) / 1024 / 1024,
+		HeapAllocMB:  float64(ms.HeapAlloc) / 1024 / 1024,
+		HeapInuseMB:  float64(ms.HeapInuse) / 1024 / 1024,
+		HeapSysMB:    float64(ms.HeapSys) / 1024 / 1024,
+		LastPauseMs:  float64(ms.PauseNs[(ms.NumGC+255)%256]) / 1e6,
+		Goroutines:   runtime.NumGoroutine(),
+		PacketsInRAM: packetsInRAM,
+		TrackedMB:    trackedMB,
+		CacheHitRate: cacheHitRate,
+		AvgMs:        avgMs,
+		DbSizeMB:     dbSizeMB,
+		WalSizeMB:    walSizeMB,
+	}
+}
+
+// storePerfSample appends a sample to the server-side ring buffer (max 2880 = 48 h at 1 min).
+func (s *Server) storePerfSample(sample PerfSample) {
+	const maxSamples = 2880
+	s.perfHistoryMu.Lock()
+	defer s.perfHistoryMu.Unlock()
+	s.perfHistory = append(s.perfHistory, sample)
+	if len(s.perfHistory) > maxSamples {
+		s.perfHistory = s.perfHistory[1:]
+	}
+}
+
+// handlePerfHistory returns the server-side perf ring buffer as JSON.
+// GET /api/perf/history → { "samples": [...] }
+func (s *Server) handlePerfHistory(w http.ResponseWriter, r *http.Request) {
+	s.perfHistoryMu.Lock()
+	samples := make([]PerfSample, len(s.perfHistory))
+	copy(samples, s.perfHistory)
+	s.perfHistoryMu.Unlock()
+	writeJSON(w, map[string]interface{}{"samples": samples})
 }
 
 // --- Packet Handlers ---

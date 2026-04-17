@@ -225,6 +225,28 @@ type GoRuntimeStats struct {
 	HeapInuseMB  float64 `json:"heapInuseMB"`
 	HeapIdleMB   float64 `json:"heapIdleMB"`
 	NumCPU       int     `json:"numCPU"`
+	CpuPercent   float64 `json:"cpuPercent"`
+	TotalSysMB   float64 `json:"totalSysMB"`
+}
+
+// PerfSample is one minute-resolution snapshot stored in the server-side ring
+// buffer and served by GET /api/perf/history.  Field names mirror the keys used
+// by the frontend ring buffer so the JS can consume them directly.
+type PerfSample struct {
+	Ts           int64   `json:"ts"`
+	CpuPercent   float64 `json:"cpuPercent"`
+	TotalSysMB   float64 `json:"totalSysMB"`
+	HeapAllocMB  float64 `json:"heapAllocMB"`
+	HeapInuseMB  float64 `json:"heapInuseMB"`
+	HeapSysMB    float64 `json:"heapSysMB"`
+	LastPauseMs  float64 `json:"lastPauseMs"`
+	Goroutines   int     `json:"goroutines"`
+	PacketsInRAM int     `json:"packetsInRAM"`
+	TrackedMB    float64 `json:"trackedMB"`
+	CacheHitRate float64 `json:"cacheHitRate"`
+	AvgMs        float64 `json:"avgMs"`
+	DbSizeMB     float64 `json:"dbSizeMB"`
+	WalSizeMB    float64 `json:"walSizeMB"`
 }
 
 // ─── Packets ───────────────────────────────────────────────────────────────────

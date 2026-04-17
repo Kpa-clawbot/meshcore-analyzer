@@ -1690,12 +1690,44 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .perf-table .perf-warn { background: rgba(251, 191, 36, 0.06); }
 .perf-table .perf-warn td { color: var(--status-yellow); }
 
+/* Perf page — graph toggle & timeframe controls */
+.perf-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.perf-header-controls { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.perf-view-btn {
+  padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--input-bg); color: var(--text); cursor: pointer;
+  font-size: 13px; font-weight: 600; transition: background .15s;
+}
+.perf-view-btn:hover { background: var(--hover-bg); }
+.perf-tf-bar { display: flex; gap: 4px; }
+.perf-tf-btn {
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--input-bg); color: var(--text-muted); cursor: pointer;
+  font-size: 12px; transition: background .15s, color .15s, border-color .15s;
+}
+.perf-tf-btn.active, .perf-tf-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.perf-graphs-category { margin-bottom: 24px; }
+.perf-graphs-cat-title {
+  font-size: 12px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--text-muted); margin: 0 0 8px;
+}
+.perf-graphs-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px; margin-top: 8px;
+}
+.perf-graph-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; }
+.perf-graph-title {
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .3px; margin-bottom: 8px;
+}
+
 /* #204 — Perf page responsive */
 @media (max-width: 640px) {
   #perfWrapper { padding: 12px !important; }
   .perf-card { min-width: 0; flex: 1 1 calc(50% - 8px); }
   .perf-table { font-size: 11px; }
   .perf-table th, .perf-table td { padding: 4px 6px; }
+  .perf-graphs-grid { grid-template-columns: 1fr; }
 }
 
 /* ─── Region filter bar ─── */

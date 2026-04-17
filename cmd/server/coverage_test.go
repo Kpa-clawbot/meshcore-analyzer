@@ -1650,6 +1650,74 @@ func TestHandlePerfNoStore(t *testing.T) {
 	}
 }
 
+func TestHandlePerfHistoryEmpty(t *testing.T) {
+	_, router := setupNoStoreServer(t)
+	req := httptest.NewRequest("GET", "/api/perf/history", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		Samples []PerfSample `json:"samples"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.Samples == nil {
+		t.Error("expected non-nil samples slice")
+	}
+}
+
+func TestHandlePerfHistoryAfterSample(t *testing.T) {
+	srv, router := setupNoStoreServer(t)
+	srv.storePerfSample(srv.collectPerfSample())
+	req := httptest.NewRequest("GET", "/api/perf/history", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		Samples []PerfSample `json:"samples"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(resp.Samples) != 1 {
+		t.Fatalf("expected 1 sample, got %d", len(resp.Samples))
+	}
+	if resp.Samples[0].TotalSysMB <= 0 {
+		t.Errorf("expected totalSysMB > 0, got %f", resp.Samples[0].TotalSysMB)
+	}
+	if resp.Samples[0].Ts <= 0 {
+		t.Errorf("expected ts > 0, got %d", resp.Samples[0].Ts)
+	}
+}
+
+func TestHandlePerfCPUFields(t *testing.T) {
+	_, router := setupNoStoreServer(t)
+	req := httptest.NewRequest("GET", "/api/perf", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp PerfResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.GoRuntime == nil {
+		t.Fatal("expected goRuntime to be present")
+	}
+	if resp.GoRuntime.CpuPercent < 0 {
+		t.Errorf("cpuPercent should be >= 0, got %f", resp.GoRuntime.CpuPercent)
+	}
+	if resp.GoRuntime.TotalSysMB <= 0 {
+		t.Errorf("totalSysMB should be > 0, got %f", resp.GoRuntime.TotalSysMB)
+	}
+}
+
 // --- HandleIATACoords ---
 
 func TestHandleIATACoordsNoStore(t *testing.T) {

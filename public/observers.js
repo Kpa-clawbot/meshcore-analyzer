@@ -15,6 +15,104 @@
           <a href="#/compare" class="btn-icon" title="Compare observers" aria-label="Compare observers" style="text-decoration:none">🔍</a>
           <button class="btn-icon" data-action="obs-refresh" title="Refresh" aria-label="Refresh observers">🔄</button>
         </div>
+        <div class="obs-help">
+          <div class="help-box">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;cursor:pointer" data-action="toggle-help">
+              <strong>ℹ️ How to connect your observer to Cornmeister.nl</strong>
+              <span class="help-toggle" style="font-size:14px;user-select:none">▶</span>
+            </div>
+
+            <div class="help-content" style="overflow:hidden;transition:max-height 0.3s ease;max-height:0px">
+              <div class="text-muted" style="font-size:12px;margin-bottom:12px">
+                Connect your node to the Cornmeister MQTT broker to share raw packets.
+              </div>
+
+              <table class="help-table">
+                <tr><td>Server:</td><td><code>mqtt.cornmeister.nl</code></td></tr>
+                <tr><td>Port (TLS):</td><td><code>8883</code></td></tr>
+                <tr><td>Port (plain):</td><td><code>1883</code></td></tr>
+                <tr><td>Transport:</td><td><code>TCP</code></td></tr>
+                <tr><td>Username:</td><td><code>observer</code></td></tr>
+                <tr><td>Password:</td><td><code>hiermetdiedata</code></td></tr>
+              </table>
+
+              <div style="margin-top:16px">
+                <strong>Alternative (Meshwiki Community MQTT)</strong>
+                <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
+                  Community endpoint shares data with multiple projects:
+                </div>
+
+                <table class="help-table">
+                  <tr><td>Server:</td><td><code>mqtt.mwiki.nl</code></td></tr>
+                  <tr><td>Port (TLS):</td><td><code>8883</code></td></tr>
+                  <tr><td>Port (plain):</td><td><code>1883</code></td></tr>
+                  <tr><td>Transport:</td><td><code>TCP</code></td></tr>
+                  <tr><td>Username:</td><td><code>observer</code></td></tr>
+                  <tr><td>Password:</td><td><code>86w7bW9NJxuPcErp2Y5NCQ==</code></td></tr>
+                </table>
+              </div>
+
+              <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
+
+              <div style="margin-bottom:16px">
+                <strong>MQTT Bridge Firmware Commands</strong>
+                <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:12px">
+                  Paste into your device console:
+                </div>
+
+                <div style="margin-bottom:12px;padding:10px 12px;background:var(--surface-0);border:1px solid var(--border);border-radius:6px">
+                  <strong style="font-size:12px">📍 Your region (IATA code)</strong>
+                  <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
+                    CoreScope groups observers by the IATA airport code nearest to them.
+                    If your observer shows as <strong>Offline</strong> or doesn't appear in the list, you most likely haven't set this yet.
+                    Pick your region below — the commands update automatically.
+                  </div>
+                  <select id="obsIataSelect" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px;cursor:pointer">
+                    <option value="AMS">AMS – Amsterdam Schiphol</option>
+                    <option value="RTM">RTM – Rotterdam The Hague</option>
+                    <option value="EIN">EIN – Eindhoven</option>
+                    <option value="MST">MST – Maastricht Aachen</option>
+                    <option value="GRQ">GRQ – Groningen Eelde</option>
+                    <option value="LEY">LEY – Lelystad</option>
+                    <option value="DHR">DHR – Den Helder (De Kooy)</option>
+                    <option value="ENS">ENS – Enschede Twente</option>
+                  </select>
+                </div>                
+
+                <div style="margin-bottom:12px">
+                  <strong>Cornmeister.nl (Recommended)</strong>
+                  <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
+                    Unencrypted non-tls connection uses port 1883
+                  </div>
+                  <pre class="help-code"><code>set mqtt.server mqtt.cornmeister.nl
+set mqtt.port 8883
+set mqtt.username observer
+set mqtt.password hiermetdiedata
+set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
+                </div>
+
+                <div>
+                  <strong>Meshwiki Community (Feeds multiple projects)</strong>
+                  <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
+                    Unencrypted non-tls connection uses port 1883
+                  </div>
+                  <pre class="help-code"><code>set mqtt.server mqtt.mwiki.nl
+set mqtt.port 8883
+set mqtt.username observer
+set mqtt.password 86w7bW9NJxuPcErp2Y5NCQ==
+set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
+                </div>
+              </div>
+
+              <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
+
+              <div style="font-size:12px" class="text-muted">
+                Live packets: <a href="https://cornmeister.nl" target="_blank" rel="noopener">cornmeister.nl</a>
+              </div>
+            </div>
+          </div>
+        </div>
+		<hr class="section-divider">
         <div id="obsRegionFilter" class="region-filter-container"></div>
         <div id="obsContent"><div class="text-center text-muted" style="padding:40px">Loading…</div></div>
       </div>`;
@@ -25,8 +123,24 @@
     app.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-action]');
       if (btn && btn.dataset.action === 'obs-refresh') loadObservers();
+      if (btn && btn.dataset.action === 'toggle-help') {
+        var content = btn.closest('.help-box').querySelector('.help-content');
+        var toggle = btn.querySelector('.help-toggle');
+        var isCollapsed = toggle.textContent === '▶';
+        content.style.maxHeight = isCollapsed ? '2000px' : '0px';
+        toggle.textContent = isCollapsed ? '▼' : '▶';
+      }
       var row = e.target.closest('tr[data-action="navigate"]');
       if (row) location.hash = row.dataset.value;
+    });
+    // IATA picker — update both code blocks when a region is selected
+    app.addEventListener('change', function (e) {
+      if (e.target.id === 'obsIataSelect') {
+        var code = e.target.value;
+        app.querySelectorAll('.obs-iata-val').forEach(function (span) {
+          span.textContent = code;
+        });
+      }
     });
     // #209 — Keyboard accessibility for observer rows
     app.addEventListener('keydown', function (e) {
