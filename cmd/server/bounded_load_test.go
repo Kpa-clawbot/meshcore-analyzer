@@ -16,45 +16,7 @@ func createTestDB(t *testing.T, numTx int) string {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-
-	conn.Exec(`CREATE TABLE IF NOT EXISTS transmissions (
-		id INTEGER PRIMARY KEY,
-		raw_hex TEXT, hash TEXT, first_seen TEXT,
-		route_type INTEGER, payload_type INTEGER,
-		payload_version INTEGER, decoded_json TEXT
-	)`)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS observations (
-		id INTEGER PRIMARY KEY,
-		transmission_id INTEGER, observer_id TEXT, observer_name TEXT,
-		direction TEXT, snr REAL, rssi REAL, score INTEGER,
-		path_json TEXT, timestamp TEXT
-	)`)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT)`)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS nodes (
-		pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
-		last_seen TEXT, first_seen TEXT, frequency REAL
-	)`)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)`)
-	conn.Exec(`INSERT INTO schema_version (version) VALUES (1)`)
-
-	txStmt, _ := conn.Prepare("INSERT INTO transmissions (id, raw_hex, hash, first_seen, route_type, payload_type, payload_version, decoded_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-	obsStmt, _ := conn.Prepare("INSERT INTO observations (id, transmission_id, observer_id, observer_name, direction, snr, rssi, score, path_json, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-	defer txStmt.Close()
-	defer obsStmt.Close()
-
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	for i := 1; i <= numTx; i++ {
-		ts := base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339)
-		hash := fmt.Sprintf("h%04d", i)
-		txStmt.Exec(i, "aabb", hash, ts, 0, 4, 1, fmt.Sprintf(`{"pubKey":"pk%04d"}`, i))
-		obsStmt.Exec(i, i, "obs1", "Obs1", "RX", -10.0, -80.0, 5, `["aa","bb"]`, ts)
-	}
-
+	createTestDBAt(t, dbPath, numTx)
 	return dbPath
 }
 
