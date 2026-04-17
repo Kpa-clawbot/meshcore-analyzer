@@ -343,6 +343,10 @@ func (s *PacketStore) Load() error {
 	if s.db.hasResolvedPath {
 		rpCol = ",\n\t\t\t\to.resolved_path"
 	}
+	whereClause := ""
+	if s.retentionHours > 0 {
+		whereClause = fmt.Sprintf("\n\t\t\tWHERE t.first_seen >= datetime('now', '-%.0f hours')", s.retentionHours)
+	}
 	if s.db.isV3 {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
 				t.payload_type, t.payload_version, t.decoded_json,
@@ -350,7 +354,7 @@ func (s *PacketStore) Load() error {
 				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')` + rpCol + `
 			FROM transmissions t
 			LEFT JOIN observations o ON o.transmission_id = t.id
-			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+			LEFT JOIN observers obs ON obs.rowid = o.observer_idx` + whereClause + `
 			ORDER BY t.first_seen ASC, o.timestamp DESC`
 	} else {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
@@ -358,7 +362,7 @@ func (s *PacketStore) Load() error {
 				o.id, o.observer_id, o.observer_name, o.direction,
 				o.snr, o.rssi, o.score, o.path_json, o.timestamp` + rpCol + `
 			FROM transmissions t
-			LEFT JOIN observations o ON o.transmission_id = t.id
+			LEFT JOIN observations o ON o.transmission_id = t.id` + whereClause + `
 			ORDER BY t.first_seen ASC, o.timestamp DESC`
 	}
 
