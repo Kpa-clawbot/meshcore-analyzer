@@ -15,8 +15,9 @@
   let activeCharts = []; // [{ chart: Chart, key: string }]
 
   const METRICS = [
+    { key: 'cpuPercent',   label: 'CPU Usage (%)',               color: '#f43f5e' },
+    { key: 'totalSysMB',   label: 'Server RAM — Total Sys (MB)', color: '#22c55e' },
     { key: 'heapAllocMB',  label: 'Heap Alloc (MB)',             color: '#4a9eff' },
-    { key: 'heapSysMB',    label: 'Server RAM — Heap Sys (MB)',  color: '#22c55e' },
     { key: 'goroutines',   label: 'Goroutines',                  color: '#eab308' },
     { key: 'packetsInRAM', label: 'Packets in RAM',              color: '#a855f7' },
     { key: 'cacheHitRate', label: 'Cache Hit Rate (%)',           color: '#f97316' },
@@ -31,8 +32,9 @@
     const sq = server.sqlite;
     history.push({
       ts:           Date.now(),
+      cpuPercent:   gr ? +gr.cpuPercent                : null,
+      totalSysMB:   gr ? +gr.totalSysMB                : null,
       heapAllocMB:  gr ? +gr.heapAllocMB               : null,
-      heapSysMB:    gr ? +gr.heapSysMB                 : null,
       goroutines:   gr ? gr.goroutines                 : null,
       packetsInRAM: ps ? ps.inMemory                   : null,
       cacheHitRate: server.cache ? server.cache.hitRate : null,
@@ -131,11 +133,16 @@
     let html = '';
 
     // Server overview
+    const gr0 = server.goRuntime;
+    const cpuColor = gr0 && gr0.cpuPercent > 80 ? 'var(--status-red)' : gr0 && gr0.cpuPercent > 40 ? 'var(--status-yellow)' : 'var(--status-green)';
     html += `<div style="display:flex;gap:16px;flex-wrap:wrap;margin:16px 0;">
       <div class="perf-card"><div class="perf-num">${server.totalRequests}</div><div class="perf-label">Total Requests</div></div>
       <div class="perf-card"><div class="perf-num">${server.avgMs}ms</div><div class="perf-label">Avg Response</div></div>
       <div class="perf-card"><div class="perf-num">${health ? health.uptimeHuman : Math.round(server.uptime / 60) + 'm'}</div><div class="perf-label">Uptime</div></div>
       <div class="perf-card"><div class="perf-num">${server.slowQueries.length}</div><div class="perf-label">Slow (&gt;100ms)</div></div>
+      ${gr0 ? `<div class="perf-card"><div class="perf-num" style="color:${cpuColor}">${(+gr0.cpuPercent).toFixed(1)}%</div><div class="perf-label">CPU Usage</div></div>` : ''}
+      ${gr0 ? `<div class="perf-card"><div class="perf-num">${(+gr0.totalSysMB).toFixed(0)}MB</div><div class="perf-label">Server RAM</div></div>` : ''}
+      ${server.sqlite ? `<div class="perf-card"><div class="perf-num">${server.sqlite.dbSizeMB}MB</div><div class="perf-label">Dataset Size</div></div>` : ''}
     </div>`;
 
     // System health
@@ -144,7 +151,10 @@
       if (isGo && server.goRuntime) {
         const gr = server.goRuntime;
         const gcColor = gr.lastPauseMs > 5 ? 'var(--status-red)' : gr.lastPauseMs > 1 ? 'var(--status-yellow)' : 'var(--status-green)';
+        const cpuPctColor = gr.cpuPercent > 80 ? 'var(--status-red)' : gr.cpuPercent > 40 ? 'var(--status-yellow)' : 'var(--status-green)';
         html += `<h3>🔧 Go Runtime</h3><div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0;">
+          <div class="perf-card"><div class="perf-num" style="color:${cpuPctColor}">${(+gr.cpuPercent).toFixed(1)}%</div><div class="perf-label">CPU Usage</div></div>
+          <div class="perf-card"><div class="perf-num">${(+gr.totalSysMB).toFixed(0)}MB</div><div class="perf-label">Total Sys RAM</div></div>
           <div class="perf-card"><div class="perf-num">${gr.goroutines}</div><div class="perf-label">Goroutines</div></div>
           <div class="perf-card"><div class="perf-num">${gr.numGC}</div><div class="perf-label">GC Collections</div></div>
           <div class="perf-card"><div class="perf-num" style="color:${gcColor}">${(+gr.pauseTotalMs).toFixed(1)}ms</div><div class="perf-label">GC Pause Total</div></div>

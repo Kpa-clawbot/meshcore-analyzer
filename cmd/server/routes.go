@@ -46,6 +46,11 @@ type Server struct {
 
 	// Router reference for OpenAPI spec generation
 	router *mux.Router
+
+	// CPU usage delta tracking (see cpu_unix.go / cpu_windows.go)
+	cpuMu        sync.Mutex
+	cpuLastWall  time.Time
+	cpuLastCPUNs int64
 }
 
 // PerfStats tracks request performance.
@@ -705,6 +710,8 @@ func (s *Server) handlePerf(w http.ResponseWriter, r *http.Request) {
 				HeapInuseMB:  float64(ms.HeapInuse) / 1024 / 1024,
 				HeapIdleMB:   float64(ms.HeapIdle) / 1024 / 1024,
 				NumCPU:       runtime.NumCPU(),
+				CpuPercent:   s.getCPUPercent(),
+				TotalSysMB:   float64(ms.Sys) / 1024 / 1024,
 			}
 		}(),
 	})

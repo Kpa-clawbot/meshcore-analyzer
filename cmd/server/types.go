@@ -225,6 +225,8 @@ type GoRuntimeStats struct {
 	HeapInuseMB  float64 `json:"heapInuseMB"`
 	HeapIdleMB   float64 `json:"heapIdleMB"`
 	NumCPU       int     `json:"numCPU"`
+	CpuPercent   float64 `json:"cpuPercent"`
+	TotalSysMB   float64 `json:"totalSysMB"`
 }
 
 // ─── Packets ───────────────────────────────────────────────────────────────────

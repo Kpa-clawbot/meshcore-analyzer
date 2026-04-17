@@ -1650,6 +1650,29 @@ func TestHandlePerfNoStore(t *testing.T) {
 	}
 }
 
+func TestHandlePerfCPUFields(t *testing.T) {
+	_, router := setupNoStoreServer(t)
+	req := httptest.NewRequest("GET", "/api/perf", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp PerfResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.GoRuntime == nil {
+		t.Fatal("expected goRuntime to be present")
+	}
+	if resp.GoRuntime.CpuPercent < 0 {
+		t.Errorf("cpuPercent should be >= 0, got %f", resp.GoRuntime.CpuPercent)
+	}
+	if resp.GoRuntime.TotalSysMB <= 0 {
+		t.Errorf("totalSysMB should be > 0, got %f", resp.GoRuntime.TotalSysMB)
+	}
+}
+
 // --- HandleIATACoords ---
 
 func TestHandleIATACoordsNoStore(t *testing.T) {

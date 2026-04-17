@@ -31,3 +31,4 @@ cmd/ingestor/ingestor.exe
 !test-fixtures/e2e-fixture.db
 corescope-server
 cmd/server/server
+/.claude
