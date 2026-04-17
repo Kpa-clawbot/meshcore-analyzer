@@ -1055,9 +1055,9 @@
           init(appEl, decodeURIComponent(pubkey));
           history.replaceState(null, '', href);
         } else {
-          // Analytics link — different page, force hashchange via router
-          location.hash = '#/';
-          setTimeout(function() { location.hash = href.substring(1); }, 0);
+          // Analytics link — different page, force hashchange via replaceState + assign
+          history.replaceState(null, '', '#/');
+          location.hash = href.substring(1);
         }
         return;
       }
