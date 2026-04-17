@@ -29,7 +29,8 @@
 
               <table class="help-table">
                 <tr><td>Server:</td><td><code>mqtt.cornmeister.nl</code></td></tr>
-                <tr><td>Port:</td><td><code>8883</code> (TLS)</td></tr>
+                <tr><td>Port (TLS):</td><td><code>8883</code></td></tr>
+                <tr><td>Port (plain):</td><td><code>1883</code></td></tr>
                 <tr><td>Transport:</td><td><code>TCP</code></td></tr>
                 <tr><td>Username:</td><td><code>observer</code></td></tr>
                 <tr><td>Password:</td><td><code>hiermetdiedata</code></td></tr>
@@ -88,6 +89,18 @@ set mqtt.port 8883
 set mqtt.username observer
 set mqtt.password hiermetdiedata
 set mqtt.tls 1
+set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
+                </div>
+
+                <div style="margin-bottom:12px">
+                  <strong>Cornmeister (Plain)</strong>
+                  <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
+                    Unencrypted connection:
+                  </div>
+                  <pre class="help-code"><code>set mqtt.server mqtt.cornmeister.nl
+set mqtt.port 1883
+set mqtt.username observer
+set mqtt.password hiermetdiedata
 set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
                 </div>
 
