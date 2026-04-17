@@ -315,29 +315,34 @@
 
   let regionChangeHandler = null;
 
+  // Show full-screen node detail view (works on any screen size)
+  function showFullScreenNode(pubkey) {
+    var app = document.getElementById('app');
+    app.innerHTML = '<div class="node-fullscreen">' +
+      '<div class="node-full-header">' +
+        '<button class="detail-back-btn node-back-btn" id="nodeBackBtn" aria-label="Back to nodes">←</button>' +
+        '<span class="node-full-title">Loading…</span>' +
+      '</div>' +
+      '<div class="node-full-body" id="nodeFullBody">' +
+        '<div class="text-center text-muted" style="padding:40px">Loading…</div>' +
+      '</div>' +
+    '</div>';
+    document.getElementById('nodeBackBtn').addEventListener('click', function() { location.hash = '#/nodes'; });
+    loadFullNode(pubkey);
+    document.addEventListener('keydown', function nodesEsc(e) {
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', nodesEsc);
+        location.hash = '#/nodes';
+      }
+    });
+  }
+
   function init(app, routeParam) {
     directNode = routeParam || null;
 
     if (directNode && window.innerWidth <= 640) {
-      // Full-screen single node view (mobile only)
-      app.innerHTML = `<div class="node-fullscreen">
-        <div class="node-full-header">
-          <button class="detail-back-btn node-back-btn" id="nodeBackBtn" aria-label="Back to nodes">←</button>
-          <span class="node-full-title">Loading…</span>
-        </div>
-        <div class="node-full-body" id="nodeFullBody">
-          <div class="text-center text-muted" style="padding:40px">Loading…</div>
-        </div>
-      </div>`;
-      document.getElementById('nodeBackBtn').addEventListener('click', () => { location.hash = '#/nodes'; });
-      loadFullNode(directNode);
-      // Escape to go back to nodes list
-      document.addEventListener('keydown', function nodesEsc(e) {
-        if (e.key === 'Escape') {
-          document.removeEventListener('keydown', nodesEsc);
-          location.hash = '#/nodes';
-        }
-      });
+      // Full-screen single node view (mobile)
+      showFullScreenNode(directNode);
       return;
     }
 
@@ -1045,10 +1050,17 @@
       var link = e.target.closest('a.btn-primary[href^="#/nodes/"]');
       if (link) {
         e.preventDefault();
-        var target = link.getAttribute('href');
-        // Always clear and reassign — hashchange won't fire if hash already matches
-        history.replaceState(null, '', '#/');
-        location.hash = target.substring(1);
+        var href = link.getAttribute('href');
+        var pubkey = decodeURIComponent(href.replace('#/nodes/', '').replace('/analytics', ''));
+        if (href.includes('/analytics')) {
+          // Navigate to analytics page
+          history.replaceState(null, '', '#/');
+          location.hash = '/nodes/' + encodeURIComponent(pubkey) + '/analytics';
+        } else {
+          // Show full-screen node detail view
+          showFullScreenNode(pubkey);
+          history.replaceState(null, '', '#/nodes/' + encodeURIComponent(pubkey));
+        }
         return;
       }
       if (e.target.closest('.panel-close-btn')) {

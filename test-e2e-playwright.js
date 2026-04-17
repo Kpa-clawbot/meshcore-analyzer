@@ -231,8 +231,8 @@ async function run() {
     assert(hasStatus, 'No status indicator found in node detail');
   });
 
-  // Test: Node side panel Details link navigates to full detail page (#778)
-  await test('Node side panel Details link navigates', async () => {
+  // Test: Node side panel Details link opens full-screen detail view (#778)
+  await test('Node side panel Details link opens full detail', async () => {
     await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('table tbody tr');
     // Click first row to open side panel
@@ -243,16 +243,12 @@ async function run() {
     // Find the Details link in the side panel
     const detailsLink = await page.$('#nodesRight a.btn-primary[href^="#/nodes/"]');
     assert(detailsLink, 'Details link not found in side panel');
-    const href = await detailsLink.getAttribute('href');
-    // Click the Details link — this should navigate to the full detail page
+    // Click the Details link — should open full-screen node detail view
     await detailsLink.click();
-    // Wait for navigation — the full detail page has sections like neighbors/packets
-    await page.waitForFunction((expectedHash) => {
-      return location.hash === expectedHash;
-    }, href, { timeout: 5000 });
-    // Verify we're on the full detail page (should have section tabs or detail content)
-    const hash = await page.evaluate(() => location.hash);
-    assert(hash === href, `Expected hash "${href}" but got "${hash}"`);
+    // Wait for the full-screen node detail view to render
+    await page.waitForSelector('.node-fullscreen', { timeout: 5000 });
+    const hasFullBody = await page.$('.node-full-body');
+    assert(hasFullBody, 'Full-screen node detail body not found');
   });
 
   // Test: Nodes page has WebSocket auto-update listener (#131)
