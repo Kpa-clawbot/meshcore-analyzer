@@ -1160,6 +1160,9 @@
           return;
         }
       }
+      // #781: No matching key found — show lock message instead of fetching gibberish
+      msgEl.innerHTML = '<div class="ch-empty">🔒 This channel is encrypted and no decryption key is configured</div>';
+      return;
     }
 
     msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';
