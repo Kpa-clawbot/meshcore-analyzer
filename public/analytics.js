@@ -2045,6 +2045,11 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
       const color = (window.ROLE_COLORS || {})[r] || '#888';
       rcEl.innerHTML += `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-role="${r}" checked> <span style="color:${esc(color)}">${esc(r)}</span></label>`;
     });
+    // Observer checkbox — unchecked by default (observers create hub-and-spoke noise)
+    {
+      const color = (window.ROLE_COLORS || {}).observer || '#8b5cf6';
+      rcEl.innerHTML += `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-role="observer"> <span style="color:${esc(color)}">observer</span></label>`;
+    }
 
     // Load data
     const rqs = RegionFilter.regionQueryString();
@@ -2102,7 +2107,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     // Filter nodes by role
     const visibleNodes = _ngState.allNodes.filter(n => {
       const role = (n.role || 'unknown').toLowerCase();
-      return checkedRoles.has(role) || role === 'unknown' || role === 'observer';
+      return checkedRoles.has(role) || role === 'unknown';
     });
     const visiblePKs = new Set(visibleNodes.map(n => n.pubkey));
 
