@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	_ "modernc.org/sqlite"
 )
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -454,6 +456,72 @@ func TestNeighborGraphAPI_ResponseShape(t *testing.T) {
 	for _, key := range []string{"total_nodes", "total_edges", "ambiguous_edges", "avg_cluster_size"} {
 		if _, ok := stats[key]; !ok {
 			t.Errorf("missing stats key %q", key)
+		}
+	}
+}
+
+// ─── Tests: buildNodeInfoMap observer enrichment (#753) ────────────────────────
+
+func TestBuildNodeInfoMap_ObserverEnrichment(t *testing.T) {
+	// Create a temp SQLite DB with nodes and observers tables.
+	tmpDir := t.TempDir()
+	dbPath := tmpDir + "/test.db"
+
+	conn, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// Create tables
+	for _, stmt := range []string{
+		"CREATE TABLE nodes (public_key TEXT, name TEXT, role TEXT, lat REAL, lon REAL)",
+		"CREATE TABLE observers (id TEXT, name TEXT)",
+		"INSERT INTO nodes VALUES ('AAAA1111', 'Repeater-1', 'repeater', 0, 0)",
+		"INSERT INTO observers VALUES ('BBBB2222', 'Observer-Alpha')",
+		"INSERT INTO observers VALUES ('AAAA1111', 'Obs-also-repeater')",
+	} {
+		if _, err := conn.Exec(stmt); err != nil {
+			t.Fatalf("exec %q: %v", stmt, err)
+		}
+	}
+	conn.Close()
+
+	// Open via our DB wrapper
+	db, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.conn.Close()
+
+	// Build a PacketStore with this DB (minimal — just need getCachedNodesAndPM)
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	srv := &Server{
+		db:        db,
+		store:     store,
+		perfStats: NewPerfStats(),
+	}
+
+	m := srv.buildNodeInfoMap()
+
+	// AAAA1111 should be from nodes table (repeater), NOT overwritten by observer
+	if info, ok := m["aaaa1111"]; !ok {
+		t.Error("expected aaaa1111 in map")
+	} else if info.Role != "repeater" {
+		t.Errorf("expected role=repeater for aaaa1111, got %q", info.Role)
+	}
+
+	// BBBB2222 should be enriched from observers table
+	if info, ok := m["bbbb2222"]; !ok {
+		t.Error("expected bbbb2222 in map (observer-only node)")
+	} else {
+		if info.Role != "observer" {
+			t.Errorf("expected role=observer for bbbb2222, got %q", info.Role)
+		}
+		if info.Name != "Observer-Alpha" {
+			t.Errorf("expected name=Observer-Alpha for bbbb2222, got %q", info.Name)
 		}
 	}
 }

@@ -2016,8 +2016,8 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
           <label style="font-size:13px">Roles:
             <span id="ngRoleChecks" style="margin-left:4px"></span>
           </label>
-          <label style="font-size:13px">Min Score: <input type="range" id="ngMinScore" min="0" max="100" value="10" style="width:100px;vertical-align:middle">
-            <span id="ngMinScoreVal">0.10</span>
+          <label style="font-size:13px">Min Score: <input type="range" id="ngMinScore" min="0" max="100" value="70" style="width:100px;vertical-align:middle">
+            <span id="ngMinScoreVal">0.70</span>
           </label>
           <label style="font-size:13px">Confidence:
             <select id="ngConfidence" style="font-size:12px;padding:2px 4px">
@@ -2045,6 +2045,11 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
       const color = (window.ROLE_COLORS || {})[r] || '#888';
       rcEl.innerHTML += `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-role="${r}" checked> <span style="color:${esc(color)}">${esc(r)}</span></label>`;
     });
+    // Observer checkbox — unchecked by default (observers create hub-and-spoke noise)
+    {
+      const color = (window.ROLE_COLORS || {}).observer || '#8b5cf6';
+      rcEl.innerHTML += `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-role="observer"> <span style="color:${esc(color)}">observer</span></label>`;
+    }
 
     // Load data
     const rqs = RegionFilter.regionQueryString();
@@ -2062,8 +2067,17 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     startGraphRenderer();
 
     // Filter listeners
+    // Restore saved min score from localStorage
+    var savedScore = localStorage.getItem('ng-min-score');
+    if (savedScore !== null) {
+      document.getElementById('ngMinScore').value = savedScore;
+      document.getElementById('ngMinScoreVal').textContent = (savedScore / 100).toFixed(2);
+      applyNGFilters();
+    }
+
     document.getElementById('ngMinScore').addEventListener('input', function() {
       document.getElementById('ngMinScoreVal').textContent = (this.value / 100).toFixed(2);
+      localStorage.setItem('ng-min-score', this.value);
       applyNGFilters();
     });
     document.getElementById('ngConfidence').addEventListener('change', applyNGFilters);
@@ -2102,7 +2116,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     // Filter nodes by role
     const visibleNodes = _ngState.allNodes.filter(n => {
       const role = (n.role || 'unknown').toLowerCase();
-      return checkedRoles.has(role) || role === 'unknown' || role === 'observer';
+      return checkedRoles.has(role) || role === 'unknown';
     });
     const visiblePKs = new Set(visibleNodes.map(n => n.pubkey));
 
