@@ -22,6 +22,7 @@ type DBStats struct {
 	NodeUpserts            atomic.Int64
 	ObserverUpserts        atomic.Int64
 	WriteErrors            atomic.Int64
+	SignatureDrops         atomic.Int64
 }
 
 // Store wraps the SQLite database for packet ingestion.
@@ -379,6 +380,32 @@ func applySchema(db *sql.DB) error {
 		}
 		db.Exec(`INSERT INTO _migrations (name) VALUES ('channel_hash_v1')`)
 		log.Println("[migration] channel_hash column added and backfilled")
+	}
+
+	// Migration: dropped_packets table for signature validation failures (#793)
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'dropped_packets_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Creating dropped_packets table...")
+		_, err := db.Exec(`
+			CREATE TABLE IF NOT EXISTS dropped_packets (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				hash TEXT,
+				raw_hex TEXT,
+				reason TEXT NOT NULL,
+				observer_id TEXT,
+				observer_name TEXT,
+				node_pubkey TEXT,
+				node_name TEXT,
+				dropped_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_dropped_observer ON dropped_packets(observer_id);
+			CREATE INDEX IF NOT EXISTS idx_dropped_node ON dropped_packets(node_pubkey);
+		`)
+		if err != nil {
+			return fmt.Errorf("dropped_packets schema: %w", err)
+		}
+		db.Exec(`INSERT INTO _migrations (name) VALUES ('dropped_packets_v1')`)
+		log.Println("[migration] dropped_packets table created")
 	}
 
 	return nil
@@ -758,13 +785,14 @@ func (s *Store) Checkpoint() {
 
 // LogStats logs current operational metrics.
 func (s *Store) LogStats() {
-	log.Printf("[stats] tx_inserted=%d tx_dupes=%d obs_inserted=%d node_upserts=%d observer_upserts=%d write_errors=%d",
+	log.Printf("[stats] tx_inserted=%d tx_dupes=%d obs_inserted=%d node_upserts=%d observer_upserts=%d write_errors=%d sig_drops=%d",
 		s.Stats.TransmissionsInserted.Load(),
 		s.Stats.DuplicateTransmissions.Load(),
 		s.Stats.ObservationsInserted.Load(),
 		s.Stats.NodeUpserts.Load(),
 		s.Stats.ObserverUpserts.Load(),
 		s.Stats.WriteErrors.Load(),
+		s.Stats.SignatureDrops.Load(),
 	)
 }
 
@@ -817,6 +845,48 @@ func (s *Store) RemoveStaleObservers(observerDays int) (int64, error) {
 		log.Printf("Marked %d observer(s) as inactive (not seen in %d days)", removed, observerDays)
 	}
 	return removed, nil
+}
+
+// DroppedPacket holds data for a packet rejected during ingest.
+type DroppedPacket struct {
+	Hash         string
+	RawHex       string
+	Reason       string
+	ObserverID   string
+	ObserverName string
+	NodePubKey   string
+	NodeName     string
+}
+
+// InsertDroppedPacket records a rejected packet in the dropped_packets table.
+func (s *Store) InsertDroppedPacket(dp *DroppedPacket) error {
+	_, err := s.db.Exec(
+		`INSERT INTO dropped_packets (hash, raw_hex, reason, observer_id, observer_name, node_pubkey, node_name) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		dp.Hash, dp.RawHex, dp.Reason, dp.ObserverID, dp.ObserverName, dp.NodePubKey, dp.NodeName,
+	)
+	if err != nil {
+		s.Stats.WriteErrors.Add(1)
+		return fmt.Errorf("insert dropped packet: %w", err)
+	}
+	s.Stats.SignatureDrops.Add(1)
+	return nil
+}
+
+// PruneDroppedPackets removes dropped_packets older than retentionDays.
+func (s *Store) PruneDroppedPackets(retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Format(time.RFC3339)
+	result, err := s.db.Exec(`DELETE FROM dropped_packets WHERE dropped_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune dropped packets: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		log.Printf("Pruned %d dropped packet(s) older than %d days", n, retentionDays)
+	}
+	return n, nil
 }
 
 // PacketData holds the data needed to insert a packet into the DB.

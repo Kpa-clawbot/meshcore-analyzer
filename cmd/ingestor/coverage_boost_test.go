@@ -158,7 +158,7 @@ func TestHandleMessageChannelMessage(t *testing.T) {
 	payload := []byte(`{"text":"Alice: Hello everyone","channel_idx":3,"SNR":5.0,"RSSI":-95,"score":10,"direction":"rx","sender_timestamp":1700000000}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/2", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -218,7 +218,7 @@ func TestHandleMessageChannelMessageEmptyText(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: []byte(`{"text":""}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -233,7 +233,7 @@ func TestHandleMessageChannelNoSender(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: []byte(`{"text":"no sender here"}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
@@ -250,7 +250,7 @@ func TestHandleMessageDirectMessage(t *testing.T) {
 	payload := []byte(`{"text":"Bob: Hey there","sender_timestamp":1700000000,"SNR":3.0,"rssi":-100,"Score":8,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/abc123", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -294,7 +294,7 @@ func TestHandleMessageDirectMessageEmptyText(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/direct/abc", payload: []byte(`{"text":""}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -309,7 +309,7 @@ func TestHandleMessageDirectNoSender(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/direct/xyz", payload: []byte(`{"text":"message with no colon"}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -328,7 +328,7 @@ func TestHandleMessageUppercaseScoreDirection(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `","Score":9.0,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var score *float64
 	var direction *string
@@ -349,7 +349,7 @@ func TestHandleMessageChannelLowercaseFields(t *testing.T) {
 
 	payload := []byte(`{"text":"Test: msg","snr":3.0,"rssi":-90,"Score":5,"Direction":"rx"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/0", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -365,7 +365,7 @@ func TestHandleMessageDirectLowercaseFields(t *testing.T) {
 
 	payload := []byte(`{"text":"Test: msg","snr":2.0,"rssi":-85,"score":7,"direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/xyz", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -388,7 +388,7 @@ func TestHandleMessageAdvertWithTelemetry(t *testing.T) {
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	// Should have created transmission, node, and observer
 	var txCount, nodeCount, obsCount int
@@ -428,7 +428,7 @@ func TestHandleMessageAdvertGeoFiltered(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, gf)
+	handleMessage(store, "test", source, msg, nil, &Config{GeoFilter: gf})
 
 	// Geo-filtered adverts should not create nodes
 	var nodeCount int
@@ -665,7 +665,7 @@ func TestHandleMessageCorruptedAdvertNoNode(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
@@ -687,7 +687,7 @@ func TestHandleMessageNonAdvertPacket(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -864,7 +864,7 @@ func TestHandleMessageChannelLongSender(t *testing.T) {
 	longText := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: msg"
 	payload := []byte(`{"text":"` + longText + `"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
@@ -883,7 +883,7 @@ func TestHandleMessageDirectLongSender(t *testing.T) {
 	longText := "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB: msg"
 	payload := []byte(`{"text":"` + longText + `"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/abc", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -900,7 +900,7 @@ func TestHandleMessageDirectUppercaseScoreDirection(t *testing.T) {
 
 	payload := []byte(`{"text":"X: hi","Score":6,"Direction":"rx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/d1", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -930,7 +930,7 @@ func TestHandleMessageChannelUppercaseScoreDirection(t *testing.T) {
 
 	payload := []byte(`{"text":"Y: hi","Score":4,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/5", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -961,7 +961,7 @@ func TestHandleMessageRawLowercaseScore(t *testing.T) {
 	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
 	payload := []byte(`{"raw":"` + rawHex + `","score":3.5}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var score *float64
 	if err := store.db.QueryRow("SELECT score FROM observations LIMIT 1").Scan(&score); err != nil {
@@ -980,7 +980,7 @@ func TestHandleMessageStatusNoOrigin(t *testing.T) {
 		topic:   "meshcore/LAX/obs5/status",
 		payload: []byte(`{"model":"L1"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM observers WHERE id = 'obs5'").Scan(&count); err != nil {

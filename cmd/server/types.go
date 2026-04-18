@@ -70,6 +70,7 @@ type StatsResponse struct {
 	Counts             RoleCounts `json:"counts"`
 	Backfilling        bool       `json:"backfilling"`
 	BackfillProgress   float64    `json:"backfillProgress"`
+	SignatureDrops     int64      `json:"signatureDrops,omitempty"`
 }
 
 // ─── Health ────────────────────────────────────────────────────────────────────

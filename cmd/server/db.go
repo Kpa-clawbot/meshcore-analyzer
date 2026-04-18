@@ -2252,3 +2252,71 @@ func (db *DB) TouchNodeLastSeen(pubkey string, timestamp string) error {
 	)
 	return err
 }
+
+// GetDroppedPackets returns recently dropped packets, newest first.
+func (db *DB) GetDroppedPackets(limit int, observerID, nodePubkey string) ([]map[string]interface{}, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, hash, raw_hex, reason, observer_id, observer_name, node_pubkey, node_name, dropped_at FROM dropped_packets`
+	var conditions []string
+	var args []interface{}
+	if observerID != "" {
+		conditions = append(conditions, "observer_id = ?")
+		args = append(args, observerID)
+	}
+	if nodePubkey != "" {
+		conditions = append(conditions, "node_pubkey = ?")
+		args = append(args, nodePubkey)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY dropped_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var hash, rawHex, reason, obsID, obsName, pubkey, name, droppedAt sql.NullString
+		if err := rows.Scan(&id, &hash, &rawHex, &reason, &obsID, &obsName, &pubkey, &name, &droppedAt); err != nil {
+			continue
+		}
+		row := map[string]interface{}{
+			"id":            id,
+			"hash":          nullStr(hash),
+			"reason":        nullStr(reason),
+			"observer_id":   nullStr(obsID),
+			"observer_name": nullStr(obsName),
+			"node_pubkey":   nullStr(pubkey),
+			"node_name":     nullStr(name),
+			"dropped_at":    nullStr(droppedAt),
+		}
+		// Only include raw_hex if explicitly requested (it's large)
+		if rawHex.Valid {
+			row["raw_hex"] = rawHex.String
+		}
+		results = append(results, row)
+	}
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	return results, nil
+}
+
+// GetSignatureDropCount returns the total number of dropped packets.
+func (db *DB) GetSignatureDropCount() int64 {
+	var count int64
+	// Table may not exist yet if ingestor hasn't run the migration
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM dropped_packets").Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}

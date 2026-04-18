@@ -124,6 +124,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
 	r.Handle("/api/admin/prune", s.requireAPIKey(http.HandlerFunc(s.handleAdminPrune))).Methods("POST")
 	r.Handle("/api/debug/affinity", s.requireAPIKey(http.HandlerFunc(s.handleDebugAffinity))).Methods("GET")
+	r.Handle("/api/dropped-packets", s.requireAPIKey(http.HandlerFunc(s.handleDroppedPackets))).Methods("GET")
 
 	// Packet endpoints
 	r.HandleFunc("/api/packets/observations", s.handleBatchObservations).Methods("POST")
@@ -589,6 +590,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		},
 		Backfilling:      backfilling,
 		BackfillProgress: backfillProgress,
+		SignatureDrops:   s.db.GetSignatureDropCount(),
 	}
 
 	s.statsMu.Lock()
@@ -2605,4 +2607,23 @@ func (s *Server) filterBlacklistedFromSubpaths(data map[string]interface{}) map[
 		}
 	}
 	return data
+}
+
+// handleDroppedPackets returns recently dropped packets for investigation.
+func (s *Server) handleDroppedPackets(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	observerID := r.URL.Query().Get("observer")
+	nodePubkey := r.URL.Query().Get("pubkey")
+
+	results, err := s.db.GetDroppedPackets(limit, observerID, nodePubkey)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, results)
 }

@@ -39,7 +39,8 @@ type Config struct {
 	HashChannels    []string          `json:"hashChannels,omitempty"`
 	Retention       *RetentionConfig  `json:"retention,omitempty"`
 	Metrics         *MetricsConfig    `json:"metrics,omitempty"`
-	GeoFilter       *GeoFilterConfig  `json:"geo_filter,omitempty"`
+	GeoFilter            *GeoFilterConfig  `json:"geo_filter,omitempty"`
+	ValidateSignatures   *bool             `json:"validateSignatures,omitempty"`
 }
 
 // GeoFilterConfig is an alias for the shared geofilter.Config type.
@@ -55,6 +56,14 @@ type RetentionConfig struct {
 // MetricsConfig controls observer metrics collection.
 type MetricsConfig struct {
 	SampleIntervalSec int `json:"sampleIntervalSec"`
+}
+
+// ShouldValidateSignatures returns true (default) unless explicitly disabled.
+func (c *Config) ShouldValidateSignatures() bool {
+	if c.ValidateSignatures != nil {
+		return *c.ValidateSignatures
+	}
+	return true
 }
 
 // MetricsSampleInterval returns the configured sample interval or 300s default.
