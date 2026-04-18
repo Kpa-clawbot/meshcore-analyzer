@@ -213,6 +213,9 @@ type PacketStore struct {
 	// Empty string means all data is in memory (no limit applied).
 	oldestLoaded string
 
+	// Async hash migration state: set after migrateContentHashesAsync completes.
+	hashMigrationComplete atomic.Bool
+
 	// Eviction config and stats
 	retentionHours   float64        // 0 = unlimited
 	maxMemoryMB      int            // 0 = unlimited (packet store memory budget)

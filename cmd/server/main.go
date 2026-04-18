@@ -457,6 +457,9 @@ func main() {
 	// Start async backfill in background — HTTP is now available.
 	go backfillResolvedPathsAsync(store, dbPath, 5000, 100*time.Millisecond, cfg.BackfillHours())
 
+	// Migrate old content hashes in background (one-time, idempotent).
+	go migrateContentHashesAsync(store, 5000, 100*time.Millisecond)
+
 	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("[server] %v", err)
 	}

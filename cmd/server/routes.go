@@ -588,9 +588,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			Companions: counts["companions"],
 			Sensors:    counts["sensors"],
 		},
-		Backfilling:      backfilling,
-		BackfillProgress: backfillProgress,
-		SignatureDrops:   s.db.GetSignatureDropCount(),
+		Backfilling:           backfilling,
+		BackfillProgress:      backfillProgress,
+		SignatureDrops:        s.db.GetSignatureDropCount(),
+		HashMigrationComplete: s.store != nil && s.store.hashMigrationComplete.Load(),
 	}
 
 	s.statsMu.Lock()
