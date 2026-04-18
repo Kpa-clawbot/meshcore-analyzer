@@ -132,6 +132,7 @@ type PacketStore struct {
 	byNode        map[string][]*StoreTx      // pubkey → transmissions
 	nodeHashes    map[string]map[string]bool // pubkey → Set<hash>
 	byPathHop     map[string][]*StoreTx      // lowercase hop/pubkey → transmissions with that hop in path
+	relayTimes    map[string][]int64         // lowercase pubkey → sorted unix-millis of relay events (full pubkeys only)
 	byPayloadType map[int][]*StoreTx         // payload_type → transmissions
 	loaded        bool
 	totalObs      int
@@ -297,6 +298,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		byObserver:    make(map[string][]*StoreObs),
 		byNode:        make(map[string][]*StoreTx),
 		byPathHop:     make(map[string][]*StoreTx),
+		relayTimes:    make(map[string][]int64),
 		nodeHashes:    make(map[string]map[string]bool),
 		byPayloadType: make(map[int][]*StoreTx),
 		rfCache:       make(map[string]*cachedResult),
@@ -1541,6 +1543,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			s.spTotalPaths++
 		}
 		addTxToPathHopIndex(s.byPathHop, tx)
+		addTxToRelayTimeIndex(s.relayTimes, tx)
 	}
 
 	// Incrementally update precomputed distance index with new transmissions
@@ -1918,6 +1921,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 				tx.parsedPath, tx.pathParsed = oldHops, true
 				tx.ResolvedPath = oldResolvedPaths[txID]
 				removeTxFromPathHopIndex(s.byPathHop, tx)
+				removeFromRelayTimeIndex(s.relayTimes, tx)
 				tx.parsedPath, tx.pathParsed = saved, savedFlag
 				tx.ResolvedPath = savedRP
 			}
@@ -1927,6 +1931,11 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 				s.spTotalPaths++
 			}
 			addTxToPathHopIndex(s.byPathHop, tx)
+			addTxToRelayTimeIndex(s.relayTimes, tx)
+		} else {
+			// Path unchanged: new observation may have relay hops in its resolved
+			// path that aren't indexed yet (idempotent — safe to call repeatedly).
+			addTxToRelayTimeIndex(s.relayTimes, tx)
 		}
 	}
 
@@ -2479,10 +2488,15 @@ func (s *PacketStore) buildSubpathIndex() {
 // Must be called with s.mu held.
 func (s *PacketStore) buildPathHopIndex() {
 	s.byPathHop = make(map[string][]*StoreTx, 4096)
+	s.relayTimes = make(map[string][]int64, 4096)
+	cutoff := time.Now().Add(-24 * time.Hour)
 	for _, tx := range s.packets {
 		addTxToPathHopIndex(s.byPathHop, tx)
+		if t, err := time.Parse(time.RFC3339, tx.FirstSeen); err == nil && t.After(cutoff) {
+			addTxToRelayTimeIndex(s.relayTimes, tx)
+		}
 	}
-	log.Printf("[store] Built path-hop index: %d unique keys", len(s.byPathHop))
+	log.Printf("[store] Built path-hop index: %d unique keys, %d relay-time keys", len(s.byPathHop), len(s.relayTimes))
 }
 
 // addTxToPathHopIndex indexes a transmission under each unique hop key
@@ -2501,13 +2515,115 @@ func addTxToPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
 		}
 		// Also index by resolved pubkey if available
 		if tx.ResolvedPath != nil && i < len(tx.ResolvedPath) && tx.ResolvedPath[i] != nil {
-			pk := *tx.ResolvedPath[i]
+			pk := strings.ToLower(*tx.ResolvedPath[i])
 			if !seen[pk] {
 				seen[pk] = true
 				idx[pk] = append(idx[pk], tx)
 			}
 		}
 	}
+}
+
+// addTxToRelayTimeIndex records the relay timestamp for each full pubkey that
+// appears in ANY observation's resolved path. Scanning all observations (not
+// just the best one) ensures relay activity is captured even when the best
+// observer received the packet directly without a relay hop.
+// Insert is idempotent: if the same timestamp already exists for a pubkey it is
+// not duplicated, so the function may be called multiple times safely.
+// Must be called with s.mu held (or during build before store is live).
+func addTxToRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
+	// Parse FirstSeen on each call. StoreTx has no cached millis field;
+	// RFC3339 parse is cheap relative to the binary-search inserts that follow.
+	ms, err := time.Parse(time.RFC3339, tx.FirstSeen)
+	if err != nil {
+		return
+	}
+	millis := ms.UnixMilli()
+	seen := make(map[string]bool)
+	insert := func(rp *string) {
+		if rp == nil {
+			return
+		}
+		pk := strings.ToLower(*rp)
+		if seen[pk] {
+			return
+		}
+		seen[pk] = true
+		slice := idx[pk]
+		i := sort.Search(len(slice), func(j int) bool { return slice[j] >= millis })
+		if i < len(slice) && slice[i] == millis {
+			return // idempotent: already present
+		}
+		slice = append(slice, 0)
+		copy(slice[i+1:], slice[i:])
+		slice[i] = millis
+		idx[pk] = slice
+	}
+	// Scan all observations — relay hops appear in any observation's path.
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			insert(rp)
+		}
+	}
+	// Fallback for DB-loaded packets where Observations slice may be empty
+	// but tx.ResolvedPath (best observation) is populated.
+	for _, rp := range tx.ResolvedPath {
+		insert(rp)
+	}
+}
+
+// removeFromRelayTimeIndex removes the relay timestamp for every full pubkey
+// that appears in any observation's resolved path. Symmetric with
+// addTxToRelayTimeIndex so eviction does not leave orphaned entries.
+func removeFromRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
+	ms, err := time.Parse(time.RFC3339, tx.FirstSeen)
+	if err != nil {
+		return
+	}
+	millis := ms.UnixMilli()
+	seen := make(map[string]bool)
+	remove := func(rp *string) {
+		if rp == nil {
+			return
+		}
+		pk := strings.ToLower(*rp)
+		if seen[pk] {
+			return
+		}
+		seen[pk] = true
+		slice := idx[pk]
+		i := sort.Search(len(slice), func(j int) bool { return slice[j] >= millis })
+		if i < len(slice) && slice[i] == millis {
+			idx[pk] = append(slice[:i], slice[i+1:]...)
+			if len(idx[pk]) == 0 {
+				delete(idx, pk)
+			}
+		}
+	}
+	for _, obs := range tx.Observations {
+		for _, rp := range obs.ResolvedPath {
+			remove(rp)
+		}
+	}
+	for _, rp := range tx.ResolvedPath {
+		remove(rp)
+	}
+}
+
+// relayMetrics computes relay_count_1h, relay_count_24h, and last_relayed from a
+// sorted unix-millis slice. now is time.Now().UnixMilli(). O(log n).
+// last_relayed is always the most recent entry regardless of window age — callers
+// receive it even when both counts are zero (e.g. "last relayed 3 days ago").
+func relayMetrics(times []int64, now int64) (count1h, count24h int, lastRelayed string) {
+	if len(times) == 0 {
+		return 0, 0, ""
+	}
+	i1h := sort.Search(len(times), func(i int) bool { return times[i] >= now-3600000 })
+	i24h := sort.Search(len(times), func(i int) bool { return times[i] >= now-86400000 })
+	count1h = len(times) - i1h
+	count24h = len(times) - i24h
+	lastRelayed = time.UnixMilli(times[len(times)-1]).UTC().Format(time.RFC3339)
+	return
 }
 
 // removeTxFromPathHopIndex removes a transmission from all its path-hop index entries.
@@ -2524,7 +2640,7 @@ func removeTxFromPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
 			removeTxFromSlice(idx, key, tx)
 		}
 		if tx.ResolvedPath != nil && i < len(tx.ResolvedPath) && tx.ResolvedPath[i] != nil {
-			pk := *tx.ResolvedPath[i]
+			pk := strings.ToLower(*tx.ResolvedPath[i])
 			if !seen[pk] {
 				seen[pk] = true
 				removeTxFromSlice(idx, pk, tx)
@@ -2909,6 +3025,7 @@ func (s *PacketStore) EvictStale() int {
 		removeTxFromSubpathIndexFull(s.spIndex, s.spTxIndex, tx)
 		// Remove from path-hop index
 		removeTxFromPathHopIndex(s.byPathHop, tx)
+		removeFromRelayTimeIndex(s.relayTimes, tx)
 	}
 
 	// Batch-remove from byObserver: single pass per affected observer slice
@@ -6238,21 +6355,30 @@ func (s *PacketStore) GetBulkHealth(limit int, region string) []map[string]inter
 			lhVal = lastHeard
 		}
 
+		statsMap := map[string]interface{}{
+			"totalTransmissions": len(packets),
+			"totalObservations":  totalObservations,
+			"totalPackets":       len(packets),
+			"packetsToday":       packetsToday,
+			"avgSnr":             avgSnr,
+			"lastHeard":          lhVal,
+		}
+		if strings.ToLower(n.role) == "repeater" {
+			c1h, c24h, lastRel := relayMetrics(s.relayTimes[strings.ToLower(n.pk)], time.Now().UnixMilli())
+			statsMap["relay_count_1h"] = c1h
+			statsMap["relay_count_24h"] = c24h
+			if lastRel != "" {
+				statsMap["last_relayed"] = lastRel
+			}
+		}
 		results = append(results, map[string]interface{}{
 			"public_key": n.pk,
 			"name":       nilIfEmpty(n.name),
 			"role":       nilIfEmpty(n.role),
 			"lat":        n.lat,
 			"lon":        n.lon,
-			"stats": map[string]interface{}{
-				"totalTransmissions": len(packets),
-				"totalObservations":  totalObservations,
-				"totalPackets":       len(packets),
-				"packetsToday":       packetsToday,
-				"avgSnr":             avgSnr,
-				"lastHeard":          lhVal,
-			},
-			"observers": observerRows,
+			"stats":      statsMap,
+			"observers":  observerRows,
 		})
 	}
 
@@ -6389,18 +6515,32 @@ func (s *PacketStore) GetNodeHealth(pubkey string) (map[string]interface{}, erro
 		recentPackets = append(recentPackets, p)
 	}
 
+	nodeStats := map[string]interface{}{
+		"totalTransmissions": len(packets),
+		"totalObservations":  totalObservations,
+		"totalPackets":       len(packets),
+		"packetsToday":       packetsToday,
+		"avgSnr":             avgSnr,
+		"avgHops":            avgHops,
+		"lastHeard":          lhVal,
+	}
+	role := ""
+	if r, ok := node["role"].(string); ok {
+		role = strings.ToLower(r)
+	}
+	if role == "repeater" {
+		lowerPK := strings.ToLower(pubkey)
+		c1h, c24h, lastRel := relayMetrics(s.relayTimes[lowerPK], time.Now().UnixMilli())
+		nodeStats["relay_count_1h"] = c1h
+		nodeStats["relay_count_24h"] = c24h
+		if lastRel != "" {
+			nodeStats["last_relayed"] = lastRel
+		}
+	}
 	return map[string]interface{}{
-		"node":      node,
-		"observers": observerRows,
-		"stats": map[string]interface{}{
-			"totalTransmissions": len(packets),
-			"totalObservations":  totalObservations,
-			"totalPackets":       len(packets),
-			"packetsToday":       packetsToday,
-			"avgSnr":             avgSnr,
-			"avgHops":            avgHops,
-			"lastHeard":          lhVal,
-		},
+		"node":          node,
+		"observers":     observerRows,
+		"stats":         nodeStats,
 		"recentPackets": recentPackets,
 	}, nil
 }

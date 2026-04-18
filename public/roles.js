@@ -84,12 +84,16 @@
     };
   };
 
-  // Simplified two-state helper: returns 'active' or 'stale'
-  window.getNodeStatus = function (role, lastSeenMs) {
+  // Three-state helper for repeaters: returns 'relaying', 'active', or 'stale'
+  window.getNodeStatus = function (role, lastSeenMs, relayCount24h) {
     var isInfra = role === 'repeater' || role === 'room';
     var staleMs = isInfra ? HEALTH_THRESHOLDS.infraSilentMs : HEALTH_THRESHOLDS.nodeSilentMs;
     var age = typeof lastSeenMs === 'number' ? (Date.now() - lastSeenMs) : Infinity;
-    return age < staleMs ? 'active' : 'stale';
+    if (age >= staleMs) return 'stale';
+    if (role === 'repeater') {
+      return (typeof relayCount24h === 'number' && relayCount24h > 0) ? 'relaying' : 'active';
+    }
+    return 'active';
   };
 
   // ─── Tile URLs ───

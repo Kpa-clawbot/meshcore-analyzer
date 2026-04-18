@@ -1038,11 +1038,29 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.store != nil {
 		hashInfo := s.store.GetNodeHashSizeInfo()
+		now := time.Now().UnixMilli()
+		s.store.mu.RLock()
 		for _, node := range nodes {
-			if pk, ok := node["public_key"].(string); ok {
-				EnrichNodeWithHashSize(node, hashInfo[pk])
+			pk, ok := node["public_key"].(string)
+			if !ok {
+				continue
+			}
+			EnrichNodeWithHashSize(node, hashInfo[pk])
+			role, _ := node["role"].(string)
+			if strings.ToLower(role) == "repeater" {
+				lk := strings.ToLower(pk)
+				c1h, c24h, lastRel := relayMetrics(s.store.relayTimes[lk], now)
+				stats := map[string]interface{}{
+					"relay_count_1h":  c1h,
+					"relay_count_24h": c24h,
+				}
+				if lastRel != "" {
+					stats["last_relayed"] = lastRel
+				}
+				node["stats"] = stats
 			}
 		}
+		s.store.mu.RUnlock()
 	}
 	if s.cfg.GeoFilter != nil {
 		filtered := nodes[:0]
