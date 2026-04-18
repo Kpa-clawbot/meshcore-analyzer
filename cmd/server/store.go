@@ -209,6 +209,10 @@ type PacketStore struct {
 	backfillTotal     atomic.Int64 // set once at start of async backfill
 	backfillProcessed atomic.Int64
 
+	// Bounded cold load: oldest packet timestamp loaded into memory.
+	// Empty string means all data is in memory (no limit applied).
+	oldestLoaded string
+
 	// Eviction config and stats
 	retentionHours   float64        // 0 = unlimited
 	maxMemoryMB      int            // 0 = unlimited (packet store memory budget)
@@ -329,18 +333,48 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 	return ps
 }
 
-// Load reads all transmissions + observations from SQLite into memory.
+// Load reads transmissions + observations from SQLite into memory.
+// When maxMemoryMB > 0, loads only the newest N transmissions that fit
+// within the memory budget, avoiding OOM on large databases.
 func (s *PacketStore) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	t0 := time.Now()
 
+	// Count total transmissions for logging.
+	var totalInDB int
+	if err := s.db.conn.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&totalInDB); err != nil {
+		totalInDB = -1 // non-fatal
+	}
+
+	// Calculate max packets to load based on memory budget.
+	var maxPackets int64
+	if s.maxMemoryMB > 0 {
+		// Use a typical packet with ~10 observations as the estimate.
+		avgBytes := int64(1000) // conservative floor
+		if sample := estimateStoreTxBytesTypical(10); sample > avgBytes {
+			avgBytes = sample
+		}
+		maxPackets = (int64(s.maxMemoryMB) * 1048576) / avgBytes
+		if maxPackets < 1000 {
+			maxPackets = 1000 // minimum 1000 packets
+		}
+	}
+	// maxPackets == 0 means unlimited
+
 	var loadSQL string
 	rpCol := ""
 	if s.db.hasResolvedPath {
 		rpCol = ",\n\t\t\t\to.resolved_path"
 	}
+
+	limitClause := ""
+	if maxPackets > 0 {
+		limitClause = fmt.Sprintf(
+			"\n\t\t\tWHERE t.id IN (SELECT id FROM transmissions ORDER BY first_seen DESC LIMIT %d)", maxPackets)
+	}
+
 	if s.db.isV3 {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
 				t.payload_type, t.payload_version, t.decoded_json,
@@ -348,7 +382,7 @@ func (s *PacketStore) Load() error {
 				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')` + rpCol + `
 			FROM transmissions t
 			LEFT JOIN observations o ON o.transmission_id = t.id
-			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+			LEFT JOIN observers obs ON obs.rowid = o.observer_idx` + limitClause + `
 			ORDER BY t.first_seen ASC, o.timestamp DESC`
 	} else {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
@@ -356,7 +390,7 @@ func (s *PacketStore) Load() error {
 				o.id, o.observer_id, o.observer_name, o.direction,
 				o.snr, o.rssi, o.score, o.path_json, o.timestamp` + rpCol + `
 			FROM transmissions t
-			LEFT JOIN observations o ON o.transmission_id = t.id
+			LEFT JOIN observations o ON o.transmission_id = t.id` + limitClause + `
 			ORDER BY t.first_seen ASC, o.timestamp DESC`
 	}
 
@@ -482,10 +516,20 @@ func (s *PacketStore) Load() error {
 	// Precompute distance analytics (hop distances, path totals)
 	s.buildDistanceIndex()
 
+	// Track oldest loaded timestamp for future SQL fallback queries.
+	if len(s.packets) > 0 {
+		s.oldestLoaded = s.packets[0].FirstSeen
+	}
+
 	s.loaded = true
 	elapsed := time.Since(t0)
-	log.Printf("[store] Loaded %d transmissions (%d observations) in %v (tracked ~%.0fMB, heap ~%.0fMB)",
-		len(s.packets), s.totalObs, elapsed, s.trackedMemoryMB(), s.estimatedMemoryMB())
+	if maxPackets > 0 && totalInDB > len(s.packets) {
+		log.Printf("[store] Loaded %d/%d transmissions (%d observations) in %v — bounded by %dMB budget (tracked ~%.0fMB, heap ~%.0fMB)",
+			len(s.packets), totalInDB, s.totalObs, elapsed, s.maxMemoryMB, s.trackedMemoryMB(), s.estimatedMemoryMB())
+	} else {
+		log.Printf("[store] Loaded %d transmissions (%d observations) in %v (tracked ~%.0fMB, heap ~%.0fMB)",
+			len(s.packets), s.totalObs, elapsed, s.trackedMemoryMB(), s.estimatedMemoryMB())
+	}
 	return nil
 }
 
@@ -924,6 +968,7 @@ func (s *PacketStore) GetPerfStoreStats() map[string]interface{} {
 		"sqliteOnly":        false,
 		"retentionHours":    s.retentionHours,
 		"maxMemoryMB":       s.maxMemoryMB,
+		"oldestLoaded":      s.oldestLoaded,
 		"estimatedMB":       estimatedMB,
 		"trackedMB":         trackedMB,
 		"indexes": map[string]interface{}{
@@ -2652,6 +2697,25 @@ func estimateStoreTxBytes(tx *StoreTx) int64 {
 		base += subpaths * perSubpathEntryBytes
 	}
 
+	return base
+}
+
+// estimateStoreTxBytesTypical returns the estimated memory cost of a typical
+// transmission with the given number of observations. Used for budget
+// calculation during bounded cold load (no actual StoreTx needed).
+func estimateStoreTxBytesTypical(numObs int) int64 {
+	// Typical tx: ~64 byte hash, ~200 byte decoded JSON, ~40 byte path, 3 hops
+	base := int64(storeTxBaseBytes) + 64 + 200 + 40
+	base += int64(numIndexesPerTx * indexEntryBytes)
+	base += perTxMapsBytes
+	hops := int64(3)
+	base += hops * perPathHopBytes
+	base += (hops * (hops - 1) / 2) * perSubpathEntryBytes
+	// Add observation costs
+	obsBase := int64(storeObsBaseBytes) + 30 + 30 + 60 // observer ID + name + path
+	obsBase += int64(numIndexesPerObs * indexEntryBytes)
+	obsBase += 3 * perResolvedPathElemBytes // typical resolved path
+	base += int64(numObs) * obsBase
 	return base
 }
 

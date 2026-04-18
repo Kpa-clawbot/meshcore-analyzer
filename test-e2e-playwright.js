@@ -1508,7 +1508,9 @@ async function run() {
     const pubkey = await page.$eval('#nodesBody tr[data-key]', el => el.dataset.key);
     // Use evaluate to change hash (reliable same-document navigation)
     await page.evaluate((pk) => { location.hash = '#/nodes/' + pk; }, pubkey);
-    await page.waitForSelector('#node-neighbors', { timeout: 15000 });
+    // Wait for the full-node view to render (async API fetch populates body)
+    await page.waitForSelector('.node-fullscreen', { timeout: 10000 });
+    await page.waitForSelector('#node-neighbors', { timeout: 25000 });
     // Check the section exists
     const header = await page.$eval('#fullNeighborsHeader', el => el.textContent);
     assert(header.startsWith('Neighbors'), 'Header should start with "Neighbors", got: ' + header);
