@@ -265,7 +265,7 @@ function formatVersionBadge(version, commit, engine, buildTime) {
   var parts = [];
   if (version && isProd) {
     var vTag = version.charAt(0) === 'v' ? version : 'v' + version;
-    parts.push('<a href="' + GH + '/releases/tag/' + vTag + '" target="_blank" rel="noopener">' + vTag + '</a>');
+    parts.push('<a href="' + GH + '" target="_blank" rel="noopener">' + vTag + '</a>');
   }
   if (commit && commit !== 'unknown') {
     var short = commit.length > 7 ? commit.slice(0, 7) : commit;
