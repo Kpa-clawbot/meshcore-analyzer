@@ -20,7 +20,7 @@ const ctx = {
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync('public/roles.js', 'utf8'), ctx);
 // Mirror browser semantics: in a real browser window === globalThis, so bare
-// HEALTH_THRESHOLDS resolves the same as window.HEALTH_THRESHOLDS. Expose it here.
+// NOTE: mirrors browser global; update if HEALTH_THRESHOLDS moves out of window scope in roles.js
 ctx.HEALTH_THRESHOLDS = ctx.window.HEALTH_THRESHOLDS;
 
 // Run tests inside the VM context to preserve closures

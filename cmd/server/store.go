@@ -1499,7 +1499,9 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			s.spTotalPaths++
 		}
 		addTxToPathHopIndex(s.byPathHop, tx)
-		addTxToRelayTimeIndex(s.relayTimes, tx)
+		if ms, err := time.Parse(time.RFC3339, tx.FirstSeen); err == nil {
+			addTxToRelayTimeIndex(s.relayTimes, tx, ms.UnixMilli())
+		}
 	}
 
 	// Incrementally update precomputed distance index with new transmissions
@@ -1887,11 +1889,15 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 				s.spTotalPaths++
 			}
 			addTxToPathHopIndex(s.byPathHop, tx)
-			addTxToRelayTimeIndex(s.relayTimes, tx)
+			if ms, err := time.Parse(time.RFC3339, tx.FirstSeen); err == nil {
+				addTxToRelayTimeIndex(s.relayTimes, tx, ms.UnixMilli())
+			}
 		} else {
 			// Path unchanged: new observation may have relay hops in its resolved
 			// path that aren't indexed yet (idempotent — safe to call repeatedly).
-			addTxToRelayTimeIndex(s.relayTimes, tx)
+			if ms, err := time.Parse(time.RFC3339, tx.FirstSeen); err == nil {
+				addTxToRelayTimeIndex(s.relayTimes, tx, ms.UnixMilli())
+			}
 		}
 	}
 
@@ -2449,7 +2455,7 @@ func (s *PacketStore) buildPathHopIndex() {
 	for _, tx := range s.packets {
 		addTxToPathHopIndex(s.byPathHop, tx)
 		if t, err := time.Parse(time.RFC3339, tx.FirstSeen); err == nil && t.After(cutoff) {
-			addTxToRelayTimeIndex(s.relayTimes, tx)
+			addTxToRelayTimeIndex(s.relayTimes, tx, t.UnixMilli())
 		}
 	}
 	log.Printf("[store] Built path-hop index: %d unique keys, %d relay-time keys", len(s.byPathHop), len(s.relayTimes))
@@ -2486,15 +2492,9 @@ func addTxToPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
 // observer received the packet directly without a relay hop.
 // Insert is idempotent: if the same timestamp already exists for a pubkey it is
 // not duplicated, so the function may be called multiple times safely.
+// millis is tx.FirstSeen already parsed to unix-milliseconds by the caller.
 // Must be called with s.mu held (or during build before store is live).
-func addTxToRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
-	// Parse FirstSeen on each call. StoreTx has no cached millis field;
-	// RFC3339 parse is cheap relative to the binary-search inserts that follow.
-	ms, err := time.Parse(time.RFC3339, tx.FirstSeen)
-	if err != nil {
-		return
-	}
-	millis := ms.UnixMilli()
+func addTxToRelayTimeIndex(idx map[string][]int64, tx *StoreTx, millis int64) {
 	seen := make(map[string]bool)
 	insert := func(rp *string) {
 		if rp == nil {
@@ -2550,9 +2550,12 @@ func removeFromRelayTimeIndex(idx map[string][]int64, tx *StoreTx) {
 		slice := idx[pk]
 		i := sort.Search(len(slice), func(j int) bool { return slice[j] >= millis })
 		if i < len(slice) && slice[i] == millis {
-			idx[pk] = append(slice[:i], slice[i+1:]...)
-			if len(idx[pk]) == 0 {
+			copy(slice[i:], slice[i+1:])
+			slice = slice[:len(slice)-1]
+			if len(slice) == 0 {
 				delete(idx, pk)
+			} else {
+				idx[pk] = slice
 			}
 		}
 	}
@@ -6304,7 +6307,7 @@ func (s *PacketStore) GetBulkHealth(limit int, region string) []map[string]inter
 			c1h, c24h, lastRel := relayMetrics(s.relayTimes[strings.ToLower(n.pk)], time.Now().UnixMilli())
 			statsMap["relay_count_1h"] = c1h
 			statsMap["relay_count_24h"] = c24h
-			if lastRel != "" {
+			if lastRel != "" && (c1h > 0 || c24h > 0) {
 				statsMap["last_relayed"] = lastRel
 			}
 		}
@@ -6470,7 +6473,7 @@ func (s *PacketStore) GetNodeHealth(pubkey string) (map[string]interface{}, erro
 		c1h, c24h, lastRel := relayMetrics(s.relayTimes[lowerPK], time.Now().UnixMilli())
 		nodeStats["relay_count_1h"] = c1h
 		nodeStats["relay_count_24h"] = c24h
-		if lastRel != "" {
+		if lastRel != "" && (c1h > 0 || c24h > 0) {
 			nodeStats["last_relayed"] = lastRel
 		}
 	}

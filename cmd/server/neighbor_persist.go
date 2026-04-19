@@ -499,7 +499,9 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 						// tx.ResolvedPath is now updated; add newly resolved pubkeys to
 						// the relay time index. The first call during buildPathHopIndex
 						// was a no-op (ResolvedPath was nil then), so no duplicates.
-						addTxToRelayTimeIndex(store.relayTimes, tx)
+						if ms, err := time.Parse(time.RFC3339, tx.FirstSeen); err == nil {
+							addTxToRelayTimeIndex(store.relayTimes, tx, ms.UnixMilli())
+						}
 					}
 				}
 			}

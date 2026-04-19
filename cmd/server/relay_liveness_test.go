@@ -17,7 +17,7 @@ func TestAddTxToRelayTimeIndex_SingleNode(t *testing.T) {
 		FirstSeen:    ts.Format(time.RFC3339),
 		ResolvedPath: []*string{makeRp(pk)},
 	}
-	addTxToRelayTimeIndex(idx, tx)
+	addTxToRelayTimeIndex(idx, tx, ts.UnixMilli())
 	if len(idx[pk]) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(idx[pk]))
 	}
@@ -37,8 +37,8 @@ func TestAddTxToRelayTimeIndex_SortedOrder(t *testing.T) {
 	// Insert newer first, expect sorted ascending
 	tx2 := &StoreTx{FirstSeen: t2.Format(time.RFC3339), ResolvedPath: []*string{makeRp(pk)}}
 	tx1 := &StoreTx{FirstSeen: t1.Format(time.RFC3339), ResolvedPath: []*string{makeRp(pk)}}
-	addTxToRelayTimeIndex(idx, tx2)
-	addTxToRelayTimeIndex(idx, tx1)
+	addTxToRelayTimeIndex(idx, tx2, t2.UnixMilli())
+	addTxToRelayTimeIndex(idx, tx1, t1.UnixMilli())
 
 	if len(idx[pk]) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(idx[pk]))
@@ -57,7 +57,7 @@ func TestAddTxToRelayTimeIndex_MultipleNodes(t *testing.T) {
 		FirstSeen:    ts.Format(time.RFC3339),
 		ResolvedPath: []*string{makeRp(pk1), makeRp(pk2)},
 	}
-	addTxToRelayTimeIndex(idx, tx)
+	addTxToRelayTimeIndex(idx, tx, ts.UnixMilli())
 	if len(idx[pk1]) != 1 {
 		t.Errorf("pk1: expected 1 entry, got %d", len(idx[pk1]))
 	}
@@ -69,7 +69,7 @@ func TestAddTxToRelayTimeIndex_MultipleNodes(t *testing.T) {
 func TestAddTxToRelayTimeIndex_NilResolvedPath(t *testing.T) {
 	idx := make(map[string][]int64)
 	tx := &StoreTx{FirstSeen: time.Now().UTC().Format(time.RFC3339), ResolvedPath: nil}
-	addTxToRelayTimeIndex(idx, tx) // must not panic
+	addTxToRelayTimeIndex(idx, tx, time.Now().UnixMilli()) // must not panic
 	if len(idx) != 0 {
 		t.Error("expected empty index for nil ResolvedPath")
 	}
@@ -83,7 +83,7 @@ func TestAddTxToRelayTimeIndex_DuplicatePubkeyInPath(t *testing.T) {
 		FirstSeen:    ts.Format(time.RFC3339),
 		ResolvedPath: []*string{makeRp(pk), makeRp(pk)}, // same pubkey twice
 	}
-	addTxToRelayTimeIndex(idx, tx)
+	addTxToRelayTimeIndex(idx, tx, ts.UnixMilli())
 	if len(idx[pk]) != 1 {
 		t.Errorf("duplicate pubkey should produce only 1 entry, got %d", len(idx[pk]))
 	}
@@ -92,10 +92,10 @@ func TestAddTxToRelayTimeIndex_DuplicatePubkeyInPath(t *testing.T) {
 func TestRemoveFromRelayTimeIndex_RemovesEntry(t *testing.T) {
 	idx := make(map[string][]int64)
 	pk := "aabbccdd11223344"
-	ts := time.Now().Add(-1 * time.Hour).UTC()
+	ts := time.Now().Add(-1 * time.Hour).Truncate(time.Second).UTC()
 	tx := &StoreTx{FirstSeen: ts.Format(time.RFC3339), ResolvedPath: []*string{makeRp(pk)}}
 
-	addTxToRelayTimeIndex(idx, tx)
+	addTxToRelayTimeIndex(idx, tx, ts.UnixMilli())
 	if len(idx[pk]) != 1 {
 		t.Fatal("setup: expected 1 entry")
 	}
@@ -108,13 +108,13 @@ func TestRemoveFromRelayTimeIndex_RemovesEntry(t *testing.T) {
 func TestRemoveFromRelayTimeIndex_PartialRemove(t *testing.T) {
 	idx := make(map[string][]int64)
 	pk := "aabbccdd11223344"
-	t1 := time.Now().Add(-2 * time.Hour).UTC()
-	t2 := time.Now().Add(-30 * time.Minute).UTC()
+	t1 := time.Now().Add(-2 * time.Hour).Truncate(time.Second).UTC()
+	t2 := time.Now().Add(-30 * time.Minute).Truncate(time.Second).UTC()
 	tx1 := &StoreTx{FirstSeen: t1.Format(time.RFC3339), ResolvedPath: []*string{makeRp(pk)}}
 	tx2 := &StoreTx{FirstSeen: t2.Format(time.RFC3339), ResolvedPath: []*string{makeRp(pk)}}
 
-	addTxToRelayTimeIndex(idx, tx1)
-	addTxToRelayTimeIndex(idx, tx2)
+	addTxToRelayTimeIndex(idx, tx1, t1.UnixMilli())
+	addTxToRelayTimeIndex(idx, tx2, t2.UnixMilli())
 	removeFromRelayTimeIndex(idx, tx1)
 
 	if len(idx[pk]) != 1 {
@@ -290,7 +290,7 @@ func TestAddTxToRelayTimeIndex_LowercasesKey(t *testing.T) {
 	pkLower := strings.ToLower(pkUpper)
 	ts := time.Now().UTC()
 	tx := &StoreTx{FirstSeen: ts.Format(time.RFC3339), ResolvedPath: []*string{makeRp(pkUpper)}}
-	addTxToRelayTimeIndex(idx, tx)
+	addTxToRelayTimeIndex(idx, tx, ts.UnixMilli())
 	if len(idx[pkLower]) != 1 {
 		t.Errorf("expected index keyed by lowercase, found %d entries at lowercase key", len(idx[pkLower]))
 	}

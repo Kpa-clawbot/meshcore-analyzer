@@ -1036,7 +1036,27 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 	if s.store != nil {
 		hashInfo := s.store.GetNodeHashSizeInfo()
 		now := time.Now().UnixMilli()
+
+		// Snapshot relay times for repeater nodes under the read lock, then
+		// release before enrichment so the lock isn't held for the full loop.
+		relaySnap := make(map[string][]int64)
 		s.store.mu.RLock()
+		for _, node := range nodes {
+			pk, ok := node["public_key"].(string)
+			if !ok {
+				continue
+			}
+			if role, _ := node["role"].(string); strings.ToLower(role) == "repeater" {
+				lk := strings.ToLower(pk)
+				if times := s.store.relayTimes[lk]; len(times) > 0 {
+					cp := make([]int64, len(times))
+					copy(cp, times)
+					relaySnap[lk] = cp
+				}
+			}
+		}
+		s.store.mu.RUnlock()
+
 		for _, node := range nodes {
 			pk, ok := node["public_key"].(string)
 			if !ok {
@@ -1046,18 +1066,17 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 			role, _ := node["role"].(string)
 			if strings.ToLower(role) == "repeater" {
 				lk := strings.ToLower(pk)
-				c1h, c24h, lastRel := relayMetrics(s.store.relayTimes[lk], now)
+				c1h, c24h, lastRel := relayMetrics(relaySnap[lk], now)
 				stats := map[string]interface{}{
 					"relay_count_1h":  c1h,
 					"relay_count_24h": c24h,
 				}
-				if lastRel != "" {
+				if lastRel != "" && (c1h > 0 || c24h > 0) {
 					stats["last_relayed"] = lastRel
 				}
 				node["stats"] = stats
 			}
 		}
-		s.store.mu.RUnlock()
 	}
 	if s.cfg.GeoFilter != nil {
 		filtered := nodes[:0]

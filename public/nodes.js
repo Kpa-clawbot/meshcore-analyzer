@@ -513,10 +513,9 @@
           <tr><td>Packets Today</td><td>${stats.packetsToday || 0}</td></tr>
           ${stats.avgSnr != null ? `<tr><td>Avg SNR</td><td>${Number(stats.avgSnr).toFixed(1)} dB</td></tr>` : ''}
           ${stats.avgHops ? `<tr><td>Avg Hops</td><td>${stats.avgHops}</td></tr>` : ''}
-          ${si.role === 'repeater' ? `
-          <tr><td>Relay (1h)</td><td>${typeof si.relayCount1h === 'number' ? si.relayCount1h + ' packet' + (si.relayCount1h === 1 ? '' : 's') : '—'}</td></tr>
-          <tr><td>Relay (24h)</td><td>${typeof si.relayCount24h === 'number' ? si.relayCount24h + ' packet' + (si.relayCount24h === 1 ? '' : 's') : '—'}</td></tr>
-          ${si.lastRelayed ? `<tr><td>Last Relayed</td><td>${renderNodeTimestampHtml(si.lastRelayed)}</td></tr>` : ''}` : ''}
+          ${si.role === 'repeater' ? `<tr><td>Relay (1h)</td><td>${typeof si.relayCount1h === 'number' ? si.relayCount1h + ' packet' + (si.relayCount1h === 1 ? '' : 's') : '—'}</td></tr>` : ''}
+          ${si.role === 'repeater' ? `<tr><td>Relay (24h)</td><td>${typeof si.relayCount24h === 'number' ? si.relayCount24h + ' packet' + (si.relayCount24h === 1 ? '' : 's') : '—'}</td></tr>` : ''}
+          ${si.role === 'repeater' && si.lastRelayed ? `<tr><td>Last Relayed</td><td>${renderNodeTimestampHtml(si.lastRelayed)}</td></tr>` : ''}
           ${hasLoc ? `<tr><td>Location</td><td>${Number(n.lat).toFixed(5)}, ${Number(n.lon).toFixed(5)}</td></tr>` : ''}
           <tr><td>Hash Prefix</td><td>${n.hash_size ? '<code style="font-family:var(--mono);font-weight:700">' + n.public_key.slice(0, n.hash_size * 2).toUpperCase() + '</code> (' + n.hash_size + '-byte)' : 'Unknown'}${n.hash_size_inconsistent ? ' <span style="color:var(--status-yellow);cursor:help" title="Seen: ' + (Array.isArray(n.hash_sizes_seen) ? n.hash_sizes_seen : []).join(', ') + '-byte">⚠️ varies</span>' : ''}</td></tr>
         </table>
@@ -1194,10 +1193,9 @@
             <dt>Packets Today</dt><dd>${stats.packetsToday || 0}</dd>
             ${stats.avgSnr != null ? `<dt>Avg SNR</dt><dd>${Number(stats.avgSnr).toFixed(1)} dB</dd>` : ''}
             ${stats.avgHops ? `<dt>Avg Hops</dt><dd>${stats.avgHops}</dd>` : ''}
-            ${si.role === 'repeater' ? `
-            <dt>Relay (1h)</dt><dd>${typeof si.relayCount1h === 'number' ? si.relayCount1h + ' packet' + (si.relayCount1h === 1 ? '' : 's') : '—'}</dd>
-            <dt>Relay (24h)</dt><dd>${typeof si.relayCount24h === 'number' ? si.relayCount24h + ' packet' + (si.relayCount24h === 1 ? '' : 's') : '—'}</dd>
-            ${si.lastRelayed ? `<dt>Last Relayed</dt><dd>${renderNodeTimestampHtml(si.lastRelayed)}</dd>` : ''}` : ''}
+            ${si.role === 'repeater' ? `<dt>Relay (1h)</dt><dd>${typeof si.relayCount1h === 'number' ? si.relayCount1h + ' packet' + (si.relayCount1h === 1 ? '' : 's') : '—'}</dd>` : ''}
+            ${si.role === 'repeater' ? `<dt>Relay (24h)</dt><dd>${typeof si.relayCount24h === 'number' ? si.relayCount24h + ' packet' + (si.relayCount24h === 1 ? '' : 's') : '—'}</dd>` : ''}
+            ${si.role === 'repeater' && si.lastRelayed ? `<dt>Last Relayed</dt><dd>${renderNodeTimestampHtml(si.lastRelayed)}</dd>` : ''}
             ${hasLoc ? `<dt>Location</dt><dd>${Number(n.lat).toFixed(5)}, ${Number(n.lon).toFixed(5)}</dd>` : ''}
           </dl>
         </div>
