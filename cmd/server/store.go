@@ -2442,8 +2442,21 @@ func (s *PacketStore) buildSubpathIndex() {
 			s.spTotalPaths++
 		}
 	}
-	log.Printf("[store] Built subpath index: %d unique raw subpaths from %d paths",
-		len(s.spIndex), s.spTotalPaths)
+	// Drop singleton entries (count==1) to save memory. At scale, 60-70% of
+	// subpath keys appear only once — they're noise and not useful for analytics.
+	// Singletons that appear after startup via incremental ingest will remain
+	// in the index until the next restart; this is acceptable since they only
+	// matter for display ranking and the count is still correct for non-singletons.
+	total := len(s.spIndex)
+	dropped := 0
+	for key, count := range s.spIndex {
+		if count == 1 {
+			delete(s.spIndex, key)
+			dropped++
+		}
+	}
+	log.Printf("[store] Subpath index: kept %d/%d entries (dropped %d singletons)",
+		total-dropped, total, dropped)
 }
 
 // buildPathHopIndex scans all packets and populates byPathHop.
