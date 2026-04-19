@@ -111,6 +111,14 @@ func main() {
 	// Resolve DB path
 	resolvedDB := cfg.ResolveDBPath(configDir)
 	log.Printf("[config] port=%d db=%s public=%s", cfg.Port, resolvedDB, publicDir)
+	if len(cfg.NodeBlacklist) > 0 {
+		log.Printf("[config] nodeBlacklist: %d node(s) will be hidden from API", len(cfg.NodeBlacklist))
+		for _, pk := range cfg.NodeBlacklist {
+			if trimmed := strings.ToLower(strings.TrimSpace(pk)); trimmed != "" {
+				log.Printf("[config]   blacklisted: %s", trimmed)
+			}
+		}
+	}
 
 	// Open database
 	database, err := OpenDB(resolvedDB)
@@ -326,6 +334,40 @@ func main() {
 		log.Printf("[metrics-prune] auto-prune enabled: metrics older than %d days", metricsDays)
 	}
 
+	// Auto-prune stale observers
+	var stopObserverPrune func()
+	{
+		observerDays := cfg.ObserverDaysOrDefault()
+		if observerDays <= -1 {
+			// -1 means keep forever, skip
+		} else {
+			observerPruneTicker := time.NewTicker(24 * time.Hour)
+			observerPruneDone := make(chan struct{})
+			stopObserverPrune = func() {
+				observerPruneTicker.Stop()
+				close(observerPruneDone)
+			}
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[observer-prune] panic recovered: %v", r)
+					}
+				}()
+				time.Sleep(3 * time.Minute) // stagger after metrics prune
+				database.RemoveStaleObservers(observerDays)
+				for {
+					select {
+					case <-observerPruneTicker.C:
+						database.RemoveStaleObservers(observerDays)
+					case <-observerPruneDone:
+						return
+					}
+				}
+			}()
+			log.Printf("[observer-prune] auto-prune enabled: observers not seen in %d days will be removed", observerDays)
+		}
+	}
+
 	// Auto-prune old neighbor edges
 	var stopEdgePrune func()
 	{
@@ -387,6 +429,9 @@ func main() {
 		if stopMetricsPrune != nil {
 			stopMetricsPrune()
 		}
+		if stopObserverPrune != nil {
+			stopObserverPrune()
+		}
 		if stopEdgePrune != nil {
 			stopEdgePrune()
 		}
@@ -412,6 +457,9 @@ func main() {
 
 	// Start async backfill in background — HTTP is now available.
 	go backfillResolvedPathsAsync(store, dbPath, 5000, 100*time.Millisecond, cfg.BackfillHours())
+
+	// Migrate old content hashes in background (one-time, idempotent).
+	go migrateContentHashesAsync(store, 5000, 100*time.Millisecond)
 
 	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("[server] %v", err)

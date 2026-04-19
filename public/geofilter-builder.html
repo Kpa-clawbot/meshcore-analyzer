@@ -8,32 +8,32 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; height: 100vh; display: flex; flex-direction: column; }
-  header { padding: 12px 16px; background: #fff; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  header h1 { font-size: 1rem; font-weight: 600; color: #1a6abf; white-space: nowrap; }
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 16px; background: #0f0f23; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 1rem; font-weight: 600; color: #4a9eff; white-space: nowrap; }
   .controls { display: flex; gap: 8px; flex-wrap: wrap; }
   button { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 500; }
-  #btnUndo  { background: #eee; color: #555; border: 1px solid #ccc; }
-  #btnClear { background: #fee; color: #c44; border: 1px solid #fcc; }
-  #btnUndo:hover  { background: #e0e0e0; }
-  #btnClear:hover { background: #fdd; }
+  #btnUndo  { background: #333; color: #ccc; }
+  #btnClear { background: #5a2020; color: #ffaaaa; }
+  #btnUndo:hover  { background: #444; }
+  #btnClear:hover { background: #7a2020; }
   .hint { font-size: 0.8rem; color: #888; margin-left: auto; }
   #map { flex: 1; }
-  #output-panel { background: #fff; border-top: 1px solid #ddd; padding: 12px 16px; display: flex; gap: 12px; align-items: flex-start; }
+  #output-panel { background: #0f0f23; border-top: 1px solid #333; padding: 12px 16px; display: flex; gap: 12px; align-items: flex-start; }
   #output-panel label { font-size: 0.75rem; color: #888; white-space: nowrap; padding-top: 6px; }
-  #output { flex: 1; background: #f0f4f8; border: 1px solid #ccd; border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 0.78rem; color: #1a6abf; white-space: pre; overflow-x: auto; min-height: 54px; max-height: 140px; overflow-y: auto; cursor: text; }
-  #output.empty { color: #aaa; font-style: italic; }
-  #btnCopy { padding: 6px 14px; background: #1a6abf; color: #fff; border-radius: 6px; border: none; cursor: pointer; font-size: 0.85rem; white-space: nowrap; align-self: flex-end; }
-  #btnCopy:hover { background: #1558a0; }
-  #btnCopy.copied { background: #1a7a3a; color: #fff; }
+  #output { flex: 1; background: #111; border: 1px solid #333; border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 0.78rem; color: #7ec8e3; white-space: pre; overflow-x: auto; min-height: 54px; max-height: 140px; overflow-y: auto; cursor: text; }
+  #output.empty { color: #555; font-style: italic; }
+  #btnCopy { padding: 6px 14px; background: #1a4a7a; color: #7ec8e3; border-radius: 6px; border: none; cursor: pointer; font-size: 0.85rem; white-space: nowrap; align-self: flex-end; }
+  #btnCopy:hover { background: #2a6aaa; }
+  #btnCopy.copied { background: #1a6a3a; color: #7effa0; }
   #counter { font-size: 0.8rem; color: #888; padding-top: 6px; white-space: nowrap; }
   .bufferRow { display: flex; align-items: center; gap: 8px; }
-  .bufferRow label { font-size: 0.85rem; color: #555; }
-  .bufferRow input { width: 60px; padding: 5px 8px; background: #fff; border: 1px solid #ccc; border-radius: 6px; color: #222; font-size: 0.85rem; }
-  #help-bar { background: #fff; padding: 6px 16px; font-size: 0.75rem; color: #888; border-top: 1px solid #e0e0e0; }
-  #help-bar a { color: #1a6abf; text-decoration: none; }
+  .bufferRow label { font-size: 0.85rem; color: #aaa; }
+  .bufferRow input { width: 60px; padding: 5px 8px; background: #222; border: 1px solid #444; border-radius: 6px; color: #eee; font-size: 0.85rem; }
+  #help-bar { background: #0f0f23; padding: 6px 16px; font-size: 0.75rem; color: #666; border-top: 1px solid #222; }
+  #help-bar a { color: #4a9eff; text-decoration: none; }
   #help-bar a:hover { text-decoration: underline; }
-  #back-link { font-size: 0.8rem; color: #1a6abf; text-decoration: none; white-space: nowrap; }
+  #back-link { font-size: 0.8rem; color: #4a9eff; text-decoration: none; white-space: nowrap; }
   #back-link:hover { text-decoration: underline; }
 </style>
 </head>

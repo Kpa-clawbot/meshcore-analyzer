@@ -60,6 +60,7 @@ func setupTestDB(t *testing.T) *DB {
 			payload_type INTEGER,
 			payload_version INTEGER,
 			decoded_json TEXT,
+			channel_hash TEXT DEFAULT NULL,
 			created_at TEXT DEFAULT (datetime('now'))
 		);
 
@@ -124,10 +125,10 @@ func seedTestData(t *testing.T, db *DB) {
 		VALUES ('1122334455667788', 'TestRoom', 'room', 37.4, -121.9, ?, '2026-01-01T00:00:00Z', 5)`, twoDaysAgo)
 
 	// Seed transmissions
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
-		VALUES ('AABB', 'abc123def4567890', ?, 1, 4, '{"pubKey":"aabbccdd11223344","name":"TestRepeater","type":"ADVERT","timestamp":1700000000,"timestampISO":"2023-11-14T22:13:20.000Z","signature":"abcdef","flags":{"isRepeater":true},"lat":37.5,"lon":-122.0}')`, recent)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
-		VALUES ('CCDD', '1234567890abcdef', ?, 1, 5, '{"type":"CHAN","channel":"#test","text":"Hello: World","sender":"TestUser"}')`, yesterday)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
+		VALUES ('AABB', 'abc123def4567890', ?, 1, 4, '{"pubKey":"aabbccdd11223344","name":"TestRepeater","type":"ADVERT","timestamp":1700000000,"timestampISO":"2023-11-14T22:13:20.000Z","signature":"abcdef","flags":{"isRepeater":true},"lat":37.5,"lon":-122.0}', '#test')`, recent)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
+		VALUES ('CCDD', '1234567890abcdef', ?, 1, 5, '{"type":"CHAN","channel":"#test","text":"Hello: World","sender":"TestUser"}', '#test')`, yesterday)
 	// Second ADVERT for same node with different hash_size (raw_hex byte 0x1F → hs=1 vs 0xBB → hs=3)
 	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
 		VALUES ('AA1F', 'def456abc1230099', ?, 1, 4, '{"pubKey":"aabbccdd11223344","name":"TestRepeater","type":"ADVERT","timestamp":1700000100,"timestampISO":"2023-11-14T22:14:40.000Z","signature":"fedcba","flags":{"isRepeater":true},"lat":37.5,"lon":-122.0}')`, yesterday)
@@ -735,12 +736,12 @@ func TestGetChannelMessagesRegionFiltering(t *testing.T) {
 
 	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Observer One', 'SJC')`)
 	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs2', 'Observer Two', ' sfo ')`)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('AA', 'chanregion0001', ?, 1, 5,
-		'{"type":"CHAN","channel":"#region","text":"SjcUser: One","sender":"SjcUser"}')`, ts1)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		'{"type":"CHAN","channel":"#region","text":"SjcUser: One","sender":"SjcUser"}', '#region')`, ts1)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('BB', 'chanregion0002', ?, 1, 5,
-		'{"type":"CHAN","channel":"#region","text":"SfoUser: Two","sender":"SfoUser"}')`, ts2)
+		'{"type":"CHAN","channel":"#region","text":"SfoUser: Two","sender":"SfoUser"}', '#region')`, ts2)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 		VALUES (1, 1, 10.0, -90, '[]', ?)`, epoch1)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
@@ -1119,6 +1120,7 @@ func setupTestDBV2(t *testing.T) *DB {
 			payload_type INTEGER,
 			payload_version INTEGER,
 			decoded_json TEXT,
+			channel_hash TEXT DEFAULT NULL,
 			created_at TEXT DEFAULT (datetime('now'))
 		);
 
@@ -1202,12 +1204,12 @@ func TestGetChannelMessagesDedup(t *testing.T) {
 	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs2', 'Observer Two', 'SFO')`)
 
 	// Insert two transmissions with same hash to test dedup
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('AA', 'chanmsg00000001', '2026-01-15T10:00:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#general","text":"User1: Hello","sender":"User1"}')`)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		'{"type":"CHAN","channel":"#general","text":"User1: Hello","sender":"User1"}', '#general')`)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('BB', 'chanmsg00000002', '2026-01-15T10:01:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#general","text":"User2: World","sender":"User2"}')`)
+		'{"type":"CHAN","channel":"#general","text":"User2: World","sender":"User2"}', '#general')`)
 
 	// Observations: first msg seen by two observers (dedup), second by one
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
@@ -1251,9 +1253,9 @@ func TestGetChannelMessagesNoSender(t *testing.T) {
 	defer db.Close()
 
 	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Observer One', 'SJC')`)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('CC', 'chanmsg00000003', '2026-01-15T10:02:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#noname","text":"plain text no colon"}')`)
+		'{"type":"CHAN","channel":"#noname","text":"plain text no colon"}', '#noname')`)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 		VALUES (1, 1, 12.0, -90, null, 1736935300)`)
 
@@ -1356,9 +1358,9 @@ func TestGetChannelMessagesObserverFallback(t *testing.T) {
 	defer db.Close()
 
 	// Observer with ID but no name entry (observer_idx won't match)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('AA', 'chanmsg00000004', '2026-01-15T10:00:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#obs","text":"Sender: Test","sender":"Sender"}')`)
+		'{"type":"CHAN","channel":"#obs","text":"Sender: Test","sender":"Sender"}', '#obs')`)
 	// Observation without observer (observer_idx = NULL)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 		VALUES (1, NULL, 12.0, -90, null, 1736935200)`)
@@ -1380,12 +1382,12 @@ func TestGetChannelsMultiple(t *testing.T) {
 	defer db.Close()
 
 	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Observer', 'SJC')`)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('AA', 'chan1hash', '2026-01-15T10:00:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#alpha","text":"Alice: Hello","sender":"Alice"}')`)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		'{"type":"CHAN","channel":"#alpha","text":"Alice: Hello","sender":"Alice"}', '#alpha')`)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('BB', 'chan2hash', '2026-01-15T10:01:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#beta","text":"Bob: World","sender":"Bob"}')`)
+		'{"type":"CHAN","channel":"#beta","text":"Bob: World","sender":"Bob"}', '#beta')`)
 	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
 		VALUES ('CC', 'chan3hash', '2026-01-15T10:02:00Z', 1, 5,
 		'{"type":"CHAN","channel":"","text":"No channel"}')`)
@@ -1468,13 +1470,13 @@ func TestGetChannelsStaleMessage(t *testing.T) {
 	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs2', 'Observer2', 'SFO')`)
 
 	// Older message (first_seen T1)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('AA', 'oldhash1', '2026-01-15T10:00:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#test","text":"Alice: Old message","sender":"Alice"}')`)
+		'{"type":"CHAN","channel":"#test","text":"Alice: Old message","sender":"Alice"}', '#test')`)
 	// Newer message (first_seen T2 > T1)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('BB', 'newhash2', '2026-01-15T10:05:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#test","text":"Bob: New message","sender":"Bob"}')`)
+		'{"type":"CHAN","channel":"#test","text":"Bob: New message","sender":"Bob"}', '#test')`)
 
 	// Observations: older message re-observed AFTER newer message (stale scenario)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, timestamp)
@@ -1512,16 +1514,16 @@ func TestGetChannelsRegionFiltering(t *testing.T) {
 	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs2', 'Observer2', 'SFO')`)
 
 	// Channel message seen only in SJC
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('AA', 'hash1', '2026-01-15T10:00:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#sjc-only","text":"Alice: Hello SJC","sender":"Alice"}')`)
+		'{"type":"CHAN","channel":"#sjc-only","text":"Alice: Hello SJC","sender":"Alice"}', '#sjc-only')`)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, timestamp)
 		VALUES (1, 1, 12.0, -90, 1736935200)`)
 
 	// Channel message seen only in SFO
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
 		VALUES ('BB', 'hash2', '2026-01-15T10:05:00Z', 1, 5,
-		'{"type":"CHAN","channel":"#sfo-only","text":"Bob: Hello SFO","sender":"Bob"}')`)
+		'{"type":"CHAN","channel":"#sfo-only","text":"Bob: Hello SFO","sender":"Bob"}', '#sfo-only')`)
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, timestamp)
 		VALUES (2, 2, 14.0, -88, 1736935500)`)
 

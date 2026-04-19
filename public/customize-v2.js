@@ -1470,6 +1470,10 @@
       '<details style="margin-top:12px"><summary style="font-size:12px;font-weight:600;cursor:pointer;color:var(--text-muted)">Raw JSON</summary>' +
         '<textarea id="cv2ExportJson" style="width:100%;min-height:200px;font-family:var(--mono);font-size:12px;background:var(--surface-1);border:1px solid var(--border);border-radius:6px;padding:12px;color:var(--text);resize:vertical;box-sizing:border-box;margin-top:8px">' + esc(json) + '</textarea>' +
       '</details>' +
+      '<p class="cust-section-title" style="margin-top:20px">Tools</p>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Server-side configuration helpers.</p>' +
+      '<a href="/geofilter-builder.html" target="_blank" style="display:inline-block;padding:7px 14px;background:var(--surface-1);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:13px;text-decoration:none;font-weight:500">🗺️ GeoFilter Builder →</a>' +
+      '<p style="font-size:11px;color:var(--text-muted);margin-top:6px">Draw a polygon on the map to generate a <code style="font-family:var(--mono)">geo_filter</code> block for <code style="font-family:var(--mono)">config.json</code>.</p>' +
     '</div>';
   }
 

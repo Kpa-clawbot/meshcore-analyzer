@@ -365,3 +365,25 @@ func TestPropagationBufferMs(t *testing.T) {
 		}
 	})
 }
+
+func TestObserverDaysOrDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{"nil retention", &Config{}, 14},
+		{"zero observer days", &Config{Retention: &RetentionConfig{ObserverDays: 0}}, 14},
+		{"positive value", &Config{Retention: &RetentionConfig{ObserverDays: 30}}, 30},
+		{"keep forever", &Config{Retention: &RetentionConfig{ObserverDays: -1}}, -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.ObserverDaysOrDefault()
+			if got != tt.want {
+				t.Errorf("ObserverDaysOrDefault() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

@@ -318,8 +318,8 @@
   function init(app, routeParam) {
     directNode = routeParam || null;
 
-    if (directNode) {
-      // Full-screen single node view
+    if (directNode && window.innerWidth <= 640) {
+      // Full-screen single node view (mobile only)
       app.innerHTML = `<div class="node-fullscreen">
         <div class="node-full-header">
           <button class="detail-back-btn node-back-btn" id="nodeBackBtn" aria-label="Back to nodes">←</button>
@@ -363,7 +363,7 @@
     </div>`;
 
     RegionFilter.init(document.getElementById('nodesRegionFilter'));
-    regionChangeHandler = RegionFilter.onChange(function () { _allNodes = null; loadNodes(); });
+    regionChangeHandler = RegionFilter.onChange(function () { _allNodes = null; _fleetSkew = null; loadNodes(); });
 
     if (search) {
       var _si = document.getElementById('nodeSearch');
@@ -377,6 +377,7 @@
     }, 250));
 
     loadNodes();
+    if (directNode) selectNode(directNode);
     // Auto-refresh when ADVERT packets arrive via WebSocket (fixes #131)
     wsHandler = debouncedOnWS(function (msgs) {
       const advertMsgs = msgs.filter(isAdvertMessage);
@@ -409,6 +410,7 @@
 
       if (needReload) {
         _allNodes = null;
+        _fleetSkew = null;
         invalidateApiCache('/nodes');
       }
       loadNodes(true);
@@ -492,6 +494,8 @@
           ${hasLoc ? `<tr><td>Location</td><td>${Number(n.lat).toFixed(5)}, ${Number(n.lon).toFixed(5)}</td></tr>` : ''}
           <tr><td>Hash Prefix</td><td>${n.hash_size ? '<code style="font-family:var(--mono);font-weight:700">' + n.public_key.slice(0, n.hash_size * 2).toUpperCase() + '</code> (' + n.hash_size + '-byte)' : 'Unknown'}${n.hash_size_inconsistent ? ' <span style="color:var(--status-yellow);cursor:help" title="Seen: ' + (Array.isArray(n.hash_sizes_seen) ? n.hash_sizes_seen : []).join(', ') + '-byte">⚠️ varies</span>' : ''}</td></tr>
         </table>
+
+        <div class="node-full-card skew-detail-section" id="node-clock-skew" style="display:none"></div>
 
         ${observers.length ? `<div class="node-full-card" id="node-observers">
           ${(() => { const regions = [...new Set(observers.map(o => o.iata).filter(Boolean))]; return regions.length ? `<div style="margin-bottom:8px"><strong>Regions:</strong> ${regions.map(r => '<span class="badge" style="margin:0 2px">' + escapeHtml(r) + '</span>').join(' ')}</div>` : ''; })()}
@@ -623,6 +627,35 @@
       fetchAndRenderNeighbors(n.public_key, 'fullNeighborsContent', {
         headerSelector: '#fullNeighborsHeader'
       });
+
+      // #690 — Clock Skew detail section
+      (async function loadClockSkew() {
+        var container = document.getElementById('node-clock-skew');
+        if (!container) return;
+        try {
+          var cs = await api('/nodes/' + encodeURIComponent(n.public_key) + '/clock-skew', { ttl: 30000 });
+          if (!cs || !cs.severity) return;
+          container.style.display = '';
+          var severityColor = SKEW_SEVERITY_COLORS[cs.severity] || 'var(--text-muted)';
+          var severityLabel = SKEW_SEVERITY_LABELS[cs.severity] || cs.severity;
+          var driftHtml = cs.driftPerDaySec ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Drift: ' + formatDrift(cs.driftPerDaySec) + '</div>' : '';
+          var sparkHtml = renderSkewSparkline(cs.samples, 200, 32);
+          var skewDisplay = cs.severity === 'no_clock'
+            ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
+            : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(cs.medianSkewSec) + '</span>';
+          container.innerHTML =
+            '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
+            '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+              skewDisplay +
+              renderSkewBadge(cs.severity, cs.medianSkewSec) +
+              (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
+            '</div>' +
+            driftHtml +
+            (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '');
+        } catch (e) {
+          // Non-fatal — section stays hidden
+        }
+      })();
 
       // Affinity debug panel — show if debugAffinity is enabled
       (function loadAffinityDebug() {
@@ -777,6 +810,22 @@
   let _themeRefreshHandler = null;
 
   let _allNodes = null; // cached full node list
+  let _fleetSkew = null; // cached clock skew map: pubkey → {severity, medianSkewSec, ...}
+
+  /** Fetch fleet clock skew once, return map keyed by pubkey */
+  async function getFleetSkew() {
+    if (_fleetSkew) return _fleetSkew;
+    try {
+      const data = await api('/nodes/clock-skew', { ttl: 30000 });
+      _fleetSkew = {};
+      (Array.isArray(data) ? data : []).forEach(function(cs) {
+        if (cs && cs.pubkey) _fleetSkew[cs.pubkey] = cs;
+      });
+    } catch (e) {
+      _fleetSkew = {};
+    }
+    return _fleetSkew;
+  }
 
   // Build a map of lowercased name → count of distinct pubkeys sharing that name
   function buildDupNameMap(allNodes) {
@@ -806,7 +855,10 @@
         const params = new URLSearchParams({ limit: '5000' });
         const rp = RegionFilter.getRegionParam();
         if (rp) params.set('region', rp);
-        const data = await api('/nodes?' + params, { ttl: CLIENT_TTL.nodeList });
+        const [data] = await Promise.all([
+          api('/nodes?' + params, { ttl: CLIENT_TTL.nodeList }),
+          getFleetSkew() // pre-fetch clock skew in parallel
+        ]);
         _allNodes = data.nodes || [];
         counts = data.counts || {};
       }
@@ -979,6 +1031,7 @@
           panel.classList.add('empty');
           panel.innerHTML = '<span>Select a node to view details</span>';
           selectedKey = null;
+          history.replaceState(null, '', '#/nodes');
           renderRows();
         }
       }
@@ -986,11 +1039,36 @@
 
     // #630: Close button for node detail panel (important for mobile full-screen overlay)
     document.getElementById('nodesRight').addEventListener('click', function(e) {
+      // #778: Details/Analytics links don't navigate because replaceState
+      // already set the hash to #/nodes/PUBKEY, so clicking <a href="#/nodes/PUBKEY">
+      // is a same-hash no-op. For the detail link (same page), call init()
+      // directly — faster than a full router teardown/rebuild cycle.
+      // For analytics (different page), force hashchange via replaceState + assign.
+      var link = e.target.closest('a.btn-primary[href^="#/nodes/"]');
+      if (link) {
+        e.preventDefault();
+        var href = link.getAttribute('href');
+        if (href.indexOf('/analytics') === -1) {
+          // Detail link — re-init with the pubkey directly;
+          // destroy() first to clean up WS handlers, maps, listeners
+          destroy();
+          var pubkey = href.replace('#/nodes/', '').split('/')[0];
+          var appEl = document.getElementById('app');
+          init(appEl, decodeURIComponent(pubkey));
+          history.replaceState(null, '', href);
+        } else {
+          // Analytics link — different page, force hashchange via replaceState + assign
+          history.replaceState(null, '', '#/');
+          location.hash = href.substring(1);
+        }
+        return;
+      }
       if (e.target.closest('.panel-close-btn')) {
         const panel = document.getElementById('nodesRight');
         panel.classList.add('empty');
         panel.innerHTML = '<span>Select a node to view details</span>';
         selectedKey = null;
+        history.replaceState(null, '', '#/nodes');
         renderRows();
       }
     });
@@ -1029,8 +1107,10 @@
       const lastSeenTime = n.last_heard || n.last_seen;
       const status = getNodeStatus(n.role || 'companion', lastSeenTime ? new Date(lastSeenTime).getTime() : 0);
       const lastSeenClass = status === 'active' ? 'last-seen-active' : 'last-seen-stale';
+      const cs = _fleetSkew && _fleetSkew[n.public_key];
+      const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, cs.medianSkewSec) : '';
       return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}${isClaimed ? ' claimed-row' : ''}">
-        <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh">★</span> ' : ''}<strong>${n.name || '(unnamed)'}</strong>${dupNameBadge(n.name, n.public_key, dupMap)}</td>
+        <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh">★</span> ' : ''}<strong>${n.name || '(unnamed)'}</strong>${dupNameBadge(n.name, n.public_key, dupMap)}${skewBadgeHtml}</td>
         <td class="mono col-pubkey">${truncate(n.public_key, 16)}</td>
         <td><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span></td>
         <td class="${lastSeenClass}">${renderNodeTimestampHtml(n.last_heard || n.last_seen)}</td>
@@ -1048,6 +1128,7 @@
       return;
     }
     selectedKey = pubkey;
+    history.replaceState(null, '', '#/nodes/' + encodeURIComponent(pubkey));
     renderRows();
     const panel = document.getElementById('nodesRight');
     panel.classList.remove('empty');

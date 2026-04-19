@@ -166,7 +166,7 @@ func BuildFromStoreWithLog(store *PacketStore, enableLog bool) *NeighborGraph {
 
 	// Phase 1: Extract edges from every transmission + observation.
 	for _, tx := range packets {
-		isAdvert := tx.PayloadType != nil && *tx.PayloadType == 4
+		isAdvert := tx.PayloadType != nil && *tx.PayloadType == PayloadADVERT
 		fromNode := extractFromNode(tx)
 		// Pre-compute lowered originator once per tx (not per observation).
 		fromLower := ""

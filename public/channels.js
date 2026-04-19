@@ -325,43 +325,72 @@
     return /^[0-9a-fA-F]{32}$/.test(val);
   }
 
+  // Show status message in the add-channel form (#759)
+  var statusTimer = null;
+  function showAddStatus(msg, type) {
+    var el = document.getElementById('chAddStatus');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'ch-add-status ch-add-status--' + (type || 'info');
+    el.style.display = '';
+    clearTimeout(statusTimer);
+    if (type !== 'loading') {
+      statusTimer = setTimeout(function () { el.style.display = 'none'; }, 5000);
+    }
+  }
+
   // Add a user channel by name (#channelname) or hex key
   async function addUserChannel(val) {
+    var displayName = val.startsWith('#') ? val : (isHexKey(val) ? val.substring(0, 8) + '…' : '#' + val);
+    showAddStatus('Decrypting ' + displayName + ' messages…', 'loading');
     var channelName, keyHex;
-    if (val.startsWith('#')) {
-      channelName = val;
-      var keyBytes = await ChannelDecrypt.deriveKey(channelName);
-      keyHex = ChannelDecrypt.bytesToHex(keyBytes);
-    } else if (isHexKey(val)) {
-      keyHex = val.toLowerCase();
-      channelName = 'psk:' + keyHex.substring(0, 8);
-    } else {
-      // Try with # prefix if user forgot
-      channelName = '#' + val;
-      var keyBytes2 = await ChannelDecrypt.deriveKey(channelName);
-      keyHex = ChannelDecrypt.bytesToHex(keyBytes2);
+    try {
+      if (val.startsWith('#')) {
+        channelName = val;
+        var keyBytes = await ChannelDecrypt.deriveKey(channelName);
+        keyHex = ChannelDecrypt.bytesToHex(keyBytes);
+      } else if (isHexKey(val)) {
+        keyHex = val.toLowerCase();
+        channelName = 'psk:' + keyHex.substring(0, 8);
+      } else {
+        // Try with # prefix if user forgot
+        channelName = '#' + val;
+        var keyBytes2 = await ChannelDecrypt.deriveKey(channelName);
+        keyHex = ChannelDecrypt.bytesToHex(keyBytes2);
+      }
+
+      ChannelDecrypt.storeKey(channelName, keyHex);
+
+      // Compute channel hash byte to find matching encrypted channels
+      var keyBytes3 = ChannelDecrypt.hexToBytes(keyHex);
+      var hashByte = await ChannelDecrypt.computeChannelHash(keyBytes3);
+
+      // Add to sidebar or merge with existing encrypted channel
+      mergeUserChannels();
+      renderChannelList();
+
+      // Auto-select and start decrypting
+      var targetHash = 'user:' + channelName;
+      // Check if there's an existing encrypted channel with this hash byte
+      var existingEncrypted = channels.find(function (ch) {
+        return ch.encrypted && String(ch.hash) === String(hashByte);
+      });
+      if (existingEncrypted) {
+        targetHash = existingEncrypted.hash;
+      }
+      await selectChannel(targetHash, { userKey: keyHex, channelHashByte: hashByte, channelName: channelName });
+
+      // Show success feedback (#759)
+      var msgCount = document.querySelectorAll('#chMessages .ch-msg').length;
+      var userDisplay = channelName.startsWith('psk:') ? 'Custom channel (' + channelName.substring(4) + ')' : channelName;
+      if (msgCount > 0) {
+        showAddStatus('Added ' + userDisplay + ' — ' + msgCount + ' messages decrypted', 'success');
+      } else {
+        showAddStatus('No messages found for ' + userDisplay, 'warn');
+      }
+    } catch (err) {
+      showAddStatus('Failed to decrypt', 'error');
     }
-
-    ChannelDecrypt.storeKey(channelName, keyHex);
-
-    // Compute channel hash byte to find matching encrypted channels
-    var keyBytes3 = ChannelDecrypt.hexToBytes(keyHex);
-    var hashByte = await ChannelDecrypt.computeChannelHash(keyBytes3);
-
-    // Add to sidebar or merge with existing encrypted channel
-    mergeUserChannels();
-    renderChannelList();
-
-    // Auto-select and start decrypting
-    var targetHash = 'user:' + channelName;
-    // Check if there's an existing encrypted channel with this hash byte
-    var existingEncrypted = channels.find(function (ch) {
-      return ch.encrypted && String(ch.hash) === String(hashByte);
-    });
-    if (existingEncrypted) {
-      targetHash = existingEncrypted.hash;
-    }
-    await selectChannel(targetHash, { userKey: keyHex, channelHashByte: hashByte, channelName: channelName });
   }
 
   // Merge user-stored keys into the channel list
@@ -389,15 +418,23 @@
     }
   }
 
-  // Fetch and decrypt GRP_TXT packets client-side
-  async function fetchAndDecryptChannel(keyHex, channelHashByte, channelName) {
+  // Fetch and decrypt GRP_TXT packets client-side (M5: delta fetch + cache)
+  async function fetchAndDecryptChannel(keyHex, channelHashByte, channelName, opts) {
+    opts = opts || {};
     var keyBytes = ChannelDecrypt.hexToBytes(keyHex);
 
-    // Check cache first
+    // M5: Check cache first — serve cached messages immediately
     var cacheKey = channelName || String(channelHashByte);
     var cached = ChannelDecrypt.getCache(cacheKey);
     var cachedMsgs = cached ? cached.messages : [];
     var lastTs = cached ? cached.lastTimestamp : '';
+    var cachedCount = cached ? (cached.count || 0) : 0;
+
+    // If we have cached messages and caller wants instant render, return them first
+    if (cachedMsgs.length > 0 && !opts.forceFullDecrypt) {
+      // Signal caller to render cache immediately, then do delta fetch
+      if (opts.onCacheHit) opts.onCacheHit(cachedMsgs);
+    }
 
     // Fetch packets from API — get all payload_type=5 (GRP_TXT/CHAN)
     var rp = RegionFilter.getRegionParam();
@@ -406,7 +443,7 @@
     try {
       data = await api('/packets?limit=1000&payloadType=5' + qs, { ttl: 10000 });
     } catch (e) {
-      return { messages: cachedMsgs, error: 'Failed to fetch packets: ' + e.message };
+      return { messages: cachedMsgs, error: 'Failed to fetch packets: ' + e.message, fromCache: cachedMsgs.length > 0 };
     }
 
     var packets = data.packets || [];
@@ -419,30 +456,72 @@
       catch (e) { continue; }
       if (!dj) continue;
 
-      // Include both undecrypted GRP_TXT and already-decrypted CHAN with matching channel
       if (dj.type === 'CHAN' && dj.channel === channelName) {
-        // Already decrypted by server — use directly
-        candidates.push({
-          type: 'already_decrypted',
-          decoded: dj,
-          packet: p
-        });
+        candidates.push({ type: 'already_decrypted', decoded: dj, packet: p });
       } else if (dj.type === 'GRP_TXT' && dj.encryptedData && dj.mac) {
-        // Check channelHash byte match for fast rejection
         if (dj.channelHash === channelHashByte) {
-          candidates.push({
-            type: 'encrypted',
-            decoded: dj,
-            packet: p
-          });
+          candidates.push({ type: 'encrypted', decoded: dj, packet: p });
         }
       }
+    }
+
+    // M5: Cache invalidation — if total candidate count changed, re-decrypt everything
+    var totalCandidates = candidates.length;
+    var needFullDecrypt = (totalCandidates !== cachedCount) || opts.forceFullDecrypt;
+
+    // M5: Delta fetch — only decrypt packets newer than lastTs
+    if (!needFullDecrypt && cachedMsgs.length > 0 && lastTs) {
+      // Filter candidates to only those newer than cached lastTimestamp
+      var newCandidates = candidates.filter(function (c) {
+        var ts = c.packet.first_seen || c.packet.timestamp || '';
+        return ts > lastTs;
+      });
+
+      if (newCandidates.length === 0) {
+        // Nothing new — return cache as-is
+        return { messages: cachedMsgs, fromCache: true };
+      }
+
+      // Decrypt only new candidates
+      var newDecrypted = await decryptCandidates(keyBytes, newCandidates);
+      if (newDecrypted.wrongKey) {
+        return { messages: cachedMsgs, wrongKey: true };
+      }
+
+      // Merge: cached + new, deduplicate by packetHash, sort chronologically
+      var merged = deduplicateAndMerge(cachedMsgs, newDecrypted.messages);
+      var newLastTs = merged.length ? merged[merged.length - 1].timestamp : lastTs;
+      ChannelDecrypt.setCache(cacheKey, merged, newLastTs, totalCandidates);
+      return { messages: merged, deltaCount: newDecrypted.messages.length };
     }
 
     if (candidates.length === 0) {
       return { messages: cachedMsgs, empty: true };
     }
 
+    // Full decrypt
+    var result = await decryptCandidates(keyBytes, candidates);
+    if (result.wrongKey) {
+      return { messages: result.messages, wrongKey: true };
+    }
+
+    var decrypted = result.messages;
+    // Sort chronologically (oldest first)
+    decrypted.sort(function (a, b) {
+      var ta = a.timestamp || '';
+      var tb = b.timestamp || '';
+      return ta.localeCompare(tb);
+    });
+
+    // M5: Cache results
+    var newLastTimestamp = decrypted.length ? decrypted[decrypted.length - 1].timestamp : '';
+    ChannelDecrypt.setCache(cacheKey, decrypted, newLastTimestamp, totalCandidates);
+
+    return { messages: decrypted };
+  }
+
+  /** Decrypt an array of candidate packets. Returns { messages, wrongKey }. */
+  async function decryptCandidates(keyBytes, candidates) {
     // Sort newest first for progressive rendering
     candidates.sort(function (a, b) {
       var ta = a.packet.first_seen || a.packet.timestamp || '';
@@ -450,7 +529,6 @@
       return tb.localeCompare(ta);
     });
 
-    // Decrypt in chunks, checking for wrong key
     var decrypted = [];
     var macFailCount = 0;
     var macCheckCount = 0;
@@ -462,64 +540,66 @@
         var d = c.decoded;
         var sender = d.sender || 'Unknown';
         var text = d.text || '';
-        // Strip "sender: " prefix if present
         var ci = text.indexOf(': ');
         if (ci > 0 && ci < 50 && text.substring(0, ci) === sender) {
           text = text.substring(ci + 2);
         }
         decrypted.push({
-          sender: sender,
-          text: text,
+          sender: sender, text: text,
           timestamp: c.packet.first_seen || c.packet.timestamp,
           sender_timestamp: d.sender_timestamp || null,
-          packetHash: c.packet.hash,
-          packetId: c.packet.id,
-          hops: d.path_len || 0,
-          snr: c.packet.snr || null,
+          packetHash: c.packet.hash, packetId: c.packet.id,
+          hops: d.path_len || 0, snr: c.packet.snr || null,
           observers: c.packet.observer_name ? [c.packet.observer_name] : [],
           repeats: 1
         });
         continue;
       }
 
-      // Encrypted — try to decrypt
       macCheckCount++;
       var result = await ChannelDecrypt.decryptPacket(keyBytes, c.decoded.mac, c.decoded.encryptedData);
       if (result) {
-        macFailCount = 0; // reset on success
+        macFailCount = 0;
         decrypted.push({
-          sender: result.sender,
-          text: result.message,
+          sender: result.sender, text: result.message,
           timestamp: c.packet.first_seen || c.packet.timestamp,
           sender_timestamp: result.timestamp || null,
-          packetHash: c.packet.hash,
-          packetId: c.packet.id,
-          hops: 0,
-          snr: c.packet.snr || null,
+          packetHash: c.packet.hash, packetId: c.packet.id,
+          hops: 0, snr: c.packet.snr || null,
           observers: c.packet.observer_name ? [c.packet.observer_name] : [],
           repeats: 1
         });
       } else {
         macFailCount++;
-        // Wrong key detection: if first ~10 MAC checks all fail, abort early
         if (macCheckCount >= 10 && macFailCount >= macCheckCount) {
           return { messages: decrypted, wrongKey: true };
         }
       }
     }
 
-    // Sort chronologically (oldest first) for display
-    decrypted.sort(function (a, b) {
+    return { messages: decrypted, wrongKey: false };
+  }
+
+  /** Merge cached and new messages, deduplicate by packetHash, sort chronologically. */
+  function deduplicateAndMerge(cached, newMsgs) {
+    var seen = {};
+    var merged = [];
+    // Add cached first
+    for (var i = 0; i < cached.length; i++) {
+      var key = cached[i].packetHash || ('idx:' + i);
+      if (!seen[key]) { seen[key] = true; merged.push(cached[i]); }
+    }
+    // Add new
+    for (var j = 0; j < newMsgs.length; j++) {
+      var key2 = newMsgs[j].packetHash || ('new:' + j);
+      if (!seen[key2]) { seen[key2] = true; merged.push(newMsgs[j]); }
+    }
+    merged.sort(function (a, b) {
       var ta = a.timestamp || '';
       var tb = b.timestamp || '';
       return ta.localeCompare(tb);
     });
-
-    // Cache results
-    var lastTimestamp = decrypted.length ? decrypted[decrypted.length - 1].timestamp : '';
-    ChannelDecrypt.setCache(cacheKey, decrypted, lastTimestamp);
-
-    return { messages: decrypted };
+    return merged;
   }
 
   function init(app, routeParam) {
@@ -535,8 +615,15 @@
           </label>
         </div>
         <div class="ch-key-input-wrap" style="padding:4px 8px">
-          <form id="chKeyForm" autocomplete="off">
-            <input type="text" id="chKeyInput" class="ch-key-input" placeholder="#LongFast or paste hex key" aria-label="Add channel by name or hex key" spellcheck="false">
+          <form id="chKeyForm" autocomplete="off" class="ch-add-form">
+            <div class="ch-add-row">
+              <input type="text" id="chKeyInput" class="ch-key-input"
+                     placeholder="#channelname"
+                     aria-label="Channel name or hex key" spellcheck="false">
+              <button type="submit" class="ch-add-btn" title="Add channel">+</button>
+            </div>
+            <div class="ch-add-hint">e.g. #LongFast or 32-char hex key — decrypted in your browser.</div>
+            <div id="chAddStatus" class="ch-add-status" style="display:none"></div>
           </form>
         </div>
         <div id="chRegionFilter" class="region-filter-container" style="padding:0 8px"></div>
@@ -577,17 +664,25 @@
       });
     });
 
-    // Channel key input handler (#725 M2)
+    // Channel key input handler (#725 M2, improved UX #759)
     var chKeyForm = document.getElementById('chKeyForm');
     if (chKeyForm) {
-      chKeyForm.addEventListener('submit', async function (e) {
+      var submitHandler = async function (e) {
         e.preventDefault();
         var input = document.getElementById('chKeyInput');
         var val = (input.value || '').trim();
         if (!val) return;
         input.value = '';
         await addUserChannel(val);
-      });
+      };
+      chKeyForm.addEventListener('submit', submitHandler);
+      var chKeyInput = document.getElementById('chKeyInput');
+      if (chKeyInput) {
+        chKeyInput.addEventListener('focus', function () {
+          var st = document.getElementById('chAddStatus');
+          if (st) { st.style.display = 'none'; clearTimeout(statusTimer); statusTimer = null; }
+        });
+      }
     }
 
     // Auto-enable encrypted toggle if deep-linking to an encrypted channel
@@ -648,6 +743,29 @@
 
     // Event delegation for channel selection (touch-friendly)
     document.getElementById('chList').addEventListener('click', (e) => {
+      // M4: Remove channel button
+      const removeBtn = e.target.closest('[data-remove-channel]');
+      if (removeBtn) {
+        e.stopPropagation();
+        var channelHash = removeBtn.getAttribute('data-remove-channel');
+        if (!channelHash) return;
+        var chName = channelHash.startsWith('user:') ? channelHash.substring(5) : channelHash;
+        if (!confirm('Remove channel "' + chName + '"? This will clear saved keys and cached messages.')) return;
+        ChannelDecrypt.removeKey(chName);
+        // Remove from channels array
+        channels = channels.filter(function (c) { return c.hash !== channelHash; });
+        if (selectedHash === channelHash) {
+          selectedHash = null;
+          messages = [];
+          history.replaceState(null, '', '#/channels');
+          var msgEl2 = document.getElementById('chMessages');
+          if (msgEl2) msgEl2.innerHTML = '<div class="ch-empty">Choose a channel from the sidebar to view messages</div>';
+          var header2 = document.getElementById('chHeader');
+          if (header2) header2.querySelector('.ch-header-text').textContent = 'Select a channel';
+        }
+        renderChannelList();
+        return;
+      }
       // Color dot click — open picker, don't select channel
       const dot = e.target.closest('.ch-color-dot');
       if (dot && window.ChannelColorPicker) {
@@ -945,6 +1063,8 @@
       const dotStyle = chColor ? ` style="background:${chColor}"` : '';
       // Left border for assigned color
       const borderStyle = chColor ? ` style="border-left:3px solid ${chColor}"` : '';
+      // M4: Remove button for user-added channels
+      const removeBtn = ch.userAdded ? ' <button class="ch-remove-btn" data-remove-channel="' + escapeHtml(ch.hash) + '" title="Remove channel" aria-label="Remove ' + escapeHtml(name) + '">✕</button>' : '';
 
       return `<button class="ch-item${sel}${encClass}" data-hash="${ch.hash}"${borderStyle} type="button" role="option" aria-selected="${selectedHash === ch.hash ? 'true' : 'false'}" aria-label="${escapeHtml(name)}"${isEncrypted ? ' data-encrypted="true"' : ''}>
         <div class="ch-badge" style="background:${color}" aria-hidden="true">${isEncrypted ? '🔒' : escapeHtml(abbr)}</div>
@@ -952,7 +1072,7 @@
           <div class="ch-item-top">
             <span class="ch-item-name">${escapeHtml(name)}</span>
             <span class="ch-color-dot" data-channel="${escapeHtml(ch.hash)}"${dotStyle} title="Change channel color" aria-label="Change color for ${escapeHtml(name)}"></span>
-            <span class="ch-item-time" data-channel-hash="${ch.hash}">${time}</span>
+            <span class="ch-item-time" data-channel-hash="${ch.hash}">${time}</span>${removeBtn}
           </div>
           <div class="ch-item-preview">${escapeHtml(preview)}</div>
         </div>
@@ -976,10 +1096,20 @@
 
     const msgEl = document.getElementById('chMessages');
 
-    // Shared helper: fetch, decrypt, and render messages for a channel key
+    // Shared helper: fetch, decrypt, and render messages for a channel key (M5: cache-first)
     async function decryptAndRender(keyHex, channelHashByte, channelName) {
       msgEl.innerHTML = '<div class="ch-loading">Decrypting messages…</div>';
-      var result = await fetchAndDecryptChannel(keyHex, channelHashByte, channelName);
+      var result = await fetchAndDecryptChannel(keyHex, channelHashByte, channelName, {
+        onCacheHit: function (cachedMsgs) {
+          // M5: Render cached messages immediately while delta fetch runs
+          messages = cachedMsgs;
+          if (messages.length > 0) {
+            header.querySelector('.ch-header-text').textContent = name + ' — ' + messages.length + ' messages (cached)';
+            renderMessages();
+            scrollToBottom();
+          }
+        }
+      });
       if (isStaleMessageRequest(request)) return true;
       if (result.wrongKey) {
         msgEl.innerHTML = '<div class="ch-empty ch-wrong-key">🔒 Key does not match — no messages could be decrypted</div>';
@@ -1030,6 +1160,9 @@
           return;
         }
       }
+      // #781: No matching key found — show lock message instead of fetching gibberish
+      msgEl.innerHTML = '<div class="ch-empty">🔒 This channel is encrypted and no decryption key is configured</div>';
+      return;
     }
 
     msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';

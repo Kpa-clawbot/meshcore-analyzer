@@ -187,9 +187,7 @@ Provide cert and key paths to enable HTTPS.
 
 Restricts ingestion and API responses to nodes within the polygon plus a buffer margin. Remove the block to disable filtering. Nodes with no GPS fix always pass through.
 
-Can also be configured live via the **🗺️ GeoFilter** tab in the Customizer (requires `apiKey`).
-
-See [Geographic Filtering](geofilter.md) for the full guide.
+See [Geographic Filtering](geofilter.md) for the full guide including the visual polygon builder and the prune script for cleaning up historical data.
 
 ## Home page
 

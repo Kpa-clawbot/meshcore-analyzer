@@ -130,7 +130,7 @@ func TestHandleMessageRawPacket(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `","SNR":5.5,"RSSI":-100.0,"origin":"myobs"}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -147,7 +147,7 @@ func TestHandleMessageRawPacketAdvert(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `"}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	// Should create a node from the ADVERT
 	var count int
@@ -169,7 +169,7 @@ func TestHandleMessageInvalidJSON(t *testing.T) {
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: []byte(`not json`)}
 
 	// Should not panic
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -186,7 +186,7 @@ func TestHandleMessageStatusTopic(t *testing.T) {
 		payload: []byte(`{"origin":"MyObserver"}`),
 	}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var name, iata string
 	err := store.db.QueryRow("SELECT name, iata FROM observers WHERE id = 'obs1'").Scan(&name, &iata)
@@ -207,11 +207,11 @@ func TestHandleMessageSkipStatusTopics(t *testing.T) {
 
 	// meshcore/status should be skipped
 	msg1 := &mockMessage{topic: "meshcore/status", payload: []byte(`{"raw":"0A00"}`)}
-	handleMessage(store, "test", source, msg1, nil, nil)
+	handleMessage(store, "test", source, msg1, nil, &Config{})
 
 	// meshcore/events/connection should be skipped
 	msg2 := &mockMessage{topic: "meshcore/events/connection", payload: []byte(`{"raw":"0A00"}`)}
-	handleMessage(store, "test", source, msg2, nil, nil)
+	handleMessage(store, "test", source, msg2, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -230,7 +230,7 @@ func TestHandleMessageIATAFilter(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -243,7 +243,7 @@ func TestHandleMessageIATAFilter(t *testing.T) {
 		topic:   "meshcore/LAX/obs2/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg2, nil, nil)
+	handleMessage(store, "test", source, msg2, nil, &Config{})
 
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
 	if count != 1 {
@@ -261,7 +261,7 @@ func TestHandleMessageIATAFilterNoRegion(t *testing.T) {
 		topic:   "meshcore",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	// No region part → filter doesn't apply, message goes through
 	// Actually the code checks len(parts) > 1 for IATA filter
@@ -277,7 +277,7 @@ func TestHandleMessageNoRawHex(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"type":"companion","data":"something"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -295,7 +295,7 @@ func TestHandleMessageBadRawHex(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"ZZZZ"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -312,7 +312,7 @@ func TestHandleMessageWithSNRRSSIAsNumbers(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `","SNR":7.2,"RSSI":-95}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var snr, rssi *float64
 	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
@@ -331,7 +331,7 @@ func TestHandleMessageMinimalTopic(t *testing.T) {
 		topic:   "meshcore/SJC",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -352,7 +352,7 @@ func TestHandleMessageCorruptedAdvert(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	// Transmission should be inserted (even if advert is invalid)
 	var count int
@@ -378,7 +378,7 @@ func TestHandleMessageNoObserverID(t *testing.T) {
 		topic:   "packets",
 		payload: []byte(`{"raw":"` + rawHex + `","origin":"obs1"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -400,7 +400,7 @@ func TestHandleMessageSNRNotFloat(t *testing.T) {
 	// SNR as a string value — should not parse as float
 	payload := []byte(`{"raw":"` + rawHex + `","SNR":"bad","RSSI":"bad"}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
@@ -416,7 +416,7 @@ func TestHandleMessageOriginExtraction(t *testing.T) {
 	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
 	payload := []byte(`{"raw":"` + rawHex + `","origin":"MyOrigin"}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	// Verify origin was extracted to observer name
 	var name string
@@ -439,7 +439,7 @@ func TestHandleMessagePanicRecovery(t *testing.T) {
 	}
 
 	// Should not panic — the defer/recover should catch it
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 }
 
 func TestHandleMessageStatusOriginFallback(t *testing.T) {
@@ -451,7 +451,7 @@ func TestHandleMessageStatusOriginFallback(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/status",
 		payload: []byte(`{"type":"status"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var name string
 	err := store.db.QueryRow("SELECT name FROM observers WHERE id = 'obs1'").Scan(&name)
@@ -640,7 +640,7 @@ func TestHandleMessageWithLowercaseSNRRSSI(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `","snr":5.5,"rssi":-102}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var snr, rssi *float64
 	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
@@ -661,7 +661,7 @@ func TestHandleMessageSNRRSSIUppercaseWins(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `","SNR":7.2,"snr":1.0,"RSSI":-95,"rssi":-50}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var snr, rssi *float64
 	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)
@@ -681,7 +681,7 @@ func TestHandleMessageNoSNRRSSI(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `"}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var snr, rssi *float64
 	store.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr, &rssi)

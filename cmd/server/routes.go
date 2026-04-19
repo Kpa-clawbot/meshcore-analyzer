@@ -142,6 +142,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
 	r.Handle("/api/admin/prune", s.requireAPIKey(http.HandlerFunc(s.handleAdminPrune))).Methods("POST")
 	r.Handle("/api/debug/affinity", s.requireAPIKey(http.HandlerFunc(s.handleDebugAffinity))).Methods("GET")
+	r.Handle("/api/dropped-packets", s.requireAPIKey(http.HandlerFunc(s.handleDroppedPackets))).Methods("GET")
 
 	// Packet endpoints
 	r.HandleFunc("/api/packets/observations", s.handleBatchObservations).Methods("POST")
@@ -160,6 +161,9 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/nodes/{pubkey}/health", s.handleNodeHealth).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/paths", s.handleNodePaths).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/analytics", s.handleNodeAnalytics).Methods("GET")
+	r.HandleFunc("/api/nodes/clock-skew", s.handleFleetClockSkew).Methods("GET")
+	r.HandleFunc("/api/nodes/{pubkey}/clock-skew", s.handleNodeClockSkew).Methods("GET")
+	r.HandleFunc("/api/observers/clock-skew", s.handleObserverClockSkew).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/neighbors", s.handleNodeNeighbors).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}", s.handleNodeDetail).Methods("GET")
 	r.HandleFunc("/api/nodes", s.handleNodes).Methods("GET")
@@ -657,8 +661,10 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			Companions: counts["companions"],
 			Sensors:    counts["sensors"],
 		},
-		Backfilling:      backfilling,
-		BackfillProgress: backfillProgress,
+		Backfilling:           backfilling,
+		BackfillProgress:      backfillProgress,
+		SignatureDrops:        s.db.GetSignatureDropCount(),
+		HashMigrationComplete: s.store != nil && s.store.hashMigrationComplete.Load(),
 	}
 
 	s.statsMu.Lock()
@@ -1121,6 +1127,17 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		total = len(filtered)
 		nodes = filtered
 	}
+	// Filter blacklisted nodes
+	if len(s.cfg.NodeBlacklist) > 0 {
+		filtered := nodes[:0]
+		for _, node := range nodes {
+			if pk, ok := node["public_key"].(string); !ok || !s.cfg.IsBlacklisted(pk) {
+				filtered = append(filtered, node)
+			}
+		}
+		total = len(filtered)
+		nodes = filtered
+	}
 	writeJSON(w, NodeListResponse{Nodes: nodes, Total: total, Counts: counts})
 }
 
@@ -1135,11 +1152,25 @@ func (s *Server) handleNodeSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	// Filter blacklisted nodes from search results
+	if len(s.cfg.NodeBlacklist) > 0 {
+		filtered := make([]map[string]interface{}, 0, len(nodes))
+		for _, node := range nodes {
+			if pk, ok := node["public_key"].(string); !ok || !s.cfg.IsBlacklisted(pk) {
+				filtered = append(filtered, node)
+			}
+		}
+		nodes = filtered
+	}
 	writeJSON(w, NodeSearchResponse{Nodes: nodes})
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	node, err := s.db.GetNodeByPubkey(pubkey)
 	if err != nil || node == nil {
 		writeError(w, 404, "Not found")
@@ -1165,6 +1196,10 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodeHealth(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	if s.store != nil {
 		result, err := s.store.GetNodeHealth(pubkey)
 		if err != nil || result == nil {
@@ -1185,7 +1220,19 @@ func (s *Server) handleBulkHealth(w http.ResponseWriter, r *http.Request) {
 
 	if s.store != nil {
 		region := r.URL.Query().Get("region")
-		writeJSON(w, s.store.GetBulkHealth(limit, region))
+		results := s.store.GetBulkHealth(limit, region)
+		// Filter blacklisted nodes
+		if len(s.cfg.NodeBlacklist) > 0 {
+			filtered := make([]map[string]interface{}, 0, len(results))
+			for _, entry := range results {
+				if pk, ok := entry["public_key"].(string); !ok || !s.cfg.IsBlacklisted(pk) {
+					filtered = append(filtered, entry)
+				}
+			}
+			writeJSON(w, filtered)
+			return
+		}
+		writeJSON(w, results)
 		return
 	}
 
@@ -1204,6 +1251,10 @@ func (s *Server) handleNetworkStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	node, err := s.db.GetNodeByPubkey(pubkey)
 	if err != nil || node == nil {
 		writeError(w, 404, "Not found")
@@ -1367,6 +1418,10 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodeAnalytics(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	days := queryInt(r, "days", 7)
 	if days < 1 {
 		days = 1
@@ -1386,6 +1441,36 @@ func (s *Server) handleNodeAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeError(w, 404, "Not found")
+}
+
+func (s *Server) handleNodeClockSkew(w http.ResponseWriter, r *http.Request) {
+	pubkey := mux.Vars(r)["pubkey"]
+	if s.store == nil {
+		writeError(w, 404, "Not found")
+		return
+	}
+	result := s.store.GetNodeClockSkew(pubkey)
+	if result == nil {
+		writeError(w, 404, "No clock skew data for this node")
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) handleObserverClockSkew(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, []ObserverCalibration{})
+		return
+	}
+	writeJSON(w, s.store.GetObserverCalibrations())
+}
+
+func (s *Server) handleFleetClockSkew(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, []*NodeClockSkew{})
+		return
+	}
+	writeJSON(w, s.store.GetFleetClockSkew())
 }
 
 // --- Analytics Handlers ---
@@ -1413,7 +1498,11 @@ func (s *Server) handleAnalyticsRF(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAnalyticsTopology(w http.ResponseWriter, r *http.Request) {
 	region := r.URL.Query().Get("region")
 	if s.store != nil {
-		writeJSON(w, s.store.GetAnalyticsTopology(region))
+		data := s.store.GetAnalyticsTopology(region)
+		if s.cfg != nil && len(s.cfg.NodeBlacklist) > 0 {
+			data = s.filterBlacklistedFromTopology(data)
+		}
+		writeJSON(w, data)
 		return
 	}
 	writeJSON(w, TopologyResponse{
@@ -1501,7 +1590,11 @@ func (s *Server) handleAnalyticsSubpaths(w http.ResponseWriter, r *http.Request)
 		}
 		maxLen := queryInt(r, "maxLen", 8)
 		limit := queryInt(r, "limit", 100)
-		writeJSON(w, s.store.GetAnalyticsSubpaths(region, minLen, maxLen, limit))
+		data := s.store.GetAnalyticsSubpaths(region, minLen, maxLen, limit)
+		if s.cfg != nil && len(s.cfg.NodeBlacklist) > 0 {
+			data = s.filterBlacklistedFromSubpaths(data)
+		}
+		writeJSON(w, data)
 		return
 	}
 	writeJSON(w, SubpathsResponse{
@@ -1553,6 +1646,11 @@ func (s *Server) handleAnalyticsSubpathsBulk(w http.ResponseWriter, r *http.Requ
 	}
 
 	results := s.store.GetAnalyticsSubpathsBulk(region, groups)
+	if s.cfg != nil && len(s.cfg.NodeBlacklist) > 0 {
+		for i, r := range results {
+			results[i] = s.filterBlacklistedFromSubpaths(r)
+		}
+	}
 	writeJSON(w, map[string]interface{}{"results": results})
 }
 
@@ -1571,6 +1669,15 @@ func (s *Server) handleAnalyticsSubpathDetail(w http.ResponseWriter, r *http.Req
 	if len(rawHops) < 2 {
 		writeJSON(w, ErrorResp{Error: "Need at least 2 hops"})
 		return
+	}
+	// Reject if any hop is a blacklisted node.
+	if s.cfg != nil && len(s.cfg.NodeBlacklist) > 0 {
+		for _, hop := range rawHops {
+			if s.cfg.IsBlacklisted(hop) {
+				writeError(w, 404, "Not found")
+				return
+			}
+		}
 	}
 	if s.store != nil {
 		writeJSON(w, s.store.GetSubpathDetail(rawHops))
@@ -1637,6 +1744,10 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 		if pm != nil {
 			if matched, ok := pm.m[hopLower]; ok {
 				for _, ni := range matched {
+					// Skip blacklisted nodes from resolution results.
+					if s.cfg != nil && s.cfg.IsBlacklisted(ni.PublicKey) {
+						continue
+					}
 					c := HopCandidate{Pubkey: ni.PublicKey}
 					if ni.Name != "" {
 						c.Name = ni.Name
@@ -1705,7 +1816,8 @@ func (s *Server) handleResolveHops(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Use the resolved node as the default (best-effort pick).
-			if best != nil {
+			// Skip if the best pick is a blacklisted node.
+			if best != nil && !(s.cfg != nil && s.cfg.IsBlacklisted(best.PublicKey)) {
 				hr.Name = best.Name
 				hr.Pubkey = best.PublicKey
 			}
@@ -2425,16 +2537,167 @@ func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "days parameter required (or set retention.packetDays in config)")
 		return
 	}
+
+	results := map[string]interface{}{}
+
+	// Prune old packets
 	n, err := s.db.PruneOldPackets(days)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
 	log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
-	writeJSON(w, map[string]interface{}{"deleted": n, "days": days})
+	results["packets_deleted"] = n
+	results["deleted"] = n // legacy alias
+
+	// Also mark stale observers as inactive if observerDays is configured
+	observerDays := s.cfg.ObserverDaysOrDefault()
+	if observerDays > 0 {
+		obsN, obsErr := s.db.RemoveStaleObservers(observerDays)
+		if obsErr != nil {
+			log.Printf("[prune] observer prune error: %v", obsErr)
+		} else {
+			results["observers_inactive"] = obsN
+		}
+	}
+
+	results["days"] = days
+	writeJSON(w, results)
 }
 
 // constantTimeEqual compares two strings in constant time to prevent timing attacks.
 func constantTimeEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// filterBlacklistedFromTopology removes blacklisted node references from the
+// topology analytics response (TopRepeaters, TopPairs, BestPathList, MultiObsNodes, PerObserverReach).
+func (s *Server) filterBlacklistedFromTopology(data map[string]interface{}) map[string]interface{} {
+	// Filter TopRepeaters
+	if repeaters, ok := data["topRepeaters"]; ok {
+		if arr, ok := repeaters.([]TopRepeater); ok {
+			var filtered []TopRepeater
+			for _, r := range arr {
+				if pk, ok := r.Pubkey.(string); ok && s.cfg.IsBlacklisted(pk) {
+					continue
+				}
+				filtered = append(filtered, r)
+			}
+			data["topRepeaters"] = filtered
+		}
+	}
+
+	// Filter TopPairs
+	if pairs, ok := data["topPairs"]; ok {
+		if arr, ok := pairs.([]TopPair); ok {
+			var filtered []TopPair
+			for _, p := range arr {
+				if pkA, ok := p.PubkeyA.(string); ok && s.cfg.IsBlacklisted(pkA) {
+					continue
+				}
+				if pkB, ok := p.PubkeyB.(string); ok && s.cfg.IsBlacklisted(pkB) {
+					continue
+				}
+				filtered = append(filtered, p)
+			}
+			data["topPairs"] = filtered
+		}
+	}
+
+	// Filter BestPathList
+	if paths, ok := data["bestPathList"]; ok {
+		if arr, ok := paths.([]BestPathEntry); ok {
+			var filtered []BestPathEntry
+			for _, p := range arr {
+				if pk, ok := p.Pubkey.(string); ok && s.cfg.IsBlacklisted(pk) {
+					continue
+				}
+				filtered = append(filtered, p)
+			}
+			data["bestPathList"] = filtered
+		}
+	}
+
+	// Filter MultiObsNodes
+	if nodes, ok := data["multiObsNodes"]; ok {
+		if arr, ok := nodes.([]MultiObsNode); ok {
+			var filtered []MultiObsNode
+			for _, n := range arr {
+				if pk, ok := n.Pubkey.(string); ok && s.cfg.IsBlacklisted(pk) {
+					continue
+				}
+				filtered = append(filtered, n)
+			}
+			data["multiObsNodes"] = filtered
+		}
+	}
+
+	// Filter PerObserverReach
+	if reach, ok := data["perObserverReach"]; ok {
+		if m, ok := reach.(map[string]*ObserverReach); ok {
+			for k, v := range m {
+				for ri := range v.Rings {
+					var filteredNodes []ReachNode
+					for _, rn := range v.Rings[ri].Nodes {
+						if pk, ok := rn.Pubkey.(string); ok && s.cfg.IsBlacklisted(pk) {
+							continue
+						}
+						filteredNodes = append(filteredNodes, rn)
+					}
+					v.Rings[ri].Nodes = filteredNodes
+				}
+				m[k] = v
+			}
+		}
+	}
+
+	return data
+}
+
+// filterBlacklistedFromSubpaths removes blacklisted node references from
+// the subpaths analytics response.
+func (s *Server) filterBlacklistedFromSubpaths(data map[string]interface{}) map[string]interface{} {
+	if subpaths, ok := data["subpaths"]; ok {
+		if arr, ok := subpaths.([]interface{}); ok {
+			var filtered []interface{}
+			for _, item := range arr {
+				if m, ok := item.(map[string]interface{}); ok {
+					if hops, ok := m["hops"].([]interface{}); ok {
+						skip := false
+						for _, h := range hops {
+							if hp, ok := h.(string); ok && s.cfg.IsBlacklisted(hp) {
+								skip = true
+								break
+							}
+						}
+						if skip {
+							continue
+						}
+					}
+				}
+				filtered = append(filtered, item)
+			}
+			data["subpaths"] = filtered
+		}
+	}
+	return data
+}
+
+// handleDroppedPackets returns recently dropped packets for investigation.
+func (s *Server) handleDroppedPackets(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	observerID := r.URL.Query().Get("observer")
+	nodePubkey := r.URL.Query().Get("pubkey")
+
+	results, err := s.db.GetDroppedPackets(limit, observerID, nodePubkey)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, results)
 }

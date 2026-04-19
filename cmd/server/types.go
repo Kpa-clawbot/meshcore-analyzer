@@ -68,8 +68,10 @@ type StatsResponse struct {
 	Commit             string     `json:"commit"`
 	BuildTime          string     `json:"buildTime"`
 	Counts             RoleCounts `json:"counts"`
-	Backfilling        bool       `json:"backfilling"`
-	BackfillProgress   float64    `json:"backfillProgress"`
+	Backfilling            bool       `json:"backfilling"`
+	BackfillProgress       float64    `json:"backfillProgress"`
+	SignatureDrops         int64      `json:"signatureDrops,omitempty"`
+	HashMigrationComplete  bool       `json:"hashMigrationComplete"`
 }
 
 // ─── Health ────────────────────────────────────────────────────────────────────
@@ -176,6 +178,7 @@ type PerfPacketStoreStats struct {
 	MaxPackets        int                `json:"maxPackets"`
 	EstimatedMB       float64            `json:"estimatedMB"`
 	TrackedMB         float64            `json:"trackedMB"`
+	AvgBytesPerPacket int64              `json:"avgBytesPerPacket"`
 	MaxMB             int                `json:"maxMB"`
 	Indexes           PacketStoreIndexes `json:"indexes"`
 }
@@ -468,6 +471,7 @@ type NodeAnalyticsResponse struct {
 	PeerInteractions    []PeerInteraction       `json:"peerInteractions"`
 	UptimeHeatmap       []HeatmapCell           `json:"uptimeHeatmap"`
 	ComputedStats       ComputedNodeStats       `json:"computedStats"`
+	ClockSkew           *NodeClockSkew          `json:"clockSkew,omitempty"`
 }
 
 // ─── Analytics — RF ────────────────────────────────────────────────────────────

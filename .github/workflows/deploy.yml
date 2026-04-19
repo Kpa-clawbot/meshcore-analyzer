@@ -387,7 +387,10 @@ jobs:
 
       - name: Deploy staging
         run: |
-          # Stop old container and release memory
+          # Force-remove the staging container regardless of how it was created
+          # (compose-managed OR manually created via docker run)
+          docker stop corescope-staging-go 2>/dev/null || true
+          docker rm -f corescope-staging-go 2>/dev/null || true
           docker compose -f "$STAGING_COMPOSE_FILE" -p corescope-staging down --timeout 30 2>/dev/null || true
 
           # Wait for container to be fully gone and OS to reclaim memory (3GB limit)

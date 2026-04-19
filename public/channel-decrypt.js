@@ -212,6 +212,17 @@ window.ChannelDecrypt = (function () {
     var keys = getKeys();
     delete keys[channelName];
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(keys)); } catch (e) { /* quota */ }
+    // Also clear cached messages for this channel
+    clearChannelCache(channelName);
+  }
+
+  /** Remove cached messages for a specific channel (by name or hash). */
+  function clearChannelCache(channelKey) {
+    try {
+      var cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+      delete cache[channelKey];
+      localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+    } catch (e) { /* quota */ }
   }
 
   // ---- Message cache (localStorage) ----
@@ -232,11 +243,23 @@ window.ChannelDecrypt = (function () {
     } catch (e) { return null; }
   }
 
-  // Cache with lastTimestamp (used by channels.js via getCache/setCache)
-  function setCache(key, messages, lastTimestamp) {
+  // Cache with lastTimestamp and count (used by channels.js via getCache/setCache)
+  var MAX_CACHED_MESSAGES = 1000;
+
+  function setCache(key, messages, lastTimestamp, totalCount) {
     try {
+      // Enforce cache size limit: only keep most recent MAX_CACHED_MESSAGES
+      var toStore = messages;
+      if (messages.length > MAX_CACHED_MESSAGES) {
+        toStore = messages.slice(messages.length - MAX_CACHED_MESSAGES);
+      }
       var cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
-      cache[key] = { messages: messages, lastTimestamp: lastTimestamp, ts: Date.now() };
+      cache[key] = {
+        messages: toStore,
+        lastTimestamp: lastTimestamp,
+        count: totalCount || toStore.length,
+        ts: Date.now()
+      };
       localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
     } catch (e) { /* quota */ }
   }
@@ -263,6 +286,7 @@ window.ChannelDecrypt = (function () {
     getKeys: getKeys,
     getStoredKeys: getStoredKeys,
     removeKey: removeKey,
+    clearChannelCache: clearChannelCache,
     cacheMessages: cacheMessages,
     getCachedMessages: getCachedMessages,
     setCache: setCache,

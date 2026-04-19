@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -19,6 +20,12 @@ type DB struct {
 	path             string // filesystem path to the database file
 	isV3             bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
 	hasResolvedPath  bool   // observations table has resolved_path column
+
+	// Channel list cache (60s TTL) — avoids repeated GROUP BY scans (#762)
+	channelsCacheMu  sync.Mutex
+	channelsCacheKey string
+	channelsCacheRes []map[string]interface{}
+	channelsCacheExp time.Time
 }
 
 // OpenDB opens a read-only SQLite connection with WAL mode.
@@ -1158,6 +1165,16 @@ func (db *DB) GetChannels(region ...string) ([]map[string]interface{}, error) {
 	if len(region) > 0 {
 		regionParam = region[0]
 	}
+
+	// Check cache (60s TTL)
+	db.channelsCacheMu.Lock()
+	if db.channelsCacheRes != nil && db.channelsCacheKey == regionParam && time.Now().Before(db.channelsCacheExp) {
+		res := db.channelsCacheRes
+		db.channelsCacheMu.Unlock()
+		return res, nil
+	}
+	db.channelsCacheMu.Unlock()
+
 	regionCodes := normalizeRegionCodes(regionParam)
 
 	var querySQL string
@@ -1171,27 +1188,54 @@ func (db *DB) GetChannels(region ...string) ([]map[string]interface{}, error) {
 		}
 		regionPlaceholder := strings.Join(placeholders, ",")
 		if db.isV3 {
-			querySQL = fmt.Sprintf(`SELECT DISTINCT t.decoded_json, t.first_seen
+			querySQL = fmt.Sprintf(`SELECT t.channel_hash,
+					COUNT(*) AS msg_count,
+					MAX(t.first_seen) AS last_activity,
+					(SELECT t2.decoded_json FROM transmissions t2
+					 WHERE t2.channel_hash = t.channel_hash AND t2.payload_type = 5
+					 ORDER BY t2.first_seen DESC LIMIT 1) AS sample_json
 				FROM transmissions t
 				JOIN observations o ON o.transmission_id = t.id
 				LEFT JOIN observers obs ON obs.rowid = o.observer_idx
 				WHERE t.payload_type = 5
+				AND t.channel_hash IS NOT NULL
+				AND t.channel_hash NOT LIKE 'enc_%%'
 				AND obs.rowid IS NOT NULL AND UPPER(TRIM(obs.iata)) IN (%s)
-				ORDER BY t.first_seen ASC`, regionPlaceholder)
+				GROUP BY t.channel_hash
+				ORDER BY last_activity DESC`, regionPlaceholder)
 		} else {
-			querySQL = fmt.Sprintf(`SELECT DISTINCT t.decoded_json, t.first_seen
+			querySQL = fmt.Sprintf(`SELECT t.channel_hash,
+					COUNT(*) AS msg_count,
+					MAX(t.first_seen) AS last_activity,
+					(SELECT t2.decoded_json FROM transmissions t2
+					 WHERE t2.channel_hash = t.channel_hash AND t2.payload_type = 5
+					 ORDER BY t2.first_seen DESC LIMIT 1) AS sample_json
 				FROM transmissions t
 				JOIN observations o ON o.transmission_id = t.id
 				WHERE t.payload_type = 5
+				AND t.channel_hash IS NOT NULL
+				AND t.channel_hash NOT LIKE 'enc_%%'
 				AND EXISTS (
 					SELECT 1 FROM observers obs
 					WHERE obs.id = o.observer_id
 					AND UPPER(TRIM(obs.iata)) IN (%s)
 				)
-				ORDER BY t.first_seen ASC`, regionPlaceholder)
+				GROUP BY t.channel_hash
+				ORDER BY last_activity DESC`, regionPlaceholder)
 		}
 	} else {
-		querySQL = `SELECT decoded_json, first_seen FROM transmissions WHERE payload_type = 5 ORDER BY first_seen ASC`
+		querySQL = `SELECT channel_hash,
+				COUNT(*) AS msg_count,
+				MAX(first_seen) AS last_activity,
+				(SELECT t2.decoded_json FROM transmissions t2
+				 WHERE t2.channel_hash = t.channel_hash AND t2.payload_type = 5
+				 ORDER BY t2.first_seen DESC LIMIT 1) AS sample_json
+			FROM transmissions t
+			WHERE payload_type = 5
+			AND channel_hash IS NOT NULL
+			AND channel_hash NOT LIKE 'enc_%%'
+			GROUP BY channel_hash
+			ORDER BY last_activity DESC`
 	}
 
 	rows, err := db.conn.Query(querySQL, args...)
@@ -1200,68 +1244,55 @@ func (db *DB) GetChannels(region ...string) ([]map[string]interface{}, error) {
 	}
 	defer rows.Close()
 
-	channelMap := map[string]map[string]interface{}{}
+	channels := make([]map[string]interface{}, 0)
 	for rows.Next() {
-		var dj, fs sql.NullString
-		rows.Scan(&dj, &fs)
-		if !dj.Valid {
+		var chHash, lastActivity, sampleJSON sql.NullString
+		var msgCount int
+		if err := rows.Scan(&chHash, &msgCount, &lastActivity, &sampleJSON); err != nil {
 			continue
 		}
-		var decoded map[string]interface{}
-		if json.Unmarshal([]byte(dj.String), &decoded) != nil {
-			continue
-		}
-		dtype, _ := decoded["type"].(string)
-		if dtype != "CHAN" {
-			continue
-		}
-		// Filter out garbage-decrypted channel names/messages (pre-#197 data still in DB)
-		chanStr, _ := decoded["channel"].(string)
-		textStr, _ := decoded["text"].(string)
-		if hasGarbageChars(chanStr) || hasGarbageChars(textStr) {
-			continue
-		}
-		channelName, _ := decoded["channel"].(string)
+		channelName := nullStr(chHash)
 		if channelName == "" {
-			channelName = "unknown"
+			continue
 		}
-		key := channelName
 
-		ch, exists := channelMap[key]
-		if !exists {
-			ch = map[string]interface{}{
-				"hash": key, "name": channelName,
-				"lastMessage": nil, "lastSender": nil,
-				"messageCount": 0, "lastActivity": nullStr(fs),
-			}
-			channelMap[key] = ch
-		}
-		ch["messageCount"] = ch["messageCount"].(int) + 1
-		if fs.Valid {
-			ch["lastActivity"] = fs.String
-		}
-		if text, ok := decoded["text"].(string); ok && text != "" {
-			idx := strings.Index(text, ": ")
-			if idx > 0 {
-				ch["lastMessage"] = text[idx+2:]
-			} else {
-				ch["lastMessage"] = text
-			}
-			if sender, ok := decoded["sender"].(string); ok {
-				ch["lastSender"] = sender
+		var lastMessage, lastSender interface{}
+		if sampleJSON.Valid {
+			var decoded map[string]interface{}
+			if json.Unmarshal([]byte(sampleJSON.String), &decoded) == nil {
+				if text, ok := decoded["text"].(string); ok && text != "" {
+					idx := strings.Index(text, ": ")
+					if idx > 0 {
+						lastMessage = text[idx+2:]
+					} else {
+						lastMessage = text
+					}
+					if sender, ok := decoded["sender"].(string); ok {
+						lastSender = sender
+					}
+				}
 			}
 		}
+
+		channels = append(channels, map[string]interface{}{
+			"hash": channelName, "name": channelName,
+			"lastMessage": lastMessage, "lastSender": lastSender,
+			"messageCount": msgCount, "lastActivity": nullStr(lastActivity),
+		})
 	}
 
-	channels := make([]map[string]interface{}, 0, len(channelMap))
-	for _, ch := range channelMap {
-		channels = append(channels, ch)
-	}
+	// Store in cache (60s TTL)
+	db.channelsCacheMu.Lock()
+	db.channelsCacheRes = channels
+	db.channelsCacheKey = regionParam
+	db.channelsCacheExp = time.Now().Add(60 * time.Second)
+	db.channelsCacheMu.Unlock()
+
 	return channels, nil
 }
 
 // GetEncryptedChannels returns channels where all messages are undecryptable (no key).
-// These have decoded_json with type "GRP_TXT" and decryptionStatus "no_key".
+// Uses channel_hash column (prefixed with 'enc_') for fast grouped queries.
 func (db *DB) GetEncryptedChannels(region ...string) ([]map[string]interface{}, error) {
 	regionParam := ""
 	if len(region) > 0 {
@@ -1280,27 +1311,42 @@ func (db *DB) GetEncryptedChannels(region ...string) ([]map[string]interface{}, 
 		}
 		regionPlaceholder := strings.Join(placeholders, ",")
 		if db.isV3 {
-			querySQL = fmt.Sprintf(`SELECT DISTINCT t.decoded_json, t.first_seen
+			querySQL = fmt.Sprintf(`SELECT t.channel_hash,
+					COUNT(*) AS msg_count,
+					MAX(t.first_seen) AS last_activity
 				FROM transmissions t
 				JOIN observations o ON o.transmission_id = t.id
 				LEFT JOIN observers obs ON obs.rowid = o.observer_idx
 				WHERE t.payload_type = 5
+				AND t.channel_hash LIKE 'enc_%%'
 				AND obs.rowid IS NOT NULL AND UPPER(TRIM(obs.iata)) IN (%s)
-				ORDER BY t.first_seen ASC`, regionPlaceholder)
+				GROUP BY t.channel_hash
+				ORDER BY last_activity DESC`, regionPlaceholder)
 		} else {
-			querySQL = fmt.Sprintf(`SELECT DISTINCT t.decoded_json, t.first_seen
+			querySQL = fmt.Sprintf(`SELECT t.channel_hash,
+					COUNT(*) AS msg_count,
+					MAX(t.first_seen) AS last_activity
 				FROM transmissions t
 				JOIN observations o ON o.transmission_id = t.id
 				WHERE t.payload_type = 5
+				AND t.channel_hash LIKE 'enc_%%'
 				AND EXISTS (
 					SELECT 1 FROM observers obs
 					WHERE obs.id = o.observer_id
 					AND UPPER(TRIM(obs.iata)) IN (%s)
 				)
-				ORDER BY t.first_seen ASC`, regionPlaceholder)
+				GROUP BY t.channel_hash
+				ORDER BY last_activity DESC`, regionPlaceholder)
 		}
 	} else {
-		querySQL = `SELECT decoded_json, first_seen FROM transmissions WHERE payload_type = 5 ORDER BY first_seen ASC`
+		querySQL = `SELECT channel_hash,
+				COUNT(*) AS msg_count,
+				MAX(first_seen) AS last_activity
+			FROM transmissions
+			WHERE payload_type = 5
+			AND channel_hash LIKE 'enc_%%'
+			GROUP BY channel_hash
+			ORDER BY last_activity DESC`
 	}
 
 	rows, err := db.conn.Query(querySQL, args...)
@@ -1309,64 +1355,22 @@ func (db *DB) GetEncryptedChannels(region ...string) ([]map[string]interface{}, 
 	}
 	defer rows.Close()
 
-	type encChanInfo struct {
-		hash         string
-		messageCount int
-		lastActivity string
-	}
-	channelMap := map[string]*encChanInfo{}
-
+	channels := make([]map[string]interface{}, 0)
 	for rows.Next() {
-		var dj, fs sql.NullString
-		if err := rows.Scan(&dj, &fs); err != nil { continue }
-		if !dj.Valid {
+		var chHash, lastActivity sql.NullString
+		var msgCount int
+		if err := rows.Scan(&chHash, &msgCount, &lastActivity); err != nil {
 			continue
 		}
-		var decoded map[string]interface{}
-		if json.Unmarshal([]byte(dj.String), &decoded) != nil {
-			continue
-		}
-		dtype, _ := decoded["type"].(string)
-		// Only include undecryptable GRP_TXT packets (not CHAN)
-		if dtype != "GRP_TXT" {
-			continue
-		}
-		ds, _ := decoded["decryptionStatus"].(string)
-		if ds != "no_key" {
-			continue
-		}
-		// Group by channelHashHex
-		chHash, _ := decoded["channelHashHex"].(string)
-		if chHash == "" {
-			if chNum, ok := decoded["channelHash"].(float64); ok {
-				chHash = fmt.Sprintf("%02X", int(chNum))
-			}
-		}
-		if chHash == "" {
-			chHash = "?"
-		}
-		key := chHash
-
-		ch, exists := channelMap[key]
-		if !exists {
-			ch = &encChanInfo{hash: key, lastActivity: nullStrVal(fs)}
-			channelMap[key] = ch
-		}
-		ch.messageCount++
-		if fs.Valid && fs.String > ch.lastActivity {
-			ch.lastActivity = fs.String
-		}
-	}
-
-	channels := make([]map[string]interface{}, 0, len(channelMap))
-	for _, ch := range channelMap {
+		fullHash := nullStrVal(chHash) // e.g. "enc_3A"
+		hexPart := strings.TrimPrefix(fullHash, "enc_")
 		channels = append(channels, map[string]interface{}{
-			"hash":         "enc_" + ch.hash,
-			"name":         "Encrypted (0x" + ch.hash + ")",
+			"hash":         fullHash,
+			"name":         "Encrypted (0x" + hexPart + ")",
 			"lastMessage":  nil,
 			"lastSender":   nil,
-			"messageCount": ch.messageCount,
-			"lastActivity": ch.lastActivity,
+			"messageCount": msgCount,
+			"lastActivity": nullStr(lastActivity),
 			"encrypted":    true,
 		})
 	}
@@ -1397,15 +1401,16 @@ func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region .
 		regionPlaceholders = strings.Join(placeholders, ",")
 	}
 
+	// Fetch messages with channel_hash filter (pagination applied in Go after dedup)
 	var querySQL string
-	args := make([]interface{}, 0, len(regionArgs))
+	args := []interface{}{channelHash}
 	if db.isV3 {
 		querySQL = `SELECT o.id, t.hash, t.decoded_json, t.first_seen,
 				obs.id, obs.name, o.snr, o.path_json
 			FROM observations o
 			JOIN transmissions t ON t.id = o.transmission_id
 			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
-			WHERE t.payload_type = 5`
+			WHERE t.channel_hash = ? AND t.payload_type = 5`
 		if len(regionCodes) > 0 {
 			querySQL += fmt.Sprintf(" AND obs.rowid IS NOT NULL AND UPPER(TRIM(obs.iata)) IN (%s)", regionPlaceholders)
 			args = append(args, regionArgs...)
@@ -1417,14 +1422,11 @@ func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region .
 				o.observer_id, o.observer_name, o.snr, o.path_json
 			FROM observations o
 			JOIN transmissions t ON t.id = o.transmission_id
-			WHERE t.payload_type = 5`
+			WHERE t.channel_hash = ? AND t.payload_type = 5`
 		if len(regionCodes) > 0 {
 			querySQL += fmt.Sprintf(` AND EXISTS (
-				SELECT 1
-				FROM observers obs
-				WHERE obs.id = o.observer_id
-				AND UPPER(TRIM(obs.iata)) IN (%s)
-			)`, regionPlaceholders)
+				SELECT 1 FROM observers obs WHERE obs.id = o.observer_id
+				AND UPPER(TRIM(obs.iata)) IN (%s))`, regionPlaceholders)
 			args = append(args, regionArgs...)
 		}
 		querySQL += `
@@ -1454,17 +1456,6 @@ func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region .
 		}
 		var decoded map[string]interface{}
 		if json.Unmarshal([]byte(dj.String), &decoded) != nil {
-			continue
-		}
-		dtype, _ := decoded["type"].(string)
-		if dtype != "CHAN" {
-			continue
-		}
-		ch, _ := decoded["channel"].(string)
-		if ch == "" {
-			ch = "unknown"
-		}
-		if ch != channelHash {
 			continue
 		}
 
@@ -1526,18 +1517,18 @@ func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region .
 		}
 	}
 
-	total := len(msgOrder)
-	// Return latest messages (tail)
-	start := total - limit - offset
+	// Return latest messages (tail) with pagination
+	msgTotal := len(msgOrder)
+	start := msgTotal - limit - offset
 	if start < 0 {
 		start = 0
 	}
-	end := total - offset
+	end := msgTotal - offset
 	if end < 0 {
 		end = 0
 	}
-	if end > total {
-		end = total
+	if end > msgTotal {
+		end = msgTotal
 	}
 
 	messages := make([]map[string]interface{}, 0)
@@ -1548,7 +1539,7 @@ func (db *DB) GetChannelMessages(channelHash string, limit, offset int, region .
 		messages = append(messages, m.Data)
 	}
 
-	return messages, total, nil
+	return messages, msgTotal, nil
 }
 
 
@@ -2222,6 +2213,35 @@ func (db *DB) PruneOldMetrics(retentionDays int) (int64, error) {
 	return n, nil
 }
 
+// RemoveStaleObservers marks observers that have not actively sent data in observerDays
+// as inactive (soft-delete). This preserves JOIN integrity for observations.observer_idx
+// and observer_metrics.observer_id — historical data still references the correct observer.
+// An observer must actively send data to stay listed — being seen by another node does not count.
+// observerDays <= -1 means never remove (keep forever).
+func (db *DB) RemoveStaleObservers(observerDays int) (int64, error) {
+	if observerDays <= -1 {
+		return 0, nil // keep forever
+	}
+	rw, err := openRW(db.path)
+	if err != nil {
+		return 0, err
+	}
+	defer rw.Close()
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -observerDays).Format(time.RFC3339)
+	res, err := rw.Exec(`UPDATE observers SET inactive = 1 WHERE last_seen < ? AND (inactive IS NULL OR inactive = 0)`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		// Clean up orphaned metrics for now-inactive observers
+		rw.Exec(`DELETE FROM observer_metrics WHERE observer_id IN (SELECT id FROM observers WHERE inactive = 1)`)
+		log.Printf("[observers] Marked %d observer(s) as inactive (not seen in %d days)", n, observerDays)
+	}
+	return n, nil
+}
+
 // TouchNodeLastSeen updates last_seen for a node identified by full public key.
 // Only updates if the new timestamp is newer than the existing value (or NULL).
 // Returns nil even if no rows are affected (node doesn't exist).
@@ -2231,4 +2251,72 @@ func (db *DB) TouchNodeLastSeen(pubkey string, timestamp string) error {
 		timestamp, pubkey, timestamp,
 	)
 	return err
+}
+
+// GetDroppedPackets returns recently dropped packets, newest first.
+func (db *DB) GetDroppedPackets(limit int, observerID, nodePubkey string) ([]map[string]interface{}, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, hash, raw_hex, reason, observer_id, observer_name, node_pubkey, node_name, dropped_at FROM dropped_packets`
+	var conditions []string
+	var args []interface{}
+	if observerID != "" {
+		conditions = append(conditions, "observer_id = ?")
+		args = append(args, observerID)
+	}
+	if nodePubkey != "" {
+		conditions = append(conditions, "node_pubkey = ?")
+		args = append(args, nodePubkey)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY dropped_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var hash, rawHex, reason, obsID, obsName, pubkey, name, droppedAt sql.NullString
+		if err := rows.Scan(&id, &hash, &rawHex, &reason, &obsID, &obsName, &pubkey, &name, &droppedAt); err != nil {
+			continue
+		}
+		row := map[string]interface{}{
+			"id":            id,
+			"hash":          nullStr(hash),
+			"reason":        nullStr(reason),
+			"observer_id":   nullStr(obsID),
+			"observer_name": nullStr(obsName),
+			"node_pubkey":   nullStr(pubkey),
+			"node_name":     nullStr(name),
+			"dropped_at":    nullStr(droppedAt),
+		}
+		// Only include raw_hex if explicitly requested (it's large)
+		if rawHex.Valid {
+			row["raw_hex"] = rawHex.String
+		}
+		results = append(results, row)
+	}
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	return results, nil
+}
+
+// GetSignatureDropCount returns the total number of dropped packets.
+func (db *DB) GetSignatureDropCount() int64 {
+	var count int64
+	// Table may not exist yet if ingestor hasn't run the migration
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM dropped_packets").Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
 }

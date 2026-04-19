@@ -41,7 +41,7 @@ func setupTestDBv2(t *testing.T) *DB {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, raw_hex TEXT NOT NULL,
 			hash TEXT NOT NULL UNIQUE, first_seen TEXT NOT NULL,
 			route_type INTEGER, payload_type INTEGER, payload_version INTEGER,
-			decoded_json TEXT, created_at TEXT DEFAULT (datetime('now'))
+			decoded_json TEXT, channel_hash TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now'))
 		);
 		CREATE TABLE observations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3214,6 +3214,189 @@ func TestGetNodeHashSizeInfoEdgeCases(t *testing.T) {
 	}
 	if _, ok := info["1122334455667788"]; ok {
 		t.Error("bad hex node should not be in results")
+	}
+}
+
+// TestHashSizeTransportRoutePathByteOffset verifies that transport routes (0, 3)
+// read the path byte from offset 5 (after 4 transport code bytes), not offset 1.
+// Regression test for #744 / #722.
+func TestHashSizeTransportRoutePathByteOffset(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
+	recentEpoch := now.Add(-1 * time.Hour).Unix()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count)
+		VALUES ('obs1', 'Obs', 'SJC', ?, '2026-01-01T00:00:00Z', 10)`, recent)
+
+	// Route type 0 (TRANSPORT_FLOOD): header=0x04 (payload_type=1, route_type=0)
+	// 4 transport bytes + path byte at offset 5.
+	// Path byte 0x80 → hash_size bits = 10 → size 3
+	// If bug is present, code reads byte 1 (0xAA) → hash_size bits = 10 → size 3 (coincidence)
+	// Use path byte 0x40 (hash_size=2) and transport byte 0x01 at offset 1 (hash_size=1 if misread)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('100102030440aabb', 'tf_offset', ?, 0, 4, '{"pubKey":"aaaa000000000001","name":"TF-Node","type":"ADVERT"}')`, recent)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, 1, 10.0, -90, '[]', ?)`, recentEpoch)
+
+	// Route type 3 (TRANSPORT_DIRECT): header=0x13 (payload_type=4, route_type=3)
+	// 4 transport bytes + path byte at offset 5.
+	// Path byte 0xC1 → hash_size bits = 11 → size 4, hop_count = 1 (not zero-hop)
+	// Byte 1 = 0x05 → hash_size bits = 00 → size 1 if misread
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('1305060708C1bbcc', 'td_offset', ?, 3, 4, '{"pubKey":"aaaa000000000002","name":"TD-Node","type":"ADVERT"}')`, recent)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (2, 1, 10.0, -90, '[]', ?)`, recentEpoch)
+
+	// Route type 1 (FLOOD): header=0x11 (payload_type=4, route_type=1)
+	// Path byte at offset 1. Path byte 0x80 → hash_size bits = 10 → size 3
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('1180aabbccdd', 'flood_offset', ?, 1, 4, '{"pubKey":"aaaa000000000003","name":"Flood-Node","type":"ADVERT"}')`, recent)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (3, 1, 10.0, -90, '[]', ?)`, recentEpoch)
+
+	store := NewPacketStore(db, nil)
+	store.Load()
+	info := store.GetNodeHashSizeInfo()
+
+	// Transport flood node: path byte 0x40 → hash_size = 2
+	if ni, ok := info["aaaa000000000001"]; !ok {
+		t.Error("transport flood node missing from hash size info")
+	} else if ni.HashSize != 2 {
+		t.Errorf("transport flood node: want HashSize=2 (from path byte at offset 5), got %d", ni.HashSize)
+	}
+
+	// Transport direct node: path byte 0xC1 → hash_size = 4
+	if ni, ok := info["aaaa000000000002"]; !ok {
+		t.Error("transport direct node missing from hash size info")
+	} else if ni.HashSize != 4 {
+		t.Errorf("transport direct node: want HashSize=4 (from path byte at offset 5), got %d", ni.HashSize)
+	}
+
+	// Regular flood node: path byte 0x80 → hash_size = 3
+	if ni, ok := info["aaaa000000000003"]; !ok {
+		t.Error("regular flood node missing from hash size info")
+	} else if ni.HashSize != 3 {
+		t.Errorf("regular flood node: want HashSize=3 (from path byte at offset 1), got %d", ni.HashSize)
+	}
+}
+
+// TestHashSizeTransportDirectZeroHopSkipped verifies that RouteTransportDirect
+// zero-hop adverts are skipped (same as RouteDirect). Regression test for #744.
+func TestHashSizeTransportDirectZeroHopSkipped(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
+	recentEpoch := now.Add(-1 * time.Hour).Unix()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count)
+		VALUES ('obs1', 'Obs', 'SJC', ?, '2026-01-01T00:00:00Z', 10)`, recent)
+
+	// RouteDirect (2) zero-hop: path byte 0x40 → hop_count=0, hash_size bits=01
+	// Should be skipped (existing behavior)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('1240aabbccdd', 'direct_zh', ?, 2, 4, '{"pubKey":"bbbb000000000001","name":"Direct-ZH","type":"ADVERT"}')`, recent)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, 1, 10.0, -90, '[]', ?)`, recentEpoch)
+
+	// RouteTransportDirect (3) zero-hop: 4 transport bytes + path byte 0x40 → hop_count=0
+	// Should ALSO be skipped (this was the missing case)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('130102030440aabb', 'tdirect_zh', ?, 3, 4, '{"pubKey":"bbbb000000000002","name":"TDirect-ZH","type":"ADVERT"}')`, recent)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (2, 1, 10.0, -90, '[]', ?)`, recentEpoch)
+
+	// RouteDirect (2) non-zero-hop: path byte 0x41 → hop_count=1
+	// Should NOT be skipped
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('1241aabbccdd', 'direct_1h', ?, 2, 4, '{"pubKey":"bbbb000000000003","name":"Direct-1H","type":"ADVERT"}')`, recent)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (3, 1, 10.0, -90, '[]', ?)`, recentEpoch)
+
+	store := NewPacketStore(db, nil)
+	store.Load()
+	info := store.GetNodeHashSizeInfo()
+
+	// RouteDirect zero-hop should be absent
+	if _, ok := info["bbbb000000000001"]; ok {
+		t.Error("RouteDirect zero-hop advert should be skipped")
+	}
+
+	// RouteTransportDirect zero-hop should also be absent
+	if _, ok := info["bbbb000000000002"]; ok {
+		t.Error("RouteTransportDirect zero-hop advert should be skipped")
+	}
+
+	// RouteDirect non-zero-hop should be present with hash_size=2
+	if ni, ok := info["bbbb000000000003"]; !ok {
+		t.Error("RouteDirect non-zero-hop should be in hash size info")
+	} else if ni.HashSize != 2 {
+		t.Errorf("RouteDirect non-zero-hop: want HashSize=2, got %d", ni.HashSize)
+	}
+}
+
+// TestAnalyticsHashSizesZeroHopSkip verifies that computeAnalyticsHashSizes
+// does not overwrite a node's hash_size with a zero-hop advert's unreliable value.
+// Regression test for #744.
+func TestAnalyticsHashSizesZeroHopSkip(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
+	recentEpoch := now.Add(-1 * time.Hour).Unix()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count)
+		VALUES ('obs1', 'Obs', 'SJC', ?, '2026-01-01T00:00:00Z', 10)`, recent)
+
+	pk := "cccc000000000001"
+	db.conn.Exec(`INSERT INTO nodes (public_key, name, role) VALUES (?, 'ZH-Analytics', 'repeater')`, pk)
+
+	decoded := `{"pubKey":"` + pk + `","name":"ZH-Analytics","type":"ADVERT"}`
+
+	// First: a flood advert with hashSize=2 (reliable, multi-hop)
+	// header 0x11 = route_type 1 (flood), payload_type 4
+	// pathByte 0x41 = hashSize bits 01 → size 2, hop_count 1
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('1141aabbccdd', 'az_flood', ?, 1, 4, ?)`, recent, decoded)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, 1, 10.0, -90, '["aabb"]', ?)`, recentEpoch)
+
+	// Second: a direct zero-hop advert with pathByte=0x00 → would give hashSize=1
+	// header 0x12 = route_type 2 (direct), payload_type 4
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('1200aabbccdd', 'az_direct', ?, 2, 4, ?)`, recent, decoded)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (2, 1, 10.0, -90, '[]', ?)`, recentEpoch)
+
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	result := store.GetAnalyticsHashSizes("")
+
+	// The node should appear in multiByteNodes (hashSize=2 from the flood advert)
+	// If the zero-hop bug is present, hashSize would be 1 and the node would NOT
+	// appear in multiByteNodes.
+	multiByteNodes, ok := result["multiByteNodes"].([]map[string]interface{})
+	if !ok {
+		t.Fatal("expected multiByteNodes slice in analytics hash sizes")
+	}
+
+	found := false
+	for _, n := range multiByteNodes {
+		if n["pubkey"] == pk {
+			found = true
+			if hs, ok := n["hashSize"].(int); ok && hs != 2 {
+				t.Errorf("expected hashSize=2 from flood advert, got %d", hs)
+			}
+		}
+	}
+	if !found {
+		t.Error("node should appear in multiByteNodes with hashSize=2; zero-hop advert should not overwrite to 1")
 	}
 }
 

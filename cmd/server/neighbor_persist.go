@@ -525,7 +525,7 @@ type edgeCandidate struct {
 // For ADVERTs: originator↔path[0] (if unambiguous). For ALL types: observer↔path[last] (if unambiguous).
 // Also handles zero-hop ADVERTs (originator↔observer direct link).
 func extractEdgesFromObs(obs *StoreObs, tx *StoreTx, pm *prefixMap) []edgeCandidate {
-	isAdvert := tx.PayloadType != nil && *tx.PayloadType == 4
+	isAdvert := tx.PayloadType != nil && *tx.PayloadType == PayloadADVERT
 	fromNode := extractFromNode(tx)
 	path := parsePathJSON(obs.PathJSON)
 	observerPK := strings.ToLower(obs.ObserverID)

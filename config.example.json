@@ -1,10 +1,13 @@
 {
   "port": 3000,
   "apiKey": "your-secret-api-key-here",
+  "nodeBlacklist": [],
+  "_comment_nodeBlacklist": "Public keys of nodes to hide from all API responses. Use for trolls, offensive names, or nodes reporting false data that operators refuse to fix.",
   "retention": {
     "nodeDays": 7,
+    "observerDays": 14,
     "packetDays": 30,
-    "_comment": "nodeDays: nodes not seen in N days are moved to inactive_nodes (default 7). packetDays: transmissions+observations older than N days are deleted daily (0 = disabled)."
+    "_comment": "nodeDays: nodes not seen in N days moved to inactive_nodes (default 7). observerDays: observers not sending data in N days are removed (-1 = keep forever, default 14). packetDays: transmissions older than N days are deleted (0 = disabled)."
   },
   "https": {
     "cert": "/path/to/cert.pem",
@@ -125,7 +128,7 @@
     }
   ],
   "channelKeys": {
-    "public": "8b3387e9c5cdea6ac9e5edbaa115cd72"
+    "Public": "8b3387e9c5cdea6ac9e5edbaa115cd72"
   },
   "hashChannels": [
     "#LongFast",
@@ -161,7 +164,7 @@
       [37.20, -122.52]
     ],
     "bufferKm": 20,
-    "_comment": "Optional. Restricts ingestion and API responses to nodes within the polygon + bufferKm. Polygon is an array of [lat, lon] pairs (minimum 3). Use the GeoFilter tab in the Customizer (requires apiKey) or tools/geofilter-builder.html to draw a polygon visually. Remove this section to disable filtering. Nodes with no GPS fix are always allowed through."
+    "_comment": "Optional. Restricts ingestion and API responses to nodes within the polygon + bufferKm. Polygon is an array of [lat, lon] pairs (minimum 3). Use tools/geofilter-builder.html to draw a polygon visually. Remove this section to disable filtering. Nodes with no GPS fix are always allowed through."
   },
   "regions": {
     "SJC": "San Jose, US",

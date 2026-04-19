@@ -61,9 +61,14 @@ func main() {
 	nodeDays := cfg.NodeDaysOrDefault()
 	store.MoveStaleNodes(nodeDays)
 
+	// Observer retention: remove stale observers on startup
+	observerDays := cfg.ObserverDaysOrDefault()
+	store.RemoveStaleObservers(observerDays)
+
 	// Metrics retention: prune old metrics on startup
 	metricsDays := cfg.MetricsRetentionDays()
 	store.PruneOldMetrics(metricsDays)
+	store.PruneDroppedPackets(metricsDays)
 
 	// Daily ticker for node retention
 	retentionTicker := time.NewTicker(1 * time.Hour)
@@ -73,11 +78,22 @@ func main() {
 		}
 	}()
 
+	// Daily ticker for observer retention (every 24h, staggered 90s after startup)
+	observerRetentionTicker := time.NewTicker(24 * time.Hour)
+	go func() {
+		time.Sleep(90 * time.Second) // stagger after metrics prune
+		store.RemoveStaleObservers(observerDays)
+		for range observerRetentionTicker.C {
+			store.RemoveStaleObservers(observerDays)
+		}
+	}()
+
 	// Daily ticker for metrics retention (every 24h)
 	metricsRetentionTicker := time.NewTicker(24 * time.Hour)
 	go func() {
 		for range metricsRetentionTicker.C {
 			store.PruneOldMetrics(metricsDays)
+			store.PruneDroppedPackets(metricsDays)
 		}
 	}()
 
@@ -146,7 +162,7 @@ func main() {
 		// Capture source for closure
 		src := source
 		opts.SetDefaultPublishHandler(func(c mqtt.Client, m mqtt.Message) {
-			handleMessage(store, tag, src, m, channelKeys, cfg.GeoFilter)
+			handleMessage(store, tag, src, m, channelKeys, cfg)
 		})
 
 		client := mqtt.NewClient(opts)
@@ -181,7 +197,7 @@ func main() {
 	log.Println("Done.")
 }
 
-func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, geoFilter *GeoFilterConfig) {
+func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, cfg *Config) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("MQTT [%s] panic in handler: %v", tag, r)
@@ -248,7 +264,8 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 	// Format 1: Raw packet (meshcoretomqtt / Cisien format)
 	rawHex, _ := msg["raw"].(string)
 	if rawHex != "" {
-		decoded, err := DecodePacket(rawHex, channelKeys, false)
+		validateSigs := cfg.ShouldValidateSignatures()
+		decoded, err := DecodePacket(rawHex, channelKeys, validateSigs)
 		if err != nil {
 			log.Printf("MQTT [%s] decode error: %v", tag, err)
 			return
@@ -308,7 +325,27 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 				log.Printf("MQTT [%s] skipping corrupted ADVERT: %s", tag, reason)
 				return
 			}
-			if !NodePassesGeoFilter(decoded.Payload.Lat, decoded.Payload.Lon, geoFilter) {
+			// Signature validation: drop adverts with invalid ed25519 signatures
+			if validateSigs && decoded.Payload.SignatureValid != nil && !*decoded.Payload.SignatureValid {
+				hash := ComputeContentHash(rawHex)
+				truncPK := decoded.Payload.PubKey
+				if len(truncPK) > 16 {
+					truncPK = truncPK[:16]
+				}
+				log.Printf("MQTT [%s] DROPPED invalid signature: hash=%s name=%s observer=%s pubkey=%s",
+					tag, hash, decoded.Payload.Name, firstNonEmpty(mqttMsg.Origin, observerID), truncPK)
+				store.InsertDroppedPacket(&DroppedPacket{
+					Hash:         hash,
+					RawHex:       rawHex,
+					Reason:       "invalid signature",
+					ObserverID:   observerID,
+					ObserverName: mqttMsg.Origin,
+					NodePubKey:   decoded.Payload.PubKey,
+					NodeName:     decoded.Payload.Name,
+				})
+				return
+			}
+			if !NodePassesGeoFilter(decoded.Payload.Lat, decoded.Payload.Lon, cfg.GeoFilter) {
 				return
 			}
 			pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
@@ -440,6 +477,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 			PayloadType:  5, // GRP_TXT
 			PathJSON:     "[]",
 			DecodedJSON:  string(decodedJSON),
+			ChannelHash:  channelName, // fast channel queries (#762)
 		}
 
 		if _, err := store.InsertTransmission(pktData); err != nil {

@@ -94,6 +94,10 @@ func (s *Server) getNeighborGraph() *NeighborGraph {
 
 func (s *Server) handleNodeNeighbors(w http.ResponseWriter, r *http.Request) {
 	pubkey := strings.ToLower(mux.Vars(r)["pubkey"])
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 
 	minCount := 1
 	if v := r.URL.Query().Get("min_count"); v != "" {
@@ -272,6 +276,11 @@ func (s *Server) handleNeighborGraph(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Filter blacklisted nodes from graph.
+		if s.cfg != nil && (s.cfg.IsBlacklisted(e.NodeA) || s.cfg.IsBlacklisted(e.NodeB)) {
+			continue
+		}
+
 		ge := GraphEdge{
 			Source:        e.NodeA,
 			Target:        e.NodeB,
@@ -373,6 +382,26 @@ func (s *Server) buildNodeInfoMap() map[string]nodeInfo {
 	for _, n := range nodes {
 		m[strings.ToLower(n.PublicKey)] = n
 	}
+
+	// Enrich observer-only nodes: if an observer pubkey isn't already in the
+	// map (i.e. it's not also a repeater/companion), add it with role "observer".
+	if s.db != nil {
+		rows, err := s.db.conn.Query("SELECT id, name FROM observers")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id, name string
+				if rows.Scan(&id, &name) != nil {
+					continue
+				}
+				key := strings.ToLower(id)
+				if _, exists := m[key]; !exists {
+					m[key] = nodeInfo{PublicKey: id, Name: name, Role: "observer"}
+				}
+			}
+		}
+	}
+
 	return m
 }
 

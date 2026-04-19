@@ -231,6 +231,30 @@ async function run() {
     assert(hasStatus, 'No status indicator found in node detail');
   });
 
+  // Test: Node side panel Details link navigates to full detail page (#778)
+  await test('Node side panel Details link navigates', async () => {
+    await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('table tbody tr');
+    // Click first row to open side panel
+    const firstRow = await page.$('table tbody tr');
+    assert(firstRow, 'No node rows found');
+    await firstRow.click();
+    await page.waitForSelector('.node-detail');
+    // Find the Details link in the side panel
+    const detailsLink = await page.$('#nodesRight a.btn-primary[href^="#/nodes/"]');
+    assert(detailsLink, 'Details link not found in side panel');
+    const href = await detailsLink.getAttribute('href');
+    // Click the Details link — this should navigate to the full detail page
+    await detailsLink.click();
+    // Wait for navigation — the full detail page has sections like neighbors/packets
+    await page.waitForFunction((expectedHash) => {
+      return location.hash === expectedHash;
+    }, href, { timeout: 5000 });
+    // Verify we're on the full detail page (should have section tabs or detail content)
+    const hash = await page.evaluate(() => location.hash);
+    assert(hash === href, `Expected hash "${href}" but got "${hash}"`);
+  });
+
   // Test: Nodes page has WebSocket auto-update listener (#131)
   await test('Nodes page has WebSocket auto-update', async () => {
     await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded' });
@@ -398,8 +422,13 @@ async function run() {
       }
     }, { timeout: 10000 });
 
-    // Full reload on the packets page — scripts re-execute, IIFE reads localStorage
-    await page.reload({ waitUntil: 'load' });
+    // Force a full page reload to reset module-level state (savedTimeWindowMin is
+    // read from localStorage once at IIFE time). Navigating from /#/packets to /#/packets
+    // is a hash-only change — no reload, so the IIFE never re-reads localStorage.
+    // Going to / first forces a fresh page load, then the hash change to /#/packets
+    // calls init() with the freshly-read savedTimeWindowMin = 60.
+    await page.goto(`${BASE}/`, { waitUntil: 'load' });
+    await page.goto(`${BASE}/#/packets`, { waitUntil: 'load' });
     await page.waitForSelector('#fTimeWindow', { timeout: 10000 });
     const timeWindowValue = await page.$eval('#fTimeWindow', (el) => el.value);
     assert(timeWindowValue === '60', `Expected time window dropdown to restore 60, got ${timeWindowValue}`);
@@ -1470,13 +1499,18 @@ async function run() {
   // ─── Neighbor section tests ───────────────────────────────────────────────
 
   await test('Node detail: neighbors section exists with correct columns', async () => {
+    // Full-screen node view (with #node-neighbors) is mobile-only since #676 fix.
+    await page.setViewportSize({ width: 390, height: 844 });
     // Navigate to a node detail page (use the first node in the list)
     await page.goto(BASE + '/#/nodes');
     await page.waitForSelector('#nodesBody tr[data-key]', { timeout: 10000 });
     // Get the first node's pubkey from the row's data-key attribute
     const pubkey = await page.$eval('#nodesBody tr[data-key]', el => el.dataset.key);
-    await page.goto(BASE + '/#/nodes/' + pubkey);
-    await page.waitForSelector('#node-neighbors', { timeout: 10000 });
+    // Use evaluate to change hash (reliable same-document navigation)
+    await page.evaluate((pk) => { location.hash = '#/nodes/' + pk; }, pubkey);
+    // Wait for the full-node view to render (async API fetch populates body)
+    await page.waitForSelector('.node-fullscreen', { timeout: 10000 });
+    await page.waitForSelector('#node-neighbors', { timeout: 25000 });
     // Check the section exists
     const header = await page.$eval('#fullNeighborsHeader', el => el.textContent);
     assert(header.startsWith('Neighbors'), 'Header should start with "Neighbors", got: ' + header);
@@ -1500,6 +1534,7 @@ async function run() {
       const text = await page.$eval('#fullNeighborsContent', el => el.textContent);
       assert(text.includes('No neighbor data') || text.includes('Could not load'), 'Should show empty or error state');
     }
+    await page.setViewportSize({ width: 1280, height: 800 });
   });
 
 
@@ -1653,6 +1688,33 @@ async function run() {
     assert(url.includes('tab=room'), `URL should contain tab=room after click, got: ${url}`);
   });
 
+  // Test: clicking a node on desktop updates URL hash (#676)
+  await test('Desktop: clicking a node updates URL to #/nodes/{pubkey}', async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(BASE + '#/nodes', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#nodesBody tr[data-key]', { timeout: 10000 });
+    const pubkey = await page.$eval('#nodesBody tr[data-key]', el => el.dataset.key);
+    await page.click('#nodesBody tr[data-key]');
+    await page.waitForTimeout(300);
+    const url = page.url();
+    assert(url.includes(encodeURIComponent(pubkey)), `URL should contain pubkey after click, got: ${url}`);
+    assert(!url.includes('node-fullscreen') || await page.$('#nodesRight:not(.empty)'), 'Split panel should be visible on desktop');
+  });
+
+  // Test: loading #/nodes/{pubkey} on desktop shows split panel (#676)
+  await test('Desktop: deep link #/nodes/{pubkey} opens split panel, not full-screen', async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(BASE + '#/nodes', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#nodesBody tr[data-key]', { timeout: 10000 });
+    const pubkey = await page.$eval('#nodesBody tr[data-key]', el => el.dataset.key);
+    await page.goto(BASE + '#/nodes/' + encodeURIComponent(pubkey), { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(500);
+    const hasSplitPanel = await page.$('#nodesRight:not(.empty)');
+    const hasFullScreen = await page.$('.node-fullscreen');
+    assert(hasSplitPanel, 'Split panel should be open on desktop deep link');
+    assert(!hasFullScreen, 'Full-screen view should NOT appear on desktop deep link');
+  });
+
   // Test: packets timeWindow deep link
   await test('Packets timeWindow deep link restores dropdown', async () => {
     await page.goto(BASE + '#/packets?timeWindow=60', { waitUntil: 'domcontentloaded' });
@@ -1661,6 +1723,36 @@ async function run() {
     assert(val === '60', `Expected timeWindow dropdown = 60, got: ${val}`);
     const url = page.url();
     assert(url.includes('timeWindow=60'), `URL should still contain timeWindow=60, got: ${url}`);
+  });
+
+  // Test: hash filter updates URL and is restored (#682)
+  await test('Packets hash filter updates URL and restores on reload', async () => {
+    await page.goto(BASE + '#/packets', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#fHash', { timeout: 8000 });
+    await page.fill('#fHash', 'abc123');
+    await page.waitForTimeout(500);
+    const url = page.url();
+    assert(url.includes('hash=abc123'), `URL should contain hash=abc123, got: ${url}`);
+    // Reload and check input restored
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#fHash', { timeout: 8000 });
+    const val = await page.$eval('#fHash', el => el.value);
+    assert(val === 'abc123', `fHash should be restored to abc123, got: ${val}`);
+  });
+
+  // Test: Wireshark filter expression updates URL and is restored (#682)
+  await test('Packets filter expression updates URL and restores on reload', async () => {
+    await page.goto(BASE + '#/packets', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#packetFilterInput', { timeout: 8000 });
+    await page.fill('#packetFilterInput', 'type == ADVERT');
+    await page.waitForTimeout(500);
+    const url = page.url();
+    assert(url.includes('filter=') && url.includes('ADVERT'), `URL should contain filter=type%3D%3DADVERT, got: ${url}`);
+    // Reload and check expression restored
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#packetFilterInput', { timeout: 8000 });
+    const val = await page.$eval('#packetFilterInput', el => el.value);
+    assert(val === 'type == ADVERT', `packetFilterInput should be restored, got: ${val}`);
   });
 
   // Test: timeWindow change updates URL

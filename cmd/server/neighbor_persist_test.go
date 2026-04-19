@@ -27,7 +27,7 @@ func createTestDBWithSchema(t *testing.T) (*DB, string) {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		raw_hex TEXT, hash TEXT UNIQUE, first_seen TEXT,
 		route_type INTEGER, payload_type INTEGER, payload_version INTEGER,
-		decoded_json TEXT
+		decoded_json TEXT, channel_hash TEXT DEFAULT NULL
 	)`)
 	conn.Exec(`CREATE TABLE observers (
 		id TEXT PRIMARY KEY, name TEXT, iata TEXT

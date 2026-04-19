@@ -2700,6 +2700,114 @@ console.log('\n=== channels.js: WS batch + region snapshot integration ===');
     assert.ok(historyCalls.includes('#/channels'), 'should route back to channels root');
   });
 }
+// ===== CHANNELS.JS: #781 encrypted channel without key shows lock message =====
+console.log('\n=== channels.js: encrypted channel without key shows lock message (#781) ===');
+{
+  test('selectChannel shows lock message for encrypted channel with no matching key', async () => {
+    const ctx = makeSandbox();
+    const dom = {};
+    function makeEl(id) {
+      if (dom[id]) return dom[id];
+      dom[id] = {
+        id,
+        innerHTML: '',
+        textContent: '',
+        value: '',
+        scrollTop: 0,
+        scrollHeight: 100,
+        clientHeight: 80,
+        style: {},
+        dataset: {},
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        addEventListener() {},
+        removeEventListener() {},
+        querySelector() { return null; },
+        querySelectorAll() { return []; },
+        getBoundingClientRect() { return { left: 0, bottom: 0, width: 0 }; },
+        setAttribute() {},
+        removeAttribute() {},
+        focus() {},
+      };
+      return dom[id];
+    }
+    const headerText = { textContent: '' };
+    makeEl('chHeader').querySelector = (sel) => (sel === '.ch-header-text' ? headerText : null);
+    makeEl('chMessages');
+    makeEl('chList');
+    makeEl('chScrollBtn');
+    makeEl('chAriaLive');
+    makeEl('chBackBtn');
+    makeEl('chRegionFilter');
+    const appEl = {
+      innerHTML: '',
+      querySelector(sel) {
+        if (sel === '.ch-sidebar' || sel === '.ch-sidebar-resize' || sel === '.ch-main') return makeEl(sel);
+        if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+        return makeEl(sel);
+      },
+      addEventListener() {},
+    };
+    let apiCallPaths = [];
+    ctx.document.getElementById = makeEl;
+    ctx.document.querySelector = (sel) => {
+      if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+      return null;
+    };
+    ctx.document.querySelectorAll = () => [];
+    ctx.document.addEventListener = () => {};
+    ctx.document.removeEventListener = () => {};
+    ctx.document.documentElement = { getAttribute: () => null, setAttribute: () => {} };
+    ctx.document.body = { appendChild() {}, removeChild() {}, contains() { return false; } };
+    ctx.history = { replaceState() {} };
+    ctx.matchMedia = () => ({ matches: false });
+    ctx.window.matchMedia = ctx.matchMedia;
+    ctx.MutationObserver = function () { this.observe = () => {}; this.disconnect = () => {}; };
+    ctx.RegionFilter = { init() {}, onChange() { return () => {}; }, offChange() {}, getRegionParam() { return ''; } };
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.api = (path) => {
+      apiCallPaths.push(path);
+      if (path.indexOf('/observers') === 0) return Promise.resolve({ observers: [] });
+      // Return an encrypted channel in the list
+      if (path.indexOf('/channels') === 0 && path.indexOf('/messages') === -1) {
+        return Promise.resolve({ channels: [
+          { hash: '42', name: 'secret-chan', messageCount: 5, lastActivity: null, encrypted: true }
+        ] });
+      }
+      // This should NOT be called for encrypted channels without a key
+      if (path.indexOf('/messages') !== -1) {
+        return Promise.resolve({ messages: [{ sender: 'X', text: 'gibberish', timestamp: '2025-01-01T00:00:00Z' }] });
+      }
+      return Promise.resolve({});
+    };
+    ctx.CLIENT_TTL = { observers: 120000, channels: 15000, channelMessages: 10000, nodeDetail: 10000 };
+    ctx.ROLE_EMOJI = {};
+    ctx.ROLE_LABELS = {};
+    ctx.timeAgo = () => '1m ago';
+    ctx.registerPage = (name, handlers) => { ctx._pageHandlers = handlers; };
+    ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+    ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
+
+    ctx.crypto = { subtle: require('crypto').webcrypto.subtle }; ctx.TextEncoder = TextEncoder; ctx.TextDecoder = TextDecoder; ctx.Uint8Array = Uint8Array;
+    loadInCtx(ctx, 'public/channel-decrypt.js');
+    loadInCtx(ctx, 'public/channels.js');
+    ctx._pageHandlers.init(appEl);
+    // Wait for loadChannels() to resolve (async in init)
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    // Select the encrypted channel — no stored keys exist
+    apiCallPaths = [];
+    await ctx.window._channelsSelectChannelForTest('42');
+
+    // Should show lock message, NOT fetch messages API
+    const msgEl = dom['chMessages'];
+    assert.ok(msgEl.innerHTML.includes('🔒'), 'should show lock emoji for encrypted channel without key');
+    assert.ok(msgEl.innerHTML.includes('no decryption key'), 'should mention no decryption key');
+    const messageApiFetched = apiCallPaths.some(p => p.indexOf('/messages') !== -1);
+    assert.ok(!messageApiFetched, 'should NOT fetch messages API for encrypted channel without key');
+  });
+}
 // ===== PACKETS.JS: savedTimeWindowMin default guard =====
 console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
 {
@@ -5111,6 +5219,92 @@ console.log('\n=== packets.js: anomaly UI rendering ===');
   });
 }
 
+// ===== packets.js: buildFieldTable transport offset tests (#765) =====
+console.log('\n=== packets.js: buildFieldTable transport offsets (#765) ===');
+{
+  const ftCtx = makeSandbox();
+  ftCtx.registerPage = () => {};
+  ftCtx.onWS = () => {};
+  ftCtx.offWS = () => {};
+  ftCtx.api = () => Promise.resolve({});
+  ftCtx.window.getParsedPath = () => [];
+  ftCtx.window.getParsedDecoded = () => ({});
+  // Provide globals from app.js that packets.js depends on
+  const ROUTE_TYPES = {0:'TRANSPORT_FLOOD',1:'FLOOD',2:'DIRECT',3:'TRANSPORT_DIRECT'};
+  const PAYLOAD_TYPES = {0:'ADVERT',1:'TXT_MSG',2:'GRP_TXT',3:'REQ',4:'ACK'};
+  ftCtx.routeTypeName = (n) => ROUTE_TYPES[n] || 'UNKNOWN';
+  ftCtx.payloadTypeName = (n) => PAYLOAD_TYPES[n] || 'UNKNOWN';
+  ftCtx.window.routeTypeName = ftCtx.routeTypeName;
+  ftCtx.window.payloadTypeName = ftCtx.payloadTypeName;
+  ftCtx.truncate = (str, len) => str && str.length > len ? str.slice(0, len) + '…' : (str || '');
+  ftCtx.window.truncate = ftCtx.truncate;
+  ftCtx.escapeHtml = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  ftCtx.window.escapeHtml = ftCtx.escapeHtml;
+  loadInCtx(ftCtx, 'public/packets.js');
+  const { buildFieldTable, fieldRow } = ftCtx.window._packetsTestAPI;
+
+  // Helper: build a hex string with specific bytes
+  function makeHex(bytes) { return bytes.map(b => b.toString(16).padStart(2, '0')).join(''); }
+
+  test('FLOOD (route_type=1): path_length at byte 1, no transport codes', () => {
+    // header=0x05 (route_type=1, payload=1), path_length=0x41 (hash_size=2, count=1), hop=AABB
+    const raw = makeHex([0x05, 0x41, 0xAA, 0xBB]);
+    const pkt = { raw_hex: raw, route_type: 1, payload_type: 1 };
+    const html = buildFieldTable(pkt, {}, [], {});
+    // Path Length should be at offset 1
+    assert.ok(html.includes('>1<') || html.includes('data-offset="1"'),
+      'FLOOD: Path Length row should reference byte offset 1');
+    // Should NOT contain transport codes
+    assert.ok(!html.includes('Next Hop'), 'FLOOD: should not show Next Hop transport');
+    assert.ok(!html.includes('Last Hop'), 'FLOOD: should not show Last Hop transport');
+  });
+
+  test('TRANSPORT_FLOOD (route_type=0): transport codes at bytes 1-4, path_length at byte 5', () => {
+    // header=0x04 (route_type=0, payload=1), next_hop=1122, last_hop=3344, path_length=0x41
+    const raw = makeHex([0x04, 0x11, 0x22, 0x33, 0x44, 0x41, 0xAA, 0xBB]);
+    const pkt = { raw_hex: raw, route_type: 0, payload_type: 1 };
+    const html = buildFieldTable(pkt, {}, [], {});
+    // Transport codes should appear
+    assert.ok(html.includes('Next Hop'), 'TRANSPORT_FLOOD: should show Next Hop');
+    assert.ok(html.includes('Last Hop'), 'TRANSPORT_FLOOD: should show Last Hop');
+    // Path Length should be at offset 5, not 1
+    // Check that Path Length row does NOT show offset 1
+    const pathLenMatch = html.match(/Path Length/);
+    assert.ok(pathLenMatch, 'TRANSPORT_FLOOD: should have Path Length row');
+    // The field table renders offset in first <td>. Check transport codes come before path length
+    const nextHopIdx = html.indexOf('Next Hop');
+    const pathLenIdx = html.indexOf('Path Length');
+    assert.ok(nextHopIdx < pathLenIdx,
+      'TRANSPORT_FLOOD: transport codes should appear before Path Length in table order');
+  });
+
+  test('TRANSPORT_DIRECT (route_type=3): same offsets as TRANSPORT_FLOOD', () => {
+    const raw = makeHex([0x0F, 0x11, 0x22, 0x33, 0x44, 0x41]);
+    const pkt = { raw_hex: raw, route_type: 3, payload_type: 3 };
+    const html = buildFieldTable(pkt, {}, [], {});
+    assert.ok(html.includes('Next Hop'), 'TRANSPORT_DIRECT: should show Next Hop');
+    assert.ok(html.includes('Last Hop'), 'TRANSPORT_DIRECT: should show Last Hop');
+    const nextHopIdx = html.indexOf('Next Hop');
+    const pathLenIdx = html.indexOf('Path Length');
+    assert.ok(nextHopIdx < pathLenIdx,
+      'TRANSPORT_DIRECT: transport codes should appear before Path Length');
+  });
+
+  test('field table row order matches byte layout for transport routes', () => {
+    const raw = makeHex([0x04, 0x11, 0x22, 0x33, 0x44, 0x41, 0xAA, 0xBB]);
+    const pkt = { raw_hex: raw, route_type: 0, payload_type: 1 };
+    const html = buildFieldTable(pkt, {}, [], {});
+    // Order: Header (0) → Next Hop (1) → Last Hop (3) → Path Length (5)
+    const headerIdx = html.indexOf('Header Byte');
+    const nextHopIdx = html.indexOf('Next Hop');
+    const lastHopIdx = html.indexOf('Last Hop');
+    const pathLenIdx = html.indexOf('Path Length');
+    assert.ok(headerIdx < nextHopIdx, 'Header should come before Next Hop');
+    assert.ok(nextHopIdx < lastHopIdx, 'Next Hop should come before Last Hop');
+    assert.ok(lastHopIdx < pathLenIdx, 'Last Hop should come before Path Length');
+  });
+}
+
 // ===== live.js: anomaly icon in feed =====
 console.log('\n=== live.js: anomaly icon in feed ===');
 {
@@ -5262,6 +5456,242 @@ console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===
     const encClass2 = ch2.encrypted === true ? ' ch-encrypted' : '';
     const className2 = 'ch-item' + encClass2;
     assert.ok(!className2.includes('ch-encrypted'), 'non-encrypted channel should not have ch-encrypted class');
+
+  });
+}
+
+// ===== #690 — Clock Skew UI Tests =====
+{
+  console.log('\n--- Clock Skew UI (roles.js helpers) ---');
+  const ctx = makeSandbox();
+  vm.runInContext(fs.readFileSync('public/roles.js', 'utf8'), ctx);
+
+  test('formatSkew handles seconds', () => {
+    assert.strictEqual(ctx.window.formatSkew(30), '+30s');
+    assert.strictEqual(ctx.window.formatSkew(-45), '-45s');
+  });
+
+  test('formatSkew handles minutes', () => {
+    assert.strictEqual(ctx.window.formatSkew(154), '+2m 34s');
+    assert.strictEqual(ctx.window.formatSkew(-900), '-15m 0s');
+  });
+
+  test('formatSkew handles hours', () => {
+    assert.strictEqual(ctx.window.formatSkew(3661), '+1h 1m');
+    assert.strictEqual(ctx.window.formatSkew(-55320), '-15h 22m');
+  });
+
+  test('formatSkew handles days', () => {
+    assert.strictEqual(ctx.window.formatSkew(90000), '+1d 1h');
+  });
+
+  test('formatSkew handles null', () => {
+    assert.strictEqual(ctx.window.formatSkew(null), '—');
+  });
+
+  test('renderSkewBadge renders correct severity class', () => {
+    var html = ctx.window.renderSkewBadge('warning', 400);
+    assert.ok(html.includes('skew-badge--warning'), 'should contain warning class');
+    assert.ok(html.includes('⏰'), 'should contain clock emoji');
+  });
+
+  test('renderSkewBadge renders ok badge (icon only)', () => {
+    var html = ctx.window.renderSkewBadge('ok', 10);
+    assert.ok(html.includes('skew-badge--ok'), 'should contain ok class');
+  });
+
+  test('renderSkewBadge returns empty for null severity', () => {
+    assert.strictEqual(ctx.window.renderSkewBadge(null, 0), '');
+  });
+
+  test('renderSkewSparkline returns SVG with data points', () => {
+    var samples = [
+      { ts: 1000, skew: 10 },
+      { ts: 2000, skew: 20 },
+      { ts: 3000, skew: -5 }
+    ];
+    var svg = ctx.window.renderSkewSparkline(samples, 120, 24);
+    assert.ok(svg.includes('<svg'), 'should return SVG element');
+    assert.ok(svg.includes('polyline'), 'should contain polyline');
+    assert.ok(svg.includes('points='), 'should have points attribute');
+  });
+
+  test('renderSkewSparkline returns empty for insufficient data', () => {
+    assert.strictEqual(ctx.window.renderSkewSparkline([], 120, 24), '');
+    assert.strictEqual(ctx.window.renderSkewSparkline([{ ts: 1, skew: 5 }], 120, 24), '');
+    assert.strictEqual(ctx.window.renderSkewSparkline(null, 120, 24), '');
+  });
+
+  test('SKEW_SEVERITY_ORDER sorts worst first', () => {
+    var order = ctx.window.SKEW_SEVERITY_ORDER;
+    assert.ok(order.absurd < order.critical, 'absurd should sort before critical');
+    assert.ok(order.critical < order.warning, 'critical should sort before warning');
+    assert.ok(order.warning < order.ok, 'warning should sort before ok');
+  });
+}
+
+// ===== analytics.js: hashStatCardsHtml collision clickability (#757) =====
+console.log('\n=== analytics.js: hashStatCardsHtml collision details ===');
+{
+  function makeAnalyticsSandbox757() {
+    const ctx = makeSandbox();
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    try { loadInCtx(ctx, 'public/analytics.js'); } catch (e) {
+      for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    }
+    return ctx;
+  }
+  const ctx = makeAnalyticsSandbox757();
+  const hashStatCardsHtml = ctx.window._analyticsHashStatCardsHtml;
+
+  test('hashStatCardsHtml is exposed', () => assert.ok(hashStatCardsHtml, '_analyticsHashStatCardsHtml must be exposed'));
+
+  test('collision count > 0 renders clickable card with onclick', () => {
+    const html = hashStatCardsHtml(100, 50, '3-byte', 16777216, 48, 3);
+    assert.ok(html.includes('onclick='), 'should have onclick when collisions > 0');
+    assert.ok(html.includes('collisionRiskSection'), 'should scroll to collisionRiskSection');
+    assert.ok(html.includes('cursor:pointer'), 'should show pointer cursor');
+    assert.ok(html.includes('▼'), 'should show expand indicator');
+  });
+
+  test('collision count 0 renders non-clickable card', () => {
+    const html = hashStatCardsHtml(100, 50, '1-byte', 256, 48, 0);
+    assert.ok(!html.includes('onclick='), 'should not have onclick when collisions = 0');
+    assert.ok(!html.includes('cursor:pointer'), 'should not show pointer cursor');
+  });
+}
+
+// ===== analytics.js: renderCollisionsFromServer node links (#757) =====
+console.log('\n=== analytics.js: renderCollisionsFromServer collision table ===');
+{
+  function makeAnalyticsSandbox757b() {
+    const ctx = makeSandbox();
+    const collisionListEl = { innerHTML: '', querySelectorAll: () => [] };
+    const origGetById = ctx.document.getElementById;
+    ctx.document.getElementById = (id) => {
+      if (id === 'collisionList') return collisionListEl;
+      return origGetById ? origGetById(id) : null;
+    };
+    ctx.window.document = ctx.document;
+    loadInCtx(ctx, 'public/roles.js');
+    loadInCtx(ctx, 'public/app.js');
+    try { loadInCtx(ctx, 'public/analytics.js'); } catch (e) {
+      for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    }
+    ctx._collisionListEl = collisionListEl;
+    return ctx;
+  }
+  const ctx = makeAnalyticsSandbox757b();
+  const renderCollisions = ctx.window._analyticsRenderCollisionsFromServer;
+
+  test('renderCollisionsFromServer is exposed', () => assert.ok(renderCollisions, '_analyticsRenderCollisionsFromServer must be exposed'));
+
+  test('renders collision table with node links to correct pubkey', () => {
+    const sizeData = {
+      collisions: [
+        {
+          prefix: 'A3F2C1',
+          byte_size: 3,
+          appearances: 2,
+          nodes: [
+            { public_key: 'abc123def456', name: 'Mountain Repeater', role: 'repeater', lat: 34.0, lon: -118.0 },
+            { public_key: 'def456abc789', name: 'Valley Node', role: 'repeater', lat: 34.5, lon: -118.5 }
+          ],
+          max_dist_km: 45.2,
+          classification: 'local',
+          with_coords: 2
+        }
+      ]
+    };
+    renderCollisions(sizeData, 3);
+    const html = ctx._collisionListEl.innerHTML;
+    assert.ok(html.includes('A3F2C1'), 'should show prefix');
+    assert.ok(html.includes('#/nodes/abc123def456'), 'first node link should point to correct pubkey');
+    assert.ok(html.includes('#/nodes/def456abc789'), 'second node link should point to correct pubkey');
+    assert.ok(html.includes('Mountain Repeater'), 'should show first node name');
+    assert.ok(html.includes('Valley Node'), 'should show second node name');
+  });
+
+  test('renders no-collision message when collisions empty', () => {
+    const sizeData = { collisions: [] };
+    renderCollisions(sizeData, 3);
+    const html = ctx._collisionListEl.innerHTML;
+    assert.ok(html.includes('No 3-byte prefix collisions'), 'should show no-collision message');
+  });
+}
+
+
+// ===== Observer role support (#753 / PR #774) =====
+{
+  console.log('\n--- Observer role support (PR #774) ---');
+
+  // Test 1: ROLE_COLORS.observer is defined and not empty
+  test('ROLE_COLORS.observer is defined and not empty', () => {
+    const rolesJs = fs.readFileSync(__dirname + '/public/roles.js', 'utf8');
+    const ctx = makeSandbox();
+    vm.runInNewContext(rolesJs, ctx);
+    assert.ok(ctx.window.ROLE_COLORS.observer, 'ROLE_COLORS.observer should be defined');
+    assert.ok(ctx.window.ROLE_COLORS.observer.length > 0, 'ROLE_COLORS.observer should not be empty');
+  });
+
+  // Test 2: Observer checkbox exists in neighbor graph filter (unchecked by default)
+  test('Observer checkbox exists in neighbor graph filter section', () => {
+    const analyticsJs = fs.readFileSync(__dirname + '/public/analytics.js', 'utf8');
+    // The observer checkbox is added with data-role="observer" and NO "checked" attribute
+    assert.ok(analyticsJs.includes('data-role="observer"'), 'analytics.js should contain observer checkbox');
+    // Verify it's NOT checked by default (no "checked" attribute on observer checkbox)
+    const observerCheckboxMatch = analyticsJs.match(/data-role="observer"[^>]*>/);
+    assert.ok(observerCheckboxMatch, 'observer checkbox markup must exist');
+    assert.ok(!observerCheckboxMatch[0].includes('checked'), 'observer checkbox should NOT be checked by default');
+  });
+
+  // Test 3: Other role checkboxes ARE checked by default
+  test('Non-observer role checkboxes are checked by default', () => {
+    const analyticsJs = fs.readFileSync(__dirname + '/public/analytics.js', 'utf8');
+    // The main role loop uses "checked" attribute
+    const mainRoleCheckbox = analyticsJs.match(/data-role="\$\{r\}"[^>]*checked/);
+    assert.ok(mainRoleCheckbox, 'Main role checkboxes should have checked attribute');
+  });
+
+  // Test 4: --role-observer CSS variable exists in style.css
+  test('--role-observer CSS variable exists in style.css', () => {
+    const css = fs.readFileSync(__dirname + '/public/style.css', 'utf8');
+    assert.ok(css.includes('--role-observer:'), 'style.css should define --role-observer CSS variable');
+  });
+
+  // Test 5: Filter logic does NOT auto-include observer role
+  test('Filter logic excludes observer nodes when checkbox unchecked', () => {
+    const analyticsJs = fs.readFileSync(__dirname + '/public/analytics.js', 'utf8');
+    // Old code had: return checkedRoles.has(role) || role === 'unknown' || role === 'observer';
+    // New code: return checkedRoles.has(role) || role === 'unknown';
+    // Verify observer is NOT given special pass-through treatment
+    const filterLine = analyticsJs.match(/return checkedRoles\.has\(role\)[^;]+;/);
+    assert.ok(filterLine, 'filter line must exist');
+    assert.ok(!filterLine[0].includes("'observer'"), 'filter should NOT auto-include observer role');
+    assert.ok(filterLine[0].includes("'unknown'"), 'filter should still auto-include unknown role');
+  });
+}
+
+// ===== Neighbor Graph Min Score Slider Persistence =====
+{
+  console.log('\n--- Neighbor Graph Slider Persistence ---');
+
+  test('default slider value is 70 (0.70)', () => {
+    // Read the raw HTML from analytics.js to verify default
+    const src = fs.readFileSync('public/analytics.js', 'utf8');
+    assert.ok(src.includes('value="70"'), 'ngMinScore input should default to value="70"');
+    assert.ok(src.includes('>0.70</span>'), 'ngMinScoreVal should display 0.70');
+  });
+
+  test('localStorage read on load is present in code', () => {
+    const src = fs.readFileSync('public/analytics.js', 'utf8');
+    assert.ok(src.includes("localStorage.getItem('ng-min-score')"), 'should read ng-min-score from localStorage on load');
+  });
+
+  test('localStorage write on slider change is present in code', () => {
+    const src = fs.readFileSync('public/analytics.js', 'utf8');
+    assert.ok(src.includes("localStorage.setItem('ng-min-score'"), 'should write ng-min-score to localStorage on change');
 
   });
 }

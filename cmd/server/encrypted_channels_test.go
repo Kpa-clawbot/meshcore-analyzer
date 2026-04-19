@@ -15,10 +15,10 @@ func seedEncryptedChannelData(t *testing.T, db *DB) {
 	recentEpoch := now.Add(-1 * time.Hour).Unix()
 
 	// Two encrypted GRP_TXT packets on channel hash "A1B2"
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
-		VALUES ('EE01', 'enc_hash_001', ?, 1, 5, '{"type":"GRP_TXT","channelHashHex":"A1B2","decryptionStatus":"no_key"}')`, recent)
-	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
-		VALUES ('EE02', 'enc_hash_002', ?, 1, 5, '{"type":"GRP_TXT","channelHashHex":"A1B2","decryptionStatus":"no_key"}')`, recent)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
+		VALUES ('EE01', 'enc_hash_001', ?, 1, 5, '{"type":"GRP_TXT","channelHashHex":"A1B2","decryptionStatus":"no_key"}', 'enc_A1B2')`, recent)
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
+		VALUES ('EE02', 'enc_hash_002', ?, 1, 5, '{"type":"GRP_TXT","channelHashHex":"A1B2","decryptionStatus":"no_key"}', 'enc_A1B2')`, recent)
 
 	// Observations for both
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)

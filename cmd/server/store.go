@@ -200,11 +200,21 @@ type PacketStore struct {
 	// Persisted neighbor graph for hop resolution at ingest time.
 	graph *NeighborGraph
 
+	// Clock skew detection engine.
+	clockSkew *ClockSkewEngine
+
 	// Async backfill state: set after backfillResolvedPathsAsync completes.
 	backfillComplete atomic.Bool
 	// Progress tracking for async backfill (total pending and processed so far).
 	backfillTotal     atomic.Int64 // set once at start of async backfill
 	backfillProcessed atomic.Int64
+
+	// Bounded cold load: oldest packet timestamp loaded into memory.
+	// Empty string means all data is in memory (no limit applied).
+	oldestLoaded string
+
+	// Async hash migration state: set after migrateContentHashesAsync completes.
+	hashMigrationComplete atomic.Bool
 
 	// Eviction config and stats
 	retentionHours   float64        // 0 = unlimited
@@ -304,6 +314,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		spTxIndex:     make(map[string][]*StoreTx, 4096),
 		advertPubkeys:   make(map[string]int),
 		lastSeenTouched: make(map[string]time.Time),
+		clockSkew:       NewClockSkewEngine(),
 	}
 	if cfg != nil {
 		ps.retentionHours = cfg.RetentionHours
@@ -325,18 +336,48 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 	return ps
 }
 
-// Load reads all transmissions + observations from SQLite into memory.
+// Load reads transmissions + observations from SQLite into memory.
+// When maxMemoryMB > 0, loads only the newest N transmissions that fit
+// within the memory budget, avoiding OOM on large databases.
 func (s *PacketStore) Load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	t0 := time.Now()
 
+	// Count total transmissions for logging.
+	var totalInDB int
+	if err := s.db.conn.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&totalInDB); err != nil {
+		totalInDB = -1 // non-fatal
+	}
+
+	// Calculate max packets to load based on memory budget.
+	var maxPackets int64
+	if s.maxMemoryMB > 0 {
+		// Use a typical packet with ~10 observations as the estimate.
+		avgBytes := int64(1000) // conservative floor
+		if sample := estimateStoreTxBytesTypical(10); sample > avgBytes {
+			avgBytes = sample
+		}
+		maxPackets = (int64(s.maxMemoryMB) * 1048576) / avgBytes
+		if maxPackets < 1000 {
+			maxPackets = 1000 // minimum 1000 packets
+		}
+	}
+	// maxPackets == 0 means unlimited
+
 	var loadSQL string
 	rpCol := ""
 	if s.db.hasResolvedPath {
 		rpCol = ",\n\t\t\t\to.resolved_path"
 	}
+
+	limitClause := ""
+	if maxPackets > 0 {
+		limitClause = fmt.Sprintf(
+			"\n\t\t\tWHERE t.id IN (SELECT id FROM transmissions ORDER BY first_seen DESC LIMIT %d)", maxPackets)
+	}
+
 	if s.db.isV3 {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
 				t.payload_type, t.payload_version, t.decoded_json,
@@ -344,7 +385,7 @@ func (s *PacketStore) Load() error {
 				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')` + rpCol + `
 			FROM transmissions t
 			LEFT JOIN observations o ON o.transmission_id = t.id
-			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+			LEFT JOIN observers obs ON obs.rowid = o.observer_idx` + limitClause + `
 			ORDER BY t.first_seen ASC, o.timestamp DESC`
 	} else {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
@@ -352,7 +393,7 @@ func (s *PacketStore) Load() error {
 				o.id, o.observer_id, o.observer_name, o.direction,
 				o.snr, o.rssi, o.score, o.path_json, o.timestamp` + rpCol + `
 			FROM transmissions t
-			LEFT JOIN observations o ON o.transmission_id = t.id
+			LEFT JOIN observations o ON o.transmission_id = t.id` + limitClause + `
 			ORDER BY t.first_seen ASC, o.timestamp DESC`
 	}
 
@@ -478,10 +519,20 @@ func (s *PacketStore) Load() error {
 	// Precompute distance analytics (hop distances, path totals)
 	s.buildDistanceIndex()
 
+	// Track oldest loaded timestamp for future SQL fallback queries.
+	if len(s.packets) > 0 {
+		s.oldestLoaded = s.packets[0].FirstSeen
+	}
+
 	s.loaded = true
 	elapsed := time.Since(t0)
-	log.Printf("[store] Loaded %d transmissions (%d observations) in %v (tracked ~%.0fMB, heap ~%.0fMB)",
-		len(s.packets), s.totalObs, elapsed, s.trackedMemoryMB(), s.estimatedMemoryMB())
+	if maxPackets > 0 && totalInDB > len(s.packets) {
+		log.Printf("[store] Loaded %d/%d transmissions (%d observations) in %v — bounded by %dMB budget (tracked ~%.0fMB, heap ~%.0fMB)",
+			len(s.packets), totalInDB, s.totalObs, elapsed, s.maxMemoryMB, s.trackedMemoryMB(), s.estimatedMemoryMB())
+	} else {
+		log.Printf("[store] Loaded %d transmissions (%d observations) in %v (tracked ~%.0fMB, heap ~%.0fMB)",
+			len(s.packets), s.totalObs, elapsed, s.trackedMemoryMB(), s.estimatedMemoryMB())
+	}
 	return nil
 }
 
@@ -640,7 +691,7 @@ func (s *PacketStore) touchRelayLastSeen(tx *StoreTx, now time.Time) {
 // trackAdvertPubkey increments the advertPubkeys refcount for ADVERT packets.
 // Must be called under s.mu write lock.
 func (s *PacketStore) trackAdvertPubkey(tx *StoreTx) {
-	if tx.PayloadType == nil || *tx.PayloadType != 4 || tx.DecodedJSON == "" {
+	if tx.PayloadType == nil || *tx.PayloadType != PayloadADVERT || tx.DecodedJSON == "" {
 		return
 	}
 	d := tx.ParsedDecoded()
@@ -661,7 +712,7 @@ func (s *PacketStore) trackAdvertPubkey(tx *StoreTx) {
 // untrackAdvertPubkey decrements the advertPubkeys refcount for ADVERT packets.
 // Must be called under s.mu write lock.
 func (s *PacketStore) untrackAdvertPubkey(tx *StoreTx) {
-	if tx.PayloadType == nil || *tx.PayloadType != 4 || tx.DecodedJSON == "" {
+	if tx.PayloadType == nil || *tx.PayloadType != PayloadADVERT || tx.DecodedJSON == "" {
 		return
 	}
 	var d map[string]interface{}
@@ -920,6 +971,7 @@ func (s *PacketStore) GetPerfStoreStats() map[string]interface{} {
 		"sqliteOnly":        false,
 		"retentionHours":    s.retentionHours,
 		"maxMemoryMB":       s.maxMemoryMB,
+		"oldestLoaded":      s.oldestLoaded,
 		"estimatedMB":       estimatedMB,
 		"trackedMB":         trackedMB,
 		"indexes": map[string]interface{}{
@@ -1086,6 +1138,11 @@ func (s *PacketStore) GetPerfStoreStatsTyped() PerfPacketStoreStats {
 	estimatedMB := math.Round(s.estimatedMemoryMB()*10) / 10
 	trackedMB := math.Round(s.trackedMemoryMB()*10) / 10
 
+	var avgBytesPerPacket int64
+	if totalLoaded > 0 {
+		avgBytesPerPacket = s.trackedBytes / int64(totalLoaded)
+	}
+
 	return PerfPacketStoreStats{
 		TotalLoaded:       totalLoaded,
 		TotalObservations: totalObs,
@@ -1097,6 +1154,7 @@ func (s *PacketStore) GetPerfStoreStatsTyped() PerfPacketStoreStats {
 		MaxPackets:        2386092,
 		EstimatedMB:       estimatedMB,
 		TrackedMB:         trackedMB,
+		AvgBytesPerPacket: avgBytesPerPacket,
 		MaxMB:             s.maxMemoryMB,
 		Indexes: PacketStoreIndexes{
 			ByHash:           hashIdx,
@@ -2596,27 +2654,87 @@ func (s *PacketStore) buildDistanceIndex() {
 // These estimate the in-memory cost of StoreTx and StoreObs structs including
 // map/index overhead. They don't need to be exact — just proportional to actual
 // usage and independent of GC state.
+//
+// Issue #743: Previous estimates missed major per-packet allocations:
+// - spTxIndex: O(path²) entries per tx (50-150MB at scale)
+// - ResolvedPath on observations (~25MB at scale)
+// - Per-tx maps: obsKeys, observerSet (~11MB at scale)
+// - byPathHop index entries (20-40MB at scale)
 const (
 	storeTxBaseBytes  = 384 // StoreTx struct fields + map headers + sync.Once + string headers
 	storeObsBaseBytes = 192 // StoreObs struct fields + string headers
 	indexEntryBytes   = 48  // average cost of one index map entry (key + pointer + bucket overhead)
 	numIndexesPerTx   = 5   // byHash, byTxID, byNode, byPayloadType, nodeHashes entries
 	numIndexesPerObs  = 2   // byObsID, byObserver entries
+
+	// Per-tx map overhead (obsKeys + observerSet): map header + initial buckets
+	perTxMapsBytes = 200
+
+	// Per path hop: byPathHop index entry (pointer + map bucket)
+	perPathHopBytes = 50
+
+	// Per subpath entry in spTxIndex: string key + slice append + pointer
+	perSubpathEntryBytes = 40
+
+	// Per resolved path element on an observation
+	perResolvedPathElemBytes = 24 // *string pointer + string header + avg pubkey length
 )
 
 // estimateStoreTxBytes returns the estimated memory cost of a StoreTx (excluding observations).
+// Includes per-tx maps (obsKeys, observerSet), byPathHop entries, and spTxIndex subpath entries.
 func estimateStoreTxBytes(tx *StoreTx) int64 {
 	base := int64(storeTxBaseBytes)
 	base += int64(len(tx.RawHex) + len(tx.Hash) + len(tx.DecodedJSON) + len(tx.PathJSON))
 	base += int64(numIndexesPerTx * indexEntryBytes)
+
+	// Per-tx maps: obsKeys + observerSet
+	base += perTxMapsBytes
+
+	// Path-dependent costs
+	hops := int64(len(txGetParsedPath(tx)))
+	base += hops * perPathHopBytes
+
+	// spTxIndex: O(path²) subpath combinations
+	if hops > 1 {
+		subpaths := hops * (hops - 1) / 2
+		base += subpaths * perSubpathEntryBytes
+	}
+
+	return base
+}
+
+// estimateStoreTxBytesTypical returns the estimated memory cost of a typical
+// transmission with the given number of observations. Used for budget
+// calculation during bounded cold load (no actual StoreTx needed).
+func estimateStoreTxBytesTypical(numObs int) int64 {
+	// Typical tx: ~64 byte hash, ~200 byte decoded JSON, ~40 byte path, 3 hops
+	base := int64(storeTxBaseBytes) + 64 + 200 + 40
+	base += int64(numIndexesPerTx * indexEntryBytes)
+	base += perTxMapsBytes
+	hops := int64(3)
+	base += hops * perPathHopBytes
+	base += (hops * (hops - 1) / 2) * perSubpathEntryBytes
+	// Add observation costs
+	obsBase := int64(storeObsBaseBytes) + 30 + 30 + 60 // observer ID + name + path
+	obsBase += int64(numIndexesPerObs * indexEntryBytes)
+	obsBase += 3 * perResolvedPathElemBytes // typical resolved path
+	base += int64(numObs) * obsBase
 	return base
 }
 
 // estimateStoreObsBytes returns the estimated memory cost of a StoreObs.
+// Includes ResolvedPath slice overhead.
 func estimateStoreObsBytes(obs *StoreObs) int64 {
 	base := int64(storeObsBaseBytes)
 	base += int64(len(obs.PathJSON) + len(obs.ObserverID))
 	base += int64(numIndexesPerObs * indexEntryBytes)
+
+	// ResolvedPath: slice header + per-element pointer/string
+	if obs.ResolvedPath != nil {
+		base += 24 // slice header
+		base += int64(len(obs.ResolvedPath)) * perResolvedPathElemBytes
+	}
+
 	return base
 }
 
@@ -5054,7 +5172,18 @@ func (s *PacketStore) GetAnalyticsHashSizes(region string) map[string]interface{
 
 	// Add multi-byte capability data (only for unfiltered/global view)
 	if region == "" {
-		result["multiByteCapability"] = s.computeMultiByteCapability()
+		// Pass adopter hash sizes so capability can cross-reference
+		adopterHS := make(map[string]int)
+		if mbNodes, ok := result["multiByteNodes"].([]map[string]interface{}); ok {
+			for _, n := range mbNodes {
+				pk, _ := n["pubkey"].(string)
+				hs, _ := n["hashSize"].(int)
+				if pk != "" && hs >= 2 {
+					adopterHS[pk] = hs
+				}
+			}
+		}
+		result["multiByteCapability"] = s.computeMultiByteCapability(adopterHS)
 	}
 
 	s.cacheMu.Lock()
@@ -5134,7 +5263,7 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 
 		// Track originator from advert packets (including zero-hop adverts,
 		// keyed by pubKey so same-name nodes don't merge).
-		if tx.PayloadType != nil && *tx.PayloadType == 4 && tx.DecodedJSON != "" {
+		if tx.PayloadType != nil && *tx.PayloadType == PayloadADVERT && tx.DecodedJSON != "" {
 			var d map[string]interface{}
 			if json.Unmarshal([]byte(tx.DecodedJSON), &d) == nil {
 				pk := ""
@@ -5155,16 +5284,26 @@ func (s *PacketStore) computeAnalyticsHashSizes(region string) map[string]interf
 							name = pk
 						}
 					}
+					// Skip zero-hop direct adverts for hash_size — the
+					// path byte is locally generated and unreliable.
+					// Still count the packet and update lastSeen.
+					isZeroHop := (routeType == uint64(RouteDirect) || routeType == uint64(RouteTransportDirect)) && (actualPathByte&0x3F) == 0
 					if byNode[pk] == nil {
 						role := nodeRoleByPK[pk] // empty if unknown
+						initHS := hashSize
+						if isZeroHop {
+							initHS = 0
+						}
 						byNode[pk] = map[string]interface{}{
-							"hashSize": hashSize, "packets": 0,
+							"hashSize": initHS, "packets": 0,
 							"lastSeen": tx.FirstSeen, "name": name,
 							"role": role,
 						}
 					}
 					byNode[pk]["packets"] = byNode[pk]["packets"].(int) + 1
-					byNode[pk]["hashSize"] = hashSize
+					if !isZeroHop {
+						byNode[pk]["hashSize"] = hashSize
+					}
 					byNode[pk]["lastSeen"] = tx.FirstSeen
 				}
 			}
@@ -5669,13 +5808,22 @@ func (s *PacketStore) computeNodeHashSizeInfo() map[string]*hashSizeNodeInfo {
 			continue
 		}
 		routeType := int(header & 0x03)
-		pathByte, err := strconv.ParseUint(tx.RawHex[2:4], 16, 8)
+		// Transport routes (0, 3) have 4 transport code bytes before the path
+		// byte, so the path byte is at offset 5 instead of 1.
+		pbOffset := 1
+		if routeType == RouteTransportFlood || routeType == RouteTransportDirect {
+			pbOffset = 5
+		}
+		if len(tx.RawHex) < (pbOffset+1)*2 {
+			continue
+		}
+		pathByte, err := strconv.ParseUint(tx.RawHex[pbOffset*2:pbOffset*2+2], 16, 8)
 		if err != nil {
 			continue
 		}
-		// DIRECT zero-hop adverts use path byte 0x00 locally and can misreport
-		// multibyte repeater hash mode as 1-byte.
-		if routeType == RouteDirect && (pathByte&0x3F) == 0 {
+		// Direct zero-hop adverts (route types 2 and 3) use path byte 0x00
+		// locally and can misreport multibyte hash mode as 1-byte.
+		if (routeType == RouteDirect || routeType == RouteTransportDirect) && (pathByte&0x3F) == 0 {
 			continue
 		}
 		hs := int((pathByte>>6)&0x3) + 1
@@ -5748,7 +5896,7 @@ func EnrichNodeWithHashSize(node map[string]interface{}, info *hashSizeNodeInfo)
 
 // --- Multi-Byte Capability Inference ---
 
-// MultiByteCapEntry represents a repeater's inferred multi-byte capability.
+// MultiByteCapEntry represents a node's inferred multi-byte capability.
 type MultiByteCapEntry struct {
 	PublicKey   string `json:"pubkey"`
 	Name        string `json:"name"`
@@ -5760,7 +5908,7 @@ type MultiByteCapEntry struct {
 }
 
 // computeMultiByteCapability determines multi-byte capability for each
-// repeater using two methods:
+// node (repeaters, companions, rooms, sensors) using two methods:
 //
 // 1. Confirmed: the node has advertised with hash_size >= 2 (from advert
 //    path byte). This is 100% reliable because the full public key is
@@ -5777,7 +5925,7 @@ type MultiByteCapEntry struct {
 //    with default (1-byte) settings.
 //
 // Caller must hold NO locks — this method acquires mu.RLock internally.
-func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
+func (s *PacketStore) computeMultiByteCapability(adopterHashSizes map[string]int) []MultiByteCapEntry {
 	// Get hash size info from adverts (has its own locking)
 	hashInfo := s.GetNodeHashSizeInfo()
 
@@ -5812,24 +5960,21 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 		pubkey string
 		prefix string
 	}
-	repeaterPrefixes := make(map[string][]prefixEntry) // prefix → entries
-	for pk, n := range nodeByPK {
-		if !strings.Contains(strings.ToLower(n.Role), "repeater") {
-			continue
-		}
+	nodePrefixes := make(map[string][]prefixEntry) // prefix → entries
+	for pk := range nodeByPK {
 		// Generate 1-byte, 2-byte, 3-byte prefixes
 		pkLower := strings.ToLower(pk)
 		for byteLen := 1; byteLen <= 3; byteLen++ {
 			hexLen := byteLen * 2
 			if len(pkLower) >= hexLen {
 				pfx := pkLower[:hexLen]
-				repeaterPrefixes[pfx] = append(repeaterPrefixes[pfx], prefixEntry{pk, pfx})
+				nodePrefixes[pfx] = append(nodePrefixes[pfx], prefixEntry{pk, pfx})
 			}
 		}
 	}
 
 	suspected := make(map[string]int) // pubkey → max hash size from path appearances
-	for pfx, entries := range repeaterPrefixes {
+	for pfx, entries := range nodePrefixes {
 		txList := s.byPathHop[pfx]
 		for _, tx := range txList {
 			if tx.RawHex == "" || len(tx.RawHex) < 4 {
@@ -5875,9 +6020,9 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 	}
 	s.mu.RUnlock()
 
-	// Build result for all repeaters — fetch last_seen from DB
+	// Build result for all nodes — fetch last_seen from DB
 	dbLastSeen := make(map[string]string)
-	rows, err := s.db.conn.Query("SELECT public_key, last_seen FROM nodes WHERE role LIKE '%repeater%'")
+	rows, err := s.db.conn.Query("SELECT public_key, last_seen FROM nodes")
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -5892,9 +6037,6 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 
 	var result []MultiByteCapEntry
 	for pk, n := range nodeByPK {
-		if !strings.Contains(strings.ToLower(n.Role), "repeater") {
-			continue
-		}
 		entry := MultiByteCapEntry{
 			PublicKey:   pk,
 			Name:        n.Name,
@@ -5904,6 +6046,12 @@ func (s *PacketStore) computeMultiByteCapability() []MultiByteCapEntry {
 		}
 
 		if maxHS, ok := confirmed[pk]; ok {
+			entry.Status = "confirmed"
+			entry.Evidence = "advert"
+			entry.MaxHashSize = maxHS
+		} else if maxHS, ok := adopterHashSizes[pk]; ok && maxHS >= 2 {
+			// Adopter data (from computeAnalyticsHashSizes) shows hash_size >= 2
+			// from advert analysis — this is advert-based evidence, so confirmed.
 			entry.Status = "confirmed"
 			entry.Evidence = "advert"
 			entry.MaxHashSize = maxHS
@@ -6602,6 +6750,9 @@ func (s *PacketStore) GetNodeAnalytics(pubkey string, days int) (*NodeAnalyticsR
 		relayPct = round(float64(relayedCount)*100.0/float64(totalWithPath), 1)
 	}
 
+	// Compute clock skew (already under RLock).
+	clockSkew := s.getNodeClockSkewLocked(pubkey)
+
 	return &NodeAnalyticsResponse{
 		Node:                node,
 		TimeRange:           TimeRangeResp{From: fromISO, To: toISO, Days: days},
@@ -6625,6 +6776,7 @@ func (s *PacketStore) GetNodeAnalytics(pubkey string, days int) (*NodeAnalyticsR
 			UniquePeers:         len(peerSlice),
 			AvgPacketsPerDay:    avgPacketsPerDay,
 		},
+		ClockSkew: clockSkew,
 	}, nil
 }
 
