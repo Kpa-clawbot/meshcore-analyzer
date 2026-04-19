@@ -2640,10 +2640,11 @@ func (s *PacketStore) buildDistanceIndex() {
 // usage and independent of GC state.
 //
 // Issue #743: Previous estimates missed major per-packet allocations:
-// - spTxIndex: O(path²) entries per tx (50-150MB at scale)
 // - ResolvedPath on observations (~25MB at scale)
 // - Per-tx maps: obsKeys, observerSet (~11MB at scale)
 // - byPathHop index entries (20-40MB at scale)
+// Note: spTxIndex was eliminated in #791 (saved ~280MB at 3.4M subpaths).
+// Singleton subpath entries are also dropped from spIndex (#791, saves ~150MB).
 const (
 	storeTxBaseBytes  = 384 // StoreTx struct fields + map headers + sync.Once + string headers
 	storeObsBaseBytes = 192 // StoreObs struct fields + string headers
@@ -2657,15 +2658,12 @@ const (
 	// Per path hop: byPathHop index entry (pointer + map bucket)
 	perPathHopBytes = 50
 
-	// Per subpath entry in spTxIndex: string key + slice append + pointer
-	perSubpathEntryBytes = 40
-
 	// Per resolved path element on an observation
 	perResolvedPathElemBytes = 24 // *string pointer + string header + avg pubkey length
 )
 
 // estimateStoreTxBytes returns the estimated memory cost of a StoreTx (excluding observations).
-// Includes per-tx maps (obsKeys, observerSet), byPathHop entries, and spTxIndex subpath entries.
+// Includes per-tx maps (obsKeys, observerSet) and byPathHop entries.
 func estimateStoreTxBytes(tx *StoreTx) int64 {
 	base := int64(storeTxBaseBytes)
 	base += int64(len(tx.RawHex) + len(tx.Hash) + len(tx.DecodedJSON) + len(tx.PathJSON))
@@ -2677,12 +2675,6 @@ func estimateStoreTxBytes(tx *StoreTx) int64 {
 	// Path-dependent costs
 	hops := int64(len(txGetParsedPath(tx)))
 	base += hops * perPathHopBytes
-
-	// spTxIndex: O(path²) subpath combinations
-	if hops > 1 {
-		subpaths := hops * (hops - 1) / 2
-		base += subpaths * perSubpathEntryBytes
-	}
 
 	return base
 }
@@ -2697,7 +2689,6 @@ func estimateStoreTxBytesTypical(numObs int) int64 {
 	base += perTxMapsBytes
 	hops := int64(3)
 	base += hops * perPathHopBytes
-	base += (hops * (hops - 1) / 2) * perSubpathEntryBytes
 	// Add observation costs
 	obsBase := int64(storeObsBaseBytes) + 30 + 30 + 60 // observer ID + name + path
 	obsBase += int64(numIndexesPerObs * indexEntryBytes)

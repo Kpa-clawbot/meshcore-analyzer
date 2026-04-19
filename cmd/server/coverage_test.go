@@ -2322,24 +2322,12 @@ func TestSubpathTxIndexPopulated(t *testing.T) {
 	store := NewPacketStore(db, nil)
 	store.Load()
 
-	// spTxIndex must be populated alongside spIndex
-	if len(store.spTxIndex) == 0 {
-		t.Fatal("expected spTxIndex to be populated after Load()")
+	// spIndex must be populated after Load()
+	if len(store.spIndex) == 0 {
+		t.Fatal("expected spIndex to be populated after Load()")
 	}
 
-	// Every key in spIndex must also exist in spTxIndex with matching count
-	for key, count := range store.spIndex {
-		txs, ok := store.spTxIndex[key]
-		if !ok {
-			t.Errorf("spTxIndex missing key %q that exists in spIndex", key)
-			continue
-		}
-		if len(txs) != count {
-			t.Errorf("spTxIndex[%q] has %d txs, spIndex count is %d", key, len(txs), count)
-		}
-	}
-
-	// GetSubpathDetail should return correct match count via indexed lookup
+	// GetSubpathDetail should return correct match count via scan fallback
 	detail := store.GetSubpathDetail([]string{"eeff", "0011"})
 	if detail == nil {
 		t.Fatal("expected non-nil detail for existing subpath")
