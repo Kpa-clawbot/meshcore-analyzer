@@ -22,6 +22,7 @@ type DBStats struct {
 	NodeUpserts            atomic.Int64
 	ObserverUpserts        atomic.Int64
 	WriteErrors            atomic.Int64
+	SignatureDrops         atomic.Int64
 }
 
 // Store wraps the SQLite database for packet ingestion.
@@ -110,7 +111,8 @@ func applySchema(db *sql.DB) error {
 			radio TEXT,
 			battery_mv INTEGER,
 			uptime_secs INTEGER,
-			noise_floor REAL
+			noise_floor REAL,
+			inactive INTEGER DEFAULT 0
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
@@ -195,7 +197,7 @@ func applySchema(db *sql.DB) error {
 				   t.created_at
 			FROM observations o
 			JOIN transmissions t ON t.id = o.transmission_id
-			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+			LEFT JOIN observers obs ON obs.rowid = o.observer_idx AND (obs.inactive IS NULL OR obs.inactive = 0)
 	`)
 	if vErr != nil {
 		return fmt.Errorf("packets_v view: %w", vErr)
@@ -335,6 +337,19 @@ func applySchema(db *sql.DB) error {
 		log.Println("[migration] observer_metrics timestamp index created")
 	}
 
+	// Migration: add inactive column to observers for soft-delete retention
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'observers_inactive_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Adding inactive column to observers...")
+		_, err := db.Exec(`ALTER TABLE observers ADD COLUMN inactive INTEGER DEFAULT 0`)
+		if err != nil {
+			// Column may already exist (e.g. fresh install with schema above)
+			log.Printf("[migration] observers.inactive: %v (may already exist)", err)
+		}
+		db.Exec(`INSERT INTO _migrations (name) VALUES ('observers_inactive_v1')`)
+		log.Println("[migration] observers.inactive column added")
+	}
+
 	// Migration: add packets_sent and packets_recv columns to observer_metrics
 	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'observer_metrics_packets_v1'")
 	if row.Scan(&migDone) != nil {
@@ -365,6 +380,32 @@ func applySchema(db *sql.DB) error {
 		}
 		db.Exec(`INSERT INTO _migrations (name) VALUES ('channel_hash_v1')`)
 		log.Println("[migration] channel_hash column added and backfilled")
+	}
+
+	// Migration: dropped_packets table for signature validation failures (#793)
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'dropped_packets_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Creating dropped_packets table...")
+		_, err := db.Exec(`
+			CREATE TABLE IF NOT EXISTS dropped_packets (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				hash TEXT,
+				raw_hex TEXT,
+				reason TEXT NOT NULL,
+				observer_id TEXT,
+				observer_name TEXT,
+				node_pubkey TEXT,
+				node_name TEXT,
+				dropped_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_dropped_observer ON dropped_packets(observer_id);
+			CREATE INDEX IF NOT EXISTS idx_dropped_node ON dropped_packets(node_pubkey);
+		`)
+		if err != nil {
+			return fmt.Errorf("dropped_packets schema: %w", err)
+		}
+		db.Exec(`INSERT INTO _migrations (name) VALUES ('dropped_packets_v1')`)
+		log.Println("[migration] dropped_packets table created")
 	}
 
 	return nil
@@ -644,10 +685,13 @@ func (s *Store) UpsertObserver(id, name, iata string, meta *ObserverMeta) error 
 	)
 	if err != nil {
 		s.Stats.WriteErrors.Add(1)
-	} else {
-		s.Stats.ObserverUpserts.Add(1)
+		return err
 	}
-	return err
+	s.Stats.ObserverUpserts.Add(1)
+
+	// Reactivate if this observer was previously marked inactive
+	s.db.Exec(`UPDATE observers SET inactive = 0 WHERE id = ? AND inactive = 1`, id)
+	return nil
 }
 
 // Close checkpoints the WAL and closes the database.
@@ -741,13 +785,14 @@ func (s *Store) Checkpoint() {
 
 // LogStats logs current operational metrics.
 func (s *Store) LogStats() {
-	log.Printf("[stats] tx_inserted=%d tx_dupes=%d obs_inserted=%d node_upserts=%d observer_upserts=%d write_errors=%d",
+	log.Printf("[stats] tx_inserted=%d tx_dupes=%d obs_inserted=%d node_upserts=%d observer_upserts=%d write_errors=%d sig_drops=%d",
 		s.Stats.TransmissionsInserted.Load(),
 		s.Stats.DuplicateTransmissions.Load(),
 		s.Stats.ObservationsInserted.Load(),
 		s.Stats.NodeUpserts.Load(),
 		s.Stats.ObserverUpserts.Load(),
 		s.Stats.WriteErrors.Load(),
+		s.Stats.SignatureDrops.Load(),
 	)
 }
 
@@ -777,6 +822,71 @@ func (s *Store) MoveStaleNodes(nodeDays int) (int64, error) {
 		log.Printf("Moved %d node(s) to inactive_nodes (not seen in %d days)", moved, nodeDays)
 	}
 	return moved, nil
+}
+
+// RemoveStaleObservers marks observers that have not actively sent data in observerDays
+// as inactive (soft-delete). This preserves JOIN integrity for observations.observer_idx
+// and observer_metrics.observer_id — historical data still references the correct observer.
+// An observer must actively send data to stay listed — being seen by another node does not count.
+// observerDays <= -1 means never remove (keep forever).
+func (s *Store) RemoveStaleObservers(observerDays int) (int64, error) {
+	if observerDays <= -1 {
+		return 0, nil // keep forever
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -observerDays).Format(time.RFC3339)
+	result, err := s.db.Exec(`UPDATE observers SET inactive = 1 WHERE last_seen < ? AND (inactive IS NULL OR inactive = 0)`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("mark stale observers inactive: %w", err)
+	}
+	removed, _ := result.RowsAffected()
+	if removed > 0 {
+		// Clean up orphaned metrics for now-inactive observers
+		s.db.Exec(`DELETE FROM observer_metrics WHERE observer_id IN (SELECT id FROM observers WHERE inactive = 1)`)
+		log.Printf("Marked %d observer(s) as inactive (not seen in %d days)", removed, observerDays)
+	}
+	return removed, nil
+}
+
+// DroppedPacket holds data for a packet rejected during ingest.
+type DroppedPacket struct {
+	Hash         string
+	RawHex       string
+	Reason       string
+	ObserverID   string
+	ObserverName string
+	NodePubKey   string
+	NodeName     string
+}
+
+// InsertDroppedPacket records a rejected packet in the dropped_packets table.
+func (s *Store) InsertDroppedPacket(dp *DroppedPacket) error {
+	_, err := s.db.Exec(
+		`INSERT INTO dropped_packets (hash, raw_hex, reason, observer_id, observer_name, node_pubkey, node_name) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		dp.Hash, dp.RawHex, dp.Reason, dp.ObserverID, dp.ObserverName, dp.NodePubKey, dp.NodeName,
+	)
+	if err != nil {
+		s.Stats.WriteErrors.Add(1)
+		return fmt.Errorf("insert dropped packet: %w", err)
+	}
+	s.Stats.SignatureDrops.Add(1)
+	return nil
+}
+
+// PruneDroppedPackets removes dropped_packets older than retentionDays.
+func (s *Store) PruneDroppedPackets(retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Format(time.RFC3339)
+	result, err := s.db.Exec(`DELETE FROM dropped_packets WHERE dropped_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune dropped packets: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n > 0 {
+		log.Printf("Pruned %d dropped packet(s) older than %d days", n, retentionDays)
+	}
+	return n, nil
 }
 
 // PacketData holds the data needed to insert a packet into the DB.

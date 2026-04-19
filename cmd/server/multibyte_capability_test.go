@@ -6,9 +6,16 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+// recentTS returns a timestamp string N hours ago, ensuring test data
+// stays within the 7-day advert window used by computeNodeHashSizeInfo.
+func recentTS(hoursAgo int) string {
+	return time.Now().UTC().Add(-time.Duration(hoursAgo) * time.Hour).Format("2006-01-02T15:04:05.000Z")
+}
 
 // setupCapabilityTestDB creates a minimal in-memory DB with nodes table.
 func setupCapabilityTestDB(t *testing.T) *DB {
@@ -69,7 +76,7 @@ func makeTestAdvert(pubkey string, hashSize int) *StoreTx {
 		PayloadType: &pt,
 		DecodedJSON: string(decoded),
 		PathJSON:    `["` + prefix + `"]`,
-		FirstSeen:   "2026-04-11T00:00:00.000Z",
+		FirstSeen:   recentTS(24),
 	}
 }
 
@@ -80,7 +87,7 @@ func TestMultiByteCapability_Confirmed(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "RepA", "repeater", "2026-04-11T00:00:00Z")
+		"aabbccdd11223344", "RepA", "repeater", recentTS(24))
 
 	store := NewPacketStore(db, nil)
 	addTestPacket(store, makeTestAdvert("aabbccdd11223344", 2))
@@ -107,7 +114,7 @@ func TestMultiByteCapability_Suspected(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "RepB", "repeater", "2026-04-10T00:00:00Z")
+		"aabbccdd11223344", "RepB", "repeater", recentTS(48))
 
 	store := NewPacketStore(db, nil)
 
@@ -119,7 +126,7 @@ func TestMultiByteCapability_Suspected(t *testing.T) {
 		RawHex:      rawHex,
 		PayloadType: &pt,
 		PathJSON:    `["aabb"]`,
-		FirstSeen:   "2026-04-10T00:00:00.000Z",
+		FirstSeen:   recentTS(48),
 	}
 	addTestPacket(store, pkt)
 
@@ -145,7 +152,7 @@ func TestMultiByteCapability_Unknown(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "RepC", "repeater", "2026-04-08T00:00:00Z")
+		"aabbccdd11223344", "RepC", "repeater", recentTS(72))
 
 	store := NewPacketStore(db, nil)
 
@@ -173,9 +180,9 @@ func TestMultiByteCapability_PrefixCollision(t *testing.T) {
 
 	// Two repeaters sharing 1-byte prefix "aa"
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabb000000000001", "RepConfirmed", "repeater", "2026-04-11T00:00:00Z")
+		"aabb000000000001", "RepConfirmed", "repeater", recentTS(24))
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aacc000000000002", "RepOther", "repeater", "2026-04-11T00:00:00Z")
+		"aacc000000000002", "RepOther", "repeater", recentTS(24))
 
 	store := NewPacketStore(db, nil)
 
@@ -190,7 +197,7 @@ func TestMultiByteCapability_PrefixCollision(t *testing.T) {
 		RawHex:      rawHex,
 		PayloadType: &pt,
 		PathJSON:    `["aa"]`,
-		FirstSeen:   "2026-04-10T00:00:00.000Z",
+		FirstSeen:   recentTS(48),
 	}
 	addTestPacket(store, pkt)
 
@@ -221,7 +228,7 @@ func TestMultiByteCapability_TraceExcluded(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "RepTrace", "repeater", "2026-04-10T00:00:00Z")
+		"aabbccdd11223344", "RepTrace", "repeater", recentTS(48))
 
 	store := NewPacketStore(db, nil)
 
@@ -233,7 +240,7 @@ func TestMultiByteCapability_TraceExcluded(t *testing.T) {
 		RawHex:      rawHex,
 		PayloadType: &pt,
 		PathJSON:    `["aabb"]`,
-		FirstSeen:   "2026-04-10T00:00:00.000Z",
+		FirstSeen:   recentTS(48),
 	}
 	addTestPacket(store, pkt)
 
@@ -253,7 +260,7 @@ func TestMultiByteCapability_NonTraceStillSuspected(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "RepNonTrace", "repeater", "2026-04-10T00:00:00Z")
+		"aabbccdd11223344", "RepNonTrace", "repeater", recentTS(48))
 
 	store := NewPacketStore(db, nil)
 
@@ -265,7 +272,7 @@ func TestMultiByteCapability_NonTraceStillSuspected(t *testing.T) {
 		RawHex:      rawHex,
 		PayloadType: &pt,
 		PathJSON:    `["aabb"]`,
-		FirstSeen:   "2026-04-10T00:00:00.000Z",
+		FirstSeen:   recentTS(48),
 	}
 	addTestPacket(store, pkt)
 
@@ -285,7 +292,7 @@ func TestMultiByteCapability_ConfirmedUnaffectedByTraceExclusion(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "RepConfirmedTrace", "repeater", "2026-04-11T00:00:00Z")
+		"aabbccdd11223344", "RepConfirmedTrace", "repeater", recentTS(24))
 
 	store := NewPacketStore(db, nil)
 
@@ -300,7 +307,7 @@ func TestMultiByteCapability_ConfirmedUnaffectedByTraceExclusion(t *testing.T) {
 		RawHex:      rawHex,
 		PayloadType: &pt,
 		PathJSON:    `["aabb"]`,
-		FirstSeen:   "2026-04-10T00:00:00.000Z",
+		FirstSeen:   recentTS(48),
 	}
 	addTestPacket(store, pkt)
 
@@ -320,7 +327,7 @@ func TestMultiByteCapability_CompanionConfirmed(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "CompA", "companion", "2026-04-11T00:00:00Z")
+		"aabbccdd11223344", "CompA", "companion", recentTS(24))
 
 	store := NewPacketStore(db, nil)
 	addTestPacket(store, makeTestAdvert("aabbccdd11223344", 2))
@@ -347,11 +354,11 @@ func TestMultiByteCapability_RoleColumnPopulated(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabb000000000001", "Rep1", "repeater", "2026-04-11T00:00:00Z")
+		"aabb000000000001", "Rep1", "repeater", recentTS(24))
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"ccdd000000000002", "Comp1", "companion", "2026-04-11T00:00:00Z")
+		"ccdd000000000002", "Comp1", "companion", recentTS(24))
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"eeff000000000003", "Room1", "room_server", "2026-04-11T00:00:00Z")
+		"eeff000000000003", "Room1", "room_server", recentTS(24))
 
 	store := NewPacketStore(db, nil)
 	addTestPacket(store, makeTestAdvert("aabb000000000001", 2))
@@ -386,7 +393,7 @@ func TestMultiByteCapability_AdopterEvidenceTakesPrecedence(t *testing.T) {
 	defer db.conn.Close()
 
 	db.conn.Exec("INSERT INTO nodes (public_key, name, role, last_seen) VALUES (?, ?, ?, ?)",
-		"aabbccdd11223344", "RepAdopter", "repeater", "2026-04-11T00:00:00Z")
+		"aabbccdd11223344", "RepAdopter", "repeater", recentTS(24))
 
 	store := NewPacketStore(db, nil)
 
@@ -398,7 +405,7 @@ func TestMultiByteCapability_AdopterEvidenceTakesPrecedence(t *testing.T) {
 		RawHex:      rawHex,
 		PayloadType: &pt,
 		PathJSON:    `["aabb"]`,
-		FirstSeen:   "2026-04-10T00:00:00.000Z",
+		FirstSeen:   recentTS(48),
 	}
 	addTestPacket(store, pkt)
 

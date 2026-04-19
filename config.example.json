@@ -1,10 +1,13 @@
 {
   "port": 3000,
   "apiKey": "your-secret-api-key-here",
+  "nodeBlacklist": [],
+  "_comment_nodeBlacklist": "Public keys of nodes to hide from all API responses. Use for trolls, offensive names, or nodes reporting false data that operators refuse to fix.",
   "retention": {
     "nodeDays": 7,
+    "observerDays": 14,
     "packetDays": 30,
-    "_comment": "nodeDays: nodes not seen in N days are moved to inactive_nodes (default 7). packetDays: transmissions+observations older than N days are deleted daily (0 = disabled)."
+    "_comment": "nodeDays: nodes not seen in N days moved to inactive_nodes (default 7). observerDays: observers not sending data in N days are removed (-1 = keep forever, default 14). packetDays: transmissions older than N days are deleted (0 = disabled)."
   },
   "https": {
     "cert": "/path/to/cert.pem",

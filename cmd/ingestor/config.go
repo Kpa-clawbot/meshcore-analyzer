@@ -39,7 +39,8 @@ type Config struct {
 	HashChannels    []string          `json:"hashChannels,omitempty"`
 	Retention       *RetentionConfig  `json:"retention,omitempty"`
 	Metrics         *MetricsConfig    `json:"metrics,omitempty"`
-	GeoFilter       *GeoFilterConfig  `json:"geo_filter,omitempty"`
+	GeoFilter            *GeoFilterConfig  `json:"geo_filter,omitempty"`
+	ValidateSignatures   *bool             `json:"validateSignatures,omitempty"`
 }
 
 // GeoFilterConfig is an alias for the shared geofilter.Config type.
@@ -47,13 +48,22 @@ type GeoFilterConfig = geofilter.Config
 
 // RetentionConfig controls how long stale nodes are kept before being moved to inactive_nodes.
 type RetentionConfig struct {
-	NodeDays    int `json:"nodeDays"`
-	MetricsDays int `json:"metricsDays"`
+	NodeDays      int `json:"nodeDays"`
+	ObserverDays  int `json:"observerDays"`
+	MetricsDays   int `json:"metricsDays"`
 }
 
 // MetricsConfig controls observer metrics collection.
 type MetricsConfig struct {
 	SampleIntervalSec int `json:"sampleIntervalSec"`
+}
+
+// ShouldValidateSignatures returns true (default) unless explicitly disabled.
+func (c *Config) ShouldValidateSignatures() bool {
+	if c.ValidateSignatures != nil {
+		return *c.ValidateSignatures
+	}
+	return true
 }
 
 // MetricsSampleInterval returns the configured sample interval or 300s default.
@@ -78,6 +88,15 @@ func (c *Config) NodeDaysOrDefault() int {
 		return c.Retention.NodeDays
 	}
 	return 7
+}
+
+// ObserverDaysOrDefault returns the configured retention.observerDays or 14 if not set.
+// A value of -1 means observers are never removed.
+func (c *Config) ObserverDaysOrDefault() int {
+	if c.Retention != nil && c.Retention.ObserverDays != 0 {
+		return c.Retention.ObserverDays
+	}
+	return 14
 }
 
 // LoadConfig reads configuration from a JSON file, with env var overrides.

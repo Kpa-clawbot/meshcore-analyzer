@@ -926,6 +926,93 @@ func TestComputeContentHashLongFallback(t *testing.T) {
 	}
 }
 
+// TestComputeContentHashRouteTypeIndependence verifies that the same logical
+// packet produces the same content hash regardless of route type (issue #786).
+func TestComputeContentHashRouteTypeIndependence(t *testing.T) {
+	// Same payload type (TXT_MSG=2, bits 2-5) with different route types.
+	// Header 0x08 = route_type 0 (TRANSPORT_FLOOD), payload_type 2
+	// Header 0x0A = route_type 2 (DIRECT), payload_type 2
+	// Header 0x09 = route_type 1 (FLOOD), payload_type 2
+	// pathByte=0x00, payload=D69FD7A5A7
+	payloadHex := "D69FD7A5A7"
+
+	// FLOOD: header=0x09 (route_type 1), pathByte=0x00
+	floodHex := "09" + "00" + payloadHex
+	// DIRECT: header=0x0A (route_type 2), pathByte=0x00
+	directHex := "0A" + "00" + payloadHex
+
+	hashFlood := ComputeContentHash(floodHex)
+	hashDirect := ComputeContentHash(directHex)
+	if hashFlood != hashDirect {
+		t.Errorf("same payload with different route types produced different hashes: flood=%s direct=%s", hashFlood, hashDirect)
+	}
+}
+
+// TestComputeContentHashTraceIncludesPathLen verifies TRACE packets include
+// path_len in the hash (matching firmware behavior).
+func TestComputeContentHashTraceIncludesPathLen(t *testing.T) {
+	// TRACE = payload_type 0x09, so header bits 2-5 = 0x09 → header = 0x09<<2 | route=2 = 0x26
+	// pathByte=0x01 (1 hop, 1-byte hash) → 1 path byte
+	traceHeader1 := "26" // route=2, payload_type=9
+	pathByte1 := "01"
+	pathData1 := "AA"
+	payload := "DEADBEEF"
+	hex1 := traceHeader1 + pathByte1 + pathData1 + payload
+
+	// Same but pathByte=0x02 (2 hops) → 2 path bytes
+	pathByte2 := "02"
+	pathData2 := "AABB"
+	hex2 := traceHeader1 + pathByte2 + pathData2 + payload
+
+	hash1 := ComputeContentHash(hex1)
+	hash2 := ComputeContentHash(hex2)
+	if hash1 == hash2 {
+		t.Error("TRACE packets with different path_len should produce different hashes (path_len is part of hash input)")
+	}
+}
+
+// TestComputeContentHashMatchesFirmware verifies hash output matches what the
+// firmware would compute: SHA256(payload_type_byte + payload)[:16hex].
+func TestComputeContentHashMatchesFirmware(t *testing.T) {
+	// header=0x0A → payload_type = (0x0A >> 2) & 0x0F = 2
+	// pathByte=0x00, payload = D69FD7A5A7475DB07337749AE61FA53A4788E976
+	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
+	hash := ComputeContentHash(rawHex)
+
+	// Manually compute expected: SHA256(0x02 + payload_bytes)
+	payloadBytes, _ := hex.DecodeString("D69FD7A5A7475DB07337749AE61FA53A4788E976")
+	toHash := append([]byte{0x02}, payloadBytes...)
+	expected := sha256.Sum256(toHash)
+	expectedHex := hex.EncodeToString(expected[:])[:16]
+	if hash != expectedHex {
+		t.Errorf("hash=%s, want %s (firmware-compatible)", hash, expectedHex)
+	}
+}
+
+// TestComputeContentHashTraceGoldenValue is a golden-value test that locks down
+// the 2-byte path_len (uint16 LE) behavior for TRACE hashing. If anyone removes
+// the 0x00 byte from the hash input, this test breaks.
+//
+// Packet: header=0x25 (FLOOD route=1, payload_type=TRACE=0x09), pathByte=0x02
+// (2 hops, 1-byte hash), path=[AA,BB], payload=[DE,AD,BE,EF].
+// Hash input: [0x09, 0x02, 0x00, 0xDE, 0xAD, 0xBE, 0xEF]
+//   → SHA256 = b1baaf3bf0d0726c2672b1ec9e2665dc...
+//   → first 16 hex chars = "b1baaf3bf0d0726c"
+func TestComputeContentHashTraceGoldenValue(t *testing.T) {
+	// TRACE packet: header byte 0x25 = payload_type 9 (TRACE), route_type 1 (FLOOD)
+	// pathByte 0x02 = hash_size 1, hash_count 2
+	// 2 path bytes (AA, BB), then payload DEADBEEF
+	rawHex := "2502AABBDEADBEEF"
+	hash := ComputeContentHash(rawHex)
+
+	// Pre-computed: SHA256(0x09 0x02 0x00 0xDE 0xAD 0xBE 0xEF)[:16hex]
+	// The 0x00 is the high byte of uint16_t path_len (little-endian).
+	const golden = "b1baaf3bf0d0726c"
+	if hash != golden {
+		t.Errorf("TRACE golden hash = %s, want %s (2-byte path_len encoding)", hash, golden)
+	}
+}
+
 func TestDecodePacketWithWhitespace(t *testing.T) {
 	raw := "0A 00 D6 9F D7 A5 A7 47 5D B0 73 37 74 9A E6 1F A5 3A 47 88 E9 76"
 	pkt, err := DecodePacket(raw, nil, false)

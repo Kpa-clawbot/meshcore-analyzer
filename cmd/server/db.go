@@ -2213,6 +2213,35 @@ func (db *DB) PruneOldMetrics(retentionDays int) (int64, error) {
 	return n, nil
 }
 
+// RemoveStaleObservers marks observers that have not actively sent data in observerDays
+// as inactive (soft-delete). This preserves JOIN integrity for observations.observer_idx
+// and observer_metrics.observer_id — historical data still references the correct observer.
+// An observer must actively send data to stay listed — being seen by another node does not count.
+// observerDays <= -1 means never remove (keep forever).
+func (db *DB) RemoveStaleObservers(observerDays int) (int64, error) {
+	if observerDays <= -1 {
+		return 0, nil // keep forever
+	}
+	rw, err := openRW(db.path)
+	if err != nil {
+		return 0, err
+	}
+	defer rw.Close()
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -observerDays).Format(time.RFC3339)
+	res, err := rw.Exec(`UPDATE observers SET inactive = 1 WHERE last_seen < ? AND (inactive IS NULL OR inactive = 0)`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		// Clean up orphaned metrics for now-inactive observers
+		rw.Exec(`DELETE FROM observer_metrics WHERE observer_id IN (SELECT id FROM observers WHERE inactive = 1)`)
+		log.Printf("[observers] Marked %d observer(s) as inactive (not seen in %d days)", n, observerDays)
+	}
+	return n, nil
+}
+
 // TouchNodeLastSeen updates last_seen for a node identified by full public key.
 // Only updates if the new timestamp is newer than the existing value (or NULL).
 // Returns nil even if no rows are affected (node doesn't exist).
@@ -2222,4 +2251,72 @@ func (db *DB) TouchNodeLastSeen(pubkey string, timestamp string) error {
 		timestamp, pubkey, timestamp,
 	)
 	return err
+}
+
+// GetDroppedPackets returns recently dropped packets, newest first.
+func (db *DB) GetDroppedPackets(limit int, observerID, nodePubkey string) ([]map[string]interface{}, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	query := `SELECT id, hash, raw_hex, reason, observer_id, observer_name, node_pubkey, node_name, dropped_at FROM dropped_packets`
+	var conditions []string
+	var args []interface{}
+	if observerID != "" {
+		conditions = append(conditions, "observer_id = ?")
+		args = append(args, observerID)
+	}
+	if nodePubkey != "" {
+		conditions = append(conditions, "node_pubkey = ?")
+		args = append(args, nodePubkey)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY dropped_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var hash, rawHex, reason, obsID, obsName, pubkey, name, droppedAt sql.NullString
+		if err := rows.Scan(&id, &hash, &rawHex, &reason, &obsID, &obsName, &pubkey, &name, &droppedAt); err != nil {
+			continue
+		}
+		row := map[string]interface{}{
+			"id":            id,
+			"hash":          nullStr(hash),
+			"reason":        nullStr(reason),
+			"observer_id":   nullStr(obsID),
+			"observer_name": nullStr(obsName),
+			"node_pubkey":   nullStr(pubkey),
+			"node_name":     nullStr(name),
+			"dropped_at":    nullStr(droppedAt),
+		}
+		// Only include raw_hex if explicitly requested (it's large)
+		if rawHex.Valid {
+			row["raw_hex"] = rawHex.String
+		}
+		results = append(results, row)
+	}
+	if results == nil {
+		results = []map[string]interface{}{}
+	}
+	return results, nil
+}
+
+// GetSignatureDropCount returns the total number of dropped packets.
+func (db *DB) GetSignatureDropCount() int64 {
+	var count int64
+	// Table may not exist yet if ingestor hasn't run the migration
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM dropped_packets").Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
 }

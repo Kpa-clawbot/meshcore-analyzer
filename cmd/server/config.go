@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/meshcore-analyzer/geofilter"
 )
@@ -15,6 +16,17 @@ type Config struct {
 	Port    int    `json:"port"`
 	APIKey  string `json:"apiKey"`
 	DBPath  string `json:"dbPath"`
+
+	// NodeBlacklist is a list of public keys to exclude from all API responses.
+	// Blacklisted nodes are hidden from node lists, search, detail, map, and stats.
+	// Use this to filter out trolls, nodes with offensive names, or nodes
+	// reporting deliberately false data (e.g. wrong GPS position) that the
+	// operator refuses to fix.
+	NodeBlacklist []string `json:"nodeBlacklist"`
+
+	// blacklistSetCached is the lazily-built set version of NodeBlacklist.
+	blacklistSetCached map[string]bool
+	blacklistOnce      sync.Once
 
 	Branding   map[string]interface{} `json:"branding"`
 	Theme      map[string]interface{} `json:"theme"`
@@ -110,9 +122,10 @@ type PacketStoreConfig struct {
 type GeoFilterConfig = geofilter.Config
 
 type RetentionConfig struct {
-	NodeDays    int `json:"nodeDays"`
-	PacketDays  int `json:"packetDays"`
-	MetricsDays int `json:"metricsDays"`
+	NodeDays      int `json:"nodeDays"`
+	ObserverDays  int `json:"observerDays"`
+	PacketDays    int `json:"packetDays"`
+	MetricsDays   int `json:"metricsDays"`
 }
 
 // MetricsRetentionDays returns configured metrics retention or 30 days default.
@@ -163,6 +176,15 @@ func (c *Config) NodeDaysOrDefault() int {
 		return c.Retention.NodeDays
 	}
 	return 7
+}
+
+// ObserverDaysOrDefault returns the configured retention.observerDays or 14 if not set.
+// A value of -1 means observers are never removed.
+func (c *Config) ObserverDaysOrDefault() int {
+	if c.Retention != nil && c.Retention.ObserverDays != 0 {
+		return c.Retention.ObserverDays
+	}
+	return 14
 }
 
 type HealthThresholds struct {
@@ -337,4 +359,31 @@ func (c *Config) PropagationBufferMs() int {
 		return c.LiveMap.PropagationBufferMs
 	}
 	return 5000
+}
+
+// blacklistSet lazily builds and caches the nodeBlacklist as a set for O(1) lookups.
+// Uses sync.Once to eliminate the data race on first concurrent access.
+func (c *Config) blacklistSet() map[string]bool {
+	c.blacklistOnce.Do(func() {
+		if len(c.NodeBlacklist) == 0 {
+			return
+		}
+		m := make(map[string]bool, len(c.NodeBlacklist))
+		for _, pk := range c.NodeBlacklist {
+			trimmed := strings.ToLower(strings.TrimSpace(pk))
+			if trimmed != "" {
+				m[trimmed] = true
+			}
+		}
+		c.blacklistSetCached = m
+	})
+	return c.blacklistSetCached
+}
+
+// IsBlacklisted returns true if the given public key is in the nodeBlacklist.
+func (c *Config) IsBlacklisted(pubkey string) bool {
+	if c == nil || len(c.NodeBlacklist) == 0 {
+		return false
+	}
+	return c.blacklistSet()[strings.ToLower(strings.TrimSpace(pubkey))]
 }

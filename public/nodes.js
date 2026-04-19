@@ -1065,6 +1065,30 @@
 
     // #630: Close button for node detail panel (important for mobile full-screen overlay)
     document.getElementById('nodesRight').addEventListener('click', function(e) {
+      // #778: Details/Analytics links don't navigate because replaceState
+      // already set the hash to #/nodes/PUBKEY, so clicking <a href="#/nodes/PUBKEY">
+      // is a same-hash no-op. For the detail link (same page), call init()
+      // directly — faster than a full router teardown/rebuild cycle.
+      // For analytics (different page), force hashchange via replaceState + assign.
+      var link = e.target.closest('a.btn-primary[href^="#/nodes/"]');
+      if (link) {
+        e.preventDefault();
+        var href = link.getAttribute('href');
+        if (href.indexOf('/analytics') === -1) {
+          // Detail link — re-init with the pubkey directly;
+          // destroy() first to clean up WS handlers, maps, listeners
+          destroy();
+          var pubkey = href.replace('#/nodes/', '').split('/')[0];
+          var appEl = document.getElementById('app');
+          init(appEl, decodeURIComponent(pubkey));
+          history.replaceState(null, '', href);
+        } else {
+          // Analytics link — different page, force hashchange via replaceState + assign
+          history.replaceState(null, '', '#/');
+          location.hash = href.substring(1);
+        }
+        return;
+      }
       if (e.target.closest('.panel-close-btn')) {
         const panel = document.getElementById('nodesRight');
         panel.classList.add('empty');

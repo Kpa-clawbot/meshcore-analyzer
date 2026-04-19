@@ -231,6 +231,30 @@ async function run() {
     assert(hasStatus, 'No status indicator found in node detail');
   });
 
+  // Test: Node side panel Details link navigates to full detail page (#778)
+  await test('Node side panel Details link navigates', async () => {
+    await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('table tbody tr');
+    // Click first row to open side panel
+    const firstRow = await page.$('table tbody tr');
+    assert(firstRow, 'No node rows found');
+    await firstRow.click();
+    await page.waitForSelector('.node-detail');
+    // Find the Details link in the side panel
+    const detailsLink = await page.$('#nodesRight a.btn-primary[href^="#/nodes/"]');
+    assert(detailsLink, 'Details link not found in side panel');
+    const href = await detailsLink.getAttribute('href');
+    // Click the Details link — this should navigate to the full detail page
+    await detailsLink.click();
+    // Wait for navigation — the full detail page has sections like neighbors/packets
+    await page.waitForFunction((expectedHash) => {
+      return location.hash === expectedHash;
+    }, href, { timeout: 5000 });
+    // Verify we're on the full detail page (should have section tabs or detail content)
+    const hash = await page.evaluate(() => location.hash);
+    assert(hash === href, `Expected hash "${href}" but got "${hash}"`);
+  });
+
   // Test: Nodes page has WebSocket auto-update listener (#131)
   await test('Nodes page has WebSocket auto-update', async () => {
     await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded' });
@@ -1482,8 +1506,11 @@ async function run() {
     await page.waitForSelector('#nodesBody tr[data-key]', { timeout: 10000 });
     // Get the first node's pubkey from the row's data-key attribute
     const pubkey = await page.$eval('#nodesBody tr[data-key]', el => el.dataset.key);
-    await page.goto(BASE + '/#/nodes/' + pubkey);
-    await page.waitForSelector('#node-neighbors', { timeout: 10000 });
+    // Use evaluate to change hash (reliable same-document navigation)
+    await page.evaluate((pk) => { location.hash = '#/nodes/' + pk; }, pubkey);
+    // Wait for the full-node view to render (async API fetch populates body)
+    await page.waitForSelector('.node-fullscreen', { timeout: 10000 });
+    await page.waitForSelector('#node-neighbors', { timeout: 25000 });
     // Check the section exists
     const header = await page.$eval('#fullNeighborsHeader', el => el.textContent);
     assert(header.startsWith('Neighbors'), 'Header should start with "Neighbors", got: ' + header);

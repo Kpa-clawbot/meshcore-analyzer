@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // hmacSHA256 computes HMAC-SHA256 for test use.
@@ -157,7 +158,7 @@ func TestHandleMessageChannelMessage(t *testing.T) {
 	payload := []byte(`{"text":"Alice: Hello everyone","channel_idx":3,"SNR":5.0,"RSSI":-95,"score":10,"direction":"rx","sender_timestamp":1700000000}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/2", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -217,7 +218,7 @@ func TestHandleMessageChannelMessageEmptyText(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: []byte(`{"text":""}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -232,7 +233,7 @@ func TestHandleMessageChannelNoSender(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: []byte(`{"text":"no sender here"}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
@@ -249,7 +250,7 @@ func TestHandleMessageDirectMessage(t *testing.T) {
 	payload := []byte(`{"text":"Bob: Hey there","sender_timestamp":1700000000,"SNR":3.0,"rssi":-100,"Score":8,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/abc123", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -293,7 +294,7 @@ func TestHandleMessageDirectMessageEmptyText(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/direct/abc", payload: []byte(`{"text":""}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -308,7 +309,7 @@ func TestHandleMessageDirectNoSender(t *testing.T) {
 	store, source := newTestContext(t)
 
 	msg := &mockMessage{topic: "meshcore/message/direct/xyz", payload: []byte(`{"text":"message with no colon"}`)}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -327,7 +328,7 @@ func TestHandleMessageUppercaseScoreDirection(t *testing.T) {
 	payload := []byte(`{"raw":"` + rawHex + `","Score":9.0,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var score *float64
 	var direction *string
@@ -348,7 +349,7 @@ func TestHandleMessageChannelLowercaseFields(t *testing.T) {
 
 	payload := []byte(`{"text":"Test: msg","snr":3.0,"rssi":-90,"Score":5,"Direction":"rx"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/0", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -364,7 +365,7 @@ func TestHandleMessageDirectLowercaseFields(t *testing.T) {
 
 	payload := []byte(`{"text":"Test: msg","snr":2.0,"rssi":-85,"score":7,"direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/xyz", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -387,7 +388,7 @@ func TestHandleMessageAdvertWithTelemetry(t *testing.T) {
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
 
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	// Should have created transmission, node, and observer
 	var txCount, nodeCount, obsCount int
@@ -427,7 +428,7 @@ func TestHandleMessageAdvertGeoFiltered(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, gf)
+	handleMessage(store, "test", source, msg, nil, &Config{GeoFilter: gf})
 
 	// Geo-filtered adverts should not create nodes
 	var nodeCount int
@@ -664,7 +665,7 @@ func TestHandleMessageCorruptedAdvertNoNode(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
@@ -686,7 +687,7 @@ func TestHandleMessageNonAdvertPacket(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -863,7 +864,7 @@ func TestHandleMessageChannelLongSender(t *testing.T) {
 	longText := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA: msg"
 	payload := []byte(`{"text":"` + longText + `"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/1", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&count); err != nil {
@@ -882,7 +883,7 @@ func TestHandleMessageDirectLongSender(t *testing.T) {
 	longText := "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB: msg"
 	payload := []byte(`{"text":"` + longText + `"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/abc", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -899,7 +900,7 @@ func TestHandleMessageDirectUppercaseScoreDirection(t *testing.T) {
 
 	payload := []byte(`{"text":"X: hi","Score":6,"Direction":"rx"}`)
 	msg := &mockMessage{topic: "meshcore/message/direct/d1", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -929,7 +930,7 @@ func TestHandleMessageChannelUppercaseScoreDirection(t *testing.T) {
 
 	payload := []byte(`{"text":"Y: hi","Score":4,"Direction":"tx"}`)
 	msg := &mockMessage{topic: "meshcore/message/channel/5", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count); err != nil {
@@ -960,7 +961,7 @@ func TestHandleMessageRawLowercaseScore(t *testing.T) {
 	rawHex := "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976"
 	payload := []byte(`{"raw":"` + rawHex + `","score":3.5}`)
 	msg := &mockMessage{topic: "meshcore/SJC/obs1/packets", payload: payload}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var score *float64
 	if err := store.db.QueryRow("SELECT score FROM observations LIMIT 1").Scan(&score); err != nil {
@@ -979,7 +980,7 @@ func TestHandleMessageStatusNoOrigin(t *testing.T) {
 		topic:   "meshcore/LAX/obs5/status",
 		payload: []byte(`{"model":"L1"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, nil)
+	handleMessage(store, "test", source, msg, nil, &Config{})
 
 	var count int
 	if err := store.db.QueryRow("SELECT COUNT(*) FROM observers WHERE id = 'obs5'").Scan(&count); err != nil {
@@ -1136,5 +1137,184 @@ func TestDecodeTraceWithPath(t *testing.T) {
 	}
 	if p.TraceFlags == nil || *p.TraceFlags != 3 {
 		t.Errorf("flags=%v, want 3", p.TraceFlags)
+	}
+}
+
+// --- db.go: RemoveStaleObservers (soft-delete) ---
+
+func TestRemoveStaleObservers(t *testing.T) {
+	store := newTestStore(t)
+
+	// Insert an observer with last_seen 30 days ago
+	err := store.UpsertObserver("obs-old", "OldObserver", "LAX", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Override last_seen to 30 days ago
+	cutoff := time.Now().UTC().AddDate(0, 0, -30).Format(time.RFC3339)
+	_, err = store.db.Exec("UPDATE observers SET last_seen = ? WHERE id = ?", cutoff, "obs-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert a recent observer
+	err = store.UpsertObserver("obs-new", "NewObserver", "NYC", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := store.RemoveStaleObservers(14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Errorf("removed=%d, want 1", removed)
+	}
+
+	// Observer should still be in the table (soft-delete), but marked inactive
+	var count int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM observers").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("observers count=%d, want 2 (soft-delete preserves row)", count)
+	}
+
+	// Check that the old observer is marked inactive
+	var inactive int
+	if err := store.db.QueryRow("SELECT inactive FROM observers WHERE id = ?", "obs-old").Scan(&inactive); err != nil {
+		t.Fatal(err)
+	}
+	if inactive != 1 {
+		t.Errorf("obs-old inactive=%d, want 1", inactive)
+	}
+
+	// Check that the recent observer is still active
+	var newInactive int
+	if err := store.db.QueryRow("SELECT inactive FROM observers WHERE id = ?", "obs-new").Scan(&newInactive); err != nil {
+		t.Fatal(err)
+	}
+	if newInactive != 0 {
+		t.Errorf("obs-new inactive=%d, want 0", newInactive)
+	}
+}
+
+func TestRemoveStaleObserversNone(t *testing.T) {
+	store := newTestStore(t)
+
+	removed, err := store.RemoveStaleObservers(14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Errorf("removed=%d, want 0", removed)
+	}
+}
+
+func TestRemoveStaleObserversKeepForever(t *testing.T) {
+	store := newTestStore(t)
+
+	// Insert an old observer
+	err := store.UpsertObserver("obs-ancient", "AncientObserver", "LAX", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -365).Format(time.RFC3339)
+	_, err = store.db.Exec("UPDATE observers SET last_seen = ? WHERE id = ?", cutoff, "obs-ancient")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// observerDays = -1 means keep forever
+	removed, err := store.RemoveStaleObservers(-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 {
+		t.Errorf("removed=%d, want 0 (keep forever)", removed)
+	}
+
+	var count int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM observers").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("observers count=%d, want 1 (keep forever)", count)
+	}
+
+	// Observer should NOT be marked inactive
+	var inactive int
+	if err := store.db.QueryRow("SELECT inactive FROM observers WHERE id = ?", "obs-ancient").Scan(&inactive); err != nil {
+		t.Fatal(err)
+	}
+	if inactive != 0 {
+		t.Errorf("obs-ancient inactive=%d, want 0 (keep forever)", inactive)
+	}
+}
+
+func TestRemoveStaleObserversReactivation(t *testing.T) {
+	store := newTestStore(t)
+
+	// Insert and stale-mark an observer
+	err := store.UpsertObserver("obs-test", "TestObserver", "LAX", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -30).Format(time.RFC3339)
+	_, err = store.db.Exec("UPDATE observers SET last_seen = ? WHERE id = ?", cutoff, "obs-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := store.RemoveStaleObservers(14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Errorf("removed=%d, want 1", removed)
+	}
+
+	// Verify it's inactive
+	var inactive int
+	if err := store.db.QueryRow("SELECT inactive FROM observers WHERE id = ?", "obs-test").Scan(&inactive); err != nil {
+		t.Fatal(err)
+	}
+	if inactive != 1 {
+		t.Errorf("inactive=%d, want 1 after soft-delete", inactive)
+	}
+
+	// Now UpsertObserver should reactivate it
+	err = store.UpsertObserver("obs-test", "TestObserver", "LAX", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.db.QueryRow("SELECT inactive FROM observers WHERE id = ?", "obs-test").Scan(&inactive); err != nil {
+		t.Fatal(err)
+	}
+	if inactive != 0 {
+		t.Errorf("inactive=%d, want 0 after reactivation", inactive)
+	}
+}
+
+func TestObserverDaysOrDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want int
+	}{
+		{"nil retention", &Config{}, 14},
+		{"zero observer days", &Config{Retention: &RetentionConfig{ObserverDays: 0}}, 14},
+		{"positive value", &Config{Retention: &RetentionConfig{ObserverDays: 30}}, 30},
+		{"keep forever", &Config{Retention: &RetentionConfig{ObserverDays: -1}}, -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.ObserverDaysOrDefault()
+			if got != tt.want {
+				t.Errorf("ObserverDaysOrDefault() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
