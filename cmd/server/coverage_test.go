@@ -2145,6 +2145,13 @@ func setupRichTestDB(t *testing.T) *DB {
 	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
 		VALUES (5, 1, 14.0, -88, '["aa"]', ?)`, recentEpoch)
 
+	// Extra packet sharing subpath "eeff,0011" with hash_with_path_02 above,
+	// so that subpath has count>=2 and survives singleton pruning.
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('0140eeff0011', 'hash_shared_subpath', ?, 1, 4, '{"pubKey":"eeff001199887766","name":"TestShared","type":"ADVERT"}')`, recent)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (6, 1, 9.0, -92, '["eeff","0011"]', ?)`, recentEpoch)
+
 	return db
 }
 
@@ -2276,14 +2283,11 @@ func TestSubpathPrecomputedIndex(t *testing.T) {
 		t.Fatal("expected spTotalPaths > 0 after Load()")
 	}
 
-	// The rich test DB has paths ["aa","bb"], ["aabb","ccdd"], and
-	// ["eeff","0011","2233"].  That yields 5 unique raw subpaths.
+	// The rich test DB has paths ["aa","bb"], ["aabb","ccdd"],
+	// ["eeff","0011","2233"], and ["eeff","0011"].  After singleton pruning,
+	// only subpaths with count>=2 survive.  "eeff,0011" appears in two packets.
 	expectedRaw := map[string]int{
-		"aa,bb":          1,
-		"aabb,ccdd":      1,
-		"eeff,0011":      1,
-		"0011,2233":      1,
-		"eeff,0011,2233": 1,
+		"eeff,0011": 2,
 	}
 	for key, want := range expectedRaw {
 		got, ok := store.spIndex[key]
@@ -2293,8 +2297,16 @@ func TestSubpathPrecomputedIndex(t *testing.T) {
 			t.Errorf("spIndex[%q] = %d, want %d", key, got, want)
 		}
 	}
-	if store.spTotalPaths != 3 {
-		t.Errorf("spTotalPaths = %d, want 3", store.spTotalPaths)
+
+	// Singleton subpaths must have been pruned
+	singletons := []string{"aa,bb", "aabb,ccdd", "0011,2233", "eeff,0011,2233"}
+	for _, key := range singletons {
+		if _, ok := store.spIndex[key]; ok {
+			t.Errorf("expected singleton spIndex[%q] to be pruned", key)
+		}
+	}
+	if store.spTotalPaths != 4 {
+		t.Errorf("spTotalPaths = %d, want 4", store.spTotalPaths)
 	}
 
 	// Fast-path (no region) and slow-path (with region) must return the
@@ -2322,31 +2334,19 @@ func TestSubpathTxIndexPopulated(t *testing.T) {
 	store := NewPacketStore(db, nil)
 	store.Load()
 
-	// spTxIndex must be populated alongside spIndex
-	if len(store.spTxIndex) == 0 {
-		t.Fatal("expected spTxIndex to be populated after Load()")
+	// spIndex must be populated after Load()
+	if len(store.spIndex) == 0 {
+		t.Fatal("expected spIndex to be populated after Load()")
 	}
 
-	// Every key in spIndex must also exist in spTxIndex with matching count
-	for key, count := range store.spIndex {
-		txs, ok := store.spTxIndex[key]
-		if !ok {
-			t.Errorf("spTxIndex missing key %q that exists in spIndex", key)
-			continue
-		}
-		if len(txs) != count {
-			t.Errorf("spTxIndex[%q] has %d txs, spIndex count is %d", key, len(txs), count)
-		}
-	}
-
-	// GetSubpathDetail should return correct match count via indexed lookup
+	// GetSubpathDetail should return correct match count via scan fallback
 	detail := store.GetSubpathDetail([]string{"eeff", "0011"})
 	if detail == nil {
 		t.Fatal("expected non-nil detail for existing subpath")
 	}
 	matches, _ := detail["totalMatches"].(int)
-	if matches != 1 {
-		t.Errorf("totalMatches = %d, want 1", matches)
+	if matches != 2 {
+		t.Errorf("totalMatches = %d, want 2", matches)
 	}
 
 	// Non-existent subpath should return 0 matches
@@ -2391,6 +2391,55 @@ func TestSubpathDetailMixedCaseHops(t *testing.T) {
 	upperMatches, _ := upper["totalMatches"].(int)
 	if upperMatches != lowerMatches {
 		t.Errorf("uppercase totalMatches = %d, want %d", upperMatches, lowerMatches)
+	}
+}
+
+// TestSubpathSingletonDrop verifies that singleton entries are pruned from
+// spIndex while count>=2 entries are preserved.
+func TestSubpathSingletonDrop(t *testing.T) {
+	db := setupRichTestDB(t)
+	defer db.Close()
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	// "eeff,0011" appears in 2 packets — must survive singleton pruning
+	if count, ok := store.spIndex["eeff,0011"]; !ok {
+		t.Fatal("expected spIndex[\"eeff,0011\"] to survive singleton pruning")
+	} else if count != 2 {
+		t.Errorf("spIndex[\"eeff,0011\"] = %d, want 2", count)
+	}
+
+	// All count==1 entries must be gone
+	for key, count := range store.spIndex {
+		if count < 2 {
+			t.Errorf("spIndex[%q] = %d, singletons should have been pruned", key, count)
+		}
+	}
+}
+
+// TestSubpathEmptyDB verifies that the store loads successfully on a DB
+// with no transmissions (no subpaths at all).
+func TestSubpathEmptyDB(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	store := NewPacketStore(db, nil)
+	store.Load()
+
+	if len(store.spIndex) != 0 {
+		t.Errorf("expected empty spIndex on empty DB, got %d entries", len(store.spIndex))
+	}
+	if store.spTotalPaths != 0 {
+		t.Errorf("expected spTotalPaths=0 on empty DB, got %d", store.spTotalPaths)
+	}
+
+	// GetSubpathDetail should still work (return zero matches)
+	detail := store.GetSubpathDetail([]string{"aa", "bb"})
+	if detail == nil {
+		t.Fatal("expected non-nil detail even on empty DB")
+	}
+	matches, _ := detail["totalMatches"].(int)
+	if matches != 0 {
+		t.Errorf("totalMatches on empty DB = %d, want 0", matches)
 	}
 }
 

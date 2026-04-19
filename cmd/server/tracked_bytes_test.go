@@ -28,7 +28,7 @@ func TestEstimateStoreTxBytes_ReasonableValues(t *testing.T) {
 }
 
 // TestEstimateStoreTxBytes_ManyHopsSubpaths verifies that packets with many
-// hops estimate significantly more due to O(path²) subpath index entries.
+// hops estimate more due to per-hop byPathHop index entries.
 func TestEstimateStoreTxBytes_ManyHopsSubpaths(t *testing.T) {
 	tx2 := &StoreTx{
 		Hash:       "aabb",
@@ -43,12 +43,14 @@ func TestEstimateStoreTxBytes_ManyHopsSubpaths(t *testing.T) {
 	est2 := estimateStoreTxBytes(tx2)
 	est10 := estimateStoreTxBytes(tx10)
 
-	// 10 hops → 45 subpath combos × 40 = 1800 bytes just for subpaths
+	// 10 hops vs 2 hops → 8 extra byPathHop entries × perPathHopBytes
 	if est10 <= est2 {
 		t.Errorf("10-hop (%d) should estimate more than 2-hop (%d)", est10, est2)
 	}
-	if est10 < est2+1500 {
-		t.Errorf("10-hop (%d) should estimate at least 1500 more than 2-hop (%d)", est10, est2)
+	// spTxIndex eliminated in #791; cost difference is now linear (per-hop only)
+	expectedDiff := int64(8) * perPathHopBytes // 8 extra hops
+	if est10 < est2+expectedDiff {
+		t.Errorf("10-hop (%d) should estimate at least %d more than 2-hop (%d)", est10, expectedDiff, est2)
 	}
 }
 

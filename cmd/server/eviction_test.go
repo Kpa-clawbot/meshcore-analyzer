@@ -546,9 +546,6 @@ func TestEstimateStoreTxBytes(t *testing.T) {
 	manualCalc := int64(storeTxBaseBytes) + int64(len(tx.RawHex)+len(tx.Hash)+len(tx.DecodedJSON)+len(tx.PathJSON)) + int64(numIndexesPerTx*indexEntryBytes)
 	manualCalc += perTxMapsBytes
 	manualCalc += hops * perPathHopBytes
-	if hops > 1 {
-		manualCalc += (hops * (hops - 1) / 2) * perSubpathEntryBytes
-	}
 	if est != manualCalc {
 		t.Fatalf("estimateStoreTxBytes = %d, want %d (manual calc)", est, manualCalc)
 	}
