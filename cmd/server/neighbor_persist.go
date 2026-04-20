@@ -496,6 +496,7 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 					affectedSet[r.txHash] = true
 					if tx, ok := store.byHash[r.txHash]; ok {
 						pickBestObservation(tx)
+						store.indexByNode(tx)
 					}
 				}
 			}

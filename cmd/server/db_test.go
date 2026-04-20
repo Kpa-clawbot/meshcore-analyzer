@@ -1975,3 +1975,47 @@ func TestParseWindowDuration(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadIndexesRelayHopsFromResolvedPath verifies that after Load(), relay
+// nodes that appear only in resolved_path (not in decoded_json) are indexed
+// in byNode. This was broken: indexByNode was called before observations were
+// appended, so tx.ResolvedPath was nil at index time.
+func TestLoadIndexesRelayHopsFromResolvedPath(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	now := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	epoch := time.Now().UTC().Add(-1 * time.Hour).Unix()
+
+	// Insert a node whose pubkey does NOT appear in any decoded_json —
+	// it only relays traffic (appears in resolved_path of other packets).
+	const relayPubkey = "relay000aabbccddeeff0011"
+	const senderPubkey = "sender00112233445566"
+
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('FF01', 'relaytest0001hash', ?, 1, 4, ?)`,
+		now, `{"pubKey":"`+senderPubkey+`","name":"Sender","type":"ADVERT"}`)
+
+	// Observer hears the packet via the relay node.
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp, resolved_path)
+		VALUES (1, 1, 10.0, -90, '["rr"]', ?, ?)`,
+		epoch, `["`+relayPubkey+`"]`)
+
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The sender should be in byNode via decoded_json.
+	if len(store.byNode[senderPubkey]) == 0 {
+		t.Errorf("sender not indexed in byNode via decoded_json")
+	}
+
+	// The relay node must be in byNode via resolved_path — this was the bug.
+	if len(store.byNode[relayPubkey]) == 0 {
+		t.Errorf("relay node not indexed in byNode after Load() — resolved_path indexing broken")
+	}
+	if store.byNode[relayPubkey][0].Hash != "relaytest0001hash" {
+		t.Errorf("relay byNode entry has wrong hash: %s", store.byNode[relayPubkey][0].Hash)
+	}
+}

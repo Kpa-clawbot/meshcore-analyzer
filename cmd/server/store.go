@@ -505,9 +505,14 @@ func (s *PacketStore) Load() error {
 		}
 	}
 
-	// Post-load: pick best observation (longest path) for each transmission
+	// Post-load: pick best observation (longest path) for each transmission,
+	// then re-index so relay hops from resolved_path land in byNode.
+	// indexByNode was called earlier (on StoreTx creation) before observations
+	// were appended, so tx.ResolvedPath was nil at that point — call it again
+	// now that pickBestObservation has propagated the best path.
 	for _, tx := range s.packets {
 		pickBestObservation(tx)
+		s.indexByNode(tx)
 	}
 
 	// Build precomputed subpath index for O(1) analytics queries
