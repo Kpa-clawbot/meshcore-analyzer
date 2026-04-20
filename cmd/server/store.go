@@ -2062,9 +2062,15 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 
 	// Pre-compute node filter parameters.
 	var nodePK string
+	var nodeHashSet map[string]bool
 	hasNode := q.Node != ""
 	if hasNode {
 		nodePK = s.db.resolveNodePubkey(q.Node)
+		indexed := s.byNode[nodePK]
+		nodeHashSet = make(map[string]bool, len(indexed))
+		for _, tx := range indexed {
+			nodeHashSet[tx.Hash] = true
+		}
 	}
 
 	// Determine the source slice. Use index-based source when only node
@@ -2118,10 +2124,7 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 			}
 		}
 		if hasNode {
-			if tx.DecodedJSON == "" {
-				return false
-			}
-			if !strings.Contains(tx.DecodedJSON, nodePK) && !strings.Contains(tx.DecodedJSON, q.Node) {
+			if !nodeHashSet[tx.Hash] {
 				return false
 			}
 		}
@@ -6412,11 +6415,6 @@ func (s *PacketStore) GetNodeAnalytics(pubkey string, days int) (*NodeAnalyticsR
 		return nil, err
 	}
 
-	name := ""
-	if n, ok := node["name"]; ok && n != nil {
-		name = fmt.Sprintf("%v", n)
-	}
-
 	fromTime := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	fromISO := fromTime.Format(time.RFC3339)
 	toISO := time.Now().Format(time.RFC3339)
@@ -6424,30 +6422,14 @@ func (s *PacketStore) GetNodeAnalytics(pubkey string, days int) (*NodeAnalyticsR
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Collect packets from byNode index + text search (matches Node.js findPacketsForNode)
+	// Collect packets from byNode index (time-filtered).
+	// Raw JSON text search is intentionally avoided: a GRP_TXT packet whose message
+	// text contains a node's pubkey is not a packet *for* that node.
 	indexed := s.byNode[pubkey]
-	hashSet := make(map[string]bool, len(indexed))
-	for _, tx := range indexed {
-		hashSet[tx.Hash] = true
-	}
 	var packets []*StoreTx
-	if name != "" {
-		for _, tx := range s.packets {
-			if tx.FirstSeen <= fromISO {
-				continue // Skip old packets early before expensive string matching
-			}
-			if hashSet[tx.Hash] {
-				packets = append(packets, tx)
-			} else if tx.DecodedJSON != "" && (strings.Contains(tx.DecodedJSON, name) || strings.Contains(tx.DecodedJSON, pubkey)) {
-				packets = append(packets, tx)
-			}
-		}
-	} else {
-		// Filter indexed packets by time range
-		for _, p := range indexed {
-			if p.FirstSeen > fromISO {
-				packets = append(packets, p)
-			}
+	for _, p := range indexed {
+		if p.FirstSeen > fromISO {
+			packets = append(packets, p)
 		}
 	}
 
