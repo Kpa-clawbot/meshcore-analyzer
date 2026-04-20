@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -386,4 +387,60 @@ func (c *Config) IsBlacklisted(pubkey string) bool {
 		return false
 	}
 	return c.blacklistSet()[strings.ToLower(strings.TrimSpace(pubkey))]
+}
+
+// SaveGeoFilter writes the geo_filter section back to config.json on disk.
+// Pass gf=nil to remove the filter. The rest of config.json is preserved as-is.
+func SaveGeoFilter(configDir string, gf *GeoFilterConfig) error {
+	var configPath string
+	for _, p := range []string{
+		filepath.Join(configDir, "config.json"),
+		filepath.Join(configDir, "data", "config.json"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			configPath = p
+			break
+		}
+	}
+	if configPath == "" {
+		return fmt.Errorf("config.json not found in %s", configDir)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+
+	// Parse as a raw map so non-struct fields (_comment, etc.) are preserved.
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+
+	if gf == nil || len(gf.Polygon) == 0 {
+		delete(raw, "geo_filter")
+	} else {
+		// Round-trip through JSON to get a plain interface{} value.
+		b, _ := json.Marshal(gf)
+		var v interface{}
+		_ = json.Unmarshal(b, &v)
+		raw["geo_filter"] = v
+	}
+
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	out = append(out, '\n')
+
+	// Atomic write: temp file + rename.
+	tmp := configPath + ".tmp"
+	if err := os.WriteFile(tmp, out, 0644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Rename(tmp, configPath); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("rename config: %w", err)
+	}
+	return nil
 }

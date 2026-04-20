@@ -24,6 +24,7 @@ type Server struct {
 	cfg       *Config
 	hub       *Hub
 	store     *PacketStore // in-memory packet store (nil = fallback to DB)
+	configDir string       // directory containing config.json (for write-back)
 	startedAt time.Time
 	perfStats *PerfStats
 	version   string
@@ -116,6 +117,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/config/theme", s.handleConfigTheme).Methods("GET")
 	r.HandleFunc("/api/config/map", s.handleConfigMap).Methods("GET")
 	r.HandleFunc("/api/config/geo-filter", s.handleConfigGeoFilter).Methods("GET")
+	r.Handle("/api/config/geo-filter", s.requireAPIKey(http.HandlerFunc(s.handlePutConfigGeoFilter))).Methods("PUT")
 
 	// System endpoints
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
@@ -123,6 +125,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
 	r.Handle("/api/admin/prune", s.requireAPIKey(http.HandlerFunc(s.handleAdminPrune))).Methods("POST")
+	r.Handle("/api/admin/prune-geo-filter", s.requireAPIKey(http.HandlerFunc(s.handlePruneGeoFilter))).Methods("POST")
 	r.Handle("/api/debug/affinity", s.requireAPIKey(http.HandlerFunc(s.handleDebugAffinity))).Methods("GET")
 	r.Handle("/api/dropped-packets", s.requireAPIKey(http.HandlerFunc(s.handleDroppedPackets))).Methods("GET")
 
@@ -429,11 +432,50 @@ func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfigGeoFilter(w http.ResponseWriter, r *http.Request) {
 	gf := s.cfg.GeoFilter
+	writeEnabled := s.cfg != nil && s.cfg.APIKey != "" && !IsWeakAPIKey(s.cfg.APIKey)
 	if gf == nil || len(gf.Polygon) == 0 {
-		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0})
+		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0, "writeEnabled": writeEnabled})
 		return
 	}
-	writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm})
+	writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm, "writeEnabled": writeEnabled})
+}
+
+func (s *Server) handlePutConfigGeoFilter(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Polygon  [][2]float64 `json:"polygon"`
+		BufferKm float64      `json:"bufferKm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Allow clearing (empty/null polygon) or a valid polygon with ≥ 3 points.
+	if len(body.Polygon) > 0 && len(body.Polygon) < 3 {
+		writeError(w, http.StatusBadRequest, "polygon must have at least 3 points")
+		return
+	}
+
+	var gf *GeoFilterConfig
+	if len(body.Polygon) >= 3 {
+		gf = &GeoFilterConfig{Polygon: body.Polygon, BufferKm: body.BufferKm}
+	}
+
+	if s.configDir != "" {
+		if err := SaveGeoFilter(s.configDir, gf); err != nil {
+			log.Printf("[geofilter] save failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to save config")
+			return
+		}
+	}
+
+	s.cfg.GeoFilter = gf
+
+	if gf != nil {
+		writeJSON(w, map[string]interface{}{"polygon": gf.Polygon, "bufferKm": gf.BufferKm})
+	} else {
+		writeJSON(w, map[string]interface{}{"polygon": nil, "bufferKm": 0})
+	}
 }
 
 // --- System Handlers ---
@@ -2490,6 +2532,91 @@ func (s *Server) handleAdminPrune(w http.ResponseWriter, r *http.Request) {
 
 	results["days"] = days
 	writeJSON(w, results)
+}
+
+// handlePruneGeoFilter identifies (dry_run=true, default) or deletes (confirm=true)
+// nodes whose GPS coordinates fall outside the currently configured geo_filter.
+// Nodes with no GPS fix are always kept. Requires geo_filter to be configured.
+// Confirm requires the pubkeys from the preview in the request body to prevent
+// TOCTOU races: only nodes in the passed list AND still outside the filter are deleted.
+func (s *Server) handlePruneGeoFilter(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.GeoFilter == nil || len(s.cfg.GeoFilter.Polygon) < 3 {
+		writeError(w, http.StatusBadRequest, "no geo_filter configured")
+		return
+	}
+
+	nodes, err := s.db.GetNodesForGeoPrune()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	type nodeResult struct {
+		PubKey string   `json:"pubkey"`
+		Name   string   `json:"name"`
+		Lat    *float64 `json:"lat"`
+		Lon    *float64 `json:"lon"`
+	}
+
+	var outside []nodeResult
+	for _, n := range nodes {
+		if n.Lat == nil || n.Lon == nil {
+			continue // no GPS — always keep
+		}
+		if !NodePassesGeoFilter(*n.Lat, *n.Lon, s.cfg.GeoFilter) {
+			outside = append(outside, nodeResult{PubKey: n.PubKey, Name: n.Name, Lat: n.Lat, Lon: n.Lon})
+		}
+	}
+
+	if r.URL.Query().Get("confirm") != "true" {
+		// Dry run — return preview without deleting
+		writeJSON(w, map[string]interface{}{
+			"dryRun": true,
+			"count":  len(outside),
+			"nodes":  outside,
+		})
+		return
+	}
+
+	// Confirmed delete — require pubkeys from the preview to prevent TOCTOU:
+	// only nodes that were shown in preview AND are still outside the filter are deleted.
+	var body struct {
+		Pubkeys []string `json:"pubkeys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Pubkeys) == 0 {
+		writeError(w, http.StatusBadRequest, "confirm requires pubkeys from preview in request body")
+		return
+	}
+	allowed := make(map[string]bool, len(body.Pubkeys))
+	for _, pk := range body.Pubkeys {
+		allowed[pk] = true
+	}
+
+	var toDelete []nodeResult
+	for _, n := range outside {
+		if allowed[n.PubKey] {
+			toDelete = append(toDelete, n)
+		}
+	}
+
+	pubkeys := make([]string, len(toDelete))
+	for i, n := range toDelete {
+		pubkeys[i] = n.PubKey
+	}
+	deleted, err := s.db.DeleteNodesByPubkeys(pubkeys)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	for _, n := range toDelete {
+		log.Printf("[geo-prune] deleted node %q (%s)", n.Name, n.PubKey)
+	}
+	log.Printf("[geo-prune] deleted %d nodes outside geo filter", deleted)
+	writeJSON(w, map[string]interface{}{
+		"dryRun":  false,
+		"deleted": deleted,
+		"nodes":   toDelete,
+	})
 }
 
 // constantTimeEqual compares two strings in constant time to prevent timing attacks.

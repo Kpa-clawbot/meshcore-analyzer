@@ -2320,3 +2320,61 @@ func (db *DB) GetSignatureDropCount() int64 {
 	}
 	return count
 }
+
+// NodeForGeoPrune holds the minimal fields needed for geo-filter pruning.
+type NodeForGeoPrune struct {
+	PubKey string
+	Name   string
+	Lat    *float64
+	Lon    *float64
+}
+
+// GetNodesForGeoPrune returns all nodes with their coordinates for geo-filter evaluation.
+func (db *DB) GetNodesForGeoPrune() ([]NodeForGeoPrune, error) {
+	rows, err := db.conn.Query("SELECT public_key, name, lat, lon FROM nodes ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []NodeForGeoPrune
+	for rows.Next() {
+		var pk string
+		var name sql.NullString
+		var lat, lon sql.NullFloat64
+		if err := rows.Scan(&pk, &name, &lat, &lon); err != nil {
+			continue
+		}
+		n := NodeForGeoPrune{PubKey: pk, Name: name.String}
+		if lat.Valid {
+			v := lat.Float64
+			n.Lat = &v
+		}
+		if lon.Valid {
+			v := lon.Float64
+			n.Lon = &v
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+
+// DeleteNodesByPubkeys deletes nodes by their public keys and returns the count deleted.
+// Only the nodes table is affected — references in transmissions or other tables are
+// not cascaded (no FK constraints exist today; revisit if schema adds them).
+func (db *DB) DeleteNodesByPubkeys(pubkeys []string) (int64, error) {
+	if len(pubkeys) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.Repeat("?,", len(pubkeys))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]interface{}, len(pubkeys))
+	for i, pk := range pubkeys {
+		args[i] = pk
+	}
+	result, err := db.conn.Exec("DELETE FROM nodes WHERE public_key IN ("+placeholders+")", args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
