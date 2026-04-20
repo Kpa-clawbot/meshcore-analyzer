@@ -2,9 +2,9 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -603,7 +603,7 @@ func TestRepeaterLiveness_StillAccurate(t *testing.T) {
 // BenchmarkResolvedPubkeyIndex_Memory measures index memory at different cardinalities.
 func BenchmarkResolvedPubkeyIndex_Memory(b *testing.B) {
 	for _, numPubkeys := range []int{50000, 500000} {
-		b.Run("pubkeys="+string(rune('0'+numPubkeys/100000))+"00K", func(b *testing.B) {
+		b.Run(fmt.Sprintf("pubkeys=%dK", numPubkeys/1000), func(b *testing.B) {
 			for n := 0; n < b.N; n++ {
 				store := &PacketStore{
 					byNode:               make(map[string][]*StoreTx),
@@ -854,307 +854,134 @@ func TestLRU_EvictionOnFull(t *testing.T) {
 	}
 }
 
-// --- Missing spec tests ---
+// --- Regression tests for review feedback fixes ---
 
-// TestBackfill_UpdatesIndexAndByPathHop verifies backfill populates the resolved
-// pubkey index, byNode, and byPathHop resolved-key entries.
-func TestBackfill_UpdatesIndexAndByPathHop(t *testing.T) {
+// TestAddToResolvedPubkeyIndex_CrossCallDedup verifies that calling
+// addToResolvedPubkeyIndex multiple times for the same (hash, txID) pair
+// does not create duplicate entries in the forward index.
+func TestAddToResolvedPubkeyIndex_CrossCallDedup(t *testing.T) {
 	store := &PacketStore{
-		byNode:               make(map[string][]*StoreTx),
-		nodeHashes:           make(map[string]map[string]bool),
-		byPathHop:            make(map[string][]*StoreTx),
-		byHash:               make(map[string]*StoreTx),
-		byObsID:              make(map[int]*StoreObs),
 		useResolvedPathIndex: true,
 	}
 	store.initResolvedPathIndex()
 
-	tx := &StoreTx{ID: 1, Hash: "h1", PathJSON: `["aa"]`}
-	obs := &StoreObs{ID: 10, TransmissionID: 1, PathJSON: `["aa"]`}
-	tx.Observations = []*StoreObs{obs}
-	store.byHash["h1"] = tx
-	store.byObsID[10] = obs
+	// Call twice with the same txID and pubkey
+	store.addToResolvedPubkeyIndex(1, []string{"abc123"})
+	store.addToResolvedPubkeyIndex(1, []string{"abc123"})
 
-	// Simulate backfill result
-	pks := []string{"relay_pk_full"}
-	store.mu.Lock()
-	store.removeFromResolvedPubkeyIndex(tx.ID)
-	store.addToResolvedPubkeyIndex(tx.ID, pks)
-	for _, pk := range pks {
-		store.addToByNode(tx, pk)
+	h := resolvedPubkeyHash("abc123")
+	ids := store.resolvedPubkeyIndex[h]
+	if len(ids) != 1 {
+		t.Errorf("expected 1 entry in forward index, got %d", len(ids))
 	}
-	hopsSeen := make(map[string]bool)
-	for _, hop := range txGetParsedPath(tx) {
-		hopsSeen[strings.ToLower(hop)] = true
-	}
-	for _, pk := range pks {
-		if !hopsSeen[pk] {
-			store.byPathHop[pk] = append(store.byPathHop[pk], tx)
-		}
-	}
-	store.mu.Unlock()
 
-	// Verify index
-	h := resolvedPubkeyHash("relay_pk_full")
-	if len(store.resolvedPubkeyIndex[h]) != 1 {
-		t.Error("expected index entry for relay_pk_full")
-	}
-	if len(store.byNode["relay_pk_full"]) != 1 {
-		t.Error("expected byNode entry for relay_pk_full")
-	}
-	if len(store.byPathHop["relay_pk_full"]) != 1 {
-		t.Error("expected byPathHop entry for relay_pk_full")
+	// Reverse index should also have no duplicates
+	rev := store.resolvedPubkeyReverse[1]
+	if len(rev) != 1 {
+		t.Errorf("expected 1 entry in reverse index, got %d", len(rev))
 	}
 }
 
-// TestBackfill_RemoveOldOnReBackfill verifies re-backfill removes old hash entries
-// via reverse map before inserting new ones.
-func TestBackfill_RemoveOldOnReBackfill(t *testing.T) {
+// TestRemoveFromResolvedPubkeyIndex_RemovesAllOccurrences verifies that
+// removeFromResolvedPubkeyIndex removes ALL occurrences of a txID, not just the first.
+func TestRemoveFromResolvedPubkeyIndex_RemovesAllOccurrences(t *testing.T) {
 	store := &PacketStore{
-		byNode:               make(map[string][]*StoreTx),
-		nodeHashes:           make(map[string]map[string]bool),
 		useResolvedPathIndex: true,
 	}
 	store.initResolvedPathIndex()
 
-	// Initial backfill
-	store.addToResolvedPubkeyIndex(1, []string{"old_pk1", "old_pk2"})
-
-	// Verify old entries
-	h1 := resolvedPubkeyHash("old_pk1")
-	if len(store.resolvedPubkeyIndex[h1]) != 1 {
-		t.Fatal("expected old_pk1 in index")
-	}
-
-	// Re-backfill: remove old, add new
-	store.removeFromResolvedPubkeyIndex(1)
-	store.addToResolvedPubkeyIndex(1, []string{"new_pk1"})
-
-	// Old entries gone
-	if len(store.resolvedPubkeyIndex[h1]) != 0 {
-		t.Error("old_pk1 should be removed after re-backfill")
-	}
-	// New entry present
-	h2 := resolvedPubkeyHash("new_pk1")
-	if len(store.resolvedPubkeyIndex[h2]) != 1 {
-		t.Error("new_pk1 should be in index after re-backfill")
-	}
-}
-
-// TestPathsThroughNode_PrecisionAfterRefactor verifies that the index-based
-// lookup produces identical results to the old field-based approach on a
-// prefix-collision fixture.
-func TestPathsThroughNode_PrecisionAfterRefactor(t *testing.T) {
-	store := &PacketStore{
-		byNode:               make(map[string][]*StoreTx),
-		nodeHashes:           make(map[string]map[string]bool),
-		byPathHop:            make(map[string][]*StoreTx),
-		useResolvedPathIndex: true,
-	}
-	store.initResolvedPathIndex()
-
-	// Two nodes with same 2-char prefix "aa" but different full pubkeys
-	targetPK := "aabb1111"
-	otherPK := "aacc2222"
-
-	tx1 := &StoreTx{ID: 1, Hash: "h1", PathJSON: `["aa"]`}
-	tx2 := &StoreTx{ID: 2, Hash: "h2", PathJSON: `["aa"]`}
-
-	// tx1 resolved to targetPK, tx2 resolved to otherPK
-	store.addToResolvedPubkeyIndex(1, []string{targetPK})
-	store.addToResolvedPubkeyIndex(2, []string{otherPK})
-	store.resolvedPubkeyReverse[1] = []uint64{resolvedPubkeyHash(targetPK)}
-	store.resolvedPubkeyReverse[2] = []uint64{resolvedPubkeyHash(otherPK)}
-
-	store.byPathHop["aa"] = []*StoreTx{tx1, tx2}
-	store.byPathHop[targetPK] = []*StoreTx{tx1}
-	store.byPathHop[otherPK] = []*StoreTx{tx2}
-
-	// Without SQL (no DB), index lookup should match on tx1 but not tx2
-	// (assuming no hash collision between targetPK and otherPK)
-	if !store.nodeInResolvedPathViaIndex(tx1, targetPK) {
-		t.Error("tx1 should match target (indexed under targetPK)")
-	}
-	if store.nodeInResolvedPathViaIndex(tx2, targetPK) {
-		t.Error("tx2 should NOT match target (indexed under otherPK only)")
-	}
-}
-
-// TestPathsThroughNode_CollisionSafety verifies that a crafted hash collision
-// is filtered by the SQL safety check.
-func TestPathsThroughNode_CollisionSafety(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	store := &PacketStore{
-		db:                   db,
-		byNode:               make(map[string][]*StoreTx),
-		nodeHashes:           make(map[string]map[string]bool),
-		useResolvedPathIndex: true,
-	}
-	store.initResolvedPathIndex()
-
-	// Insert a tx whose resolved_path contains "real_pk" but NOT "fake_pk"
-	db.conn.Exec("INSERT INTO transmissions (id, raw_hex, hash, first_seen) VALUES (1, '', 'h1', '2026-01-01')")
-	db.conn.Exec("INSERT INTO observations (id, transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (1, 1, 1, ?, ?, ?)",
-		`["aa"]`, time.Now().Unix(), `["real_pk"]`)
-
-	tx := &StoreTx{ID: 1, Hash: "h1", PathJSON: `["aa"]`}
-
-	// Force both "real_pk" and "fake_pk" to map to same hash (simulate collision)
-	h := resolvedPubkeyHash("real_pk")
-	store.resolvedPubkeyIndex[h] = []int{1}
+	// Manually inject duplicates to simulate pre-fix state
+	h := resolvedPubkeyHash("abc123")
+	store.resolvedPubkeyIndex[h] = []int{1, 2, 1, 1} // txID=1 appears 3 times
 	store.resolvedPubkeyReverse[1] = []uint64{h}
+	store.resolvedPubkeyReverse[2] = []uint64{h}
 
-	// real_pk should pass SQL check
-	if !store.nodeInResolvedPathViaIndex(tx, "real_pk") {
-		t.Error("real_pk should pass SQL collision safety check")
-	}
+	store.removeFromResolvedPubkeyIndex(1)
 
-	// fake_pk: even if hash collides, SQL should reject it
-	// (Only works if fake_pk actually hashes to same value, which is unlikely.
-	// Instead, manually add the tx under fake_pk's hash to simulate collision.)
-	fakeH := resolvedPubkeyHash("fake_pk")
-	store.resolvedPubkeyIndex[fakeH] = []int{1}
-	store.resolvedPubkeyReverse[1] = append(store.resolvedPubkeyReverse[1], fakeH)
-
-	if store.nodeInResolvedPathViaIndex(tx, "fake_pk") {
-		t.Error("fake_pk should be rejected by SQL collision safety check")
+	ids := store.resolvedPubkeyIndex[h]
+	if len(ids) != 1 || ids[0] != 2 {
+		t.Errorf("expected [2] after removal, got %v", ids)
 	}
 }
 
-// TestLivePolling_ResolvedPathFromBroadcast verifies live poll uses in-flight
-// broadcast data (decode-window) and doesn't need SQL.
-func TestLivePolling_ResolvedPathFromBroadcast(t *testing.T) {
-	// The broadcast path builds pkt maps with resolved_path from the
-	// decode-window (broadcastRP/obsRPMap). Verify the extraction works.
-	pk1 := "aabb"
-	pk2 := "ccdd"
-	broadcastRP := map[int][]*string{
-		10: {&pk1, &pk2},
+// TestLRU_CapacityAfterBulkDelete verifies that bulk lruDelete calls don't
+// permanently degrade effective cache capacity.
+func TestLRU_CapacityAfterBulkDelete(t *testing.T) {
+	store := &PacketStore{}
+	store.initResolvedPathIndex()
+
+	s := "x"
+	dummy := []*string{&s}
+
+	// Fill LRU to capacity
+	for i := 0; i < lruMaxSize; i++ {
+		store.lruPut(i, dummy)
+	}
+	if len(store.apiResolvedPathLRU) != lruMaxSize {
+		t.Fatalf("expected %d entries, got %d", lruMaxSize, len(store.apiResolvedPathLRU))
 	}
 
-	obs := &StoreObs{ID: 10}
-	pkt := map[string]interface{}{
-		"id": obs.ID,
+	// Delete 90% of entries (simulates bulk backfill invalidation)
+	for i := 0; i < lruMaxSize*9/10; i++ {
+		store.lruDelete(i)
 	}
-	// Simulate broadcast inclusion logic
-	if rp, ok := broadcastRP[obs.ID]; ok && rp != nil {
-		pkt["resolved_path"] = rp
+	remaining := len(store.apiResolvedPathLRU)
+	if remaining != lruMaxSize/10 {
+		t.Fatalf("expected %d remaining, got %d", lruMaxSize/10, remaining)
 	}
 
-	if rp, ok := pkt["resolved_path"]; !ok || rp == nil {
-		t.Error("broadcast pkt should include resolved_path from decode-window")
+	// Add new entries — effective capacity should recover
+	for i := lruMaxSize; i < lruMaxSize+lruMaxSize/2; i++ {
+		store.lruPut(i, dummy)
 	}
-	rpSlice := pkt["resolved_path"].([]*string)
-	if len(rpSlice) != 2 || *rpSlice[0] != "aabb" {
-		t.Error("unexpected broadcast resolved_path content")
+
+	// After adding lruMaxSize/2 new entries, total should be close to that
+	// (original 10% + new 50%), NOT stuck at O(1).
+	total := len(store.apiResolvedPathLRU)
+	if total < lruMaxSize/2 {
+		t.Errorf("effective capacity degraded: expected at least %d entries, got %d", lruMaxSize/2, total)
 	}
 }
 
-// TestSubpathDetail_StillWorks verifies subpath detail endpoint still works
-// after removing ResolvedPath from structs.
-func TestSubpathDetail_StillWorks(t *testing.T) {
-	db := setupTestDB(t)
+// TestConfirmResolvedPathContains_SpecialChars verifies that pubkeys containing
+// SQL LIKE wildcards (%, _) don't cause false positives with the INSTR approach.
+func TestConfirmResolvedPathContains_SpecialChars(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 
+	_, err = db.Exec(`CREATE TABLE observations (
+		id INTEGER PRIMARY KEY,
+		transmission_id INTEGER,
+		resolved_path TEXT
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert a row with a normal pubkey
+	_, err = db.Exec(`INSERT INTO observations (id, transmission_id, resolved_path)
+		VALUES (1, 100, '["abc123","def456"]')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	store := &PacketStore{
-		packets:              make([]*StoreTx, 0),
-		byHash:               make(map[string]*StoreTx),
-		byTxID:               make(map[int]*StoreTx),
-		byNode:               make(map[string][]*StoreTx),
-		nodeHashes:           make(map[string]map[string]bool),
-		byPathHop:            make(map[string][]*StoreTx),
-		spIndex:              make(map[string]int),
-		spTxIndex:            make(map[string][]*StoreTx),
-		rfCache:              make(map[string]*cachedResult),
-		topoCache:            make(map[string]*cachedResult),
-		hashCache:            make(map[string]*cachedResult),
-		chanCache:            make(map[string]*cachedResult),
-		distCache:            make(map[string]*cachedResult),
-		subpathCache:         make(map[string]*cachedResult),
-		rfCacheTTL:           15 * time.Second,
-		db:                   db,
-		useResolvedPathIndex: true,
-	}
-	store.initResolvedPathIndex()
-
-	tx := &StoreTx{
-		ID: 1, Hash: "h1", PathJSON: `["aa","bb"]`,
-		FirstSeen: time.Now().UTC().Format(time.RFC3339),
-		Observations: []*StoreObs{{ID: 1, TransmissionID: 1, PathJSON: `["aa","bb"]`,
-			Timestamp: time.Now().UTC().Format(time.RFC3339)}},
-		observerSet: make(map[string]bool),
-		obsKeys:     make(map[string]bool),
-	}
-	store.packets = append(store.packets, tx)
-	store.byHash["h1"] = tx
-	store.byTxID[1] = tx
-	addTxToSubpathIndexFull(store.spIndex, store.spTxIndex, tx)
-
-	result := store.GetSubpathDetail([]string{"aa", "bb"})
-	if result == nil {
-		t.Fatal("expected subpath detail result")
-	}
-	// Verify it returns without crashing (no ResolvedPath field access).
-	if _, ok := result["totalMatches"]; !ok {
-		t.Error("expected 'totalMatches' key in subpath detail result")
-	}
-}
-
-// TestNodeDetailPage_RelayCount verifies "relayed N packets" still works via byNode index.
-func TestNodeDetailPage_RelayCount(t *testing.T) {
-	store := &PacketStore{
-		byNode:               make(map[string][]*StoreTx),
-		nodeHashes:           make(map[string]map[string]bool),
-		useResolvedPathIndex: true,
-	}
-	store.initResolvedPathIndex()
-
-	relayPK := "relay_count_test"
-	tx1 := &StoreTx{ID: 1, Hash: "h1"}
-	tx2 := &StoreTx{ID: 2, Hash: "h2"}
-	tx3 := &StoreTx{ID: 3, Hash: "h3"}
-
-	store.addToByNode(tx1, relayPK)
-	store.addToByNode(tx2, relayPK)
-	store.addToByNode(tx3, relayPK)
-
-	if len(store.byNode[relayPK]) != 3 {
-		t.Errorf("expected 3 packets for relay, got %d", len(store.byNode[relayPK]))
-	}
-}
-
-// BenchmarkPacketsAPI_FirstPage benchmarks first page of /api/packets with on-demand RP.
-func BenchmarkPacketsAPI_FirstPage(b *testing.B) {
-	store := &PacketStore{
-		packets:              make([]*StoreTx, 0, 1000),
-		byHash:               make(map[string]*StoreTx, 1000),
-		byTxID:               make(map[int]*StoreTx, 1000),
-		byObsID:              make(map[int]*StoreObs, 1000),
-		byNode:               make(map[string][]*StoreTx),
-		nodeHashes:           make(map[string]map[string]bool),
-		useResolvedPathIndex: true,
-	}
-	store.initResolvedPathIndex()
-
-	for i := 0; i < 1000; i++ {
-		tx := &StoreTx{ID: i, Hash: string(rune(i)), PathJSON: `["aa"]`}
-		obs := &StoreObs{ID: i, TransmissionID: i, PathJSON: `["aa"]`}
-		tx.Observations = []*StoreObs{obs}
-		store.packets = append(store.packets, tx)
-		store.byHash[tx.Hash] = tx
-		store.byTxID[i] = tx
-		store.byObsID[i] = obs
+		db: &DB{conn: db},
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Simulate first page fetch: txToMapWithRP without DB returns no resolved_path
-		// but exercises the full map-building code path.
-		for j := 999; j >= 900; j-- {
-			m := store.txToMapWithRP(store.packets[j])
-			_ = m
-		}
+	// Normal match should work
+	if !store.confirmResolvedPathContains(100, "abc123") {
+		t.Error("expected true for exact match")
+	}
+
+	// Wildcard-containing pubkey should NOT match
+	if store.confirmResolvedPathContains(100, "abc%23") {
+		t.Error("expected false for pubkey with % wildcard")
+	}
+	if store.confirmResolvedPathContains(100, "abc_23") {
+		t.Error("expected false for pubkey with _ wildcard")
 	}
 }

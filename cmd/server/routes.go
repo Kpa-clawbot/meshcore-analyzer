@@ -1233,13 +1233,51 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 	// Post-filter: verify target node actually appears in each candidate's resolved_path.
 	// The byPathHop index uses short prefixes which can collide (e.g. "c0" matches multiple nodes).
 	// We lean on resolved_path (from neighbor affinity graph) to disambiguate.
-	filtered := candidates[:0] // reuse backing array
-	for _, tx := range candidates {
-		if s.store.nodeInResolvedPathViaIndex(tx, lowerPK) {
-			filtered = append(filtered, tx)
+	//
+	// Collect candidate IDs and index membership under the read lock, then release
+	// the lock before running SQL queries (confirmResolvedPathContains does disk I/O).
+	type candidateCheck struct {
+		tx         *StoreTx
+		hasReverse bool
+		inIndex    bool
+	}
+	checks := make([]candidateCheck, len(candidates))
+	for i, tx := range candidates {
+		cc := candidateCheck{tx: tx}
+		if !s.store.useResolvedPathIndex {
+			cc.inIndex = true // flag off — keep all
+		} else if _, hasRev := s.store.resolvedPubkeyReverse[tx.ID]; !hasRev {
+			cc.inIndex = true // no indexed pubkeys — keep (conservative)
+		} else {
+			h := resolvedPubkeyHash(lowerPK)
+			for _, id := range s.store.resolvedPubkeyIndex[h] {
+				if id == tx.ID {
+					cc.hasReverse = true // needs SQL confirmation
+					break
+				}
+			}
+			// If not in index at all, it's a definite no
 		}
+		checks[i] = cc
+	}
+	s.store.mu.RUnlock()
+
+	// Now run SQL checks outside the lock for candidates that need confirmation.
+	filtered := candidates[:0]
+	for _, cc := range checks {
+		if cc.inIndex {
+			filtered = append(filtered, cc.tx)
+		} else if cc.hasReverse {
+			if s.store.confirmResolvedPathContains(cc.tx.ID, lowerPK) {
+				filtered = append(filtered, cc.tx)
+			}
+		}
+		// else: not in index → exclude
 	}
 	candidates = filtered
+
+	// Re-acquire read lock for the aggregation phase that reads store data.
+	s.store.mu.RLock()
 
 	type pathAgg struct {
 		Hops       []PathHopResp
@@ -2287,7 +2325,6 @@ func mapSliceToTransmissions(maps []map[string]interface{}) []TransmissionResp {
 		tx.PathJSON = m["path_json"]
 		tx.Direction = m["direction"]
 		tx.Score = m["score"]
-		// ResolvedPath removed from struct (#800) — dead code path
 		result = append(result, tx)
 	}
 	return result
@@ -2309,7 +2346,6 @@ func mapSliceToObservations(maps []map[string]interface{}) []ObservationResp {
 		obs.RSSI = m["rssi"]
 		obs.PathJSON = m["path_json"]
 		obs.Timestamp = m["timestamp"]
-		// ResolvedPath removed from struct (#800) — dead code path
 		result = append(result, obs)
 	}
 	return result

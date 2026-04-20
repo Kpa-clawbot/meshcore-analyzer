@@ -15,7 +15,8 @@ func resolvedPubkeyHash(pk string) uint64 {
 }
 
 // addToResolvedPubkeyIndex adds a txID under each resolved pubkey hash.
-// Deduplicates: won't add the same (hash, txID) pair twice.
+// Deduplicates both within a single call AND across calls — won't add the
+// same (hash, txID) pair twice even when called multiple times for the same tx.
 // Must be called under s.mu write lock.
 func (s *PacketStore) addToResolvedPubkeyIndex(txID int, resolvedPubkeys []string) {
 	if !s.useResolvedPathIndex {
@@ -31,7 +32,21 @@ func (s *PacketStore) addToResolvedPubkeyIndex(txID int, resolvedPubkeys []strin
 			continue
 		}
 		seen[h] = true
-		s.resolvedPubkeyIndex[h] = append(s.resolvedPubkeyIndex[h], txID)
+
+		// Cross-call dedup: check if (h, txID) already exists in forward index.
+		existing := s.resolvedPubkeyIndex[h]
+		alreadyPresent := false
+		for _, id := range existing {
+			if id == txID {
+				alreadyPresent = true
+				break
+			}
+		}
+		if alreadyPresent {
+			continue
+		}
+
+		s.resolvedPubkeyIndex[h] = append(existing, txID)
 		s.resolvedPubkeyReverse[txID] = append(s.resolvedPubkeyReverse[txID], h)
 	}
 }
@@ -45,14 +60,17 @@ func (s *PacketStore) removeFromResolvedPubkeyIndex(txID int) {
 	hashes := s.resolvedPubkeyReverse[txID]
 	for _, h := range hashes {
 		list := s.resolvedPubkeyIndex[h]
-		for i, id := range list {
-			if id == txID {
-				s.resolvedPubkeyIndex[h] = append(list[:i], list[i+1:]...)
-				break
+		// Remove ALL occurrences of txID (not just the first) to prevent orphans.
+		filtered := list[:0]
+		for _, id := range list {
+			if id != txID {
+				filtered = append(filtered, id)
 			}
 		}
-		if len(s.resolvedPubkeyIndex[h]) == 0 {
+		if len(filtered) == 0 {
 			delete(s.resolvedPubkeyIndex, h)
+		} else {
+			s.resolvedPubkeyIndex[h] = filtered
 		}
 	}
 	delete(s.resolvedPubkeyReverse, txID)
@@ -125,13 +143,13 @@ func (s *PacketStore) confirmResolvedPathContains(txID int, pubkey string) bool 
 	if s.db == nil || s.db.conn == nil {
 		return true
 	}
-	// Use LIKE with surrounding quotes to prevent substring false positives.
+	// Use INSTR with surrounding quotes for exact match — avoids LIKE escape issues.
 	// resolved_path format: ["pubkey1","pubkey2",...]
-	pattern := `%"` + strings.ToLower(pubkey) + `"%`
+	needle := `"` + strings.ToLower(pubkey) + `"`
 	var count int
 	err := s.db.conn.QueryRow(
-		`SELECT COUNT(*) FROM observations WHERE transmission_id = ? AND resolved_path LIKE ?`,
-		txID, pattern,
+		`SELECT COUNT(*) FROM observations WHERE transmission_id = ? AND INSTR(LOWER(resolved_path), ?) > 0`,
+		txID, needle,
 	).Scan(&count)
 	if err != nil {
 		return true // on error, keep the candidate
@@ -231,11 +249,28 @@ func (s *PacketStore) lruPut(obsID int, rp []*string) {
 	if _, exists := s.apiResolvedPathLRU[obsID]; exists {
 		return
 	}
+	// Compact lruOrder if stale entries exceed 50% of capacity.
+	// This prevents effective capacity degradation after bulk deletions.
+	if len(s.lruOrder) >= lruMaxSize && len(s.apiResolvedPathLRU) < lruMaxSize/2 {
+		compacted := make([]int, 0, len(s.apiResolvedPathLRU))
+		for _, id := range s.lruOrder {
+			if _, ok := s.apiResolvedPathLRU[id]; ok {
+				compacted = append(compacted, id)
+			}
+		}
+		s.lruOrder = compacted
+	}
 	if len(s.lruOrder) >= lruMaxSize {
-		// Evict oldest
-		evictID := s.lruOrder[0]
-		s.lruOrder = s.lruOrder[1:]
-		delete(s.apiResolvedPathLRU, evictID)
+		// Evict oldest, skipping stale entries
+		for len(s.lruOrder) > 0 {
+			evictID := s.lruOrder[0]
+			s.lruOrder = s.lruOrder[1:]
+			if _, ok := s.apiResolvedPathLRU[evictID]; ok {
+				delete(s.apiResolvedPathLRU, evictID)
+				break
+			}
+			// stale entry — skip and continue
+		}
 	}
 	s.apiResolvedPathLRU[obsID] = rp
 	s.lruOrder = append(s.lruOrder, obsID)
