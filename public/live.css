@@ -132,7 +132,7 @@
 
 /* ---- Node Detail Panel ---- */
 .live-node-detail {
-  top: 60px;
+  top: 64px;
   right: 12px;
   width: 320px;
   max-height: calc(100vh - 140px);
@@ -325,10 +325,10 @@
   }
   .live-stats-row { flex-wrap: wrap; gap: 4px; }
   .live-stat-pill { font-size: 11px; padding: 2px 7px; }
-  .live-toggles { font-size: 10px; gap: 6px; margin-left: 0; }
+  .live-toggles { font-size: 10px; gap: 6px; margin-left: 0; overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
   .live-title { font-size: 12px; letter-spacing: 1px; }
   /* #203 — bottom-sheet node detail on mobile */
-  .live-node-detail { width: 100%; right: 0; left: 0; top: auto; bottom: 0; max-height: 60vh; border-radius: 16px 16px 0 0; overflow-y: auto; }
+  .live-node-detail { width: 100%; right: 0; left: 0; top: auto; bottom: 0; max-height: 60dvh; border-radius: 16px 16px 0 0; overflow-y: auto; z-index: 1050; }
   .live-node-detail.hidden { transform: translateY(100%); }
   .feed-detail-card {
     position: fixed !important;
