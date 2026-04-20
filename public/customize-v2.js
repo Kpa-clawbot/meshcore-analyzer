@@ -780,6 +780,16 @@
   var _activeTab = 'branding';
   var _styleEl = null;
 
+  // GeoFilter tab state
+  var _gfMap = null;
+  var _gfModalMap = null;
+  var _gfWriteEnabled = false;
+  var _gfPoints = [];
+  var _gfMarkers = [];
+  var _gfPolygon = null;
+  var _gfClosingLine = null;
+  var _gfLoaded = false; // true after initial server load
+
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
   function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 
@@ -906,6 +916,7 @@
       { id: 'nodes', label: '🎯', title: 'Colors', badge: (function () { var n = _countOverrides('nodeColors') + _countOverrides('typeColors'); return n ? ' <span class="cv2-tab-badge">' + n + '</span>' : ''; })() },
       { id: 'home', label: '🏠', title: 'Home', badge: _tabBadge('home') },
       { id: 'display', label: '🖥️', title: 'Display', badge: (function () { var n = _countOverrides('timestamps') + (_isOverridden(null, 'distanceUnit') ? 1 : 0); return n ? ' <span class="cv2-tab-badge">' + n + '</span>' : ''; })() },
+      { id: 'geofilter', label: '🗺️', title: 'GeoFilter' },
       { id: 'export', label: '📤', title: 'Export' }
     ];
     return '<div class="cust-tabs">' + tabs.map(function (t) {
@@ -1155,6 +1166,292 @@
     '</div>';
   }
 
+  function _renderGeoFilter() {
+    return '<div class="cust-panel' + (_activeTab === 'geofilter' ? ' active' : '') + '" data-panel="geofilter">' +
+      '<p class="cust-section-title">Geographic Filter</p>' +
+      '<p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Shows the active geographic filter. Nodes outside this area are excluded at ingest time and in API responses.</p>' +
+      '<div style="position:relative;margin-bottom:8px">' +
+        '<div id="cv2-gf-map" style="height:200px;border-radius:6px;border:1px solid var(--border);background:var(--surface-1);cursor:pointer"></div>' +
+        '<div style="position:absolute;top:7px;right:7px;background:rgba(255,255,255,0.88);border-radius:4px;padding:3px 8px;font-size:11px;color:#444;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,0.15)">🔍 click to expand</div>' +
+      '</div>' +
+      '<div id="cv2-gf-status" style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Loading current filter…</div>' +
+      // Edit controls — hidden until server confirms write access (writeEnabled=true)
+      '<div id="cv2-gf-edit" style="display:none">' +
+        '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">' +
+          '<label style="font-size:12px;color:var(--text-muted)">Buffer km:</label>' +
+          '<input type="number" id="cv2-gf-buffer" value="20" min="0" max="500" style="width:64px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px">' +
+        '</div>' +
+        '<div class="cust-field"><label>Server API Key</label>' +
+          '<input type="password" id="cv2-gf-apikey" placeholder="apiKey from config.json" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px">' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px">' +
+          '<button id="cv2-gf-save" style="padding:7px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500">Save to server</button>' +
+          '<button id="cv2-gf-remove" style="padding:7px 14px;background:var(--surface-1);color:var(--status-red);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">Remove filter</button>' +
+        '</div>' +
+        '<div id="cv2-gf-msg" style="margin-top:8px;font-size:12px;display:none"></div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function _gfOpenModal(container) {
+    var existing = document.getElementById('cv2-gf-modal-overlay');
+    if (existing) existing.remove();
+    if (_gfModalMap) { _gfModalMap.remove(); _gfModalMap = null; }
+
+    var overlay = document.createElement('div');
+    overlay.id = 'cv2-gf-modal-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;display:flex;align-items:center;justify-content:center;';
+
+    var dialog = document.createElement('div');
+    dialog.style.cssText = 'width:92vw;height:86vh;background:#fff;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+
+    var toolbarEl = document.createElement('div');
+    toolbarEl.style.cssText = 'padding:10px 14px;display:flex;gap:8px;align-items:center;border-bottom:1px solid #e0e0e0;background:#f5f5f5;flex-shrink:0;';
+    var title = document.createElement('span');
+    title.style.cssText = 'font-weight:600;color:#333;font-size:14px;';
+    title.textContent = _gfWriteEnabled ? 'Edit GeoFilter — click map to add points' : 'GeoFilter — read only';
+    toolbarEl.appendChild(title);
+
+    if (_gfWriteEnabled) {
+      var undoBtn = document.createElement('button');
+      undoBtn.id = 'cv2-gfm-undo';
+      undoBtn.textContent = '↩ Undo';
+      undoBtn.style.cssText = 'padding:5px 10px;background:#eee;color:#555;border:1px solid #ccc;border-radius:6px;cursor:pointer;font-size:12px;';
+      var clearBtn = document.createElement('button');
+      clearBtn.id = 'cv2-gfm-clear';
+      clearBtn.textContent = '✕ Clear';
+      clearBtn.style.cssText = 'padding:5px 10px;background:#fee;color:#c44;border:1px solid #fcc;border-radius:6px;cursor:pointer;font-size:12px;';
+      var countEl = document.createElement('span');
+      countEl.id = 'cv2-gfm-count';
+      countEl.style.cssText = 'font-size:12px;color:#888;';
+      var spacer = document.createElement('span');
+      spacer.style.cssText = 'flex:1;';
+      var doneBtn = document.createElement('button');
+      doneBtn.id = 'cv2-gfm-done';
+      doneBtn.textContent = 'Done';
+      doneBtn.style.cssText = 'padding:7px 18px;background:#4a9eff;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;';
+      toolbarEl.appendChild(undoBtn);
+      toolbarEl.appendChild(clearBtn);
+      toolbarEl.appendChild(countEl);
+      toolbarEl.appendChild(spacer);
+      toolbarEl.appendChild(doneBtn);
+    } else {
+      var spacer2 = document.createElement('span');
+      spacer2.style.cssText = 'flex:1;';
+      toolbarEl.appendChild(spacer2);
+    }
+
+    var closeBtn = document.createElement('button');
+    closeBtn.id = 'cv2-gfm-close';
+    closeBtn.textContent = _gfWriteEnabled ? 'Cancel' : 'Close';
+    closeBtn.style.cssText = 'padding:7px 14px;background:#eee;color:#555;border:1px solid #ccc;border-radius:6px;cursor:pointer;font-size:13px;';
+    toolbarEl.appendChild(closeBtn);
+
+    var mapDiv = document.createElement('div');
+    mapDiv.id = 'cv2-gf-modal-map';
+    mapDiv.style.cssText = 'flex:1;';
+
+    dialog.appendChild(toolbarEl);
+    dialog.appendChild(mapDiv);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    var modalPoints = _gfPoints.map(function (p) { return [p[0], p[1]]; });
+    var modalMarkers = [];
+    var modalPolygon = null;
+    var modalClosingLine = null;
+
+    _gfModalMap = L.map(mapDiv, { zoomControl: true });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap © CartoDB', maxZoom: 19
+    }).addTo(_gfModalMap);
+
+    function renderModal() {
+      if (modalPolygon) { _gfModalMap.removeLayer(modalPolygon); modalPolygon = null; }
+      if (modalClosingLine) { _gfModalMap.removeLayer(modalClosingLine); modalClosingLine = null; }
+      modalMarkers.forEach(function (m) { _gfModalMap.removeLayer(m); });
+      modalMarkers = [];
+      modalPoints.forEach(function (pt, i) {
+        var m = L.circleMarker(pt, { radius: 6, color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.9 })
+          .addTo(_gfModalMap)
+          .bindTooltip(String(i + 1), { permanent: true, direction: 'top', offset: [0, -8] });
+        modalMarkers.push(m);
+      });
+      if (modalPoints.length >= 3) {
+        modalPolygon = L.polygon(modalPoints, { color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.12 }).addTo(_gfModalMap);
+      } else if (modalPoints.length === 2) {
+        modalClosingLine = L.polyline(modalPoints, { color: '#4a9eff', weight: 2, dashArray: '5,5' }).addTo(_gfModalMap);
+      }
+      var ce = document.getElementById('cv2-gfm-count');
+      if (ce) ce.textContent = modalPoints.length + ' point' + (modalPoints.length !== 1 ? 's' : '');
+    }
+
+    function closeModal() {
+      if (_gfModalMap) { _gfModalMap.remove(); _gfModalMap = null; }
+      overlay.remove();
+    }
+
+    setTimeout(function () {
+      _gfModalMap.invalidateSize();
+      renderModal();
+      if (modalPoints.length >= 3) {
+        _gfModalMap.fitBounds(L.latLngBounds(modalPoints), { padding: [40, 40] });
+      } else {
+        _gfModalMap.setView([50.5, 4.4], 5);
+      }
+    }, 80);
+
+    if (_gfWriteEnabled) {
+      _gfModalMap.on('click', function (e) {
+        modalPoints.push([parseFloat(e.latlng.lat.toFixed(6)), parseFloat(e.latlng.lng.toFixed(6))]);
+        renderModal();
+      });
+      document.getElementById('cv2-gfm-undo').addEventListener('click', function () {
+        if (!modalPoints.length) return;
+        modalPoints.pop();
+        renderModal();
+      });
+      document.getElementById('cv2-gfm-clear').addEventListener('click', function () {
+        modalPoints = [];
+        renderModal();
+      });
+      document.getElementById('cv2-gfm-done').addEventListener('click', function () {
+        _gfPoints = modalPoints;
+        _gfRender();
+        var prune = container.querySelector('#cv2-gf-prune-section');
+        if (prune) prune.style.display = _gfPoints.length >= 3 ? '' : 'none';
+        _gfStatus(container, _gfPoints.length + ' point' + (_gfPoints.length !== 1 ? 's' : '') + '.');
+        closeModal();
+      });
+    }
+
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeModal(); });
+  }
+
+  function _gfRender() {
+    if (!_gfMap) return;
+    if (_gfPolygon) { _gfMap.removeLayer(_gfPolygon); _gfPolygon = null; }
+    if (_gfClosingLine) { _gfMap.removeLayer(_gfClosingLine); _gfClosingLine = null; }
+    _gfMarkers.forEach(function (m) { _gfMap.removeLayer(m); });
+    _gfMarkers = [];
+
+    _gfPoints.forEach(function (pt, i) {
+      var m = L.circleMarker(pt, { radius: 6, color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.9 })
+        .addTo(_gfMap)
+        .bindTooltip(String(i + 1), { permanent: true, direction: 'top', offset: [0, -8] });
+      _gfMarkers.push(m);
+    });
+
+    if (_gfPoints.length >= 3) {
+      _gfPolygon = L.polygon(_gfPoints, { color: '#4a9eff', weight: 2, fillColor: '#4a9eff', fillOpacity: 0.12 }).addTo(_gfMap);
+    } else if (_gfPoints.length === 2) {
+      _gfClosingLine = L.polyline(_gfPoints, { color: '#4a9eff', weight: 2, dashArray: '5,5' }).addTo(_gfMap);
+    }
+  }
+
+  function _gfStatus(container, msg) {
+    var el = container.querySelector('#cv2-gf-status');
+    if (el) el.textContent = msg;
+  }
+
+  function _gfMsg(container, msg, ok) {
+    var el = container.querySelector('#cv2-gf-msg');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = msg ? '' : 'none';
+    el.style.color = ok ? 'var(--status-green)' : 'var(--status-red)';
+  }
+
+  function _gfSave(container) {
+    if (_gfPoints.length < 3) { _gfMsg(container, 'Need at least 3 polygon points.', false); return; }
+    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
+    if (!apiKey) { _gfMsg(container, 'API key required to save.', false); return; }
+    var bufferKm = parseFloat((container.querySelector('#cv2-gf-buffer') || {}).value) || 0;
+    fetch('/api/config/geo-filter', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ polygon: _gfPoints, bufferKm: bufferKm })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+      _gfMsg(container, 'Saved. Filter is active immediately.', true);
+      _gfStatus(container, _gfPoints.length + ' points · bufferKm=' + bufferKm + ' · saved');
+    }).catch(function (e) { _gfMsg(container, 'Error: ' + e.message, false); });
+  }
+
+  function _gfRemove(container) {
+    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
+    if (!apiKey) { _gfMsg(container, 'API key required.', false); return; }
+    if (!confirm('Remove geo filter? All nodes will be allowed through.')) return;
+    fetch('/api/config/geo-filter', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ polygon: null })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+      _gfPoints = []; _gfLoaded = true;
+      _gfRender();
+      _gfStatus(container, 'No geo filter. Click the map to draw a polygon.');
+      _gfMsg(container, 'Geo filter removed.', true);
+    }).catch(function (e) { _gfMsg(container, 'Error: ' + e.message, false); });
+  }
+
+  function _initGeoFilterTab(container) {
+    var mapEl = container.querySelector('#cv2-gf-map');
+    if (!mapEl || typeof L === 'undefined') return;
+
+    _gfMap = L.map(mapEl, { zoomControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, touchZoom: false });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap © CartoDB', maxZoom: 19
+    }).addTo(_gfMap);
+
+    if (!_gfLoaded) {
+      api('/config/geo-filter', { ttl: 0 }).then(function (gf) {
+        // Show edit controls only on servers that have a write-capable API key configured
+        if (gf && gf.writeEnabled) {
+          _gfWriteEnabled = true;
+          var editEl = container.querySelector('#cv2-gf-edit');
+          if (editEl) editEl.style.display = '';
+        }
+        if (gf && gf.polygon && gf.polygon.length >= 3) {
+          _gfPoints = gf.polygon.map(function (p) { return [p[0], p[1]]; });
+          var buf = container.querySelector('#cv2-gf-buffer');
+          if (buf) buf.value = gf.bufferKm || 0;
+          _gfRender();
+          if (_gfPolygon) _gfMap.fitBounds(_gfPolygon.getBounds(), { padding: [20, 20] });
+          _gfStatus(container, gf.polygon.length + ' points · bufferKm=' + (gf.bufferKm || 0));
+        } else {
+          _gfPoints = [];
+          _gfStatus(container, gf && gf.writeEnabled ? 'No geo filter. Click the map to open the editor.' : 'No geo filter configured.');
+          _gfMap.setView([50.5, 4.4], 5);
+        }
+        _gfLoaded = true;
+        setTimeout(function () { if (_gfMap) _gfMap.invalidateSize(); }, 100);
+      }).catch(function () {
+        _gfStatus(container, 'Could not load current filter.');
+        _gfMap.setView([50.5, 4.4], 5);
+        _gfLoaded = true;
+        setTimeout(function () { if (_gfMap) _gfMap.invalidateSize(); }, 100);
+      });
+    } else {
+      if (_gfPoints.length >= 3) {
+        _gfRender();
+        if (_gfPolygon) _gfMap.fitBounds(_gfPolygon.getBounds(), { padding: [20, 20] });
+        _gfStatus(container, _gfPoints.length + ' points.');
+      } else {
+        _gfMap.setView([50.5, 4.4], 5);
+        _gfStatus(container, _gfPoints.length ? _gfPoints.length + ' points (need at least 3).' : 'Click the map to draw a polygon.');
+        _gfRender();
+      }
+      setTimeout(function () { if (_gfMap) _gfMap.invalidateSize(); }, 100);
+    }
+
+    _gfMap.on('click', function () { _gfOpenModal(container); });
+
+    container.querySelector('#cv2-gf-save').addEventListener('click', function () { _gfSave(container); });
+    container.querySelector('#cv2-gf-remove').addEventListener('click', function () { _gfRemove(container); });
+  }
+
   function _renderExport() {
     var delta = readOverrides();
     var json = JSON.stringify(delta, null, 2);
@@ -1189,6 +1486,7 @@
         _renderNodes() +
         _renderHome() +
         _renderDisplay() +
+        _renderGeoFilter() +
         _renderExport() +
       '</div>';
     _bindEvents(container);
@@ -1257,10 +1555,14 @@
     // Tab switching
     container.querySelectorAll('.cust-tab').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        if (_gfMap) { _gfMap.remove(); _gfMap = null; _gfMarkers = []; _gfPolygon = null; _gfClosingLine = null; } if (_gfModalMap) { _gfModalMap.remove(); _gfModalMap = null; } var _ov = document.getElementById('cv2-gf-modal-overlay'); if (_ov) _ov.remove();
         _activeTab = btn.dataset.tab;
         _renderPanel(container);
       });
     });
+
+    // GeoFilter tab init
+    if (_activeTab === 'geofilter') _initGeoFilterTab(container);
 
     // Preset buttons
     container.querySelectorAll('.cust-preset-btn').forEach(function (btn) {
@@ -1526,7 +1828,10 @@
       '<div class="cv2-footer"><span id="cv2-save-status">All changes saved</span></div>';
     document.body.appendChild(_panelEl);
 
-    _panelEl.querySelector('.cust-close').addEventListener('click', function () { _panelEl.classList.add('hidden'); });
+    _panelEl.querySelector('.cust-close').addEventListener('click', function () {
+      if (_gfMap) { _gfMap.remove(); _gfMap = null; _gfMarkers = []; _gfPolygon = null; _gfClosingLine = null; } if (_gfModalMap) { _gfModalMap.remove(); _gfModalMap = null; } var _ov = document.getElementById('cv2-gf-modal-overlay'); if (_ov) _ov.remove();
+      _panelEl.classList.add('hidden');
+    });
 
     // Drag support
     var header = _panelEl.querySelector('.cust-header');
