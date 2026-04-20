@@ -433,8 +433,12 @@ func (s *Store) prepareStatements() error {
 	}
 
 	s.stmtInsertObservation, err = s.db.Prepare(`
-		INSERT OR IGNORE INTO observations (transmission_id, observer_idx, direction, snr, rssi, score, path_json, timestamp)
+		INSERT INTO observations (transmission_id, observer_idx, direction, snr, rssi, score, path_json, timestamp)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(transmission_id, observer_idx, COALESCE(path_json, '')) DO UPDATE SET
+			snr   = COALESCE(excluded.snr,   snr),
+			rssi  = COALESCE(excluded.rssi,  rssi),
+			score = COALESCE(excluded.score, score)
 	`)
 	if err != nil {
 		return err
