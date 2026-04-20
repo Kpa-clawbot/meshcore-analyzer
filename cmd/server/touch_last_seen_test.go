@@ -69,13 +69,11 @@ func TestTouchRelayLastSeen_Debouncing(t *testing.T) {
 		lastSeenTouched: make(map[string]time.Time),
 	}
 
-	pk := "relay1"
-	tx := &StoreTx{
-		ResolvedPath: []*string{&pk},
-	}
+	// After #800, touchRelayLastSeen takes a []string of pubkeys (from decode-window)
+	pks := []string{"relay1"}
 
 	now := time.Now()
-	s.touchRelayLastSeen(tx, now)
+	s.touchRelayLastSeen(pks, now)
 
 	// Verify it was written
 	var lastSeen sql.NullString
@@ -88,7 +86,7 @@ func TestTouchRelayLastSeen_Debouncing(t *testing.T) {
 	db.conn.Exec("UPDATE nodes SET last_seen = NULL WHERE public_key = ?", "relay1")
 
 	// Call again within 5 minutes — should be debounced (no write)
-	s.touchRelayLastSeen(tx, now.Add(2*time.Minute))
+	s.touchRelayLastSeen(pks, now.Add(2*time.Minute))
 
 	db.conn.QueryRow("SELECT last_seen FROM nodes WHERE public_key = ?", "relay1").Scan(&lastSeen)
 	if lastSeen.Valid {
@@ -96,14 +94,14 @@ func TestTouchRelayLastSeen_Debouncing(t *testing.T) {
 	}
 
 	// Call after 5 minutes — should write again
-	s.touchRelayLastSeen(tx, now.Add(6*time.Minute))
+	s.touchRelayLastSeen(pks, now.Add(6*time.Minute))
 	db.conn.QueryRow("SELECT last_seen FROM nodes WHERE public_key = ?", "relay1").Scan(&lastSeen)
 	if !lastSeen.Valid {
 		t.Fatal("expected write after debounce interval expired")
 	}
 }
 
-func TestTouchRelayLastSeen_SkipsNilResolvedPath(t *testing.T) {
+func TestTouchRelayLastSeen_SkipsEmptyPubkeys(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
@@ -112,13 +110,9 @@ func TestTouchRelayLastSeen_SkipsNilResolvedPath(t *testing.T) {
 		lastSeenTouched: make(map[string]time.Time),
 	}
 
-	// tx with nil entries and empty resolved_path
-	tx := &StoreTx{
-		ResolvedPath: []*string{nil, nil},
-	}
-
-	// Should not panic or error
-	s.touchRelayLastSeen(tx, time.Now())
+	// Empty pubkeys — should not panic or error
+	s.touchRelayLastSeen([]string{}, time.Now())
+	s.touchRelayLastSeen(nil, time.Now())
 }
 
 func TestTouchRelayLastSeen_NilDB(t *testing.T) {
@@ -127,11 +121,6 @@ func TestTouchRelayLastSeen_NilDB(t *testing.T) {
 		lastSeenTouched: make(map[string]time.Time),
 	}
 
-	pk := "abc"
-	tx := &StoreTx{
-		ResolvedPath: []*string{&pk},
-	}
-
 	// Should not panic with nil db
-	s.touchRelayLastSeen(tx, time.Now())
+	s.touchRelayLastSeen([]string{"abc"}, time.Now())
 }

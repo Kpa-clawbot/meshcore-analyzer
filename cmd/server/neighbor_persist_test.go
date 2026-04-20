@@ -203,14 +203,14 @@ func TestLoadNeighborEdgesFromDB(t *testing.T) {
 }
 
 func TestStoreObsResolvedPathInBroadcast(t *testing.T) {
-	// Verify resolved_path appears in broadcast maps
-	pk := "aabbccdd"
+	// After #800 refactor, resolved_path is no longer stored on StoreTx/StoreObs structs.
+	// Broadcast maps carry resolved_path from the decode-window, not from struct fields.
+	// This test verifies pickBestObservation no longer sets ResolvedPath on tx.
 	obs := &StoreObs{
 		ID:           1,
 		ObserverID:   "obs1",
 		ObserverName: "Observer 1",
 		PathJSON:     `["aa"]`,
-		ResolvedPath: []*string{&pk},
 		Timestamp:    "2024-01-01T00:00:00Z",
 	}
 
@@ -221,32 +221,26 @@ func TestStoreObsResolvedPathInBroadcast(t *testing.T) {
 	}
 	pickBestObservation(tx)
 
-	if tx.ResolvedPath == nil {
-		t.Fatal("expected ResolvedPath to be set on tx after pickBestObservation")
-	}
-	if *tx.ResolvedPath[0] != "aabbccdd" {
-		t.Errorf("expected resolved path to be aabbccdd, got %s", *tx.ResolvedPath[0])
+	// tx should NOT have a ResolvedPath field anymore (compile-time guard)
+	// Verify the best observation's fields are propagated correctly
+	if tx.ObserverID != "obs1" {
+		t.Errorf("expected ObserverID=obs1, got %s", tx.ObserverID)
 	}
 }
 
 func TestResolvedPathInTxToMap(t *testing.T) {
-	pk := "aabbccdd"
+	// After #800, txToMap no longer includes resolved_path from the struct.
+	// resolved_path is only available via on-demand SQL fetch (txToMapWithRP).
 	tx := &StoreTx{
-		ID:           1,
-		Hash:         "abc123",
-		PathJSON:     `["aa"]`,
-		ResolvedPath: []*string{&pk},
-		obsKeys:      make(map[string]bool),
+		ID:       1,
+		Hash:     "abc123",
+		PathJSON: `["aa"]`,
+		obsKeys:  make(map[string]bool),
 	}
 
 	m := txToMap(tx)
-	rp, ok := m["resolved_path"]
-	if !ok {
-		t.Fatal("resolved_path not in txToMap output")
-	}
-	rpSlice, ok := rp.([]*string)
-	if !ok || len(rpSlice) != 1 || *rpSlice[0] != "aabbccdd" {
-		t.Errorf("unexpected resolved_path: %v", rp)
+	if _, ok := m["resolved_path"]; ok {
+		t.Error("resolved_path should not be in txToMap output (removed in #800)")
 	}
 }
 
@@ -365,27 +359,21 @@ func TestLoadWithResolvedPath(t *testing.T) {
 		t.Fatalf("expected 1 observation, got %d", len(tx.Observations))
 	}
 
-	obs := tx.Observations[0]
-	if obs.ResolvedPath == nil {
-		t.Fatal("expected ResolvedPath to be loaded")
-	}
-	if len(obs.ResolvedPath) != 1 || *obs.ResolvedPath[0] != "aabbccdd" {
-		t.Errorf("unexpected ResolvedPath: %v", obs.ResolvedPath)
-	}
-
-	// Check that pickBestObservation propagated resolved_path to tx
-	if tx.ResolvedPath == nil || len(tx.ResolvedPath) != 1 {
-		t.Error("expected ResolvedPath to be propagated to tx")
+	// After #800, ResolvedPath is not stored on StoreObs struct.
+	// Instead, resolved pubkeys are in the membership index.
+	_ = tx.Observations[0] // obs exists
+	h := resolvedPubkeyHash("aabbccdd")
+	if len(store.resolvedPubkeyIndex[h]) != 1 {
+		t.Fatal("expected resolved pubkey to be indexed")
 	}
 }
 
 func TestResolvedPathInAPIResponse(t *testing.T) {
-	// Test that TransmissionResp properly marshals resolved_path
-	pk := "aabbccddee"
+	// After #800, TransmissionResp no longer has ResolvedPath field.
+	// resolved_path is included dynamically in map-based API responses.
 	resp := TransmissionResp{
-		ID:           1,
-		Hash:         "test",
-		ResolvedPath: []*string{&pk, nil},
+		ID:   1,
+		Hash: "test",
 	}
 
 	data, err := json.Marshal(resp)
@@ -396,19 +384,9 @@ func TestResolvedPathInAPIResponse(t *testing.T) {
 	var m map[string]interface{}
 	json.Unmarshal(data, &m)
 
-	rp, ok := m["resolved_path"]
-	if !ok {
-		t.Fatal("resolved_path missing from JSON")
-	}
-	rpArr, ok := rp.([]interface{})
-	if !ok || len(rpArr) != 2 {
-		t.Fatalf("unexpected resolved_path shape: %v", rp)
-	}
-	if rpArr[0] != "aabbccddee" {
-		t.Errorf("first element wrong: %v", rpArr[0])
-	}
-	if rpArr[1] != nil {
-		t.Errorf("second element should be null: %v", rpArr[1])
+	// resolved_path should NOT be in the marshaled JSON
+	if _, ok := m["resolved_path"]; ok {
+		t.Error("resolved_path should not be in TransmissionResp JSON (#800)")
 	}
 }
 

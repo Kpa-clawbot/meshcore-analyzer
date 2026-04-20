@@ -247,6 +247,11 @@ func TestEvictStale_CleansNodeIndexes(t *testing.T) {
 
 func TestEvictStale_CleansResolvedPathNodeIndexes(t *testing.T) {
 	now := time.Now().UTC()
+
+	// Create a temp DB for on-demand SQL fetch during eviction
+	db := setupTestDB(t)
+	defer db.Close()
+
 	store := &PacketStore{
 		packets:       make([]*StoreTx, 0),
 		byHash:        make(map[string]*StoreTx),
@@ -267,25 +272,33 @@ func TestEvictStale_CleansResolvedPathNodeIndexes(t *testing.T) {
 		subpathCache:  make(map[string]*cachedResult),
 		rfCacheTTL:    15 * time.Second,
 		retentionHours: 24,
+		db:             db,
+		useResolvedPathIndex: true,
 	}
+	store.initResolvedPathIndex()
 
-	// Create a packet indexed only via resolved_path (no decoded JSON pubkeys)
+	// Create a packet indexed via resolved_path pubkeys
 	relayPK := "relay0001abcdef"
+	txID := 1
+	obsID := 100
 	tx := &StoreTx{
-		ID:        1,
+		ID:        txID,
 		Hash:      "hash_rp_001",
 		FirstSeen: now.Add(-48 * time.Hour).UTC().Format(time.RFC3339),
 	}
-	rpPtr := &relayPK
 	obs := &StoreObs{
-		ID:             100,
-		TransmissionID: 1,
+		ID:             obsID,
+		TransmissionID: txID,
 		ObserverID:     "obs0",
 		Timestamp:      tx.FirstSeen,
-		ResolvedPath:   []*string{rpPtr},
 	}
 	tx.Observations = append(tx.Observations, obs)
-	tx.ResolvedPath = []*string{rpPtr}
+
+	// Insert into DB so on-demand SQL fetch works during eviction
+	db.conn.Exec("INSERT INTO transmissions (id, raw_hex, hash, first_seen) VALUES (?, '', ?, ?)",
+		txID, tx.Hash, tx.FirstSeen)
+	db.conn.Exec("INSERT INTO observations (id, transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (?, ?, 1, ?, ?, ?)",
+		obsID, txID, `["aa"]`, now.Add(-48*time.Hour).Unix(), `["`+relayPK+`"]`)
 
 	store.packets = append(store.packets, tx)
 	store.byHash[tx.Hash] = tx
@@ -293,8 +306,9 @@ func TestEvictStale_CleansResolvedPathNodeIndexes(t *testing.T) {
 	store.byObsID[obs.ID] = obs
 	store.byObserver["obs0"] = append(store.byObserver["obs0"], obs)
 
-	// Index via resolved_path
-	store.indexByNode(tx)
+	// Index relay via decode-window simulation
+	store.addToByNode(tx, relayPK)
+	store.addToResolvedPubkeyIndex(txID, []string{relayPK})
 
 	// Verify indexed
 	if len(store.byNode[relayPK]) != 1 {
@@ -315,6 +329,14 @@ func TestEvictStale_CleansResolvedPathNodeIndexes(t *testing.T) {
 	}
 	if _, exists := store.nodeHashes[relayPK]; exists {
 		t.Fatalf("expected nodeHashes[%s] to be deleted after eviction", relayPK)
+	}
+	// Verify resolved pubkey index is cleaned up
+	h := resolvedPubkeyHash(relayPK)
+	if len(store.resolvedPubkeyIndex[h]) != 0 {
+		t.Fatalf("expected resolvedPubkeyIndex to be empty after eviction")
+	}
+	if _, exists := store.resolvedPubkeyReverse[txID]; exists {
+		t.Fatalf("expected resolvedPubkeyReverse to be empty after eviction")
 	}
 }
 

@@ -1235,7 +1235,7 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 	// We lean on resolved_path (from neighbor affinity graph) to disambiguate.
 	filtered := candidates[:0] // reuse backing array
 	for _, tx := range candidates {
-		if nodeInResolvedPath(tx, lowerPK) {
+		if s.store.nodeInResolvedPathViaIndex(tx, lowerPK) {
 			filtered = append(filtered, tx)
 		}
 	}
@@ -2287,9 +2287,7 @@ func mapSliceToTransmissions(maps []map[string]interface{}) []TransmissionResp {
 		tx.PathJSON = m["path_json"]
 		tx.Direction = m["direction"]
 		tx.Score = m["score"]
-		if rp, ok := m["resolved_path"].([]*string); ok {
-			tx.ResolvedPath = rp
-		}
+		// ResolvedPath removed from struct (#800) — dead code path
 		result = append(result, tx)
 	}
 	return result
@@ -2311,9 +2309,7 @@ func mapSliceToObservations(maps []map[string]interface{}) []ObservationResp {
 		obs.RSSI = m["rssi"]
 		obs.PathJSON = m["path_json"]
 		obs.Timestamp = m["timestamp"]
-		if rp, ok := m["resolved_path"].([]*string); ok {
-			obs.ResolvedPath = rp
-		}
+		// ResolvedPath removed from struct (#800) — dead code path
 		result = append(result, obs)
 	}
 	return result
