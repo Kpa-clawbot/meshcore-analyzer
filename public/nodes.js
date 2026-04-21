@@ -318,8 +318,11 @@
   function init(app, routeParam) {
     directNode = routeParam || null;
 
-    if (directNode && window.innerWidth <= 640) {
-      // Full-screen single node view (mobile only)
+    if (directNode) {
+      // Full-screen single node view (desktop + mobile).
+      // Reached via the 🔍 Details link or a deep link to #/nodes/{pubkey}.
+      // Row clicks use history.replaceState (no hashchange → no re-init),
+      // so the split-panel UX on desktop is preserved.
       app.innerHTML = `<div class="node-fullscreen">
         <div class="node-full-header">
           <button class="detail-back-btn node-back-btn" id="nodeBackBtn" aria-label="Back to nodes">←</button>
