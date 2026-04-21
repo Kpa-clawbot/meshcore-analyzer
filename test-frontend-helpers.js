@@ -5695,6 +5695,15 @@ console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===
     assert.strictEqual(ctx.window.renderSkewBadge(null, 0), '');
   });
 
+  test('renderSkewBadge renders bimodal_clock badge with tooltip (#845)', () => {
+    var cs = { goodFraction: 0.6, recentBadSampleCount: 4, recentSampleCount: 10 };
+    var html = ctx.window.renderSkewBadge('bimodal_clock', -5, cs);
+    assert.ok(html.includes('skew-badge--bimodal_clock'), 'should contain bimodal_clock class');
+    assert.ok(html.includes('bimodal'), 'tooltip should mention bimodal');
+    assert.ok(html.includes('40%'), 'tooltip should show bad percentage');
+    assert.ok(html.includes('⏰'), 'should contain clock emoji');
+  });
+
   test('renderSkewSparkline returns SVG with data points', () => {
     var samples = [
       { ts: 1000, skew: 10 },

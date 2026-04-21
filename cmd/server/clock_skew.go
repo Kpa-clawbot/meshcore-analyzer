@@ -16,7 +16,8 @@ const (
 	SkewWarning  SkewSeverity = "warning"  // 5 min – 1 hour
 	SkewCritical SkewSeverity = "critical" // 1 hour – 30 days
 	SkewAbsurd   SkewSeverity = "absurd"   // > 30 days
-	SkewNoClock  SkewSeverity = "no_clock" // > 365 days — uninitialized RTC
+	SkewNoClock      SkewSeverity = "no_clock"      // > 365 days — uninitialized RTC
+	SkewBimodalClock SkewSeverity = "bimodal_clock" // mixed good+bad recent samples (flaky RTC)
 )
 
 // Default thresholds in seconds.
@@ -45,6 +46,13 @@ const (
 	// samples from the last N seconds count as "recent" for severity.
 	// The effective window is min(recentSkewWindowCount, samples in 1h).
 	recentSkewWindowSec = 3600
+
+	// bimodalSkewThresholdSec is the absolute skew threshold (1 hour)
+	// above which a sample is considered "bad" — likely firmware emitting
+	// a nonsense timestamp from an uninitialized RTC, not real drift.
+	// Chosen to match the warning/critical severity boundary: real clock
+	// drift rarely exceeds 1 hour, while epoch-0 RTCs produce ~1.7B sec.
+	bimodalSkewThresholdSec = 3600.0
 
 	// maxPlausibleSkewJumpSec is the largest skew change between
 	// consecutive samples that we treat as physical drift. Anything larger
@@ -109,6 +117,9 @@ type NodeClockSkew struct {
 	LastAdvertTS    int64        `json:"lastAdvertTS"`     // most recent advert timestamp
 	LastObservedTS  int64        `json:"lastObservedTS"`   // most recent observation timestamp
 	Samples         []SkewSample `json:"samples,omitempty"` // time-series for sparklines
+	GoodFraction        float64  `json:"goodFraction"`        // fraction of recent samples with |skew| <= 1h
+	RecentBadSampleCount int     `json:"recentBadSampleCount"` // count of recent samples with |skew| > 1h
+	RecentSampleCount    int     `json:"recentSampleCount"`    // total recent samples in window
 	NodeName        string       `json:"nodeName,omitempty"` // populated in fleet responses
 	NodeRole        string       `json:"nodeRole,omitempty"` // populated in fleet responses
 }
@@ -459,6 +470,7 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 	sort.Slice(tsSkews, func(i, j int) bool { return tsSkews[i].ts < tsSkews[j].ts })
 
 	recentSkew := lastSkew
+	var recentVals []float64
 	if n := len(tsSkews); n > 0 {
 		latestTS := tsSkews[n-1].ts
 		// Index-based window: last K samples.
@@ -481,7 +493,7 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		if startByTime > start {
 			start = startByTime
 		}
-		recentVals := make([]float64, 0, n-start)
+		recentVals = make([]float64, 0, n-start)
 		for i := start; i < n; i++ {
 			recentVals = append(recentVals, tsSkews[i].skew)
 		}
@@ -490,11 +502,49 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		}
 	}
 
-	severity := classifySkew(math.Abs(recentSkew))
+	// ── Bimodal detection (#845) ─────────────────────────────────────────
+	// Split recent samples into "good" (|skew| <= 1h, real clock) and
+	// "bad" (|skew| > 1h, firmware nonsense from uninitialized RTC).
+	// Classification order (first match wins):
+	//   no_clock       — goodFraction < 0.10 (essentially no real clock)
+	//   bimodal_clock  — 0.10 <= goodFraction < 0.80 AND badCount > 0
+	//   ok/warn/etc.   — goodFraction >= 0.80 (normal, outliers filtered)
+	var goodSamples []float64
+	for _, v := range recentVals {
+		if math.Abs(v) <= bimodalSkewThresholdSec {
+			goodSamples = append(goodSamples, v)
+		}
+	}
+	recentSampleCount := len(recentVals)
+	recentBadCount := recentSampleCount - len(goodSamples)
+	var goodFraction float64
+	if recentSampleCount > 0 {
+		goodFraction = float64(len(goodSamples)) / float64(recentSampleCount)
+	}
 
-	// For no_clock nodes (uninitialized RTC), skip drift — data is meaningless.
+	var severity SkewSeverity
+	if goodFraction < 0.10 {
+		// Essentially no real clock — classify as no_clock regardless
+		// of the raw skew magnitude.
+		severity = SkewNoClock
+	} else if goodFraction < 0.80 && recentBadCount > 0 {
+		// Bimodal: use median of GOOD samples as the "real" skew.
+		severity = SkewBimodalClock
+		if len(goodSamples) > 0 {
+			recentSkew = median(goodSamples)
+		}
+	} else {
+		// Normal path: if there are good samples, use their median
+		// (filters out rare outliers in ≥80% good case).
+		if len(goodSamples) > 0 && recentBadCount > 0 {
+			recentSkew = median(goodSamples)
+		}
+		severity = classifySkew(math.Abs(recentSkew))
+	}
+
+	// For no_clock / bimodal_clock nodes, skip drift when data is unreliable.
 	var drift float64
-	if severity != SkewNoClock && len(tsSkews) >= minDriftSamples {
+	if severity != SkewNoClock && severity != SkewBimodalClock && len(tsSkews) >= minDriftSamples {
 		drift = computeDrift(tsSkews)
 		// Cap physically impossible drift rates.
 		if math.Abs(drift) > maxReasonableDriftPerDay {
@@ -509,18 +559,21 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 	}
 
 	return &NodeClockSkew{
-		Pubkey:              pubkey,
-		MeanSkewSec:         round(meanSkew, 1),
-		MedianSkewSec:       round(medSkew, 1),
-		LastSkewSec:         round(lastSkew, 1),
-		RecentMedianSkewSec: round(recentSkew, 1),
-		DriftPerDaySec:      round(drift, 2),
-		Severity:            severity,
-		SampleCount:         totalSamples,
-		Calibrated:          anyCal,
-		LastAdvertTS:        lastAdvTS,
-		LastObservedTS:      lastObsTS,
-		Samples:             samples,
+		Pubkey:               pubkey,
+		MeanSkewSec:          round(meanSkew, 1),
+		MedianSkewSec:        round(medSkew, 1),
+		LastSkewSec:          round(lastSkew, 1),
+		RecentMedianSkewSec:  round(recentSkew, 1),
+		DriftPerDaySec:       round(drift, 2),
+		Severity:             severity,
+		SampleCount:          totalSamples,
+		Calibrated:           anyCal,
+		LastAdvertTS:         lastAdvTS,
+		LastObservedTS:       lastObsTS,
+		Samples:              samples,
+		GoodFraction:         round(goodFraction, 2),
+		RecentBadSampleCount: recentBadCount,
+		RecentSampleCount:    recentSampleCount,
 	}
 }
 
