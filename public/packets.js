@@ -1850,7 +1850,7 @@
       if (!isNaN(plByte)) rawHopCount = plByte & 0x3F;
     }
     if (rawHopCount != null && pathHops.length !== rawHopCount) {
-      console.warn(`[CoreScope] Hop count inconsistency for packet ${pkt.hash}: path_json has ${pathHops.length} hops but raw_hex path_len has ${rawHopCount}. Trusting raw_hex.`);
+      console.warn(`[CoreScope] Hop count inconsistency for packet ${pkt.hash}: path_json has ${pathHops.length} hops but raw_hex path_len has ${rawHopCount}. UI shows path_json.`);
     }
 
     // Resolve sender GPS — from packet directly, or from known node in DB
@@ -2208,7 +2208,10 @@
         const label = `Hop ${i} — ${hopHtml}`;
         rows += fieldRow(hopOff, label, hex, '');
       }
-      off += hashSize * pathHops.length;
+    }
+    // Advance offset by raw_hex byte count (hashCountVal) so payload offsets stay correct
+    if (typeof hashCountVal === 'number' && hashCountVal > 0) {
+      off += hashSize * hashCountVal;
     }
 
     // Payload
