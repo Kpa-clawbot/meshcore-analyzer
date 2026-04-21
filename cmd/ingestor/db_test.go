@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/meshcore-analyzer/packetpath"
 )
 
 func tempDBPath(t *testing.T) string {
@@ -2063,11 +2066,12 @@ func TestPerObservationRawHex(t *testing.T) {
 	}
 }
 
-// TestBuildPacketData_PathJSONMatchesRawHex verifies that path_json is derived
-// from raw_hex, not from decoded.Path.Hops (which TRACE overwrites). Issue #886.
-func TestBuildPacketData_PathJSONMatchesRawHex(t *testing.T) {
+// TestBuildPacketData_TraceUsesPayloadHops verifies that TRACE packets use
+// payload-decoded route hops in path_json (NOT the raw_hex header SNR bytes).
+// Issue #886 / #887.
+func TestBuildPacketData_TraceUsesPayloadHops(t *testing.T) {
 	// TRACE packet: header path has SNR bytes [30,2D,0D,23], but decoded.Path.Hops
-	// would be overwritten to payload hops [67,33,D6,33,67].
+	// is overwritten to payload hops [67,33,D6,33,67].
 	rawHex := "2604302D0D2359FEE7B100000000006733D63367"
 	decoded, err := DecodePacket(rawHex, nil, false)
 	if err != nil {
@@ -2082,10 +2086,20 @@ func TestBuildPacketData_PathJSONMatchesRawHex(t *testing.T) {
 	msg := &MQTTPacketMessage{Raw: rawHex}
 	pd := BuildPacketData(msg, decoded, "test-obs", "TST")
 
-	// path_json MUST match the header path bytes from raw_hex, NOT the TRACE payload hops
-	expectedPathJSON := `["30","2D","0D","23"]`
+	// For TRACE: path_json MUST be the payload-decoded route hops, NOT the SNR bytes
+	expectedPathJSON := `["67","33","D6","33","67"]`
 	if pd.PathJSON != expectedPathJSON {
-		t.Errorf("path_json = %s, want %s (must match raw_hex header path)", pd.PathJSON, expectedPathJSON)
+		t.Errorf("path_json = %s, want %s (TRACE must use payload hops)", pd.PathJSON, expectedPathJSON)
+	}
+
+	// Verify that DecodePathFromRawHex returns the SNR bytes (header path) which differ
+	headerHops, herr := packetpath.DecodePathFromRawHex(rawHex)
+	if herr != nil {
+		t.Fatal(herr)
+	}
+	headerJSON, _ := json.Marshal(headerHops)
+	if string(headerJSON) == expectedPathJSON {
+		t.Error("header path (SNR) should differ from payload hops for TRACE")
 	}
 }
 

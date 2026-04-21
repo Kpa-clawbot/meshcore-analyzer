@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/meshcore-analyzer/packetpath"
 )
 
 // Server holds shared state for route handlers.
@@ -1020,8 +1021,16 @@ func (s *Server) handlePostPacket(w http.ResponseWriter, r *http.Request) {
 
 	contentHash := ComputeContentHash(hexStr)
 	pathJSON := "[]"
-	// Derive path from raw_hex to ensure path_json matches raw_hex (#886)
-	if hops, err := DecodePathFromRawHex(hexStr); err == nil && len(hops) > 0 {
+	// For TRACE packets, path_json must be the payload-decoded route hops
+	// (decoded.Path.Hops), NOT the raw_hex header bytes which are SNR values.
+	// For all other packet types, derive path from raw_hex (#886).
+	if decoded.Header.PayloadType == PayloadTRACE {
+		if len(decoded.Path.Hops) > 0 {
+			if pj, e := json.Marshal(decoded.Path.Hops); e == nil {
+				pathJSON = string(pj)
+			}
+		}
+	} else if hops, err := packetpath.DecodePathFromRawHex(hexStr); err == nil && len(hops) > 0 {
 		if pj, e := json.Marshal(hops); e == nil {
 			pathJSON = string(pj)
 		}

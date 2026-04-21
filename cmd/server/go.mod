@@ -14,6 +14,10 @@ replace github.com/meshcore-analyzer/geofilter => ../../internal/geofilter
 
 replace github.com/meshcore-analyzer/sigvalidate => ../../internal/sigvalidate
 
+require github.com/meshcore-analyzer/packetpath v0.0.0
+
+replace github.com/meshcore-analyzer/packetpath => ../../internal/packetpath
+
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

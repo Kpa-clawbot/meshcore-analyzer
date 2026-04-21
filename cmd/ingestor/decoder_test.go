@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/meshcore-analyzer/packetpath"
 	"github.com/meshcore-analyzer/sigvalidate"
 )
 
@@ -1830,7 +1831,7 @@ func TestDecodePathFromRawHex_HashSize1(t *testing.T) {
 	// Path byte 0x04 = hash_size 1 (bits 7-6 = 00 → 0+1=1), hash_count 4
 	// Path bytes: 30 2D 0D 23
 	raw := "2604302D0D2359FEE7B100000000006733D63367"
-	hops, err := DecodePathFromRawHex(raw)
+	hops, err := packetpath.DecodePathFromRawHex(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1850,7 +1851,7 @@ func TestDecodePathFromRawHex_HashSize2(t *testing.T) {
 	// Header 0x09 = FLOOD route (rt=1), payload ADVERT (pt=2)
 	// Path bytes: AABB CCDD (4 bytes = 2 hops * 2 bytes)
 	raw := "0942AABBCCDD" + "00000000000000"
-	hops, err := DecodePathFromRawHex(raw)
+	hops, err := packetpath.DecodePathFromRawHex(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1869,7 +1870,7 @@ func TestDecodePathFromRawHex_HashSize3(t *testing.T) {
 	// Path byte 0x81 = hash_size 3 (bits 7-6 = 10 → 2+1=3), hash_count 1
 	// Header 0x09 = FLOOD route (rt=1), payload ADVERT
 	raw := "0981AABBCC" + "0000000000"
-	hops, err := DecodePathFromRawHex(raw)
+	hops, err := packetpath.DecodePathFromRawHex(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1882,7 +1883,7 @@ func TestDecodePathFromRawHex_HashSize4(t *testing.T) {
 	// Path byte 0xC1 = hash_size 4 (bits 7-6 = 11 → 3+1=4), hash_count 1
 	// Header 0x09 = FLOOD route (rt=1)
 	raw := "09C1AABBCCDD" + "0000000000"
-	hops, err := DecodePathFromRawHex(raw)
+	hops, err := packetpath.DecodePathFromRawHex(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1895,7 +1896,7 @@ func TestDecodePathFromRawHex_DirectZeroHops(t *testing.T) {
 	// Path byte 0x00 = hash_size 1, hash_count 0
 	// Header 0x0A = DIRECT route (rt=2), payload ADVERT
 	raw := "0A00" + "0000000000"
-	hops, err := DecodePathFromRawHex(raw)
+	hops, err := packetpath.DecodePathFromRawHex(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1911,7 +1912,7 @@ func TestDecodePathFromRawHex_Transport(t *testing.T) {
 	// Path byte 0x02 = hash_size 1, hash_count 2
 	// Path bytes: AA BB
 	raw := "2711223344" + "02AABB" + "0000000000"
-	hops, err := DecodePathFromRawHex(raw)
+	hops, err := packetpath.DecodePathFromRawHex(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
