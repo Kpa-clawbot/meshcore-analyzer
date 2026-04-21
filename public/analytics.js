@@ -28,7 +28,7 @@
 
   function barChart(data, labels, colors, w = 800, h = 220, pad = 40) {
     const max = Math.max(...data, 1);
-    const barW = Math.min((w - pad * 2) / data.length - 2, 30);
+    const barW = Math.max(1, Math.min((w - pad * 2) / data.length - 2, 30));
     let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;max-height:${h}px" role="img" aria-label="Bar chart showing data distribution"><title>Bar chart showing data distribution</title>`;
     // Grid
     for (let i = 0; i <= 4; i++) {
@@ -263,7 +263,25 @@
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3>📈 Packets / Hour</h3>
-          ${barChart(rf.packetsPerHour.map(h=>h.count), rf.packetsPerHour.map(h=>h.hour.slice(11)+'h'), 'var(--accent)')}
+          ${(() => {
+            const pph = rf.packetsPerHour;
+            const counts = pph.map(h => h.count);
+            // Decimate x-axis labels to avoid overlap
+            const totalHours = pph.length;
+            // Pick label interval: <=24h show every 6h, <=72h every 12h, else every 24h
+            const labelInterval = totalHours <= 24 ? 6 : totalHours <= 72 ? 12 : 24;
+            const labels = pph.map((h, i) => {
+              const hh = h.hour.slice(11, 13); // "HH"
+              const hourNum = parseInt(hh, 10);
+              if (hourNum % labelInterval === 0) {
+                // For multi-day ranges, show date on 00h boundaries
+                if (totalHours > 48 && hourNum === 0) return h.hour.slice(5, 10);
+                return hh + 'h';
+              }
+              return ''; // skip label
+            });
+            return barChart(counts, labels, 'var(--accent)');
+          })()}
         </div>
       </div>
 
