@@ -965,7 +965,7 @@
         </dl>
         <div style="margin-top:8px;clear:both;">
           <a href="#/nodes/${node.public_key}" style="color:var(--accent);font-size:12px;">View Node →</a>
-          ${node.public_key ? ` · <a href="#" data-show-neighbors data-pubkey="${escapeHtml(node.public_key)}" data-name="${escapeHtml(node.name || 'Unknown')}" style="color:var(--accent);font-size:12px;">Show Neighbors</a>` : ''}
+          ${node.public_key ? ` · <a href="javascript:void(0)" role="button" data-show-neighbors data-pubkey="${escapeHtml(node.public_key)}" data-name="${escapeHtml(node.name || 'Unknown')}" style="color:var(--accent);font-size:12px;cursor:pointer;">Show Neighbors</a>` : ''}
         </div>
       </div>`;
   }
