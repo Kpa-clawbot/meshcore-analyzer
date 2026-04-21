@@ -1778,6 +1778,86 @@ async function run() {
     }
   });
 
+  // Test: Expanded group children have unique observation ids (#866)
+  await test('Expanded group children update detail pane per-observation', async () => {
+    await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
+    // Ensure grouped mode and wide time window
+    await page.evaluate(() => {
+      localStorage.setItem('meshcore-time-window', '525600');
+      localStorage.setItem('meshcore-groupbyhash', 'true');
+    });
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+
+    // Find a group row with observation_count > 1 (has expand button)
+    const expandBtn = await page.$('table tbody tr .expand-btn, table tbody tr [data-expand]');
+    if (!expandBtn) {
+      console.log('    ℹ️  No expandable groups found — skipping child assertion');
+      return;
+    }
+
+    // Click expand and wait for the /packets/<hash> detail API call
+    const [detailResp] = await Promise.all([
+      page.waitForResponse(resp => {
+        const u = new URL(resp.url(), BASE);
+        // Match /api/packets/<hash> but not /api/packets?... or /api/packets/observations
+        return /\/api\/packets\/[A-Fa-f0-9]+$/.test(u.pathname) && resp.status() === 200;
+      }, { timeout: 15000 }),
+      expandBtn.click(),
+    ]);
+    assert(detailResp, 'Expected /api/packets/<hash> response on expand');
+
+    // Wait for child rows to appear
+    await page.waitForSelector('table tbody tr.child-row, table tbody tr[class*="child"]', { timeout: 5000 });
+    const childRows = await page.$$('table tbody tr.child-row, table tbody tr[class*="child"]');
+    if (childRows.length < 2) {
+      console.log('    ℹ️  Group has < 2 children — skipping per-observation assertion');
+      return;
+    }
+
+    // Click first child row
+    await childRows[0].click();
+    await page.waitForFunction(() => {
+      const panel = document.getElementById('pktRight');
+      return panel && !panel.classList.contains('empty') && panel.textContent.trim().length > 0;
+    }, { timeout: 10000 });
+    const content1 = await page.$eval('#pktRight', el => el.textContent.trim());
+    const url1 = page.url();
+
+    // Click second child row
+    await childRows[1].click();
+    await page.waitForTimeout(500);
+    const content2 = await page.$eval('#pktRight', el => el.textContent.trim());
+    const url2 = page.url();
+
+    // URL should contain ?obs= with a real observation id
+    assert(url1.includes('obs=') || url2.includes('obs='), `URL should contain obs= parameter, got: ${url1}`);
+
+    // The two children should show different detail pane content (different observers)
+    // At minimum, the URL obs= values should differ
+    if (url1.includes('obs=') && url2.includes('obs=')) {
+      const obs1 = new URL(url1).hash.match(/obs=(\d+)/)?.[1];
+      const obs2 = new URL(url2).hash.match(/obs=(\d+)/)?.[1];
+      if (obs1 && obs2) {
+        assert(obs1 !== obs2, `Two children should have different obs ids, both got obs=${obs1}`);
+      }
+    }
+
+    // Verify obs id is NOT the aggregate packet id (the bug from #866)
+    const obsMatch = url2.match(/obs=(\d+)/);
+    if (obsMatch) {
+      const detailJson = await detailResp.json().catch(() => null);
+      if (detailJson?.packet?.id) {
+        const aggId = String(detailJson.packet.id);
+        // At least one child obs id should differ from the aggregate packet id
+        const obs1 = url1.match(/obs=(\d+)/)?.[1];
+        const obs2 = url2.match(/obs=(\d+)/)?.[1];
+        const allSameAsAgg = obs1 === aggId && obs2 === aggId;
+        assert(!allSameAsAgg, `Child obs ids should not all equal aggregate packet.id (${aggId})`);
+      }
+    }
+  });
+
   await browser.close();
 
   // Summary
