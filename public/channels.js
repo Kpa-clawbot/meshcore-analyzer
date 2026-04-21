@@ -1179,6 +1179,9 @@
       }
       // #825: confirm encrypted-ness via an encrypted-included channel list
       // before assuming a lock state. Conservative on error — fall through.
+      // Show a loading affordance so cold deep links don't display stale content
+      // for the duration of the metadata RTT (cached 15s thereafter).
+      msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';
       try {
         var rpInc = RegionFilter.getRegionParam();
         var paramsInc = ['includeEncrypted=true'];
