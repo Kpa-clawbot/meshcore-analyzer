@@ -1165,6 +1165,21 @@
       return;
     }
 
+    // #811: Deep link to encrypted channel by name (e.g. /#/channels/%23private).
+    // The channel may not be in the list (encrypted toggle off) and `ch` is undefined,
+    // but a `#`-prefixed hash unambiguously refers to a named encrypted channel.
+    if (hash.charAt(0) === '#') {
+      if (storedKeys[hash]) {
+        var keyHex2 = storedKeys[hash];
+        var keyBytes2 = ChannelDecrypt.hexToBytes(keyHex2);
+        var hashByte2 = await ChannelDecrypt.computeChannelHash(keyBytes2);
+        await decryptAndRender(keyHex2, hashByte2, hash);
+        return;
+      }
+      msgEl.innerHTML = '<div class="ch-empty">🔒 This channel is encrypted and no decryption key is configured</div>';
+      return;
+    }
+
     msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';
 
     try {
