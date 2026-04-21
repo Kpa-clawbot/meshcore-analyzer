@@ -697,7 +697,9 @@ button.ch-item:hover .ch-remove-btn { opacity: 0.6; }
 .advert-dot {
   width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 4px;
 }
-.advert-info { font-size: 12px; line-height: 1.5; }
+/* #829: explicit color so text stays readable when inherited color matches card-bg */
+.advert-info { font-size: 12px; line-height: 1.5; color: var(--text); }
+.advert-info a { color: var(--accent); }
 
 /* === Traces Page === */
 .traces-page { padding: 16px; max-width: var(--trace-max-width, 95vw); margin: 0 auto; }
