@@ -1020,8 +1020,9 @@ func (s *Server) handlePostPacket(w http.ResponseWriter, r *http.Request) {
 
 	contentHash := ComputeContentHash(hexStr)
 	pathJSON := "[]"
-	if len(decoded.Path.Hops) > 0 {
-		if pj, e := json.Marshal(decoded.Path.Hops); e == nil {
+	// Derive path from raw_hex to ensure path_json matches raw_hex (#886)
+	if hops, err := DecodePathFromRawHex(hexStr); err == nil && len(hops) > 0 {
+		if pj, e := json.Marshal(hops); e == nil {
 			pathJSON = string(pj)
 		}
 	}
