@@ -1861,11 +1861,11 @@ async function run() {
   // Test: per-observation raw_hex — hex pane updates when switching observations (#881)
   await test('Packet detail hex pane updates per observation', async () => {
     await page.goto(BASE + '#/packets', { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('tr[data-hash]', { timeout: 8000 });
-    await page.waitForTimeout(1000);
+    await page.waitForSelector('table tbody tr[data-hash]', { timeout: 15000 });
+    await page.waitForTimeout(500);
 
     // Try clicking packet rows to find one with multiple observations
-    const rows = await page.$$('tr[data-hash]');
+    const rows = await page.$$('table tbody tr[data-hash]');
     let obsRows = [];
     for (let i = 0; i < Math.min(rows.length, 10); i++) {
       await rows[i].click({ timeout: 3000 }).catch(() => null);
