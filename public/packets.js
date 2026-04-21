@@ -963,20 +963,39 @@
       }
       api('/channels').then(data => {
         const channels = (data && data.channels) || [];
-        // Re-render: keep "All Channels" first, then named channels.
-        let html = '<option value="">All Channels</option>';
-        for (const ch of channels) {
+        // Build options via DOM API: channel names are network-supplied
+        // and must NOT be interpolated into innerHTML (XSS, #812).
+        // Sort alphabetically (case-insensitive) for predictable picker order;
+        // the API returns last-activity order which is unstable for a dropdown.
+        const sorted = channels.slice().sort((a, b) => {
+          const an = (a.name || a.hash || '').toLowerCase();
+          const bn = (b.name || b.hash || '').toLowerCase();
+          return an < bn ? -1 : an > bn ? 1 : 0;
+        });
+        channelSel.textContent = '';
+        const allOpt = document.createElement('option');
+        allOpt.value = '';
+        allOpt.textContent = 'All Channels';
+        channelSel.appendChild(allOpt);
+        let matched = false;
+        for (const ch of sorted) {
           const v = ch.hash || ch.name || '';
           if (!v) continue;
-          const sel = v === filters.channel ? ' selected' : '';
-          const label = ch.name || v;
-          html += '<option value="' + v.replace(/"/g, '&quot;') + '"' + sel + '>' + label + '</option>';
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = ch.name || v;
+          if (v === filters.channel) { opt.selected = true; matched = true; }
+          channelSel.appendChild(opt);
         }
-        // If current filter not in the list (encrypted hash, stale), keep it.
-        if (filters.channel && !channels.some(ch => (ch.hash || ch.name) === filters.channel)) {
-          html += '<option value="' + filters.channel.replace(/"/g, '&quot;') + '" selected>' + filters.channel + '</option>';
+        // If current filter isn't in the list (encrypted hash, stale, or
+        // race with cache), keep it as a selected option so the UI reflects state.
+        if (filters.channel && !matched) {
+          const opt = document.createElement('option');
+          opt.value = filters.channel;
+          opt.textContent = filters.channel;
+          opt.selected = true;
+          channelSel.appendChild(opt);
         }
-        channelSel.innerHTML = html;
       }).catch(() => {});
       channelSel.addEventListener('change', (e) => {
         filters.channel = e.target.value || undefined;
