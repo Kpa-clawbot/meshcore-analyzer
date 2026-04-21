@@ -1486,3 +1486,52 @@ func TestCheckResolvedPubkeyIndexSize_Warning(t *testing.T) {
 	// Just verify it doesn't panic — the warning is logged, not returned
 	store.CheckResolvedPubkeyIndexSize()
 }
+
+// TestConcurrentBackfillAndLRURead exercises the lock ordering contract:
+// one goroutine simulates backfill (takes s.mu.Lock then lruMu.Lock separately),
+// another simulates API reads (takes lruMu then s.mu.RLock separately).
+// Run with -race to detect ordering violations.
+func TestConcurrentBackfillAndLRURead(t *testing.T) {
+	store := &PacketStore{
+		useResolvedPathIndex: true,
+	}
+	store.initResolvedPathIndex()
+
+	var wg sync.WaitGroup
+	const iterations = 500
+
+	// Simulate backfill: mu.Lock → index ops → mu.Unlock → lruMu.Lock → lruDelete → lruMu.Unlock
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			store.mu.Lock()
+			store.addToResolvedPubkeyIndex(i, []string{fmt.Sprintf("pk-%d", i)})
+			store.mu.Unlock()
+
+			store.lruMu.Lock()
+			store.lruDelete(i)
+			store.lruMu.Unlock()
+			runtime.Gosched()
+		}
+	}()
+
+	// Simulate API reads: lruMu.RLock → cache check → lruMu.RUnlock, then s.mu.RLock → read → s.mu.RUnlock
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pk := "test"
+		for i := 0; i < iterations; i++ {
+			store.lruMu.RLock()
+			_ = store.apiResolvedPathLRU[i]
+			store.lruMu.RUnlock()
+
+			store.mu.RLock()
+			_ = store.resolvedPubkeyIndex[resolvedPubkeyHash(pk)]
+			store.mu.RUnlock()
+			runtime.Gosched()
+		}
+	}()
+
+	wg.Wait()
+}

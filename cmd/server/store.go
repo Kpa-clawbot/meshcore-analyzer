@@ -6477,7 +6477,7 @@ func (s *PacketStore) GetNodeHealth(pubkey string) (map[string]interface{}, erro
 	}
 	recentPackets := make([]map[string]interface{}, 0, recentLimit)
 	for i := len(packets) - 1; i >= len(packets)-recentLimit; i-- {
-		p := txToMap(packets[i])
+		p := s.txToMapWithRP(packets[i])
 		delete(p, "observations")
 		recentPackets = append(recentPackets, p)
 	}

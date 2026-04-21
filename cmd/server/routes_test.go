@@ -3793,3 +3793,88 @@ func TestMetricsAPIEndpoints(t *testing.T) {
 		t.Errorf("expected 1 observer in summary, got %v", resp2["observers"])
 	}
 }
+
+// TestNodeHealth_RecentPackets_ResolvedPath verifies that recentPackets in the
+// node health endpoint include resolved_path (regression for Codex review item #2).
+func TestNodeHealth_RecentPackets_ResolvedPath(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/nodes/aabbccdd11223344/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	rp, ok := body["recentPackets"].([]interface{})
+	if !ok || len(rp) == 0 {
+		t.Fatal("expected non-empty recentPackets")
+	}
+	// At least one packet should have resolved_path (tx 1 has observations with resolved_path)
+	found := false
+	for _, p := range rp {
+		pm, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if pm["resolved_path"] != nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected at least one recentPacket with resolved_path")
+	}
+}
+
+// TestPacketsExpand_ResolvedPath verifies that expandObservations=true includes
+// resolved_path on expanded observations (regression for Codex review item #3).
+func TestPacketsExpand_ResolvedPath(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/packets?expand=observations&limit=10", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	packets, ok := body["packets"].([]interface{})
+	if !ok || len(packets) == 0 {
+		t.Fatal("expected non-empty packets")
+	}
+	// Find a packet with observations that should have resolved_path
+	found := false
+	for _, p := range packets {
+		pm, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		obs, ok := pm["observations"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, o := range obs {
+			om, ok := o.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if om["resolved_path"] != nil {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Error("expected at least one expanded observation with resolved_path")
+	}
+}

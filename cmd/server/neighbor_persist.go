@@ -490,8 +490,14 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 
 			// Update in-memory state: update resolved pubkey index, re-pick best observation,
 			// and invalidate LRU cache entries for backfilled observations (#800).
+			//
+			// Lock ordering: always take s.mu BEFORE lruMu. The read path
+			// (fetchResolvedPathForObs) takes lruMu independently of s.mu,
+			// so we must NOT hold s.mu while taking lruMu. Instead, collect
+			// obsIDs to invalidate under s.mu, release it, then take lruMu.
 			store.mu.Lock()
 			affectedSet := make(map[string]bool)
+			lruInvalidate := make([]int, 0, len(results))
 			for _, r := range results {
 				// Remove old index entries for this tx, then re-add with new pubkeys
 				if !affectedSet[r.txHash] {
@@ -520,10 +526,7 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 						}
 					}
 				}
-				// Invalidate LRU cache for the backfilled obs
-				store.lruMu.Lock()
-				store.lruDelete(r.obsID)
-				store.lruMu.Unlock()
+				lruInvalidate = append(lruInvalidate, r.obsID)
 			}
 			// Re-pick best observation for affected transmissions
 			for txHash := range affectedSet {
@@ -532,6 +535,14 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 				}
 			}
 			store.mu.Unlock()
+
+			// Invalidate LRU entries AFTER releasing s.mu to maintain lock
+			// ordering (lruMu must never be taken while s.mu is held).
+			store.lruMu.Lock()
+			for _, obsID := range lruInvalidate {
+				store.lruDelete(obsID)
+			}
+			store.lruMu.Unlock()
 		}
 
 		totalProcessed += len(chunk)

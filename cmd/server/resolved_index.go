@@ -1,5 +1,16 @@
 package main
 
+// Lock ordering contract (MUST be followed everywhere):
+//
+//   s.mu  →  s.lruMu   (s.mu is the outer lock, lruMu is the inner lock)
+//
+// • Never acquire s.lruMu while holding s.mu.
+// • fetchResolvedPathForObs takes lruMu independently — callers under s.mu
+//   must NOT call it directly; instead collect IDs under s.mu, release, then
+//   do LRU ops under lruMu separately.
+// • The backfill path (backfillResolvedPathsAsync) follows this by collecting
+//   obsIDs to invalidate under s.mu, releasing it, then taking lruMu.
+
 import (
 	"database/sql"
 	"hash/fnv"
