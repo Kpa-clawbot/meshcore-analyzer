@@ -50,6 +50,8 @@ const (
 	// bimodalSkewThresholdSec is the absolute skew threshold (1 hour)
 	// above which a sample is considered "bad" — likely firmware emitting
 	// a nonsense timestamp from an uninitialized RTC, not real drift.
+	// Chosen to match the warning/critical severity boundary: real clock
+	// drift rarely exceeds 1 hour, while epoch-0 RTCs produce ~1.7B sec.
 	bimodalSkewThresholdSec = 3600.0
 
 	// maxPlausibleSkewJumpSec is the largest skew change between
