@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/meshcore-analyzer/packetpath"
 	"github.com/meshcore-analyzer/sigvalidate"
 )
 
@@ -170,8 +171,6 @@ func decodeHeader(b byte) Header {
 	}
 }
 
-
-
 func decodePath(pathByte byte, buf []byte, offset int) (Path, int) {
 	hashSize := int(pathByte>>6) + 1
 	hashCount := int(pathByte & 0x3F)
@@ -194,8 +193,9 @@ func decodePath(pathByte byte, buf []byte, offset int) (Path, int) {
 	}, totalBytes
 }
 
+// isTransportRoute delegates to packetpath.IsTransportRoute.
 func isTransportRoute(routeType int) bool {
-	return routeType == RouteTransportFlood || routeType == RouteTransportDirect
+	return packetpath.IsTransportRoute(routeType)
 }
 
 func decodeEncryptedPayload(typeName string, buf []byte) Payload {

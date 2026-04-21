@@ -951,7 +951,7 @@ func BuildPacketData(msg *MQTTPacketMessage, decoded *DecodedPacket, observerID,
 	// For TRACE packets, path_json must be the payload-decoded route hops
 	// (decoded.Path.Hops), NOT the raw_hex header bytes which are SNR values.
 	// For all other packet types, derive path from raw_hex (#886).
-	if decoded.Header.PayloadType == PayloadTRACE {
+	if !packetpath.PathBytesAreHops(byte(decoded.Header.PayloadType)) {
 		if len(decoded.Path.Hops) > 0 {
 			b, _ := json.Marshal(decoded.Path.Hops)
 			pathJSON = string(b)

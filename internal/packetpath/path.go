@@ -8,11 +8,6 @@ import (
 	"strings"
 )
 
-// isTransportRoute returns true for TRANSPORT_FLOOD (0) and TRANSPORT_DIRECT (3).
-func isTransportRoute(routeType int) bool {
-	return routeType == 0 || routeType == 3
-}
-
 // DecodePathFromRawHex extracts the header path hops directly from raw hex bytes.
 // This is the authoritative path that matches what's in raw_hex, as opposed to
 // decoded.Path.Hops which may be overwritten for TRACE packets (issue #886).
@@ -24,7 +19,7 @@ func DecodePathFromRawHex(rawHex string) ([]string, error) {
 
 	headerByte := buf[0]
 	offset := 1
-	if isTransportRoute(int(headerByte & 0x03)) {
+	if IsTransportRoute(int(headerByte & 0x03)) {
 		if len(buf) < offset+4 {
 			return nil, fmt.Errorf("too short for transport codes")
 		}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/meshcore-analyzer/packetpath"
 	"github.com/meshcore-analyzer/sigvalidate"
 )
 
@@ -164,11 +165,10 @@ func decodePath(pathByte byte, buf []byte, offset int) (Path, int) {
 	}, totalBytes
 }
 
+// isTransportRoute delegates to packetpath.IsTransportRoute.
 func isTransportRoute(routeType int) bool {
-	return routeType == RouteTransportFlood || routeType == RouteTransportDirect
+	return packetpath.IsTransportRoute(routeType)
 }
-
-
 
 func decodeEncryptedPayload(typeName string, buf []byte) Payload {
 	if len(buf) < 4 {

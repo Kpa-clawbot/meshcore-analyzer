@@ -1024,7 +1024,7 @@ func (s *Server) handlePostPacket(w http.ResponseWriter, r *http.Request) {
 	// For TRACE packets, path_json must be the payload-decoded route hops
 	// (decoded.Path.Hops), NOT the raw_hex header bytes which are SNR values.
 	// For all other packet types, derive path from raw_hex (#886).
-	if decoded.Header.PayloadType == PayloadTRACE {
+	if !packetpath.PathBytesAreHops(byte(decoded.Header.PayloadType)) {
 		if len(decoded.Path.Hops) > 0 {
 			if pj, e := json.Marshal(decoded.Path.Hops); e == nil {
 				pathJSON = string(pj)
