@@ -74,7 +74,8 @@ func setupTestDB(t *testing.T) *DB {
 			score INTEGER,
 			path_json TEXT,
 			timestamp INTEGER NOT NULL,
-			resolved_path TEXT
+			resolved_path TEXT,
+			raw_hex TEXT
 		);
 
 		CREATE TABLE IF NOT EXISTS observer_metrics (
@@ -1134,7 +1135,8 @@ func setupTestDBV2(t *testing.T) *DB {
 			rssi REAL,
 			score INTEGER,
 			path_json TEXT,
-			timestamp INTEGER NOT NULL
+			timestamp INTEGER NOT NULL,
+			raw_hex TEXT
 		);
 	`
 	if _, err := conn.Exec(schema); err != nil {
@@ -1972,6 +1974,62 @@ func TestParseWindowDuration(t *testing.T) {
 		}
 		if !tc.err && got != tc.want {
 			t.Errorf("parseWindowDuration(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestPerObservationRawHexEnrich verifies enrichObs returns per-observation raw_hex
+// when available, falling back to transmission raw_hex when NULL (#881).
+func TestPerObservationRawHexEnrich(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Insert observers
+	db.conn.Exec(`INSERT INTO observers (id, name) VALUES ('obs-a', 'Observer A')`)
+	db.conn.Exec(`INSERT INTO observers (id, name) VALUES ('obs-b', 'Observer B')`)
+
+	var rowA, rowB int64
+	db.conn.QueryRow(`SELECT rowid FROM observers WHERE id='obs-a'`).Scan(&rowA)
+	db.conn.QueryRow(`SELECT rowid FROM observers WHERE id='obs-b'`).Scan(&rowB)
+
+	// Insert transmission with raw_hex
+	txHex := "deadbeef"
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen) VALUES (?, 'hash1', '2026-04-21T10:00:00Z')`, txHex)
+
+	// Insert two observations: A has its own raw_hex, B has NULL (historical)
+	obsAHex := "c0ffee01"
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp, raw_hex)
+		VALUES (1, ?, -5.0, -90.0, '[]', 1745236800, ?)`, rowA, obsAHex)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (1, ?, -3.0, -85.0, '["aabb"]', 1745236801)`, rowB)
+
+	store := NewPacketStore(db, nil)
+	if err := store.Load(); err != nil {
+		t.Fatalf("store load: %v", err)
+	}
+
+	tx := store.byHash["hash1"]
+	if tx == nil {
+		t.Fatal("transmission not loaded")
+	}
+	if len(tx.Observations) < 2 {
+		t.Fatalf("expected 2 observations, got %d", len(tx.Observations))
+	}
+
+	// Check enriched observations
+	for _, obs := range tx.Observations {
+		m := store.enrichObs(obs)
+		rh, _ := m["raw_hex"].(string)
+		if obs.RawHex != "" {
+			// Observer A: should get per-observation raw_hex
+			if rh != obsAHex {
+				t.Errorf("obs with own raw_hex: got %q, want %q", rh, obsAHex)
+			}
+		} else {
+			// Observer B: should fall back to transmission raw_hex
+			if rh != txHex {
+				t.Errorf("obs without raw_hex: got %q, want %q (tx fallback)", rh, txHex)
+			}
 		}
 	}
 }

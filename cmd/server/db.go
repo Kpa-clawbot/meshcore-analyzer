@@ -20,6 +20,7 @@ type DB struct {
 	path             string // filesystem path to the database file
 	isV3             bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
 	hasResolvedPath  bool   // observations table has resolved_path column
+	hasObsRawHex     bool   // observations table has raw_hex column (#881)
 
 	// Channel list cache (60s TTL) — avoids repeated GROUP BY scans (#762)
 	channelsCacheMu  sync.Mutex
@@ -75,6 +76,9 @@ func (db *DB) detectSchema() {
 			}
 			if colName == "resolved_path" {
 				db.hasResolvedPath = true
+			}
+			if colName == "raw_hex" {
+				db.hasObsRawHex = true
 			}
 		}
 	}

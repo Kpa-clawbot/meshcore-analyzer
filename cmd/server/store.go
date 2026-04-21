@@ -63,6 +63,7 @@ type StoreObs struct {
 	RSSI           *float64
 	Score          *int
 	PathJSON       string
+	RawHex         string
 	Timestamp      string
 }
 
@@ -458,6 +459,10 @@ func (s *PacketStore) Load() error {
 	if s.db.hasResolvedPath {
 		rpCol = ",\n\t\t\t\to.resolved_path"
 	}
+	obsRawHexCol := ""
+	if s.db.hasObsRawHex {
+		obsRawHexCol = ", o.raw_hex"
+	}
 
 	limitClause := ""
 	if maxPackets > 0 {
@@ -469,7 +474,7 @@ func (s *PacketStore) Load() error {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
 				t.payload_type, t.payload_version, t.decoded_json,
 				o.id, obs.id, obs.name, o.direction,
-				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')` + rpCol + `
+				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')` + obsRawHexCol + rpCol + `
 			FROM transmissions t
 			LEFT JOIN observations o ON o.transmission_id = t.id
 			LEFT JOIN observers obs ON obs.rowid = o.observer_idx` + limitClause + `
@@ -478,7 +483,7 @@ func (s *PacketStore) Load() error {
 		loadSQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
 				t.payload_type, t.payload_version, t.decoded_json,
 				o.id, o.observer_id, o.observer_name, o.direction,
-				o.snr, o.rssi, o.score, o.path_json, o.timestamp` + rpCol + `
+				o.snr, o.rssi, o.score, o.path_json, o.timestamp` + obsRawHexCol + rpCol + `
 			FROM transmissions t
 			LEFT JOIN observations o ON o.transmission_id = t.id` + limitClause + `
 			ORDER BY t.first_seen ASC, o.timestamp DESC`
@@ -500,12 +505,16 @@ func (s *PacketStore) Load() error {
 		var observerID, observerName, direction, pathJSON, obsTimestamp sql.NullString
 		var snr, rssi sql.NullFloat64
 		var score sql.NullInt64
+		var obsRawHex sql.NullString
 		var resolvedPathStr sql.NullString
 
 		scanArgs := []interface{}{&txID, &rawHex, &hash, &firstSeen, &routeType, &payloadType,
 			&payloadVersion, &decodedJSON,
 			&obsID, &observerID, &observerName, &direction,
 			&snr, &rssi, &score, &pathJSON, &obsTimestamp}
+		if s.db.hasObsRawHex {
+			scanArgs = append(scanArgs, &obsRawHex)
+		}
 		if s.db.hasResolvedPath {
 			scanArgs = append(scanArgs, &resolvedPathStr)
 		}
@@ -565,6 +574,7 @@ func (s *PacketStore) Load() error {
 				RSSI:           nullFloatPtr(rssi),
 				Score:          nullIntPtr(score),
 				PathJSON:       obsPJ,
+				RawHex:         nullStrVal(obsRawHex),
 				Timestamp:      normalizeTimestamp(nullStrVal(obsTimestamp)),
 			}
 
@@ -1384,11 +1394,15 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 	// New ingests always resolve fresh using the current prefix map and neighbor graph.
 	// On restart, Load() handles reading persisted resolved_path values. (review item #7)
 	var querySQL string
+	obsRHCol := ""
+	if s.db.hasObsRawHex {
+		obsRHCol = ", o.raw_hex"
+	}
 	if s.db.isV3 {
 		querySQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
 				t.payload_type, t.payload_version, t.decoded_json,
 				o.id, obs.id, obs.name, o.direction,
-				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')
+				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')` + obsRHCol + `
 			FROM transmissions t
 			LEFT JOIN observations o ON o.transmission_id = t.id
 			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
@@ -1398,7 +1412,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		querySQL = `SELECT t.id, t.raw_hex, t.hash, t.first_seen, t.route_type,
 				t.payload_type, t.payload_version, t.decoded_json,
 				o.id, o.observer_id, o.observer_name, o.direction,
-				o.snr, o.rssi, o.score, o.path_json, o.timestamp
+				o.snr, o.rssi, o.score, o.path_json, o.timestamp` + obsRHCol + `
 			FROM transmissions t
 			LEFT JOIN observations o ON o.transmission_id = t.id
 			WHERE t.id > ?
@@ -1419,6 +1433,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		routeType, payloadType                               *int
 		obsID                                                *int
 		observerID, observerName, direction, pathJSON, obsTS string
+		obsRawHex                                            string
 		snr, rssi                                            *float64
 		score                                                *int
 	}
@@ -1435,11 +1450,16 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		var observerID, observerName, direction, pathJSON, obsTimestamp sql.NullString
 		var snrVal, rssiVal sql.NullFloat64
 		var scoreVal sql.NullInt64
+		var obsRawHex sql.NullString
 
-		if err := rows.Scan(&txID, &rawHex, &hash, &firstSeen, &routeType, &payloadType,
+		scanArgs2 := []interface{}{&txID, &rawHex, &hash, &firstSeen, &routeType, &payloadType,
 			&payloadVersion, &decodedJSON,
 			&obsIDVal, &observerID, &observerName, &direction,
-			&snrVal, &rssiVal, &scoreVal, &pathJSON, &obsTimestamp); err != nil {
+			&snrVal, &rssiVal, &scoreVal, &pathJSON, &obsTimestamp}
+		if s.db.hasObsRawHex {
+			scanArgs2 = append(scanArgs2, &obsRawHex)
+		}
+		if err := rows.Scan(scanArgs2...); err != nil {
 			continue
 		}
 
@@ -1464,6 +1484,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 			direction:    nullStrVal(direction),
 			pathJSON:     nullStrVal(pathJSON),
 			obsTS:        nullStrVal(obsTimestamp),
+			obsRawHex:    nullStrVal(obsRawHex),
 			snr:          nullFloatPtr(snrVal),
 			rssi:         nullFloatPtr(rssiVal),
 			score:        nullIntPtr(scoreVal),
@@ -1564,6 +1585,7 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 				RSSI:           r.rssi,
 				Score:          r.score,
 				PathJSON:       r.pathJSON,
+				RawHex:         r.obsRawHex,
 				Timestamp:      normalizeTimestamp(r.obsTS),
 			}
 
@@ -1806,9 +1828,13 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 	}
 
 	var querySQL string
+	obsRHCol2 := ""
+	if s.db.hasObsRawHex {
+		obsRHCol2 = ", o.raw_hex"
+	}
 	if s.db.isV3 {
 		querySQL = `SELECT o.id, o.transmission_id, obs.id, obs.name, o.direction,
-				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')
+				o.snr, o.rssi, o.score, o.path_json, strftime('%Y-%m-%dT%H:%M:%fZ', o.timestamp, 'unixepoch')` + obsRHCol2 + `
 			FROM observations o
 			LEFT JOIN observers obs ON obs.rowid = o.observer_idx
 			WHERE o.id > ?
@@ -1816,7 +1842,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			LIMIT ?`
 	} else {
 		querySQL = `SELECT o.id, o.transmission_id, o.observer_id, o.observer_name, o.direction,
-				o.snr, o.rssi, o.score, o.path_json, o.timestamp
+				o.snr, o.rssi, o.score, o.path_json, o.timestamp` + obsRHCol2 + `
 			FROM observations o
 			WHERE o.id > ?
 			ORDER BY o.id ASC
@@ -1839,6 +1865,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		snr, rssi    *float64
 		score        *int
 		pathJSON     string
+		rawHex       string
 		timestamp    string
 	}
 
@@ -1848,9 +1875,14 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		var observerID, observerName, direction, pathJSON, ts sql.NullString
 		var snr, rssi sql.NullFloat64
 		var score sql.NullInt64
+		var obsRawHex sql.NullString
 
-		if err := rows.Scan(&oid, &txID, &observerID, &observerName, &direction,
-			&snr, &rssi, &score, &pathJSON, &ts); err != nil {
+		scanArgs3 := []interface{}{&oid, &txID, &observerID, &observerName, &direction,
+			&snr, &rssi, &score, &pathJSON, &ts}
+		if s.db.hasObsRawHex {
+			scanArgs3 = append(scanArgs3, &obsRawHex)
+		}
+		if err := rows.Scan(scanArgs3...); err != nil {
 			continue
 		}
 
@@ -1864,6 +1896,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			rssi:         nullFloatPtr(rssi),
 			score:        nullIntPtr(score),
 			pathJSON:     nullStrVal(pathJSON),
+			rawHex:       nullStrVal(obsRawHex),
 			timestamp:    nullStrVal(ts),
 		})
 	}
@@ -1919,6 +1952,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 			RSSI:           r.rssi,
 			Score:          r.score,
 			PathJSON:       r.pathJSON,
+			RawHex:         r.rawHex,
 			Timestamp:      normalizeTimestamp(r.timestamp),
 		}
 
@@ -2408,7 +2442,12 @@ func (s *PacketStore) enrichObs(obs *StoreObs) map[string]interface{} {
 
 	if tx != nil {
 		m["hash"] = strOrNil(tx.Hash)
-		m["raw_hex"] = strOrNil(tx.RawHex)
+		// Prefer per-observation raw_hex; fall back to transmission-level (#881)
+		if obs.RawHex != "" {
+			m["raw_hex"] = obs.RawHex
+		} else {
+			m["raw_hex"] = strOrNil(tx.RawHex)
+		}
 		m["payload_type"] = intPtrOrNil(tx.PayloadType)
 		m["route_type"] = intPtrOrNil(tx.RouteType)
 		m["decoded_json"] = strOrNil(tx.DecodedJSON)

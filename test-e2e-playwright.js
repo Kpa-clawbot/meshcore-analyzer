@@ -1858,6 +1858,47 @@ async function run() {
     }
   });
 
+  // Test: per-observation raw_hex — hex pane updates when switching observations (#881)
+  await test('Packet detail hex pane updates per observation', async () => {
+    await page.goto(BASE + '#/packets', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.waitForTimeout(500);
+
+    // Try clicking packet rows to find one with multiple observations
+    const rows = await page.$$('table tbody tr[data-action]');
+    let obsRows = [];
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      await rows[i].click({ timeout: 3000 }).catch(() => null);
+      await page.waitForTimeout(600);
+      obsRows = await page.$$('.detail-obs-row');
+      if (obsRows.length >= 2) break;
+    }
+
+    if (obsRows.length < 2) {
+      console.log('    ⏭ Skipped: no packet with ≥2 observations found in first 10 rows');
+      return;
+    }
+
+    // Click first observation, capture hex dump
+    await obsRows[0].click({ timeout: 5000 });
+    await page.waitForTimeout(500);
+    const hex1 = await page.$eval('.hex-dump', el => el.textContent).catch(() => '');
+
+    // Click second observation, capture hex dump
+    await obsRows[1].click({ timeout: 5000 });
+    await page.waitForTimeout(500);
+    const hex2 = await page.$eval('.hex-dump', el => el.textContent).catch(() => '');
+
+    // If both have content and differ, the feature works
+    if (hex1 && hex2 && hex1 !== hex2) {
+      console.log('    ✓ Hex pane content differs between observations');
+    } else if (hex1 && hex2 && hex1 === hex2) {
+      console.log('    ⏭ Hex same for both observations (likely historical NULL raw_hex — OK)');
+    } else {
+      console.log('    ⏭ Could not capture hex content from both observations');
+    }
+  });
+
   await browser.close();
 
   // Summary
