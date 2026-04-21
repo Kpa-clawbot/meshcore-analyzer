@@ -20,6 +20,7 @@
   let showGhostHops = localStorage.getItem('live-ghost-hops') !== 'false';
   let realisticPropagation = localStorage.getItem('live-realistic-propagation') === 'true';
   let showOnlyFavorites = localStorage.getItem('live-favorites-only') === 'true';
+  let nodeFilterText = localStorage.getItem('live-node-filter') || '';
   let matrixMode = localStorage.getItem('live-matrix-mode') === 'true';
   let matrixRain = localStorage.getItem('live-matrix-rain') === 'true';
   let rainCanvas = null, rainCtx = null, rainDrops = [], rainRAF = null;
@@ -834,6 +835,9 @@
             <label><input type="checkbox" id="liveFavoritesToggle" aria-describedby="favDesc"> ⭐ Favorites</label>
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
             <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
+            <input type="search" id="liveNodeFilter" class="live-node-filter" placeholder="Filter nodes…"
+              value="${escapeHtml(nodeFilterText)}" autocomplete="off" spellcheck="false"
+              aria-label="Filter nodes by name">
           </div>
           <div class="audio-controls hidden" id="audioControls">
             <label class="audio-slider-label">Voice <select id="audioVoiceSelect" class="audio-voice-select"></select></label>
@@ -989,6 +993,13 @@
       showOnlyFavorites = e.target.checked;
       localStorage.setItem('live-favorites-only', showOnlyFavorites);
       applyFavoritesFilter();
+    });
+
+    const nodeFilterInput = document.getElementById('liveNodeFilter');
+    nodeFilterInput.addEventListener('input', (e) => {
+      nodeFilterText = e.target.value.trim();
+      try { localStorage.setItem('live-node-filter', nodeFilterText); } catch (_) {}
+      applyNodeFilter();
     });
 
     // Geo filter overlay
@@ -1684,6 +1695,8 @@
 
     for (const group of sorted) {
       const pkt = Object.assign({}, group.latestPkt, { observation_count: group.count });
+      if (showOnlyFavorites && !packetInvolvesFavorite(pkt)) continue;
+      if (nodeFilterText && !packetInvolvesFilteredNode(pkt)) continue;
       const decoded = pkt.decoded || {};
       const header = decoded.header || {};
       const payload = decoded.payload || {};
@@ -1742,6 +1755,60 @@
     rebuildFeedList();
   }
 
+  function nodeMatchesFilter(n) {
+    if (!nodeFilterText) return true;
+    const f = nodeFilterText.toLowerCase();
+    return (n.name || '').toLowerCase().includes(f);
+  }
+
+  // Check whether any node involved in a packet (sender, hops) matches the active node filter.
+  function packetInvolvesFilteredNode(pkt) {
+    if (!nodeFilterText) return true;
+    const f = nodeFilterText.toLowerCase();
+
+    // resolved_path: server-resolved full pubkeys — O(1) nodeData lookup per hop.
+    // Most reliable for MeshCore repeater paths; skip slower fallbacks when present.
+    const resolved = window.getResolvedPath ? window.getResolvedPath(pkt) : null;
+    if (resolved && resolved.length) {
+      for (const key of resolved) {
+        if (key && nodeData[key] && (nodeData[key].name || '').toLowerCase().includes(f)) return true;
+      }
+      return false;
+    }
+
+    // path_json: per-observation hop keys (preferred over decoded.path.hops for live pkts)
+    // Falls back to decoded.path.hops if path_json is absent.
+    const hops = getParsedPath(pkt).length ? getParsedPath(pkt) : ((pkt.decoded || {}).path?.hops || []);
+    for (const hop of hops) {
+      const h = (hop.id || hop.public_key || hop).toString().toLowerCase();
+      for (const [k, nd] of Object.entries(nodeData)) {
+        if (k.toLowerCase().startsWith(h) || h.startsWith(k.toLowerCase())) {
+          if ((nd.name || '').toLowerCase().includes(f)) return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  function applyNodeFilter() {
+    if (!nodesLayer) return;
+    for (const [key, marker] of Object.entries(nodeMarkers)) {
+      const n = nodeData[key];
+      const visible = nodeMatchesFilter(n || {});
+      if (!visible && !marker._nodeFiltered) {
+        marker._nodeFiltered = true;
+        try { nodesLayer.removeLayer(marker); } catch (e) {}
+        if (marker._glowMarker) try { nodesLayer.removeLayer(marker._glowMarker); } catch (e) {}
+      } else if (visible && marker._nodeFiltered) {
+        marker._nodeFiltered = false;
+        nodesLayer.addLayer(marker);
+        if (marker._glowMarker) nodesLayer.addLayer(marker._glowMarker);
+      }
+    }
+    rebuildFeedList();
+  }
+
   function addNodeMarker(n) {
     if (nodeMarkers[n.public_key]) return nodeMarkers[n.public_key];
     const color = ROLE_COLORS[n.role] || ROLE_COLORS.unknown;
@@ -1769,6 +1836,13 @@
     marker._baseColor = color;
     marker._baseSize = size;
     nodeMarkers[n.public_key] = marker;
+
+    // Hide immediately if a node filter is active and this node doesn't match
+    if (!nodeMatchesFilter(n)) {
+      marker._nodeFiltered = true;
+      try { nodesLayer.removeLayer(marker); } catch (e) {}
+      try { nodesLayer.removeLayer(glow); } catch (e) {}
+    }
 
     // Apply matrix tint if active
     if (matrixMode) {
@@ -1951,6 +2025,8 @@
 
     // --- Favorites filter ---
     if (showOnlyFavorites && !packets.some(function(p) { return packetInvolvesFavorite(p); })) return;
+    // --- Node name filter ---
+    if (nodeFilterText && !packets.some(function(p) { return packetInvolvesFilteredNode(p); })) return;
 
     // --- Ensure ADVERT nodes appear on map ---
     for (var pi = 0; pi < packets.length; pi++) {
@@ -2772,6 +2848,7 @@
     const feed = feedPanel ? feedPanel.querySelector('.panel-content') : null;
     if (!feed) return;
     if (showOnlyFavorites && !packetInvolvesFavorite(pkt)) return;
+    if (nodeFilterText && !packetInvolvesFilteredNode(pkt)) return;
 
     const hash = pkt.hash;
     const incomingObs = pkt.observation_count || 1;

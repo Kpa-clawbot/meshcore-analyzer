@@ -290,7 +290,24 @@
   margin-left: 8px;
 }
 .live-toggles label { display: flex; align-items: center; gap: 3px; cursor: pointer; white-space: nowrap; }
-.live-toggles input { margin: 0; }
+.live-toggles input[type="checkbox"] { margin: 0; }
+.live-node-filter {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 2px 7px;
+  width: 130px;
+  outline: none;
+  transition: border-color 0.15s, width 0.2s;
+}
+.live-node-filter:focus {
+  border-color: rgba(74,158,255,0.6);
+  width: 180px;
+}
+.live-node-filter::placeholder { color: var(--text-muted); opacity: 0.7; }
+.live-node-filter::-webkit-search-cancel-button { cursor: pointer; }
 
 /* ---- Leaflet overrides for dark theme ---- */
 .live-page .leaflet-control-zoom a {
@@ -311,6 +328,8 @@
   .live-header { gap: 8px; padding: 6px 12px; }
   .live-stat-pill { font-size: 11px; padding: 2px 8px; }
   .live-toggles { font-size: 10px; gap: 6px; }
+  .live-node-filter { width: 100px; font-size: 10px; }
+  .live-node-filter:focus { width: 140px; }
 }
 
 /* ---- Responsive ---- */
