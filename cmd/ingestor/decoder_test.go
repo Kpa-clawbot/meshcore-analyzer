@@ -1822,3 +1822,106 @@ func TestDecodeAdvertWithSignatureValidation(t *testing.T) {
 		t.Error("SignatureValid should be nil when validation disabled")
 	}
 }
+
+// === Tests for DecodePathFromRawHex (issue #886) ===
+
+func TestDecodePathFromRawHex_HashSize1(t *testing.T) {
+	// Header byte 0x26 = route_type DIRECT, payload TRACE
+	// Path byte 0x04 = hash_size 1 (bits 7-6 = 00 → 0+1=1), hash_count 4
+	// Path bytes: 30 2D 0D 23
+	raw := "2604302D0D2359FEE7B100000000006733D63367"
+	hops, err := DecodePathFromRawHex(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"30", "2D", "0D", "23"}
+	if len(hops) != len(expected) {
+		t.Fatalf("got %d hops, want %d", len(hops), len(expected))
+	}
+	for i, h := range hops {
+		if h != expected[i] {
+			t.Errorf("hop[%d] = %s, want %s", i, h, expected[i])
+		}
+	}
+}
+
+func TestDecodePathFromRawHex_HashSize2(t *testing.T) {
+	// Path byte 0x42 = hash_size 2 (bits 7-6 = 01 → 1+1=2), hash_count 2
+	// Header 0x09 = FLOOD route (rt=1), payload ADVERT (pt=2)
+	// Path bytes: AABB CCDD (4 bytes = 2 hops * 2 bytes)
+	raw := "0942AABBCCDD" + "00000000000000"
+	hops, err := DecodePathFromRawHex(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"AABB", "CCDD"}
+	if len(hops) != len(expected) {
+		t.Fatalf("got %d hops, want %d", len(hops), len(expected))
+	}
+	for i, h := range hops {
+		if h != expected[i] {
+			t.Errorf("hop[%d] = %s, want %s", i, h, expected[i])
+		}
+	}
+}
+
+func TestDecodePathFromRawHex_HashSize3(t *testing.T) {
+	// Path byte 0x81 = hash_size 3 (bits 7-6 = 10 → 2+1=3), hash_count 1
+	// Header 0x09 = FLOOD route (rt=1), payload ADVERT
+	raw := "0981AABBCC" + "0000000000"
+	hops, err := DecodePathFromRawHex(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hops) != 1 || hops[0] != "AABBCC" {
+		t.Fatalf("got %v, want [AABBCC]", hops)
+	}
+}
+
+func TestDecodePathFromRawHex_HashSize4(t *testing.T) {
+	// Path byte 0xC1 = hash_size 4 (bits 7-6 = 11 → 3+1=4), hash_count 1
+	// Header 0x09 = FLOOD route (rt=1)
+	raw := "09C1AABBCCDD" + "0000000000"
+	hops, err := DecodePathFromRawHex(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hops) != 1 || hops[0] != "AABBCCDD" {
+		t.Fatalf("got %v, want [AABBCCDD]", hops)
+	}
+}
+
+func TestDecodePathFromRawHex_DirectZeroHops(t *testing.T) {
+	// Path byte 0x00 = hash_size 1, hash_count 0
+	// Header 0x0A = DIRECT route (rt=2), payload ADVERT
+	raw := "0A00" + "0000000000"
+	hops, err := DecodePathFromRawHex(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hops) != 0 {
+		t.Fatalf("got %d hops, want 0", len(hops))
+	}
+}
+
+func TestDecodePathFromRawHex_Transport(t *testing.T) {
+	// Route type 3 = TRANSPORT_DIRECT → 4 transport code bytes before path byte
+	// Header 0x27 = route_type 3, payload TRACE
+	// Transport codes: 1122 3344
+	// Path byte 0x02 = hash_size 1, hash_count 2
+	// Path bytes: AA BB
+	raw := "2711223344" + "02AABB" + "0000000000"
+	hops, err := DecodePathFromRawHex(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"AA", "BB"}
+	if len(hops) != len(expected) {
+		t.Fatalf("got %d hops, want %d", len(hops), len(expected))
+	}
+	for i, h := range hops {
+		if h != expected[i] {
+			t.Errorf("hop[%d] = %s, want %s", i, h, expected[i])
+		}
+	}
+}
