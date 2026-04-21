@@ -683,10 +683,14 @@
       // Restore expanded group children (parallel fetch, Map lookup)
       if (groupByHash && expandedHashes.size > 0) {
         const expandedArr = [...expandedHashes];
+        // Fetch the full packet detail (which includes per-observation rows) for each expanded hash.
+        // Previously this used `/packets?hash=X&limit=20` which returned ONE aggregate row, causing
+        // every "child" row in the table to carry the parent packet.id instead of unique observation
+        // ids — so clicking any child pointed the side pane at the same aggregate. See #866.
         const results = await Promise.all(expandedArr.map(hash => {
           const group = hashIndex.get(hash);
           if (!group) return { hash, group: null, data: null };
-          return api(`/packets?hash=${hash}&limit=20`)
+          return api(`/packets/${hash}`)
             .then(data => ({ hash, group, data }))
             .catch(() => ({ hash, group, data: null }));
         }));
@@ -694,7 +698,15 @@
           if (!group) {
             expandedHashes.delete(hash);
           } else if (data) {
-            group._children = data.packets || [];
+            const pkt = data.packet || group;
+            // Build per-observation children. Spread (pkt, obs) so obs-level fields
+            // (id, observer_id/name, path_json, snr/rssi, timestamp, raw_hex) override
+            // the aggregate. Each child's `id` is the observation id (unique per observer).
+            const obs = data.observations || [];
+            group._children = obs.length
+              ? obs.map(o => clearParsedCache({...pkt, ...o, _isObservation: true}))
+              : [pkt];
+            group._fetchedData = { packet: pkt, observations: obs, breakdown: data.breakdown };
             sortGroupChildren(group);
           }
         }
