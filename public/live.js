@@ -849,6 +849,7 @@
           <div class="panel-content" aria-live="polite" aria-relevant="additions" role="log"></div>
         </div>
         <button class="feed-show-btn hidden" id="feedShowBtn" title="Show feed">📋</button>
+        <div id="nodeDetailBackdrop" class="node-detail-backdrop"></div>
         <div class="live-overlay live-node-detail hidden" id="liveNodeDetail">
           <div class="panel-header">
             <button class="panel-corner-btn" data-panel="liveNodeDetail" title="Move panel to next corner" aria-label="Move panel to next corner">◫</button>
@@ -1216,10 +1217,14 @@
     // Node detail panel
     const nodeDetailPanel = document.getElementById('liveNodeDetail');
     const nodeDetailContent = document.getElementById('nodeDetailContent');
-    document.getElementById('nodeDetailClose').addEventListener('click', () => {
+    const nodeDetailBackdrop = document.getElementById('nodeDetailBackdrop');
+    function closeNodeDetail() {
       activeNodeDetailKey = null;
       nodeDetailPanel.classList.add('hidden');
-    });
+      nodeDetailBackdrop.classList.remove('active');
+    }
+    document.getElementById('nodeDetailClose').addEventListener('click', closeNodeDetail);
+    nodeDetailBackdrop.addEventListener('click', closeNodeDetail);
 
     // Feed panel resize handle (#27)
     const savedFeedWidth = localStorage.getItem('live-feed-width');
@@ -1451,6 +1456,7 @@
     const panel = document.getElementById('liveNodeDetail');
     const content = document.getElementById('nodeDetailContent');
     panel.classList.remove('hidden');
+    document.getElementById('nodeDetailBackdrop').classList.add('active');
     content.innerHTML = '<div style="padding:20px;color:var(--text-muted)">Loading…</div>';
     try {
       const [data, healthData] = await Promise.all([
