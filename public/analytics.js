@@ -840,29 +840,44 @@
     }
   }
 
+  var CHANNEL_TIMELINE_MAX_SERIES = 8;
+
   function renderChannelTimeline(data) {
     if (!data.length) return '<div class="text-muted">No data</div>';
     var hours = []; var hourSet = {};
     var channelList = []; var channelSet = {};
     var lookup = {};
-    var maxCount = 1;
+    var channelVolume = {};
     for (var i = 0; i < data.length; i++) {
       var d = data[i];
       if (!hourSet[d.hour]) { hourSet[d.hour] = 1; hours.push(d.hour); }
       if (!channelSet[d.channel]) { channelSet[d.channel] = 1; channelList.push(d.channel); }
       lookup[d.hour + '|' + d.channel] = d.count;
-      if (d.count > maxCount) maxCount = d.count;
+      channelVolume[d.channel] = (channelVolume[d.channel] || 0) + d.count;
     }
     hours.sort();
+    // Sort channels by total volume descending, cap to top N
+    channelList.sort(function(a, b) { return channelVolume[b] - channelVolume[a]; });
+    var hiddenCount = Math.max(0, channelList.length - CHANNEL_TIMELINE_MAX_SERIES);
+    var visibleChannels = channelList.slice(0, CHANNEL_TIMELINE_MAX_SERIES);
+
+    var maxCount = 1;
+    for (var vi = 0; vi < visibleChannels.length; vi++) {
+      for (var hi2 = 0; hi2 < hours.length; hi2++) {
+        var c = lookup[hours[hi2] + '|' + visibleChannels[vi]] || 0;
+        if (c > maxCount) maxCount = c;
+      }
+    }
+
     var colors = ['#ef4444','#22c55e','#3b82f6','#f59e0b','#8b5cf6','#ec4899','#14b8a6','#64748b'];
     var w = 600, h = 180, pad = 35;
     var xScale = (w - pad * 2) / Math.max(hours.length - 1, 1);
     var yScale = (h - pad * 2) / maxCount;
     var svg = '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;max-height:180px" role="img" aria-label="Channel message activity over time"><title>Channel message activity over time</title>';
-    for (var ci = 0; ci < channelList.length; ci++) {
+    for (var ci = 0; ci < visibleChannels.length; ci++) {
       var pts = [];
       for (var hi = 0; hi < hours.length; hi++) {
-        var count = lookup[hours[hi] + '|' + channelList[ci]] || 0;
+        var count = lookup[hours[hi] + '|' + visibleChannels[ci]] || 0;
         var x = pad + hi * xScale;
         var y = h - pad - count * yScale;
         pts.push(x + ',' + y);
@@ -876,8 +891,11 @@
     }
     svg += '</svg>';
     var legendParts = [];
-    for (var lci = 0; lci < channelList.length; lci++) {
-      legendParts.push('<span><span class="legend-dot" style="background:' + colors[lci % colors.length] + '"></span>' + esc(channelList[lci]) + '</span>');
+    for (var lci = 0; lci < visibleChannels.length; lci++) {
+      legendParts.push('<span><span class="legend-dot" style="background:' + colors[lci % colors.length] + '"></span>' + esc(visibleChannels[lci]) + '</span>');
+    }
+    if (hiddenCount > 0) {
+      legendParts.push('<span class="text-muted">+' + hiddenCount + ' more</span>');
     }
     svg += '<div class="timeline-legend">' + legendParts.join('') + '</div>';
     return svg;
