@@ -387,7 +387,7 @@
             const obs = data.observations.find(o => String(o.id) === String(obsTarget));
             if (obs) {
               expandedHashes.add(h);
-              const obsPacket = {...data.packet, observer_id: obs.observer_id, observer_name: obs.observer_name, snr: obs.snr, rssi: obs.rssi, path_json: obs.path_json, resolved_path: obs.resolved_path, direction: obs.direction, timestamp: obs.timestamp, first_seen: obs.timestamp};
+              const obsPacket = {...data.packet, observer_id: obs.observer_id, observer_name: obs.observer_name, snr: obs.snr, rssi: obs.rssi, path_json: obs.path_json, resolved_path: obs.resolved_path, timestamp: obs.timestamp, first_seen: obs.timestamp};
               clearParsedCache(obsPacket);
               selectPacket(obs.id, h, {packet: obsPacket, breakdown: data.breakdown, observations: data.observations}, obs.id);
             } else {
@@ -1246,7 +1246,7 @@
           const child = group?._children?.find(c => String(c.id) === String(value));
           if (child) {
             const parentData = group._fetchedData;
-            const obsPacket = parentData ? {...parentData.packet, observer_id: child.observer_id, observer_name: child.observer_name, snr: child.snr, rssi: child.rssi, path_json: child.path_json, resolved_path: child.resolved_path, direction: child.direction, timestamp: child.timestamp, first_seen: child.timestamp} : child;
+            const obsPacket = parentData ? {...parentData.packet, observer_id: child.observer_id, observer_name: child.observer_name, snr: child.snr, rssi: child.rssi, path_json: child.path_json, resolved_path: child.resolved_path, timestamp: child.timestamp, first_seen: child.timestamp} : child;
             if (parentData) { clearParsedCache(obsPacket); }
             selectPacket(child.id, parentHash, {packet: obsPacket, breakdown: parentData?.breakdown, observations: parentData?.observations}, child.id);
           }
@@ -1797,7 +1797,7 @@
       panel.innerHTML = isMobileNow ? '' : '<div class="panel-resize-handle" id="pktResizeHandle"></div>' + PANEL_CLOSE_HTML;
       const content = document.createElement('div');
       panel.appendChild(content);
-      await renderDetail(content, data, selectedObservationId);
+      await renderDetail(content, data);
       if (!isMobileNow) initPanelResize();
     } catch (e) {
       panel.innerHTML = `<div class="text-muted">Error: ${e.message}</div>`;
