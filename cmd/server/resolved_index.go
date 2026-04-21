@@ -265,6 +265,7 @@ func (s *PacketStore) fetchResolvedPathForTxBest(tx *StoreTx) []*string {
 		return nil
 	}
 	var bestRP []*string
+	bestObsID := 0
 	bestLen := -1
 	for _, obs := range tx.Observations {
 		rp, ok := rpMap[obs.ID]
@@ -274,7 +275,15 @@ func (s *PacketStore) fetchResolvedPathForTxBest(tx *StoreTx) []*string {
 		if l := pathLen(obs.PathJSON); l > bestLen {
 			bestLen = l
 			bestRP = rp
+			bestObsID = obs.ID
 		}
+	}
+	// Populate LRU so repeat lookups for this tx don't re-issue the multi-row
+	// SQL fallback (e.g. dashboard polling /api/nodes/{pk}/health).
+	if bestRP != nil && bestObsID != 0 {
+		s.lruMu.Lock()
+		s.lruPut(bestObsID, bestRP)
+		s.lruMu.Unlock()
 	}
 	return bestRP
 }
