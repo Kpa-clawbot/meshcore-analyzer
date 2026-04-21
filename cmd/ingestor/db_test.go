@@ -1968,3 +1968,97 @@ func TestInsertObservationSNRFillIn(t *testing.T) {
 		t.Errorf("RSSI overwritten by null arrival: got %v, want %v", rssi3, rssi)
 	}
 }
+
+// TestPerObservationRawHex verifies that two MQTT packets for the same hash
+// from different observers store distinct raw_hex per observation (#881).
+func TestPerObservationRawHex(t *testing.T) {
+	store, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Register two observers
+	store.UpsertObserver("obs-A", "Observer A", "", nil)
+	store.UpsertObserver("obs-B", "Observer B", "", nil)
+
+	hash := "abc123def456"
+	rawA := "c0ffee01"
+	rawB := "c0ffee0201aa"
+	dir := "RX"
+
+	// First observation from observer A
+	pdA := &PacketData{
+		RawHex:    rawA,
+		Hash:      hash,
+		Timestamp: "2026-04-21T10:00:00Z",
+		ObserverID: "obs-A",
+		Direction:  &dir,
+		PathJSON:   "[]",
+	}
+	isNew, err := store.InsertTransmission(pdA)
+	if err != nil {
+		t.Fatalf("insert A: %v", err)
+	}
+	if !isNew {
+		t.Fatal("expected new transmission")
+	}
+
+	// Second observation from observer B (same hash, different raw bytes)
+	pdB := &PacketData{
+		RawHex:    rawB,
+		Hash:      hash,
+		Timestamp: "2026-04-21T10:00:01Z",
+		ObserverID: "obs-B",
+		Direction:  &dir,
+		PathJSON:   `["aabb"]`,
+	}
+	isNew2, err := store.InsertTransmission(pdB)
+	if err != nil {
+		t.Fatalf("insert B: %v", err)
+	}
+	if isNew2 {
+		t.Fatal("expected duplicate transmission")
+	}
+
+	// Query observations and verify per-observation raw_hex
+	rows, err := store.db.Query(`
+		SELECT o.raw_hex, obs.id
+		FROM observations o
+		LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+		ORDER BY o.id ASC
+	`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	type obsResult struct {
+		rawHex     string
+		observerID string
+	}
+	var results []obsResult
+	for rows.Next() {
+		var rh, oid sql.NullString
+		if err := rows.Scan(&rh, &oid); err != nil {
+			t.Fatal(err)
+		}
+		results = append(results, obsResult{
+			rawHex:     rh.String,
+			observerID: oid.String,
+		})
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 observations, got %d", len(results))
+	}
+	if results[0].rawHex != rawA {
+		t.Errorf("obs A raw_hex: got %q, want %q", results[0].rawHex, rawA)
+	}
+	if results[1].rawHex != rawB {
+		t.Errorf("obs B raw_hex: got %q, want %q", results[1].rawHex, rawB)
+	}
+	if results[0].rawHex == results[1].rawHex {
+		t.Error("both observations have same raw_hex — should differ")
+	}
+}

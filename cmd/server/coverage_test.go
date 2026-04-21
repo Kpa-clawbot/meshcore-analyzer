@@ -47,7 +47,7 @@ func setupTestDBv2(t *testing.T) *DB {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			transmission_id INTEGER NOT NULL REFERENCES transmissions(id),
 			observer_id TEXT, observer_name TEXT, direction TEXT,
-			snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp INTEGER NOT NULL
+			snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp INTEGER NOT NULL, raw_hex TEXT
 		);
 	`
 	if _, err := conn.Exec(schema); err != nil {

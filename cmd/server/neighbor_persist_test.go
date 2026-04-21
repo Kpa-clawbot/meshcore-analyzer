@@ -38,7 +38,7 @@ func createTestDBWithSchema(t *testing.T) (*DB, string) {
 		observer_id TEXT, observer_name TEXT, direction TEXT,
 		snr REAL, rssi REAL, score INTEGER,
 		path_json TEXT, timestamp TEXT,
-		resolved_path TEXT
+		resolved_path TEXT, raw_hex TEXT
 	)`)
 	conn.Exec(`CREATE TABLE nodes (
 		public_key TEXT PRIMARY KEY, name TEXT, role TEXT,
@@ -264,7 +264,7 @@ func TestEnsureResolvedPathColumn(t *testing.T) {
 	conn, _ := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
 	conn.Exec(`CREATE TABLE observations (
 		id INTEGER PRIMARY KEY, transmission_id INTEGER,
-		observer_id TEXT, path_json TEXT, timestamp TEXT
+		observer_id TEXT, path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
 	conn.Close()
 

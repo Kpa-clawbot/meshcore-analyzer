@@ -229,7 +229,7 @@ func createTestDBAt(tb testing.TB, dbPath string, numTx int) {
 		id INTEGER PRIMARY KEY,
 		transmission_id INTEGER, observer_id TEXT, observer_name TEXT,
 		direction TEXT, snr REAL, rssi REAL, score INTEGER,
-		path_json TEXT, timestamp TEXT
+		path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS nodes (
@@ -280,7 +280,7 @@ func createTestDBWithObs(tb testing.TB, dbPath string, numTx int) {
 	)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS observations (
 		id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_id TEXT, observer_name TEXT,
-		direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT
+		direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS nodes (
