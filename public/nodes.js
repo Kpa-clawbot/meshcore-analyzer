@@ -1194,6 +1194,8 @@
           </dl>
         </div>
 
+        <div class="node-detail-section skew-detail-section" id="node-clock-skew" style="display:none"></div>
+
         ${observers.length ? `<div class="node-detail-section">
           ${(() => { const regions = [...new Set(observers.map(o => o.iata).filter(Boolean))]; return regions.length ? `<div style="margin-bottom:6px;font-size:12px"><strong>Regions:</strong> ${regions.join(', ')}</div>` : ''; })()}
           <h4>Heard By (${observers.length} observer${observers.length > 1 ? 's' : ''})</h4>
@@ -1286,6 +1288,33 @@
       headerSelector: '#panelNeighborsHeader',
       viewAllPubkey: n.public_key
     });
+
+    // #813 — Clock Skew section in side panel (mirrors full-screen view)
+    (async function loadClockSkewPanel() {
+      var container = document.getElementById('node-clock-skew');
+      if (!container) return;
+      try {
+        var cs = await api('/nodes/' + encodeURIComponent(n.public_key) + '/clock-skew', { ttl: 30000 });
+        if (!cs || !cs.severity) return;
+        container.style.display = '';
+        var driftHtml = cs.driftPerDaySec ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Drift: ' + formatDrift(cs.driftPerDaySec) + '</div>' : '';
+        var sparkHtml = renderSkewSparkline(cs.samples, 200, 32);
+        var skewDisplay = cs.severity === 'no_clock'
+          ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
+          : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(cs.medianSkewSec) + '</span>';
+        container.innerHTML =
+          '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
+          '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+            skewDisplay +
+            renderSkewBadge(cs.severity, cs.medianSkewSec) +
+            (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
+          '</div>' +
+          driftHtml +
+          (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '');
+      } catch (e) {
+        // Non-fatal — section stays hidden
+      }
+    })();
 
     // Fetch paths through this node
     api('/nodes/' + encodeURIComponent(n.public_key) + '/paths', { ttl: CLIENT_TTL.nodeDetail }).then(pathData => {
