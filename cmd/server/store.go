@@ -779,7 +779,7 @@ func (s *PacketStore) QueryGroupedPackets(q PacketQuery) *PacketResult {
 	}
 
 	// Cache key covers all filter dimensions. Empty key = no filters.
-	cacheKey := q.Since + "|" + q.Until + "|" + q.Region + "|" + q.Node + "|" + q.Hash + "|" + q.Observer
+	cacheKey := q.Since + "|" + q.Until + "|" + q.Region + "|" + q.Node + "|" + q.Hash + "|" + q.Observer + "|" + q.Channel
 	if q.Type != nil {
 		cacheKey += fmt.Sprintf("|t%d", *q.Type)
 	}
@@ -2069,7 +2069,7 @@ func (s *PacketStore) MaxObservationID() int {
 func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 	// Fast path: single-key index lookups
 	if q.Hash != "" && q.Type == nil && q.Route == nil && q.Observer == "" &&
-		q.Region == "" && q.Node == "" && q.Since == "" && q.Until == "" {
+		q.Region == "" && q.Node == "" && q.Channel == "" && q.Since == "" && q.Until == "" {
 		h := strings.ToLower(q.Hash)
 		tx := s.byHash[h]
 		if tx == nil {
@@ -2078,7 +2078,7 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 		return []*StoreTx{tx}
 	}
 	if q.Observer != "" && q.Type == nil && q.Route == nil &&
-		q.Region == "" && q.Node == "" && q.Hash == "" && q.Since == "" && q.Until == "" {
+		q.Region == "" && q.Node == "" && q.Channel == "" && q.Hash == "" && q.Since == "" && q.Until == "" {
 		return s.transmissionsForObserver(q.Observer, nil)
 	}
 
@@ -2103,6 +2103,7 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 	if q.Hash != "" {
 		filterHash = strings.ToLower(q.Hash)
 	}
+	filterChannel := q.Channel
 
 	// Pre-compute observer set for observer filter.
 	var observerSet map[string]bool
@@ -2134,7 +2135,7 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 	// filter is active and an index exists.
 	source := s.packets
 	if hasNode && !hasType && !hasRoute && q.Observer == "" &&
-		filterHash == "" && !hasSince && !hasUntil && q.Region == "" {
+		filterHash == "" && !hasSince && !hasUntil && q.Region == "" && filterChannel == "" {
 		if indexed, ok := s.byNode[nodePK]; ok {
 			return indexed
 		}
@@ -2188,10 +2189,45 @@ func (s *PacketStore) filterPackets(q PacketQuery) []*StoreTx {
 				return false
 			}
 		}
+		if filterChannel != "" {
+			if !packetMatchesChannel(tx, filterChannel) {
+				return false
+			}
+		}
 		return true
 	})
 
 	return results
+}
+
+// packetMatchesChannel returns true if the transmission's decoded payload
+// matches the requested channel filter (#812). The filter accepts either a
+// plaintext channel name (e.g. "public", "#test") matching decoded.channel,
+// or "enc_<HEX>" matching the channelHashHex of an undecryptable GRP_TXT.
+func packetMatchesChannel(tx *StoreTx, filterChannel string) bool {
+	if tx.PayloadType == nil || *tx.PayloadType != 5 {
+		return false
+	}
+	if tx.DecodedJSON == "" {
+		return false
+	}
+	d := tx.ParsedDecoded()
+	if d == nil {
+		return false
+	}
+	if ch, ok := d["channel"].(string); ok && ch != "" {
+		if ch == filterChannel {
+			return true
+		}
+	}
+	if strings.HasPrefix(filterChannel, "enc_") {
+		if hex, ok := d["channelHashHex"].(string); ok && hex != "" {
+			if "enc_"+hex == filterChannel {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // transmissionsForObserver returns unique transmissions for an observer.

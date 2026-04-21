@@ -384,6 +384,7 @@ type PacketQuery struct {
 	Until    string
 	Region   string
 	Node     string
+	Channel  string // channel_hash filter (#812). Plain names like "#test"/"public" or "enc_<HEX>" for encrypted
 	Order               string // ASC or DESC
 	ExpandObservations  bool   // when true, include observation sub-maps in txToMap output
 }
@@ -619,6 +620,11 @@ func (db *DB) buildTransmissionWhere(q PacketQuery) ([]string, []interface{}) {
 		pk := db.resolveNodePubkey(q.Node)
 		where = append(where, "t.decoded_json LIKE ?")
 		args = append(args, "%"+pk+"%")
+	}
+	if q.Channel != "" {
+		// channel_hash column is indexed for payload_type = 5; filter is exact match.
+		where = append(where, "t.channel_hash = ?")
+		args = append(args, q.Channel)
 	}
 	if q.Observer != "" {
 		ids := strings.Split(q.Observer, ",")
