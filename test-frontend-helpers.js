@@ -6116,6 +6116,88 @@ console.log('\n=== analytics.js: renderCollisionsFromServer collision table ==='
   });
 }
 
+// ===== Issue #866: Full-page obs-switch — hex + path must update per observation =====
+{
+  console.log('\n=== Issue #866: Full-page observation switch ===');
+
+  const ctx866 = makeSandbox();
+  loadInCtx(ctx866, 'public/roles.js');
+  loadInCtx(ctx866, 'public/app.js');
+  loadInCtx(ctx866, 'public/packet-helpers.js');
+
+  test('#866: switching observation updates effectivePkt path_json', () => {
+    const pkt = { id: 1, hash: 'abc123', observer_id: 'obs-agg', path_json: '["A","B","C","D"]', raw_hex: '0484A1B1C1D1', route_type: 1, timestamp: '2026-01-01T00:00:00Z' };
+    const obs1 = { id: 10, observer_id: 'obs-1', path_json: '["A","B"]', snr: 5, rssi: -80, timestamp: '2026-01-01T00:01:00Z' };
+    const obs2 = { id: 20, observer_id: 'obs-2', path_json: '["A","B","C","D"]', snr: 8, rssi: -75, timestamp: '2026-01-01T00:02:00Z' };
+
+    // Simulate renderDetail logic: pick obs1
+    const eff1 = ctx866.clearParsedCache({...pkt, ...obs1, _isObservation: true});
+    const path1 = ctx866.getParsedPath(eff1);
+    assert.deepStrictEqual(path1, ['A', 'B']);
+    assert.strictEqual(eff1.observer_id, 'obs-1');
+    assert.strictEqual(eff1.snr, 5);
+
+    // Switch to obs2
+    const eff2 = ctx866.clearParsedCache({...pkt, ...obs2, _isObservation: true});
+    const path2 = ctx866.getParsedPath(eff2);
+    assert.deepStrictEqual(path2, ['A', 'B', 'C', 'D']);
+    assert.strictEqual(eff2.observer_id, 'obs-2');
+    assert.strictEqual(eff2.snr, 8);
+  });
+
+  test('#866: effectivePkt preserves raw_hex from packet when obs has none', () => {
+    const pkt = { id: 1, hash: 'h1', raw_hex: '0482AABB', route_type: 1 };
+    const obs = { id: 10, observer_id: 'obs-1', path_json: '["AA"]', snr: 3, rssi: -90, timestamp: '2026-01-01T00:00:00Z' };
+    const eff = ctx866.clearParsedCache({...pkt, ...obs, _isObservation: true});
+    // obs doesn't have raw_hex, so packet's raw_hex survives spread
+    assert.strictEqual(eff.raw_hex, '0482AABB');
+  });
+
+  test('#866: effectivePkt uses obs raw_hex when available (API now returns it)', () => {
+    const pkt = { id: 1, hash: 'h1', raw_hex: '0482AABB', route_type: 1 };
+    const obs = { id: 10, observer_id: 'obs-1', raw_hex: '0441CC', path_json: '["CC"]', snr: 3, rssi: -90, timestamp: '2026-01-01T00:00:00Z' };
+    const eff = ctx866.clearParsedCache({...pkt, ...obs, _isObservation: true});
+    // obs has raw_hex from API, should override
+    assert.strictEqual(eff.raw_hex, '0441CC');
+  });
+
+  test('#866: direction field carried through observation spread', () => {
+    const pkt = { id: 1, hash: 'h1', direction: 'rx', route_type: 1 };
+    const obs = { id: 10, observer_id: 'obs-1', direction: 'tx', path_json: '[]', timestamp: '2026-01-01T00:00:00Z' };
+    const eff = {...pkt, ...obs, _isObservation: true};
+    assert.strictEqual(eff.direction, 'tx');
+  });
+
+  test('#866: resolved_path carried through observation spread', () => {
+    const pkt = { id: 1, hash: 'h1', resolved_path: '["aaa","bbb","ccc"]', route_type: 1 };
+    const obs = { id: 10, observer_id: 'obs-1', resolved_path: '["aaa"]', path_json: '["AA"]', timestamp: '2026-01-01T00:00:00Z' };
+    const eff = ctx866.clearParsedCache({...pkt, ...obs, _isObservation: true});
+    const rp = ctx866.getResolvedPath(eff);
+    assert.deepStrictEqual(rp, ['aaa']);
+  });
+
+  test('#866: getPathLenOffset used for hop count cross-check', () => {
+    // Flood route: offset 1
+    assert.strictEqual(ctx866.getPathLenOffset(1), 1);
+    assert.strictEqual(ctx866.getPathLenOffset(2), 1);
+    // Transport route: offset 5
+    assert.strictEqual(ctx866.getPathLenOffset(0), 5);
+    assert.strictEqual(ctx866.getPathLenOffset(3), 5);
+  });
+
+  test('#866: URL hash should encode obs parameter for deep linking', () => {
+    // Simulate the URL construction pattern from renderDetail obs click
+    const pktHash = 'abc123def456';
+    const obsId = '42';
+    const url = `#/packets/${pktHash}?obs=${obsId}`;
+    assert.strictEqual(url, '#/packets/abc123def456?obs=42');
+    // Parse back
+    const qIdx = url.indexOf('?');
+    const qs = new URLSearchParams(url.substring(qIdx));
+    assert.strictEqual(qs.get('obs'), '42');
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);

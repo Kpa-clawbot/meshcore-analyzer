@@ -2386,6 +2386,9 @@ func mapSliceToObservations(maps []map[string]interface{}) []ObservationResp {
 		obs.SNR = m["snr"]
 		obs.RSSI = m["rssi"]
 		obs.PathJSON = m["path_json"]
+		obs.ResolvedPath = m["resolved_path"]
+		obs.Direction = m["direction"]
+		obs.RawHex = m["raw_hex"]
 		obs.Timestamp = m["timestamp"]
 		result = append(result, obs)
 	}

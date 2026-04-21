@@ -277,6 +277,9 @@ type ObservationResp struct {
 	SNR            interface{} `json:"snr"`
 	RSSI           interface{} `json:"rssi"`
 	PathJSON       interface{} `json:"path_json"`
+	ResolvedPath   interface{} `json:"resolved_path,omitempty"`
+	Direction      interface{} `json:"direction,omitempty"`
+	RawHex         interface{} `json:"raw_hex,omitempty"`
 	Timestamp      interface{} `json:"timestamp"`
 }
 
