@@ -408,6 +408,26 @@ func applySchema(db *sql.DB) error {
 		log.Println("[migration] dropped_packets table created")
 	}
 
+	// Migration: normalize known channel_hash values for existing rows.
+	// Before this PR, config key "public" was stored as channel_hash="public".
+	// After this PR, new rows use channel_hash="Public". Without backfill,
+	// channel grouping queries split into two buckets across the upgrade boundary.
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'channel_hash_casing_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Normalizing known channel_hash values...")
+		res, err := db.Exec(`UPDATE transmissions SET channel_hash = 'Public' WHERE channel_hash = 'public' AND payload_type = 5`)
+		if err != nil {
+			log.Printf("[migration] ERROR: failed to normalize channel_hash: %v", err)
+			return fmt.Errorf("migration channel_hash_casing_v1 UPDATE failed: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		log.Printf("[migration] Normalized %d channel_hash rows from 'public' to 'Public'", n)
+		if _, err := db.Exec(`INSERT OR IGNORE INTO _migrations (name) VALUES ('channel_hash_casing_v1')`); err != nil {
+			log.Printf("[migration] WARNING: failed to record migration: %v", err)
+		}
+		log.Println("[migration] channel_hash casing normalization complete")
+	}
+
 	return nil
 }
 

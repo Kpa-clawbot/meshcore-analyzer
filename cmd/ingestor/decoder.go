@@ -423,6 +423,22 @@ func decryptChannelMessage(ciphertextHex, macHex, channelKeyHex string) (*channe
 	return result, nil
 }
 
+// knownChannelCasing maps known channel keys to their canonical display names.
+// Only well-known channels are normalized — custom/user channels are left as-is.
+var knownChannelCasing = map[string]string{
+	"public": "Public",
+}
+
+// normalizeChannelName fixes casing for well-known channel names.
+// Only normalizes names that appear in knownChannelCasing (e.g. "public" → "Public").
+// Custom channel names are left untouched since we can't know the intended casing.
+func normalizeChannelName(name string) string {
+	if corrected, ok := knownChannelCasing[strings.ToLower(name)]; ok {
+		return corrected
+	}
+	return name
+}
+
 func decodeGrpTxt(buf []byte, channelKeys map[string]string) Payload {
 	if len(buf) < 3 {
 		return Payload{Type: "GRP_TXT", Error: "too short", RawHex: hex.EncodeToString(buf)}
@@ -447,7 +463,7 @@ func decodeGrpTxt(buf []byte, channelKeys map[string]string) Payload {
 			}
 			return Payload{
 				Type:             "CHAN",
-				Channel:          name,
+				Channel:          normalizeChannelName(name),
 				ChannelHash:      channelHash,
 				ChannelHashHex:   channelHashHex,
 				DecryptionStatus: "decrypted",
