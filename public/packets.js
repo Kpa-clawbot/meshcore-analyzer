@@ -2195,29 +2195,19 @@
     rows += fieldRow(off, 'Path Length', '0x' + (buf.slice(off * 2, off * 2 + 2) || '??'), hashCountVal === 0 ? `hash_count=0 (direct advert)` : `hash_size=${hashSizeVal} byte${hashSizeVal !== 1 ? 's' : ''}, hash_count=${hashCountVal}`);
     off += 1;
 
-    // Path — byte breakdown MUST only show hops that exist in raw_hex (hashCountVal rows,
-    // hex sliced from buf). The path pill above may show more hops from path_json (aggregate).
+    // Path — render hops from path_json (what this observation reported).
+    // Byte offsets advance by hashSize * pathHops.length to match.
     const hashSize = isNaN(pathByte0) ? 1 : ((pathByte0 >> 6) + 1);
-    if (isNaN(pathByte0)) {
-      // Path byte unparseable — render zero path rows, don't advance offset
-      rows += sectionRow('Path (bytes unparseable)', 'section-path');
-    } else if (typeof hashCountVal === 'number' && hashCountVal > 0) {
-      const extraHops = pathHops.length > hashCountVal ? pathHops.length - hashCountVal : 0;
-      const sectionLabel = extraHops > 0
-        ? 'Path (' + hashCountVal + ' hops in raw_hex; ' + pathHops.length + ' in aggregate path_json)'
-        : 'Path (' + hashCountVal + ' hops)';
-      rows += sectionRow(sectionLabel, 'section-path');
-      for (let i = 0; i < hashCountVal; i++) {
+    if (pathHops.length > 0) {
+      rows += sectionRow('Path (' + pathHops.length + ' hops)', 'section-path');
+      for (let i = 0; i < pathHops.length; i++) {
         const hopOff = off + i * hashSize;
-        const hex = buf.slice(hopOff * 2, (hopOff + hashSize) * 2).toUpperCase();
+        const hex = String(pathHops[i] || '').toUpperCase();
         const hopHtml = HopDisplay.renderHop(hex, hopNameCache[hex]);
         const label = `Hop ${i} — ${hopHtml}`;
         rows += fieldRow(hopOff, label, hex, '');
       }
-      if (extraHops > 0) {
-        rows += fieldRow('', '<em>Aggregate path includes ' + extraHops + ' additional hop' + (extraHops !== 1 ? 's' : '') + ' not in this observation\'s bytes</em>', '', '');
-      }
-      off += hashSize * hashCountVal;
+      off += hashSize * pathHops.length;
     }
 
     // Payload

@@ -1945,7 +1945,7 @@ async function run() {
         if (fieldTable) {
           for (const tr of fieldTable.querySelectorAll('tr')) {
             const txt = tr.textContent.trim();
-            const sec = txt.match(/^Path\s*\((\d+)\s*hops?(?:\s*in\s*raw_hex)?/);
+            const sec = txt.match(/^Path\s*\((\d+)\s*hops?\)/);
             if (sec) breakdownSectionCount = parseInt(sec[1], 10);
             if (/^\s*\d+\s*Hop\s+\d+\s*—/.test(txt) || /^Hop\s+\d+\s*—/.test(txt.replace(/^\d+/, '').trim())) {
               breakdownRowCount++;
