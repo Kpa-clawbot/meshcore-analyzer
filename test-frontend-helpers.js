@@ -5449,7 +5449,6 @@ console.log('\n=== packets.js: buildFieldTable hop count from path_len (#844) ==
   ftCtx.window.HopDisplay = { renderHop: (hex) => hex };
   loadInCtx(ftCtx, 'public/packets.js');
   const { buildFieldTable } = ftCtx.window._packetsTestAPI;
-  function makeHex(bytes) { return bytes.map(b => b.toString(16).padStart(2, '0')).join(''); }
 
   test('#844: byte breakdown uses path_len hop count, not aggregated _parsedPath', () => {
     // path_len = 0x42 → hash_size=2, hash_count=2
