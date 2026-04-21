@@ -834,3 +834,123 @@ func TestMostlyGood_OK_845(t *testing.T) {
 		t.Errorf("recentMedianSkewSec = %v, want ≈ -5", r.RecentMedianSkewSec)
 	}
 }
+
+// TestSingleSample_845: one good sample → ok.
+func TestSingleSample_845(t *testing.T) {
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+	obsTS := int64(1700000000)
+	advTS := obsTS - 30 // 30s skew
+	tx := &StoreTx{
+		Hash:        "single-0001",
+		PayloadType: &pt,
+		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+		Observations: []*StoreObs{
+			{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+		},
+	}
+	ps.mu.Lock()
+	ps.byNode["SINGLE"] = []*StoreTx{tx}
+	ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	r := ps.GetNodeClockSkew("SINGLE")
+	if r == nil {
+		t.Fatal("nil result")
+	}
+	if r.Severity != SkewOK {
+		t.Errorf("severity = %v, want ok", r.Severity)
+	}
+	if r.RecentSampleCount != 1 {
+		t.Errorf("recentSampleCount = %d, want 1", r.RecentSampleCount)
+	}
+	if r.GoodFraction != 1.0 {
+		t.Errorf("goodFraction = %v, want 1.0", r.GoodFraction)
+	}
+}
+
+// TestFiftyFifty_Bimodal_845: 50% good / 50% bad → bimodal_clock.
+func TestFiftyFifty_Bimodal_845(t *testing.T) {
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+	baseObs := int64(1700000000)
+	var txs []*StoreTx
+	for i := 0; i < 10; i++ {
+		obsTS := baseObs + int64(i)*60
+		var skew int64
+		if i%2 == 0 {
+			skew = -10
+		} else {
+			skew = -50000000
+		}
+		tx := &StoreTx{
+			Hash:        fmt.Sprintf("fifty-%04d", i),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS+skew) + `}}`,
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+	ps.mu.Lock()
+	ps.byNode["FIFTY"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	r := ps.GetNodeClockSkew("FIFTY")
+	if r == nil {
+		t.Fatal("nil result")
+	}
+	if r.Severity != SkewBimodalClock {
+		t.Errorf("severity = %v, want bimodal_clock", r.Severity)
+	}
+	if r.GoodFraction < 0.4 || r.GoodFraction > 0.6 {
+		t.Errorf("goodFraction = %v, want ~0.5", r.GoodFraction)
+	}
+}
+
+// TestAllGood_OK_845: all samples good → ok, no bimodal.
+func TestAllGood_OK_845(t *testing.T) {
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+	baseObs := int64(1700000000)
+	var txs []*StoreTx
+	for i := 0; i < 10; i++ {
+		obsTS := baseObs + int64(i)*60
+		tx := &StoreTx{
+			Hash:        fmt.Sprintf("allgood-%04d", i),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS-3) + `}}`,
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+	ps.mu.Lock()
+	ps.byNode["ALLGOOD"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	r := ps.GetNodeClockSkew("ALLGOOD")
+	if r == nil {
+		t.Fatal("nil result")
+	}
+	if r.Severity != SkewOK {
+		t.Errorf("severity = %v, want ok", r.Severity)
+	}
+	if r.GoodFraction != 1.0 {
+		t.Errorf("goodFraction = %v, want 1.0", r.GoodFraction)
+	}
+	if r.RecentBadSampleCount != 0 {
+		t.Errorf("recentBadSampleCount = %v, want 0", r.RecentBadSampleCount)
+	}
+}

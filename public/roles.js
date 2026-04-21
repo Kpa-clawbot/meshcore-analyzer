@@ -401,7 +401,7 @@
     warning: 'var(--status-yellow)',
     critical: 'var(--status-orange)',
     absurd: 'var(--status-purple)',
-    bimodal_clock: '#f59e0b',
+    bimodal_clock: 'var(--status-amber)',
     no_clock: 'var(--text-muted)'
   };
   var SKEW_SEVERITY_LABELS = {

@@ -13,6 +13,9 @@
   --status-red: #ef4444;
   --status-orange: #f97316;
   --status-purple: #a855f7;
+  --status-amber: #f59e0b;
+  --status-amber-light: #fef3c7;
+  --status-amber-text: #92400e;
   --role-observer: #8b5cf6;
   --accent-hover: #6db3ff;
   --text: #1a1a2e;
@@ -2282,7 +2285,7 @@ th.sort-active { color: var(--accent, #60a5fa); }
 .skew-badge--critical { background: var(--status-orange); color: #fff; }
 .skew-badge--absurd { background: var(--status-purple); color: #fff; }
 .skew-badge--no_clock { background: var(--text-muted); color: #fff; }
-.skew-badge--bimodal_clock { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; }
+.skew-badge--bimodal_clock { background: var(--status-amber-light); color: var(--status-amber-text); border: 1px solid var(--status-amber); }
 
 .skew-detail-section { padding: 10px 16px; margin-bottom: 8px; }
 .skew-sparkline-wrap { margin-top: 6px; }

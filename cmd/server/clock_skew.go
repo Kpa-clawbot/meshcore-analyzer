@@ -522,12 +522,9 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 
 	var severity SkewSeverity
 	if goodFraction < 0.10 {
-		severity = classifySkew(math.Abs(recentSkew))
-		// classifySkew may return absurd/critical for huge skew; override
-		// to no_clock when essentially no good samples exist.
-		if severity != SkewNoClock {
-			severity = SkewNoClock
-		}
+		// Essentially no real clock — classify as no_clock regardless
+		// of the raw skew magnitude.
+		severity = SkewNoClock
 	} else if goodFraction < 0.80 && recentBadCount > 0 {
 		// Bimodal: use median of GOOD samples as the "real" skew.
 		severity = SkewBimodalClock

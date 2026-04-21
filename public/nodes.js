@@ -809,8 +809,8 @@
         : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(skewVal) + '</span>';
       var bimodalWarning = '';
       if (cs.severity === 'bimodal_clock') {
-        var totalRecent = cs.recentSampleCount || (cs.recentBadSampleCount && cs.goodFraction > 0 ? Math.round(cs.recentBadSampleCount / (1 - cs.goodFraction)) : 0);
-        bimodalWarning = '<div style="font-size:12px;color:#92400e;margin-top:4px">⚠️ ' + (cs.recentBadSampleCount || '?') + ' of last ' + (totalRecent || '?') + ' adverts had nonsense timestamps (likely RTC reset)</div>';
+        var totalRecent = cs.recentSampleCount || 0;
+        bimodalWarning = '<div style="font-size:12px;color:var(--status-amber-text);margin-top:4px">⚠️ ' + (cs.recentBadSampleCount || '?') + ' of last ' + (totalRecent || '?') + ' adverts had nonsense timestamps (likely RTC reset)</div>';
       }
       container.innerHTML =
         '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
