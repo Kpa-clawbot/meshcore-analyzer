@@ -345,6 +345,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .detail-meta dt { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
 .detail-meta dd { font-weight: 500; margin-bottom: 4px; }
+.observation-current { background: var(--accent-bg, rgba(0,122,255,0.1)); font-weight: 600; }
+.detail-obs-row:hover { background: var(--hover-bg, rgba(255,255,255,0.05)); }
+.detail-obs-table th { font-size: 0.8em; text-transform: uppercase; color: var(--text-muted); }
 
 /* === Hex Dump === */
 .hex-dump {

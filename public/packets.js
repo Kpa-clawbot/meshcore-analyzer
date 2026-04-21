@@ -1804,12 +1804,43 @@
     }
   }
 
-  async function renderDetail(panel, data) {
+  async function renderDetail(panel, data, chosenObsId) {
     const pkt = data.packet;
     const breakdown = data.breakdown || {};
     const ranges = breakdown.ranges || [];
-    const decoded = getParsedDecoded(pkt) || {};
-    const pathHops = getParsedPath(pkt) || [];
+    const observations = data.observations || [];
+
+    // Per-observation rendering (issue #849):
+    // When opened from a packet row (no specific observer), default to first observation.
+    // When opened from an observation child row, use that observation.
+    // Clicking a different observation row in the detail re-renders with that observation.
+    let currentObs = null;
+    const targetObsId = chosenObsId || selectedObservationId;
+    if (targetObsId && observations.length) {
+      currentObs = observations.find(o => String(o.id) === String(targetObsId));
+    }
+    if (!currentObs && observations.length) {
+      currentObs = observations[0]; // fall back to first observation
+    }
+
+    // If we have a current observation, build pkt fields from it so summary is per-observation
+    const effectivePkt = currentObs ? clearParsedCache({...pkt, ...currentObs, _isObservation: true}) : pkt;
+    const decoded = getParsedDecoded(effectivePkt) || {};
+    const pathHops = getParsedPath(effectivePkt) || [];
+
+    // Cross-check: hop count from raw_hex path_len byte vs path_json length
+    const obsRawHex = effectivePkt.raw_hex || pkt.raw_hex || '';
+    let rawHopCount = null;
+    if (obsRawHex.length >= 4) {
+      // path_len byte position depends on route type
+      let plOff = 1;
+      if (pkt.route_type === 0 || pkt.route_type === 3) plOff = 5;
+      const plByte = parseInt(obsRawHex.slice(plOff * 2, plOff * 2 + 2), 16);
+      if (!isNaN(plByte)) rawHopCount = plByte & 0x3F;
+    }
+    if (rawHopCount != null && pathHops.length !== rawHopCount) {
+      console.warn(`[CoreScope] Hop count inconsistency for packet ${pkt.hash}: path_json has ${pathHops.length} hops but raw_hex path_len has ${rawHopCount}. Trusting raw_hex.`);
+    }
 
     // Resolve sender GPS — from packet directly, or from known node in DB
     let senderLat = decoded.lat != null ? decoded.lat : (decoded.latitude || null);
@@ -1856,12 +1887,12 @@
     const rawPathByte = pkt.raw_hex ? parseInt(pkt.raw_hex.slice(2, 4), 16) : NaN;
     const hashSize = (isNaN(rawPathByte) || (rawPathByte & 0x3F) === 0) ? null : ((rawPathByte >> 6) + 1);
 
-    const size = pkt.raw_hex ? Math.floor(pkt.raw_hex.length / 2) : 0;
+    const size = effectivePkt.raw_hex ? Math.floor(effectivePkt.raw_hex.length / 2) : (pkt.raw_hex ? Math.floor(pkt.raw_hex.length / 2) : 0);
     const typeName = payloadTypeName(pkt.payload_type);
 
-    const snr = pkt.snr ?? decoded.SNR ?? decoded.snr ?? null;
-    const rssi = pkt.rssi ?? decoded.RSSI ?? decoded.rssi ?? null;
-    const hasRawHex = !!pkt.raw_hex;
+    const snr = effectivePkt.snr ?? decoded.SNR ?? decoded.snr ?? null;
+    const rssi = effectivePkt.rssi ?? decoded.RSSI ?? decoded.rssi ?? null;
+    const hasRawHex = !!(effectivePkt.raw_hex || pkt.raw_hex);
 
     // Build message preview
     let messageHtml = '';
@@ -1882,7 +1913,6 @@
       </div>`;
     }
 
-    const observations = data.observations || [];
     const obsCount = data.observation_count || observations.length || 1;
     const uniqueObservers = new Set(observations.map(o => o.observer_id)).size;
 
@@ -1945,21 +1975,28 @@
       ? `<div class="anomaly-banner" style="background:var(--warning, #f0ad4e); color:#000; padding:8px 12px; border-radius:4px; margin-bottom:8px; font-weight:600;">⚠️ Anomaly: ${escapeHtml(decoded.anomaly)}</div>`
       : '';
 
+    // Hop count display: trust raw_hex (firmware truth) over path_json
+    const displayHopCount = rawHopCount != null ? rawHopCount : pathHops.length;
+    const obsIndicator = currentObs && observations.length > 1
+      ? `<span style="font-size:0.8em;color:var(--muted);margin-left:6px">(observation ${observations.indexOf(currentObs) + 1} of ${observations.length})</span>`
+      : '';
+
     panel.innerHTML = `
       ${anomalyBanner}
       <div class="detail-title">${hasRawHex ? `Packet Byte Breakdown (${size} bytes)` : typeName + ' Packet'}</div>
-      <div class="detail-hash">${pkt.hash || 'Packet #' + pkt.id}</div>
+      <div class="detail-hash">${pkt.hash || 'Packet #' + pkt.id}${obsIndicator}</div>
       ${messageHtml}
       <dl class="detail-meta">
-        <dt>Observer</dt><dd>${obsName(pkt.observer_id)}</dd>
+        <dt>Observer</dt><dd>${obsName(effectivePkt.observer_id)}</dd>
         <dt>Location</dt><dd>${locationHtml}</dd>
         <dt>SNR / RSSI</dt><dd>${snr != null ? snr + ' dB' : '—'} / ${rssi != null ? rssi + ' dBm' : '—'}</dd>
         <dt>Route Type</dt><dd>${routeTypeName(pkt.route_type)}</dd>
         <dt>Payload Type</dt><dd><span class="badge badge-${payloadTypeColor(pkt.payload_type)}">${typeName}</span></dd>
         ${hashSize ? `<dt>Hash Size</dt><dd>${hashSize} byte${hashSize !== 1 ? 's' : ''}</dd>` : ''}
-        <dt>Timestamp</dt><dd>${renderTimestampCell(pkt.timestamp)}</dd>
+        <dt>Timestamp</dt><dd>${renderTimestampCell(effectivePkt.timestamp)}</dd>
         <dt>Propagation</dt><dd>${propagationHtml}</dd>
-        <dt>Path</dt><dd>${pathHops.length ? renderPath(pathHops, pkt.observer_id) : '—'}</dd>
+        <dt>Path</dt><dd>${displayHopCount > 0 ? `<span class="badge badge-info">${displayHopCount} hop${displayHopCount !== 1 ? 's' : ''}</span> ` + renderPath(pathHops, effectivePkt.observer_id) : '— (direct)'}</dd>
+        ${effectivePkt.direction ? `<dt>Direction</dt><dd>${escapeHtml(effectivePkt.direction)}</dd>` : ''}
       </dl>
       <div class="detail-actions">
         <button class="copy-link-btn" data-packet-hash="${pkt.hash || ''}" data-packet-id="${pkt.id}" title="Copy link to this packet">🔗 Copy Link</button>
@@ -1969,10 +2006,54 @@
       </div>
 
       ${hasRawHex ? `<div class="hex-legend">${buildHexLegend(ranges)}</div>
-      <div class="hex-dump">${createColoredHexDump(pkt.raw_hex, ranges)}</div>` : ''}
+      <div class="hex-dump">${createColoredHexDump(effectivePkt.raw_hex || pkt.raw_hex, ranges)}</div>` : ''}
 
-      ${hasRawHex ? buildFieldTable(pkt, decoded, pathHops, ranges) : buildDecodedTable(decoded)}
+      ${hasRawHex ? buildFieldTable(effectivePkt.raw_hex ? effectivePkt : pkt, decoded, pathHops, ranges) : buildDecodedTable(decoded)}
+
+      ${observations.length > 1 ? `
+      <div class="detail-observations" style="margin-top:16px">
+        <div style="font-weight:600;margin-bottom:6px">Observations (${observations.length})</div>
+        <table class="detail-obs-table" style="width:100%;border-collapse:collapse;font-size:0.9em">
+          <thead><tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:4px 6px;text-align:left">Observer</th>
+            <th style="padding:4px 6px;text-align:left">Hops</th>
+            <th style="padding:4px 6px;text-align:left">SNR</th>
+            <th style="padding:4px 6px;text-align:left">RSSI</th>
+            <th style="padding:4px 6px;text-align:left">Time</th>
+          </tr></thead>
+          <tbody>${observations.map(o => {
+            const oPath = getParsedPath(o);
+            const isCurrent = currentObs && String(o.id) === String(currentObs.id);
+            return `<tr class="detail-obs-row${isCurrent ? ' observation-current' : ''}" data-obs-id="${o.id}" style="cursor:pointer;${isCurrent ? 'background:var(--accent-bg, rgba(0,122,255,0.1))' : ''}" title="Click to view this observation">
+              <td style="padding:4px 6px">${obsName(o.observer_id)}</td>
+              <td style="padding:4px 6px">${oPath.length}</td>
+              <td style="padding:4px 6px">${o.snr != null ? o.snr + ' dB' : '—'}</td>
+              <td style="padding:4px 6px">${o.rssi != null ? o.rssi + ' dBm' : '—'}</td>
+              <td style="padding:4px 6px">${renderTimestampCell(o.timestamp)}</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>` : ''}
+
+      ${observations.length > 1 ? (() => {
+        // Cross-observer aggregate (Option B): show longest observed path across all observers
+        const aggregatePath = getParsedPath(pkt) || [];
+        return `<div class="detail-aggregate" style="margin-top:12px;padding:10px;background:var(--card-bg);border-radius:6px;border:1px solid var(--border);font-size:0.9em">
+          <div style="font-weight:600;margin-bottom:4px;color:var(--muted)">Cross-observer aggregate</div>
+          <div>Longest observed path: ${aggregatePath.length ? `${aggregatePath.length} hops — ${renderPath(aggregatePath, pkt.observer_id)}` : '— (direct)'}</div>
+          <div style="font-size:0.8em;color:var(--muted);margin-top:2px">Longest path seen across all ${uniqueObservers} observer${uniqueObservers !== 1 ? 's' : ''}</div>
+        </div>`;
+      })() : ''}
     `;
+
+    // Wire up observation row click handlers — re-render detail with clicked observation
+    panel.querySelectorAll('.detail-obs-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const obsId = row.dataset.obsId;
+        selectedObservationId = obsId;
+        renderDetail(panel, data, obsId);
+      });
+    });
 
     // Wire up copy link button
     const copyLinkBtn = panel.querySelector('.copy-link-btn');

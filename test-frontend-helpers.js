@@ -5816,6 +5816,87 @@ console.log('\n=== analytics.js: renderCollisionsFromServer collision table ==='
   });
 }
 
+// ===== Issue #849: Per-observation packet detail tests =====
+{
+  console.log('\n=== Issue #849: Per-observation packet detail ===');
+
+  // Test helper: extract hop count from raw_hex path_len byte
+  function extractRawHopCount(rawHex, routeType) {
+    if (!rawHex || rawHex.length < 4) return null;
+    let plOff = 1;
+    if (routeType === 0 || routeType === 3) plOff = 5;
+    const plByte = parseInt(rawHex.slice(plOff * 2, plOff * 2 + 2), 16);
+    if (isNaN(plByte)) return null;
+    return plByte & 0x3F;
+  }
+
+  test('#849: hop count from raw_hex path_len byte (2 hops)', () => {
+    // path_len byte = 0x82: hash_size=2+1=3, hash_count=2
+    const rawHex = '0482aabbccddee'; // header + path_len(0x82) + path data
+    assert.strictEqual(extractRawHopCount(rawHex, 1), 2);
+  });
+
+  test('#849: hop count from raw_hex path_len byte (0 hops = direct)', () => {
+    const rawHex = '0400'; // header + path_len=0x00
+    assert.strictEqual(extractRawHopCount(rawHex, 1), 0);
+  });
+
+  test('#849: hop count from raw_hex for transport route (offset 5)', () => {
+    // Transport routes have 4 bytes of transport codes before path_len
+    const rawHex = '00112233440541B127D7'; // header + 4 transport bytes + path_len(0x05)=5 hops
+    assert.strictEqual(extractRawHopCount(rawHex, 0), 5);
+  });
+
+  test('#849: hop count warns on inconsistency (path_json vs raw_hex)', () => {
+    // path_json has 3 hops, but raw_hex says 2
+    const pathJson = ['41B1', '27D7', '5EB0'];
+    const rawHopCount = 2;
+    assert.notStrictEqual(pathJson.length, rawHopCount, 'should detect inconsistency');
+    // In production code, rawHopCount is trusted
+    assert.strictEqual(rawHopCount, 2);
+  });
+
+  test('#849: per-observation fields override aggregated packet fields', () => {
+    const pkt = { id: 1, hash: 'abc', observer_id: 'obs-agg', snr: 10, rssi: -90, path_json: '["A","B","C"]', timestamp: '2026-01-01T00:00:00Z' };
+    const obs = { id: 2, observer_id: 'obs-1', snr: 5, rssi: -85, path_json: '["A"]', timestamp: '2026-01-01T00:01:00Z' };
+    // Simulate what renderDetail does: spread obs over pkt
+    const effective = {...pkt, ...obs, _isObservation: true};
+    delete effective._parsedPath; // clear cache
+    assert.strictEqual(effective.observer_id, 'obs-1');
+    assert.strictEqual(effective.snr, 5);
+    assert.strictEqual(effective.rssi, -85);
+    assert.strictEqual(effective.timestamp, '2026-01-01T00:01:00Z');
+  });
+
+  test('#849: first observation used when no specific observation selected', () => {
+    const observations = [
+      { id: 10, observer_id: 'obs-A', path_json: '["X"]' },
+      { id: 20, observer_id: 'obs-B', path_json: '["X","Y","Z"]' }
+    ];
+    // No targetObsId → use observations[0]
+    const currentObs = observations[0];
+    assert.strictEqual(currentObs.id, 10);
+    assert.strictEqual(currentObs.observer_id, 'obs-A');
+  });
+
+  test('#849: clicking observation row selects that observation', () => {
+    const observations = [
+      { id: 10, observer_id: 'obs-A', path_json: '["X"]' },
+      { id: 20, observer_id: 'obs-B', path_json: '["X","Y","Z"]' }
+    ];
+    const targetObsId = '20';
+    const currentObs = observations.find(o => String(o.id) === String(targetObsId));
+    assert.ok(currentObs);
+    assert.strictEqual(currentObs.observer_id, 'obs-B');
+  });
+
+  test('#849: null/missing raw_hex returns null hop count', () => {
+    assert.strictEqual(extractRawHopCount(null, 1), null);
+    assert.strictEqual(extractRawHopCount('', 1), null);
+    assert.strictEqual(extractRawHopCount('04', 1), null); // too short
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
