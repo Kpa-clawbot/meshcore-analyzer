@@ -264,7 +264,7 @@ function formatVersionBadge(version, commit, engine, buildTime) {
   var GH = 'https://github.com/Cornmeister/corescope';
   var parts = [];
   if (version && isProd) {
-    var vTag = version.charAt(0) === 'v' ? version : 'v' + version;
+    var vTag = version.charAt(0) === 'corn' ? version : 'corn' + version;
     parts.push('<a href="' + GH + '" target="_blank" rel="noopener">' + vTag + '</a>');
   }
   if (commit && commit !== 'unknown') {
