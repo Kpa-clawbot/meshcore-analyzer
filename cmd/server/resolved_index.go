@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"hash/fnv"
+	"log"
 	"strings"
 )
 
@@ -363,4 +364,62 @@ func (s *PacketStore) initResolvedPathIndex() {
 	s.resolvedPubkeyReverse = make(map[int][]uint64, 4096)
 	s.apiResolvedPathLRU = make(map[int][]*string, lruMaxSize)
 	s.lruOrder = make([]int, 0, lruMaxSize)
+}
+
+// CompactResolvedPubkeyIndex reclaims memory from the resolved pubkey index maps
+// after eviction. It removes empty forward-index entries (shouldn't exist if
+// removeFromResolvedPubkeyIndex is correct, but defense in depth) and clips
+// oversized slice backing arrays where cap > 2*len.
+// Must be called under s.mu write lock.
+func (s *PacketStore) CompactResolvedPubkeyIndex() {
+	if !s.useResolvedPathIndex {
+		return
+	}
+	for h, ids := range s.resolvedPubkeyIndex {
+		if len(ids) == 0 {
+			delete(s.resolvedPubkeyIndex, h)
+			continue
+		}
+		// Clip oversized backing arrays: if cap > 2*len, reallocate.
+		if cap(ids) > 2*len(ids)+8 {
+			clipped := make([]int, len(ids))
+			copy(clipped, ids)
+			s.resolvedPubkeyIndex[h] = clipped
+		}
+	}
+	for txID, hashes := range s.resolvedPubkeyReverse {
+		if len(hashes) == 0 {
+			delete(s.resolvedPubkeyReverse, txID)
+			continue
+		}
+		if cap(hashes) > 2*len(hashes)+8 {
+			clipped := make([]uint64, len(hashes))
+			copy(clipped, hashes)
+			s.resolvedPubkeyReverse[txID] = clipped
+		}
+	}
+}
+
+// defaultMaxResolvedPubkeyIndexEntries is the default hard cap for the forward
+// index. When exceeded, a warning is logged. No auto-eviction — that's the
+// eviction ticker's job.
+const defaultMaxResolvedPubkeyIndexEntries = 5_000_000
+
+// CheckResolvedPubkeyIndexSize logs a warning if the resolved pubkey forward
+// index exceeds the configured maximum entries. Must be called under s.mu
+// read lock at minimum.
+func (s *PacketStore) CheckResolvedPubkeyIndexSize() {
+	if !s.useResolvedPathIndex {
+		return
+	}
+	maxEntries := s.maxResolvedPubkeyIndexEntries
+	if maxEntries <= 0 {
+		maxEntries = defaultMaxResolvedPubkeyIndexEntries
+	}
+	fwdLen := len(s.resolvedPubkeyIndex)
+	revLen := len(s.resolvedPubkeyReverse)
+	if fwdLen > maxEntries || revLen > maxEntries {
+		log.Printf("[store] WARNING: resolvedPubkeyIndex size exceeds limit — forward=%d reverse=%d limit=%d",
+			fwdLen, revLen, maxEntries)
+	}
 }

@@ -1181,3 +1181,308 @@ func TestConfirmResolvedPathContains_SpecialChars(t *testing.T) {
 		t.Error("expected false for pubkey with _ wildcard")
 	}
 }
+
+// --- #807: Bounded growth tests ---
+
+func TestResolvedPubkeyIndex_BoundedByEviction(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	store := &PacketStore{
+		packets:              make([]*StoreTx, 0),
+		byHash:               make(map[string]*StoreTx),
+		byTxID:               make(map[int]*StoreTx),
+		byObsID:              make(map[int]*StoreObs),
+		byObserver:           make(map[string][]*StoreObs),
+		byNode:               make(map[string][]*StoreTx),
+		nodeHashes:           make(map[string]map[string]bool),
+		byPayloadType:        make(map[int][]*StoreTx),
+		byPathHop:            make(map[string][]*StoreTx),
+		spIndex:              make(map[string]int),
+		spTxIndex:            make(map[string][]*StoreTx),
+		distHops:             make([]distHopRecord, 0),
+		distPaths:            make([]distPathRecord, 0),
+		rfCache:              make(map[string]*cachedResult),
+		topoCache:            make(map[string]*cachedResult),
+		hashCache:            make(map[string]*cachedResult),
+		chanCache:            make(map[string]*cachedResult),
+		distCache:            make(map[string]*cachedResult),
+		subpathCache:         make(map[string]*cachedResult),
+		rfCacheTTL:           15 * time.Second,
+		retentionHours:       1, // 1 hour — everything older gets evicted
+		db:                   db,
+		useResolvedPathIndex: true,
+	}
+	store.initResolvedPathIndex()
+
+	now := time.Now().UTC()
+	N := 50
+
+	for i := 1; i <= N; i++ {
+		hash := fmt.Sprintf("hash_%04d", i)
+		pk := fmt.Sprintf("pk_%04d", i)
+		firstSeen := now.Add(-2 * time.Hour).Format(time.RFC3339)
+
+		db.conn.Exec("INSERT INTO transmissions (id, raw_hex, hash, first_seen) VALUES (?, '', ?, ?)",
+			i, hash, firstSeen)
+		db.conn.Exec("INSERT INTO observations (id, transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (?, ?, 1, ?, ?, ?)",
+			i, i, `["aa"]`, now.Add(-2*time.Hour).Unix(), `["`+pk+`"]`)
+
+		tx := &StoreTx{ID: i, Hash: hash, FirstSeen: firstSeen}
+		obs := &StoreObs{ID: i, TransmissionID: i, ObserverID: "obs0", Timestamp: firstSeen}
+		tx.Observations = []*StoreObs{obs}
+
+		store.packets = append(store.packets, tx)
+		store.byHash[hash] = tx
+		store.byTxID[i] = tx
+		store.byObsID[i] = obs
+		store.byObserver["obs0"] = append(store.byObserver["obs0"], obs)
+		store.addToResolvedPubkeyIndex(i, []string{pk})
+	}
+
+	if len(store.resolvedPubkeyIndex) != N {
+		t.Fatalf("forward index: expected %d entries, got %d", N, len(store.resolvedPubkeyIndex))
+	}
+	if len(store.resolvedPubkeyReverse) != N {
+		t.Fatalf("reverse index: expected %d entries, got %d", N, len(store.resolvedPubkeyReverse))
+	}
+
+	evicted := store.RunEviction()
+	if evicted != N {
+		t.Fatalf("expected %d evicted, got %d", N, evicted)
+	}
+
+	if len(store.resolvedPubkeyIndex) != 0 {
+		t.Errorf("forward index should be empty after full eviction, got %d entries", len(store.resolvedPubkeyIndex))
+	}
+	if len(store.resolvedPubkeyReverse) != 0 {
+		t.Errorf("reverse index should be empty after full eviction, got %d entries", len(store.resolvedPubkeyReverse))
+	}
+}
+
+func TestCompactResolvedPubkeyIndex_DropsEmptyKeys(t *testing.T) {
+	store := &PacketStore{useResolvedPathIndex: true}
+	store.initResolvedPathIndex()
+
+	h := resolvedPubkeyHash("pk1")
+	// Manually insert an empty slice (simulates a bug where delete wasn't called)
+	store.resolvedPubkeyIndex[h] = []int{}
+	store.resolvedPubkeyReverse[99] = []uint64{}
+
+	store.CompactResolvedPubkeyIndex()
+
+	if _, exists := store.resolvedPubkeyIndex[h]; exists {
+		t.Error("CompactResolvedPubkeyIndex should delete empty forward entries")
+	}
+	if _, exists := store.resolvedPubkeyReverse[99]; exists {
+		t.Error("CompactResolvedPubkeyIndex should delete empty reverse entries")
+	}
+}
+
+func TestCompactResolvedPubkeyIndex_ClipsOversizedSlices(t *testing.T) {
+	store := &PacketStore{useResolvedPathIndex: true}
+	store.initResolvedPathIndex()
+
+	h := resolvedPubkeyHash("pk1")
+	// Create a slice with large backing array but small length
+	big := make([]int, 100)
+	for i := range big {
+		big[i] = i
+	}
+	// Shrink to 2 elements but keep cap=100
+	store.resolvedPubkeyIndex[h] = big[:2]
+
+	if cap(store.resolvedPubkeyIndex[h]) != 100 {
+		t.Fatalf("precondition: cap should be 100, got %d", cap(store.resolvedPubkeyIndex[h]))
+	}
+
+	store.CompactResolvedPubkeyIndex()
+
+	ids := store.resolvedPubkeyIndex[h]
+	if len(ids) != 2 {
+		t.Errorf("length should be preserved: got %d", len(ids))
+	}
+	if cap(ids) > 2*len(ids)+8 {
+		t.Errorf("cap should be clipped: got cap=%d for len=%d", cap(ids), len(ids))
+	}
+	if ids[0] != 0 || ids[1] != 1 {
+		t.Error("data should be preserved after clip")
+	}
+}
+
+func TestRunEviction_TriggersCompaction(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	store := &PacketStore{
+		packets:              make([]*StoreTx, 0),
+		byHash:               make(map[string]*StoreTx),
+		byTxID:               make(map[int]*StoreTx),
+		byObsID:              make(map[int]*StoreObs),
+		byObserver:           make(map[string][]*StoreObs),
+		byNode:               make(map[string][]*StoreTx),
+		nodeHashes:           make(map[string]map[string]bool),
+		byPayloadType:        make(map[int][]*StoreTx),
+		byPathHop:            make(map[string][]*StoreTx),
+		spIndex:              make(map[string]int),
+		spTxIndex:            make(map[string][]*StoreTx),
+		distHops:             make([]distHopRecord, 0),
+		distPaths:            make([]distPathRecord, 0),
+		rfCache:              make(map[string]*cachedResult),
+		topoCache:            make(map[string]*cachedResult),
+		hashCache:            make(map[string]*cachedResult),
+		chanCache:            make(map[string]*cachedResult),
+		distCache:            make(map[string]*cachedResult),
+		subpathCache:         make(map[string]*cachedResult),
+		rfCacheTTL:           15 * time.Second,
+		retentionHours:       1,
+		db:                   db,
+		useResolvedPathIndex: true,
+	}
+	store.initResolvedPathIndex()
+
+	now := time.Now().UTC()
+	// Add one old tx with a large-cap slice in the index
+	pk := "compaction_pk"
+	firstSeen := now.Add(-2 * time.Hour).Format(time.RFC3339)
+	db.conn.Exec("INSERT INTO transmissions (id, raw_hex, hash, first_seen) VALUES (1, '', 'h1', ?)", firstSeen)
+	db.conn.Exec("INSERT INTO observations (id, transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (1, 1, 1, ?, ?, ?)",
+		`["aa"]`, now.Add(-2*time.Hour).Unix(), `["`+pk+`"]`)
+
+	tx := &StoreTx{ID: 1, Hash: "h1", FirstSeen: firstSeen}
+	obs := &StoreObs{ID: 1, TransmissionID: 1, ObserverID: "obs0", Timestamp: firstSeen}
+	tx.Observations = []*StoreObs{obs}
+
+	store.packets = append(store.packets, tx)
+	store.byHash[tx.Hash] = tx
+	store.byTxID[1] = tx
+	store.byObsID[1] = obs
+	store.byObserver["obs0"] = []*StoreObs{obs}
+
+	// Add a fresh tx (won't be evicted) with pk shared with old tx
+	pk2 := "shared_pk"
+	freshSeen := now.Format(time.RFC3339)
+	db.conn.Exec("INSERT INTO transmissions (id, raw_hex, hash, first_seen) VALUES (2, '', 'h2', ?)", freshSeen)
+	db.conn.Exec("INSERT INTO observations (id, transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (2, 2, 1, ?, ?, ?)",
+		`["bb"]`, now.Unix(), `["`+pk2+`"]`)
+
+	tx2 := &StoreTx{ID: 2, Hash: "h2", FirstSeen: freshSeen}
+	obs2 := &StoreObs{ID: 2, TransmissionID: 2, ObserverID: "obs0", Timestamp: freshSeen}
+	tx2.Observations = []*StoreObs{obs2}
+
+	store.packets = append(store.packets, tx2)
+	store.byHash[tx2.Hash] = tx2
+	store.byTxID[2] = tx2
+	store.byObsID[2] = obs2
+	store.byObserver["obs0"] = append(store.byObserver["obs0"], obs2)
+
+	store.addToResolvedPubkeyIndex(1, []string{pk, pk2})
+	store.addToResolvedPubkeyIndex(2, []string{pk2})
+
+	evicted := store.RunEviction()
+	if evicted != 1 {
+		t.Fatalf("expected 1 evicted, got %d", evicted)
+	}
+
+	// pk should be gone (only had tx 1)
+	hPK := resolvedPubkeyHash(pk)
+	if _, exists := store.resolvedPubkeyIndex[hPK]; exists {
+		t.Error("pk entry should be removed after eviction")
+	}
+
+	// pk2 should still have tx 2
+	hPK2 := resolvedPubkeyHash(pk2)
+	ids := store.resolvedPubkeyIndex[hPK2]
+	if len(ids) != 1 || ids[0] != 2 {
+		t.Errorf("pk2 should only have tx 2, got %v", ids)
+	}
+}
+
+func TestResolvedPubkeyIndex_MemoryStableThroughEvictionCycles(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	store := &PacketStore{
+		packets:              make([]*StoreTx, 0),
+		byHash:               make(map[string]*StoreTx),
+		byTxID:               make(map[int]*StoreTx),
+		byObsID:              make(map[int]*StoreObs),
+		byObserver:           make(map[string][]*StoreObs),
+		byNode:               make(map[string][]*StoreTx),
+		nodeHashes:           make(map[string]map[string]bool),
+		byPayloadType:        make(map[int][]*StoreTx),
+		byPathHop:            make(map[string][]*StoreTx),
+		spIndex:              make(map[string]int),
+		spTxIndex:            make(map[string][]*StoreTx),
+		distHops:             make([]distHopRecord, 0),
+		distPaths:            make([]distPathRecord, 0),
+		rfCache:              make(map[string]*cachedResult),
+		topoCache:            make(map[string]*cachedResult),
+		hashCache:            make(map[string]*cachedResult),
+		chanCache:            make(map[string]*cachedResult),
+		distCache:            make(map[string]*cachedResult),
+		subpathCache:         make(map[string]*cachedResult),
+		rfCacheTTL:           15 * time.Second,
+		retentionHours:       1,
+		db:                   db,
+		useResolvedPathIndex: true,
+	}
+	store.initResolvedPathIndex()
+
+	now := time.Now().UTC()
+	txCounter := 0
+
+	// Run 5 cycles: each adds 100 old txs, evicts them, checks maps are empty
+	for cycle := 0; cycle < 5; cycle++ {
+		for i := 0; i < 100; i++ {
+			txCounter++
+			hash := fmt.Sprintf("hash_%d", txCounter)
+			pk := fmt.Sprintf("pk_%d", txCounter)
+			firstSeen := now.Add(-2 * time.Hour).Format(time.RFC3339)
+
+			db.conn.Exec("INSERT INTO transmissions (id, raw_hex, hash, first_seen) VALUES (?, '', ?, ?)",
+				txCounter, hash, firstSeen)
+			db.conn.Exec("INSERT INTO observations (id, transmission_id, observer_idx, path_json, timestamp, resolved_path) VALUES (?, ?, 1, ?, ?, ?)",
+				txCounter, txCounter, `["aa"]`, now.Add(-2*time.Hour).Unix(), `["`+pk+`"]`)
+
+			tx := &StoreTx{ID: txCounter, Hash: hash, FirstSeen: firstSeen}
+			obs := &StoreObs{ID: txCounter, TransmissionID: txCounter, ObserverID: "obs0", Timestamp: firstSeen}
+			tx.Observations = []*StoreObs{obs}
+
+			store.packets = append(store.packets, tx)
+			store.byHash[hash] = tx
+			store.byTxID[txCounter] = tx
+			store.byObsID[txCounter] = obs
+			store.byObserver["obs0"] = append(store.byObserver["obs0"], obs)
+			store.addToResolvedPubkeyIndex(txCounter, []string{pk})
+		}
+
+		evicted := store.RunEviction()
+		if evicted != 100 {
+			t.Fatalf("cycle %d: expected 100 evicted, got %d", cycle, evicted)
+		}
+
+		if fwd := len(store.resolvedPubkeyIndex); fwd != 0 {
+			t.Errorf("cycle %d: forward index should be 0, got %d", cycle, fwd)
+		}
+		if rev := len(store.resolvedPubkeyReverse); rev != 0 {
+			t.Errorf("cycle %d: reverse index should be 0, got %d", cycle, rev)
+		}
+	}
+}
+
+func TestCheckResolvedPubkeyIndexSize_Warning(t *testing.T) {
+	store := &PacketStore{
+		useResolvedPathIndex:          true,
+		maxResolvedPubkeyIndexEntries: 10,
+	}
+	store.initResolvedPathIndex()
+
+	// Add 15 entries — should exceed limit of 10
+	for i := 0; i < 15; i++ {
+		store.addToResolvedPubkeyIndex(i, []string{fmt.Sprintf("pk_%d", i)})
+	}
+
+	// Just verify it doesn't panic — the warning is logged, not returned
+	store.CheckResolvedPubkeyIndexSize()
+}

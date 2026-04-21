@@ -199,7 +199,8 @@ type PacketStore struct {
 	// Replaces per-StoreTx/StoreObs ResolvedPath []*string field (#800).
 	resolvedPubkeyIndex   map[uint64][]int  // hash(pubkey) → []txID
 	resolvedPubkeyReverse map[int][]uint64  // txID → []hashes indexed under
-	useResolvedPathIndex  bool              // feature flag (default true, off path = conservative)
+	useResolvedPathIndex              bool // feature flag (default true, off path = conservative)
+	maxResolvedPubkeyIndexEntries     int  // hard cap for size warning (0 = use default 5M)
 	apiResolvedPathLRU    map[int][]*string // obsID → resolved path (LRU cache for API)
 	lruOrder              []int             // FIFO order for LRU eviction
 	lruMu                 sync.RWMutex     // guards apiResolvedPathLRU + lruOrder
@@ -328,6 +329,7 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 	if cfg != nil {
 		ps.retentionHours = cfg.RetentionHours
 		ps.maxMemoryMB = cfg.MaxMemoryMB
+		ps.maxResolvedPubkeyIndexEntries = cfg.MaxResolvedPubkeyIndexEntries
 	}
 	// Wire cacheTTL config values to server-side cache durations.
 	if len(cacheTTLs) > 0 && cacheTTLs[0] != nil {
@@ -3073,6 +3075,10 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 	s.hashSizeInfoMu.Lock()
 	s.hashSizeInfoCache = nil
 	s.hashSizeInfoMu.Unlock()
+
+	// Compact resolved pubkey index after eviction sweep
+	s.CompactResolvedPubkeyIndex()
+	s.CheckResolvedPubkeyIndexSize()
 
 	return evictCount
 }
