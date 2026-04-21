@@ -624,14 +624,13 @@
     if (!data || !data.rings.length) return '<div class="text-muted">No path data for this observer</div>';
     let html = `<div class="reach-rings">`;
     data.rings.forEach(ring => {
-      const opacity = Math.max(0.3, 1 - ring.hops * 0.06);
       const nodeLinks = ring.nodes.slice(0, 8).map(n => {
         const label = n.name ? `<a href="#/nodes/${encodeURIComponent(n.pubkey)}" class="analytics-link">${esc(n.name)}</a>` : `<span class="mono">${n.hop}</span>`;
         const detail = n.distRange ? ` <span class="text-muted">(${n.distRange})</span>` : '';
         return label + detail;
       }).join(', ');
       const extra = ring.nodes.length > 8 ? ` <span class="text-muted">+${ring.nodes.length - 8} more</span>` : '';
-      html += `<div class="reach-ring" style="opacity:${opacity}">
+      html += `<div class="reach-ring">
         <div class="reach-hop">${ring.hops} hop${ring.hops > 1 ? 's' : ''}</div>
         <div class="reach-nodes">${nodeLinks}${extra}</div>
         <div class="reach-count">${ring.nodes.length} node${ring.nodes.length > 1 ? 's' : ''}</div>
@@ -675,7 +674,6 @@
     });
     let html = '<div class="reach-rings">';
     Object.entries(byDist).sort((a, b) => +a[0] - +b[0]).forEach(([dist, nodes]) => {
-      const opacity = Math.max(0.3, 1 - (+dist) * 0.06);
       const nodeLinks = nodes.slice(0, 10).map(n => {
         const label = n.name
           ? `<a href="#/nodes/${encodeURIComponent(n.pubkey)}" class="analytics-link">${esc(n.name)}</a>`
@@ -683,7 +681,7 @@
         return label + ` <span class="text-muted">via ${esc(n.observer_name)}</span>`;
       }).join(', ');
       const extra = nodes.length > 10 ? ` <span class="text-muted">+${nodes.length - 10} more</span>` : '';
-      html += `<div class="reach-ring" style="opacity:${opacity}">
+      html += `<div class="reach-ring">
         <div class="reach-hop">${dist} hop${+dist > 1 ? 's' : ''}</div>
         <div class="reach-nodes">${nodeLinks}${extra}</div>
         <div class="reach-count">${nodes.length} node${nodes.length > 1 ? 's' : ''}</div>
