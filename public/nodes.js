@@ -807,15 +807,21 @@
       var skewDisplay = cs.severity === 'no_clock'
         ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
         : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(skewVal) + '</span>';
+      var bimodalWarning = '';
+      if (cs.severity === 'bimodal_clock') {
+        var totalRecent = cs.recentSampleCount || (cs.recentBadSampleCount && cs.goodFraction > 0 ? Math.round(cs.recentBadSampleCount / (1 - cs.goodFraction)) : 0);
+        bimodalWarning = '<div style="font-size:12px;color:#92400e;margin-top:4px">⚠️ ' + (cs.recentBadSampleCount || '?') + ' of last ' + (totalRecent || '?') + ' adverts had nonsense timestamps (likely RTC reset)</div>';
+      }
       container.innerHTML =
         '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
         '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
           skewDisplay +
-          renderSkewBadge(cs.severity, skewVal) +
+          renderSkewBadge(cs.severity, skewVal, cs) +
           (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
         '</div>' +
         driftHtml +
-        (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '');
+        (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '') +
+        bimodalWarning;
     } catch (e) {
       // Non-fatal — section stays hidden
     }
@@ -1117,7 +1123,7 @@
       const status = getNodeStatus(n.role || 'companion', lastSeenTime ? new Date(lastSeenTime).getTime() : 0);
       const lastSeenClass = status === 'active' ? 'last-seen-active' : 'last-seen-stale';
       const cs = _fleetSkew && _fleetSkew[n.public_key];
-      const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, window.currentSkewValue(cs)) : '';
+      const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, window.currentSkewValue(cs), cs) : '';
       return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}${isClaimed ? ' claimed-row' : ''}">
         <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh">★</span> ' : ''}<strong>${n.name || '(unnamed)'}</strong>${dupNameBadge(n.name, n.public_key, dupMap)}${skewBadgeHtml}</td>
         <td class="mono col-pubkey">${truncate(n.public_key, 16)}</td>

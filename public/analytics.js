@@ -3481,7 +3481,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
           return '<tr class="' + rowClass + '" data-pubkey="' + esc(n.pubkey) + '" style="cursor:pointer">' +
             '<td><strong>' + esc(n.nodeName || n.pubkey.slice(0, 12)) + '</strong></td>' +
             '<td style="font-family:var(--mono,monospace)">' + skewText + '</td>' +
-            '<td>' + renderSkewBadge(n.severity, skewVal) + '</td>' +
+            '<td>' + renderSkewBadge(n.severity, skewVal, n) + '</td>' +
             '<td style="font-family:var(--mono,monospace)">' + driftText + '</td>' +
             '<td style="font-size:11px">' + lastAdv + '</td>' +
             '</tr>';

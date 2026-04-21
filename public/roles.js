@@ -401,12 +401,13 @@
     warning: 'var(--status-yellow)',
     critical: 'var(--status-orange)',
     absurd: 'var(--status-purple)',
+    bimodal_clock: '#f59e0b',
     no_clock: 'var(--text-muted)'
   };
   var SKEW_SEVERITY_LABELS = {
-    ok: 'OK', warning: 'Warning', critical: 'Critical', absurd: 'Absurd', no_clock: 'No Clock'
+    ok: 'OK', warning: 'Warning', critical: 'Critical', absurd: 'Absurd', bimodal_clock: 'Bimodal', no_clock: 'No Clock'
   };
-  var SKEW_SEVERITY_ORDER = { no_clock: 0, absurd: 1, critical: 2, warning: 3, ok: 4 };
+  var SKEW_SEVERITY_ORDER = { no_clock: 0, bimodal_clock: 1, absurd: 2, critical: 3, warning: 4, ok: 5 };
 
   window.SKEW_SEVERITY_COLORS = SKEW_SEVERITY_COLORS;
   window.SKEW_SEVERITY_LABELS = SKEW_SEVERITY_LABELS;
@@ -439,11 +440,16 @@
   };
 
   /** Render a clock skew badge HTML */
-  window.renderSkewBadge = function(severity, skewSec) {
+  window.renderSkewBadge = function(severity, skewSec, cs) {
     if (!severity) return '';
     var cls = 'skew-badge skew-badge--' + severity;
     if (severity === 'no_clock') {
       return '<span class="' + cls + '" title="Uninitialized RTC — no valid clock">🚫 No Clock</span>';
+    }
+    if (severity === 'bimodal_clock' && cs) {
+      var badPct = cs.goodFraction != null ? Math.round((1 - cs.goodFraction) * 100) : '?';
+      var label = '⏰ ' + window.formatSkew(skewSec);
+      return '<span class="' + cls + '" title="Clock skew: ' + window.formatSkew(skewSec) + ' (bimodal: ' + badPct + '% of recent adverts have nonsense timestamps)">' + label + '</span>';
     }
     var label = severity === 'ok' ? '⏰' : '⏰ ' + window.formatSkew(skewSec);
     return '<span class="' + cls + '" title="Clock skew: ' + window.formatSkew(skewSec) + ' (' + (SKEW_SEVERITY_LABELS[severity] || severity) + ')">' + label + '</span>';

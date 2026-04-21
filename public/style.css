@@ -2282,6 +2282,7 @@ th.sort-active { color: var(--accent, #60a5fa); }
 .skew-badge--critical { background: var(--status-orange); color: #fff; }
 .skew-badge--absurd { background: var(--status-purple); color: #fff; }
 .skew-badge--no_clock { background: var(--text-muted); color: #fff; }
+.skew-badge--bimodal_clock { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; }
 
 .skew-detail-section { padding: 10px 16px; margin-bottom: 8px; }
 .skew-sparkline-wrap { margin-top: 6px; }
