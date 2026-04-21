@@ -1882,3 +1882,89 @@ func TestExtractObserverMetaNewFields(t *testing.T) {
 		t.Errorf("RecvErrors = %v, want 3", meta.RecvErrors)
 	}
 }
+
+// TestInsertObservationSNRFillIn verifies that when the same observation is
+// received twice — first without SNR, then with SNR — the SNR is filled in
+// rather than silently discarded. The unique dedup index is
+// (transmission_id, observer_idx, COALESCE(path_json, '')); observer_idx must
+// be non-NULL for the conflict to fire (SQLite treats NULL != NULL).
+func TestInsertObservationSNRFillIn(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Register the observer so observer_idx is non-NULL (required for dedup).
+	if err := s.UpsertObserver("pymc-obs1", "PyMC Observer", "SJC", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// First arrival: same observer, no SNR/RSSI (e.g. broker replay without RF fields).
+	data1 := &PacketData{
+		RawHex:     "0A00D69FD7A5A7475DB07337749AE61FA53A4788E976",
+		Timestamp:  "2026-04-20T00:00:00Z",
+		Hash:       "snrfillin0001hash",
+		RouteType:  1,
+		ObserverID: "pymc-obs1",
+		SNR:        nil,
+		RSSI:       nil,
+	}
+	if _, err := s.InsertTransmission(data1); err != nil {
+		t.Fatal(err)
+	}
+
+	var snr1, rssi1 *float64
+	s.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr1, &rssi1)
+	if snr1 != nil || rssi1 != nil {
+		t.Fatalf("precondition: first insert should have nil SNR/RSSI, got snr=%v rssi=%v", snr1, rssi1)
+	}
+
+	// Second arrival: same packet, same observer, now WITH SNR/RSSI.
+	snr := 10.5
+	rssi := -88.0
+	data2 := &PacketData{
+		RawHex:     data1.RawHex,
+		Timestamp:  data1.Timestamp,
+		Hash:       data1.Hash,
+		RouteType:  data1.RouteType,
+		ObserverID: "pymc-obs1",
+		SNR:        &snr,
+		RSSI:       &rssi,
+	}
+	if _, err := s.InsertTransmission(data2); err != nil {
+		t.Fatal(err)
+	}
+
+	var snr2, rssi2 *float64
+	s.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr2, &rssi2)
+	if snr2 == nil || *snr2 != snr {
+		t.Errorf("SNR not filled in by second arrival: got %v, want %v", snr2, snr)
+	}
+	if rssi2 == nil || *rssi2 != rssi {
+		t.Errorf("RSSI not filled in by second arrival: got %v, want %v", rssi2, rssi)
+	}
+
+	// Third arrival: same packet again, SNR absent — must NOT overwrite existing SNR.
+	data3 := &PacketData{
+		RawHex:     data1.RawHex,
+		Timestamp:  data1.Timestamp,
+		Hash:       data1.Hash,
+		RouteType:  data1.RouteType,
+		ObserverID: "pymc-obs1",
+		SNR:        nil,
+		RSSI:       nil,
+	}
+	if _, err := s.InsertTransmission(data3); err != nil {
+		t.Fatal(err)
+	}
+
+	var snr3, rssi3 *float64
+	s.db.QueryRow("SELECT snr, rssi FROM observations LIMIT 1").Scan(&snr3, &rssi3)
+	if snr3 == nil || *snr3 != snr {
+		t.Errorf("SNR overwritten by null arrival: got %v, want %v", snr3, snr)
+	}
+	if rssi3 == nil || *rssi3 != rssi {
+		t.Errorf("RSSI overwritten by null arrival: got %v, want %v", rssi3, rssi)
+	}
+}
