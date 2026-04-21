@@ -1937,15 +1937,18 @@
       }
 
       // Top hops leaderboard
-      html += `<div class="analytics-section"><h3>🏆 Top 20 Longest Hops</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Distance (${distUnitLabel})</th><th scope="col">Type</th><th scope="col">SNR</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
+      html += `<div class="analytics-section"><h3>🏆 Top 20 Longest Hops</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Distance (${distUnitLabel})</th><th scope="col">Type</th><th scope="col">Obs</th><th scope="col">Best SNR</th><th scope="col">Median SNR</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
       const top20 = data.topHops.slice(0, 20);
       top20.forEach((h, i) => {
         const fromLink = h.fromPk ? `<a href="#/nodes/${encodeURIComponent(h.fromPk)}" class="analytics-link">${esc(h.fromName)}</a>` : esc(h.fromName || '?');
         const toLink = h.toPk ? `<a href="#/nodes/${encodeURIComponent(h.toPk)}" class="analytics-link">${esc(h.toName)}</a>` : esc(h.toName || '?');
-        const snr = h.snr != null ? h.snr + ' dB' : '<span class="text-muted">—</span>';
+        const bestSnr = h.bestSnr != null ? Number(h.bestSnr).toFixed(1) + ' dB' : '<span class="text-muted">—</span>';
+        const medianSnr = h.medianSnr != null ? Number(h.medianSnr).toFixed(1) + ' dB' : '<span class="text-muted">—</span>';
+        const obs = h.obsCount != null ? h.obsCount : 1;
         const pktLink = h.hash ? `<a href="#/packet/${encodeURIComponent(h.hash)}" class="analytics-link mono" style="font-size:0.85em">${esc(h.hash.slice(0, 12))}…</a>` : '—';
         const mapBtn = h.fromPk && h.toPk ? `<button class="btn-icon dist-map-hop" data-from="${esc(h.fromPk)}" data-to="${esc(h.toPk)}" title="View on map">🗺️</button>` : '';
-        html += `<tr><td>${i+1}</td><td>${fromLink}</td><td>${toLink}</td><td><strong>${formatDistance(h.dist)}</strong></td><td>${esc(h.type)}</td><td>${snr}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
+        const tsTitle = h.timestamp ? `Best observation: ${h.timestamp}` : '';
+        html += `<tr title="${esc(tsTitle)}"><td>${i+1}</td><td>${fromLink}</td><td>${toLink}</td><td><strong>${formatDistance(h.dist)}</strong></td><td>${esc(h.type)}</td><td>${obs}</td><td>${bestSnr}</td><td>${medianSnr}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
       });
       html += `</tbody></table></div>`;
 
