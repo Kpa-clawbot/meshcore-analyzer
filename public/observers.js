@@ -34,23 +34,7 @@
                 <tr><td>Transport:</td><td><code>TCP</code></td></tr>
                 <tr><td>Username:</td><td><code>observer</code></td></tr>
                 <tr><td>Password:</td><td><code>hiermetdiedata</code></td></tr>
-              </table>
-
-              <div style="margin-top:16px">
-                <strong>Alternative (Meshwiki Community MQTT)</strong>
-                <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
-                  Community endpoint shares data with multiple projects:
-                </div>
-
-                <table class="help-table">
-                  <tr><td>Server:</td><td><code>mqtt.mwiki.nl</code></td></tr>
-                  <tr><td>Port (TLS):</td><td><code>8883</code></td></tr>
-                  <tr><td>Port (plain):</td><td><code>1883</code></td></tr>
-                  <tr><td>Transport:</td><td><code>TCP</code></td></tr>
-                  <tr><td>Username:</td><td><code>observer</code></td></tr>
-                  <tr><td>Password:</td><td><code>86w7bW9NJxuPcErp2Y5NCQ==</code></td></tr>
-                </table>
-              </div>
+              </table>             
 
               <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
 
@@ -94,20 +78,7 @@ set mqtt.port 8883
 set mqtt.username observer
 set mqtt.password hiermetdiedata
 set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
-                </div>
-
-                <div>
-                  <strong>Meshwiki Community (Feeds multiple projects)</strong>
-                  <div class="text-muted" style="font-size:12px;margin-top:4px;margin-bottom:8px">
-                    Unencrypted non-tls connection uses port 1883
-                  </div>
-                  <pre class="help-code"><code>set mqtt.server mqtt.mwiki.nl
-set mqtt.port 8883
-set mqtt.username observer
-set mqtt.password 86w7bW9NJxuPcErp2Y5NCQ==
-set mqtt.iata <span class="obs-iata-val">AMS</span></code></pre>
-                </div>
-              </div>
+                </div>          
 
               <hr style="margin:16px 0;border:none;border-top:1px solid var(--border)">
 
