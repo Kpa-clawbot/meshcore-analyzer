@@ -788,7 +788,7 @@
   let _themeRefreshHandler = null;
 
   let _allNodes = null; // cached full node list
-  let _fleetSkew = null; // cached clock skew map: pubkey → {severity, medianSkewSec, ...}
+  let _fleetSkew = null; // cached clock skew map: pubkey → {severity, recentMedianSkewSec, medianSkewSec, ...}
 
   /**
    * Fetch per-node clock skew and render into the given container element.
@@ -803,14 +803,15 @@
       container.style.display = '';
       var driftHtml = cs.driftPerDaySec ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Drift: ' + formatDrift(cs.driftPerDaySec) + '</div>' : '';
       var sparkHtml = renderSkewSparkline(cs.samples, 200, 32);
+      var skewVal = window.currentSkewValue(cs);
       var skewDisplay = cs.severity === 'no_clock'
         ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
-        : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(cs.medianSkewSec) + '</span>';
+        : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(skewVal) + '</span>';
       container.innerHTML =
         '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
         '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
           skewDisplay +
-          renderSkewBadge(cs.severity, cs.medianSkewSec) +
+          renderSkewBadge(cs.severity, skewVal) +
           (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
         '</div>' +
         driftHtml +
@@ -1116,7 +1117,7 @@
       const status = getNodeStatus(n.role || 'companion', lastSeenTime ? new Date(lastSeenTime).getTime() : 0);
       const lastSeenClass = status === 'active' ? 'last-seen-active' : 'last-seen-stale';
       const cs = _fleetSkew && _fleetSkew[n.public_key];
-      const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, cs.medianSkewSec) : '';
+      const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, window.currentSkewValue(cs)) : '';
       return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}${isClaimed ? ' claimed-row' : ''}">
         <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh">★</span> ' : ''}<strong>${n.name || '(unnamed)'}</strong>${dupNameBadge(n.name, n.public_key, dupMap)}${skewBadgeHtml}</td>
         <td class="mono col-pubkey">${truncate(n.public_key, 16)}</td>

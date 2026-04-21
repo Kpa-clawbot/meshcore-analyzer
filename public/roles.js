@@ -429,6 +429,15 @@
     return (secPerDay >= 0 ? '+' : '') + secPerDay.toFixed(1) + ' s/day';
   };
 
+  /** Pick the skew value that drives current-health UI: prefer the
+   *  recent-window median (#789, current health) over the all-time median
+   *  (poisoned by historical bad samples). Falls back gracefully if the
+   *  field isn't present (older API responses). */
+  window.currentSkewValue = function(cs) {
+    if (!cs) return null;
+    return cs.recentMedianSkewSec != null ? cs.recentMedianSkewSec : cs.medianSkewSec;
+  };
+
   /** Render a clock skew badge HTML */
   window.renderSkewBadge = function(severity, skewSec) {
     if (!severity) return '';
