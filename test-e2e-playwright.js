@@ -1701,18 +1701,18 @@ async function run() {
     assert(!url.includes('node-fullscreen') || await page.$('#nodesRight:not(.empty)'), 'Split panel should be visible on desktop');
   });
 
-  // Test: loading #/nodes/{pubkey} on desktop shows split panel (#676)
-  await test('Desktop: deep link #/nodes/{pubkey} opens split panel, not full-screen', async () => {
+  // Test: loading #/nodes/{pubkey} on desktop opens full-screen detail view (#823)
+  // Updated from #676's earlier "split panel on desktop" assertion. The Details
+  // link now opens the full-screen single-node view on desktop too — see PR #824.
+  await test('Desktop: deep link #/nodes/{pubkey} opens full-screen detail view', async () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(BASE + '#/nodes', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#nodesBody tr[data-key]', { timeout: 10000 });
     const pubkey = await page.$eval('#nodesBody tr[data-key]', el => el.dataset.key);
     await page.goto(BASE + '#/nodes/' + encodeURIComponent(pubkey), { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(500);
-    const hasSplitPanel = await page.$('#nodesRight:not(.empty)');
     const hasFullScreen = await page.$('.node-fullscreen');
-    assert(hasSplitPanel, 'Split panel should be open on desktop deep link');
-    assert(!hasFullScreen, 'Full-screen view should NOT appear on desktop deep link');
+    assert(hasFullScreen, 'Full-screen detail view should be open on desktop deep link (#823)');
   });
 
   // Test: packets timeWindow deep link

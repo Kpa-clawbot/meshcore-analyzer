@@ -207,21 +207,6 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 	topic := m.Topic()
 	parts := strings.Split(topic, "/")
 
-	// IATA filter
-	if len(source.IATAFilter) > 0 && len(parts) > 1 {
-		region := parts[1]
-		matched := false
-		for _, f := range source.IATAFilter {
-			if f == region {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return
-		}
-	}
-
 	var msg map[string]interface{}
 	if err := json.Unmarshal(m.Payload(), &msg); err != nil {
 		return
@@ -233,6 +218,9 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 	}
 
 	// Status topic: meshcore/<region>/<observer_id>/status
+	// IATA filter does NOT apply here — observer metadata (noise_floor, battery, etc.)
+	// is region-independent and should be accepted from all observers regardless of
+	// which IATA regions are configured for packet ingestion.
 	if len(parts) >= 4 && parts[3] == "status" {
 		observerID := parts[2]
 		name, _ := msg["origin"].(string)
@@ -259,6 +247,21 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		}
 		log.Printf("MQTT [%s] status: %s (%s)", tag, firstNonEmpty(name, observerID), iata)
 		return
+	}
+
+	// IATA filter applies to packet messages only — not status messages above.
+	if len(source.IATAFilter) > 0 && len(parts) > 1 {
+		region := parts[1]
+		matched := false
+		for _, f := range source.IATAFilter {
+			if f == region {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return
+		}
 	}
 
 	// Format 1: Raw packet (meshcoretomqtt / Cisien format)

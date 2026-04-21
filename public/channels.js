@@ -1165,6 +1165,40 @@
       return;
     }
 
+    // #811: Deep link to a `#`-named channel that's not in the loaded list.
+    // If a stored key matches, decrypt. Otherwise we must distinguish an
+    // encrypted-no-key channel (show lock) from an unencrypted channel that
+    // simply isn't in the toggle-off list (#825 — must fall through to REST).
+    if (hash.charAt(0) === '#') {
+      if (storedKeys[hash]) {
+        var keyHex2 = storedKeys[hash];
+        var keyBytes2 = ChannelDecrypt.hexToBytes(keyHex2);
+        var hashByte2 = await ChannelDecrypt.computeChannelHash(keyBytes2);
+        await decryptAndRender(keyHex2, hashByte2, hash);
+        return;
+      }
+      // #825: confirm encrypted-ness via an encrypted-included channel list
+      // before assuming a lock state. Conservative on error — fall through.
+      // Show a loading affordance so cold deep links don't display stale content
+      // for the duration of the metadata RTT (cached 15s thereafter).
+      msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';
+      try {
+        var rpInc = RegionFilter.getRegionParam();
+        var paramsInc = ['includeEncrypted=true'];
+        if (rpInc) paramsInc.push('region=' + encodeURIComponent(rpInc));
+        var allCh = await api('/channels?' + paramsInc.join('&'), { ttl: CLIENT_TTL.channels });
+        if (isStaleMessageRequest(request)) return;
+        var foundCh = (allCh.channels || []).find(function (c) { return c.hash === hash; });
+        if (foundCh && foundCh.encrypted === true) {
+          msgEl.innerHTML = '<div class="ch-empty">🔒 This channel is encrypted and no decryption key is configured</div>';
+          return;
+        }
+        // Unencrypted (or unknown) — fall through to the REST fetch below.
+      } catch (e) {
+        // ignore — fall through to REST fetch
+      }
+    }
+
     msgEl.innerHTML = '<div class="ch-loading">Loading messages…</div>';
 
     try {

@@ -48,6 +48,7 @@
     if (filters.hash) parts.push('hash=' + encodeURIComponent(filters.hash));
     if (filters.node) parts.push('node=' + encodeURIComponent(filters.node));
     if (filters.observer) parts.push('observer=' + encodeURIComponent(filters.observer));
+    if (filters.channel) parts.push('channel=' + encodeURIComponent(filters.channel));
     if (filters._filterExpr) parts.push('filter=' + encodeURIComponent(filters._filterExpr));
     return parts.length ? '?' + parts.join('&') : '';
   }
@@ -352,6 +353,8 @@
     if (_urlNode) { filters.node = _urlNode; filters.nodeName = _urlNode.slice(0, 8); }
     var _urlObserver = _initUrlParams.get('observer');
     if (_urlObserver) filters.observer = _urlObserver;
+    var _urlChannel = _initUrlParams.get('channel');
+    if (_urlChannel) filters.channel = _urlChannel;
     var _urlFilterExpr = _initUrlParams.get('filter');
     if (_urlFilterExpr) filters._filterExpr = _urlFilterExpr;
 
@@ -622,6 +625,7 @@
       if (filters.hash) params.set('hash', filters.hash);
       if (filters.node) params.set('node', filters.node);
       if (filters.observer) params.set('observer', filters.observer);
+      if (filters.channel) params.set('channel', filters.channel);
       if (groupByHash) {
         params.set('groupByHash', 'true');
       } else {
@@ -749,6 +753,11 @@
           <div class="multi-select-wrap" id="typeFilterWrap">
             <button class="multi-select-trigger" id="typeTrigger" title="Filter by packet type">All Types ▾</button>
             <div class="multi-select-menu" id="typeMenu"></div>
+          </div>
+          <div class="filter-group" style="display:inline-flex;align-items:center;gap:4px">
+            <select id="fChannel" class="filter-select" aria-label="Filter by channel" title="Filter Channel Messages (GRP_TXT) by channel">
+              <option value="">All Channels</option>
+            </select>
           </div>
         </div>
         <div class="filter-group">
@@ -937,6 +946,63 @@
       updateTypeTrigger();
       renderTableRows();
     });
+
+    // --- Channel filter (#812) ---
+    // Server-side filter: /api/packets?channel=<hash>. Triggers loadPackets()
+    // (not just renderTableRows) so the filter applies before pagination.
+    const channelSel = document.getElementById('fChannel');
+    if (channelSel) {
+      if (filters.channel) {
+        // Pre-seed an option so the current filter shows as selected even
+        // before the channels list arrives. Replaced when populateChannels resolves.
+        const opt = document.createElement('option');
+        opt.value = filters.channel;
+        opt.textContent = filters.channel;
+        opt.selected = true;
+        channelSel.appendChild(opt);
+      }
+      api('/channels').then(data => {
+        const channels = (data && data.channels) || [];
+        // Build options via DOM API: channel names are network-supplied
+        // and must NOT be interpolated into innerHTML (XSS, #812).
+        // Sort alphabetically (case-insensitive) for predictable picker order;
+        // the API returns last-activity order which is unstable for a dropdown.
+        const sorted = channels.slice().sort((a, b) => {
+          const an = (a.name || a.hash || '').toLowerCase();
+          const bn = (b.name || b.hash || '').toLowerCase();
+          return an < bn ? -1 : an > bn ? 1 : 0;
+        });
+        channelSel.textContent = '';
+        const allOpt = document.createElement('option');
+        allOpt.value = '';
+        allOpt.textContent = 'All Channels';
+        channelSel.appendChild(allOpt);
+        let matched = false;
+        for (const ch of sorted) {
+          const v = ch.hash || ch.name || '';
+          if (!v) continue;
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = ch.name || v;
+          if (v === filters.channel) { opt.selected = true; matched = true; }
+          channelSel.appendChild(opt);
+        }
+        // If current filter isn't in the list (encrypted hash, stale, or
+        // race with cache), keep it as a selected option so the UI reflects state.
+        if (filters.channel && !matched) {
+          const opt = document.createElement('option');
+          opt.value = filters.channel;
+          opt.textContent = filters.channel;
+          opt.selected = true;
+          channelSel.appendChild(opt);
+        }
+      }).catch(() => {});
+      channelSel.addEventListener('change', (e) => {
+        filters.channel = e.target.value || undefined;
+        updatePacketsUrl();
+        loadPackets();
+      });
+    }
 
     // Close multi-select menus on outside click
     bindDocumentHandler('menu', 'click', (e) => {

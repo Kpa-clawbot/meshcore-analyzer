@@ -579,6 +579,16 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		backfillProgress = 1
 	}
 
+	// Memory accounting (#832). storeDataMB is the in-store packet byte
+	// estimate (the old "trackedMB"); processRSSMB / goHeapInuseMB / goSysMB
+	// give ops the breakdown needed to reason about real RSS. All values
+	// share a single 1s-cached snapshot to amortize ReadMemStats cost.
+	var storeDataMB float64
+	if s.store != nil {
+		storeDataMB = s.store.trackedMemoryMB()
+	}
+	mem := s.getMemorySnapshot(storeDataMB)
+
 	resp := &StatsResponse{
 		TotalPackets:       stats.TotalPackets,
 		TotalTransmissions: &stats.TotalTransmissions,
@@ -602,6 +612,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		BackfillProgress:      backfillProgress,
 		SignatureDrops:        s.db.GetSignatureDropCount(),
 		HashMigrationComplete: s.store != nil && s.store.hashMigrationComplete.Load(),
+
+		TrackedMB:     mem.StoreDataMB, // deprecated alias
+		StoreDataMB:   mem.StoreDataMB,
+		ProcessRSSMB:  mem.ProcessRSSMB,
+		GoHeapInuseMB: mem.GoHeapInuseMB,
+		GoSysMB:       mem.GoSysMB,
 	}
 
 	s.statsMu.Lock()
@@ -856,6 +872,7 @@ func (s *Server) handlePackets(w http.ResponseWriter, r *http.Request) {
 		Until:    r.URL.Query().Get("until"),
 		Region:   r.URL.Query().Get("region"),
 		Node:     r.URL.Query().Get("node"),
+		Channel:  r.URL.Query().Get("channel"),
 		Order:              "DESC",
 		ExpandObservations: r.URL.Query().Get("expand") == "observations",
 	}
@@ -958,9 +975,11 @@ func (s *Server) handleBatchObservations(w http.ResponseWriter, r *http.Request)
 func (s *Server) handlePacketDetail(w http.ResponseWriter, r *http.Request) {
 	param := mux.Vars(r)["id"]
 	var packet map[string]interface{}
+	fromDB := false
 
+	isHash := hashPattern.MatchString(strings.ToLower(param))
 	if s.store != nil {
-		if hashPattern.MatchString(strings.ToLower(param)) {
+		if isHash {
 			packet = s.store.GetPacketByHash(param)
 		}
 		if packet == nil {
@@ -969,6 +988,25 @@ func (s *Server) handlePacketDetail(w http.ResponseWriter, r *http.Request) {
 				packet = s.store.GetTransmissionByID(id)
 				if packet == nil {
 					packet = s.store.GetPacketByID(id)
+				}
+			}
+		}
+	}
+	// DB fallback: in-memory PacketStore prunes old entries, but the SQLite
+	// DB retains them and is the source for /api/nodes recentAdverts. Without
+	// this fallback, links from node-detail pages 404 once the packet ages out.
+	if packet == nil && s.db != nil {
+		if isHash {
+			if dbPkt, err := s.db.GetPacketByHash(param); err == nil && dbPkt != nil {
+				packet = dbPkt
+				fromDB = true
+			}
+		}
+		if packet == nil {
+			if id, parseErr := strconv.Atoi(param); parseErr == nil {
+				if dbPkt, err := s.db.GetTransmissionByID(id); err == nil && dbPkt != nil {
+					packet = dbPkt
+					fromDB = true
 				}
 			}
 		}
@@ -982,6 +1020,9 @@ func (s *Server) handlePacketDetail(w http.ResponseWriter, r *http.Request) {
 	var observations []map[string]interface{}
 	if s.store != nil {
 		observations = s.store.GetObservationsForHash(hash)
+	}
+	if len(observations) == 0 && fromDB && s.db != nil && hash != "" {
+		observations = s.db.GetObservationsForHash(hash)
 	}
 	observationCount := len(observations)
 	if observationCount == 0 {
@@ -1315,13 +1356,51 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 	// Post-filter: verify target node actually appears in each candidate's resolved_path.
 	// The byPathHop index uses short prefixes which can collide (e.g. "c0" matches multiple nodes).
 	// We lean on resolved_path (from neighbor affinity graph) to disambiguate.
-	filtered := candidates[:0] // reuse backing array
-	for _, tx := range candidates {
-		if nodeInResolvedPath(tx, lowerPK) {
-			filtered = append(filtered, tx)
+	//
+	// Collect candidate IDs and index membership under the read lock, then release
+	// the lock before running SQL queries (confirmResolvedPathContains does disk I/O).
+	type candidateCheck struct {
+		tx         *StoreTx
+		hasReverse bool
+		inIndex    bool
+	}
+	checks := make([]candidateCheck, len(candidates))
+	for i, tx := range candidates {
+		cc := candidateCheck{tx: tx}
+		if !s.store.useResolvedPathIndex {
+			cc.inIndex = true // flag off — keep all
+		} else if _, hasRev := s.store.resolvedPubkeyReverse[tx.ID]; !hasRev {
+			cc.inIndex = true // no indexed pubkeys — keep (conservative)
+		} else {
+			h := resolvedPubkeyHash(lowerPK)
+			for _, id := range s.store.resolvedPubkeyIndex[h] {
+				if id == tx.ID {
+					cc.hasReverse = true // needs SQL confirmation
+					break
+				}
+			}
+			// If not in index at all, it's a definite no
 		}
+		checks[i] = cc
+	}
+	s.store.mu.RUnlock()
+
+	// Now run SQL checks outside the lock for candidates that need confirmation.
+	filtered := candidates[:0]
+	for _, cc := range checks {
+		if cc.inIndex {
+			filtered = append(filtered, cc.tx)
+		} else if cc.hasReverse {
+			if s.store.confirmResolvedPathContains(cc.tx.ID, lowerPK) {
+				filtered = append(filtered, cc.tx)
+			}
+		}
+		// else: not in index → exclude
 	}
 	candidates = filtered
+
+	// Re-acquire read lock for the aggregation phase that reads store data.
+	s.store.mu.RLock()
 
 	type pathAgg struct {
 		Hops       []PathHopResp
@@ -2369,9 +2448,6 @@ func mapSliceToTransmissions(maps []map[string]interface{}) []TransmissionResp {
 		tx.PathJSON = m["path_json"]
 		tx.Direction = m["direction"]
 		tx.Score = m["score"]
-		if rp, ok := m["resolved_path"].([]*string); ok {
-			tx.ResolvedPath = rp
-		}
 		result = append(result, tx)
 	}
 	return result
@@ -2393,9 +2469,6 @@ func mapSliceToObservations(maps []map[string]interface{}) []ObservationResp {
 		obs.RSSI = m["rssi"]
 		obs.PathJSON = m["path_json"]
 		obs.Timestamp = m["timestamp"]
-		if rp, ok := m["resolved_path"].([]*string); ok {
-			obs.ResolvedPath = rp
-		}
 		result = append(result, obs)
 	}
 	return result

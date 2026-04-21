@@ -381,7 +381,13 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 			}
 		}
 		for _, obs := range tx.Observations {
-			if obs.ResolvedPath == nil && obs.PathJSON != "" && obs.PathJSON != "[]" {
+			// Check if this observation has been resolved: look up in the index.
+			// If the tx has no reverse-map entries AND path is non-empty, it needs backfill.
+			hasRP := false
+			if _, ok := store.resolvedPubkeyReverse[tx.ID]; ok {
+				hasRP = true
+			}
+			if !hasRP && obs.PathJSON != "" && obs.PathJSON != "[]" {
 				allPending = append(allPending, obsRef{
 					obsID:       obs.ID,
 					pathJSON:    obs.PathJSON,
@@ -482,24 +488,61 @@ func backfillResolvedPathsAsync(store *PacketStore, dbPath string, chunkSize int
 				}
 			}
 
-			// Update in-memory state and re-pick best observation under a single
-			// write lock. The per-tx pickBestObservation is O(observations) which is
-			// typically <10 per tx — negligible cost vs. the race risk of splitting
-			// the lock (pollAndMerge can append to tx.Observations concurrently).
+			// Update in-memory state: update resolved pubkey index, re-pick best observation,
+			// and invalidate LRU cache entries for backfilled observations (#800).
+			//
+			// Lock ordering: always take s.mu BEFORE lruMu. The read path
+			// (fetchResolvedPathForObs) takes lruMu independently of s.mu,
+			// so we must NOT hold s.mu while taking lruMu. Instead, collect
+			// obsIDs to invalidate under s.mu, release it, then take lruMu.
 			store.mu.Lock()
 			affectedSet := make(map[string]bool)
+			lruInvalidate := make([]int, 0, len(results))
 			for _, r := range results {
-				if obs, ok := store.byObsID[r.obsID]; ok {
-					obs.ResolvedPath = r.rp
-				}
+				// Remove old index entries for this tx, then re-add with new pubkeys
 				if !affectedSet[r.txHash] {
 					affectedSet[r.txHash] = true
 					if tx, ok := store.byHash[r.txHash]; ok {
-						pickBestObservation(tx)
+						store.removeFromResolvedPubkeyIndex(tx.ID)
 					}
+				}
+				// Add new resolved pubkeys to index
+				if tx, ok := store.byHash[r.txHash]; ok {
+					pks := extractResolvedPubkeys(r.rp)
+					store.addToResolvedPubkeyIndex(tx.ID, pks)
+					// Update byNode for relay nodes
+					for _, pk := range pks {
+						store.addToByNode(tx, pk)
+					}
+					// Update byPathHop resolved-key entries
+					hopsSeen := make(map[string]bool)
+					for _, hop := range txGetParsedPath(tx) {
+						hopsSeen[strings.ToLower(hop)] = true
+					}
+					for _, pk := range pks {
+						if !hopsSeen[pk] {
+							hopsSeen[pk] = true
+							store.byPathHop[pk] = append(store.byPathHop[pk], tx)
+						}
+					}
+				}
+				lruInvalidate = append(lruInvalidate, r.obsID)
+			}
+			// Re-pick best observation for affected transmissions
+			for txHash := range affectedSet {
+				if tx, ok := store.byHash[txHash]; ok {
+					pickBestObservation(tx)
 				}
 			}
 			store.mu.Unlock()
+
+			// Invalidate LRU entries AFTER releasing s.mu to maintain lock
+			// ordering (lruMu must never be taken while s.mu is held).
+			store.lruMu.Lock()
+			for _, obsID := range lruInvalidate {
+				store.lruDelete(obsID)
+			}
+			store.lruMu.Unlock()
 		}
 
 		totalProcessed += len(chunk)

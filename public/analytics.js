@@ -3448,7 +3448,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
           if (sortKey === 'severity') {
             v = (SKEW_SEVERITY_ORDER[a.severity] || 9) - (SKEW_SEVERITY_ORDER[b.severity] || 9);
           } else if (sortKey === 'skew') {
-            v = Math.abs(b.medianSkewSec || 0) - Math.abs(a.medianSkewSec || 0);
+            v = Math.abs(window.currentSkewValue(b) || 0) - Math.abs(window.currentSkewValue(a) || 0);
           } else if (sortKey === 'name') {
             v = (a.nodeName || '').localeCompare(b.nodeName || '');
           } else if (sortKey === 'drift') {
@@ -3475,12 +3475,13 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
         var rowsHtml = filtered.map(function(n) {
           var rowClass = 'clock-fleet-row--' + (n.severity || 'ok');
           var lastAdv = n.lastObservedTS ? new Date(n.lastObservedTS * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC') : '—';
-          var skewText = n.severity === 'no_clock' ? 'No Clock' : formatSkew(n.medianSkewSec);
+          var skewVal = window.currentSkewValue(n);
+          var skewText = n.severity === 'no_clock' ? 'No Clock' : formatSkew(skewVal);
           var driftText = n.severity === 'no_clock' || !n.driftPerDaySec ? '–' : formatDrift(n.driftPerDaySec);
           return '<tr class="' + rowClass + '" data-pubkey="' + esc(n.pubkey) + '" style="cursor:pointer">' +
             '<td><strong>' + esc(n.nodeName || n.pubkey.slice(0, 12)) + '</strong></td>' +
             '<td style="font-family:var(--mono,monospace)">' + skewText + '</td>' +
-            '<td>' + renderSkewBadge(n.severity, n.medianSkewSec) + '</td>' +
+            '<td>' + renderSkewBadge(n.severity, skewVal) + '</td>' +
             '<td style="font-family:var(--mono,monospace)">' + driftText + '</td>' +
             '<td style="font-size:11px">' + lastAdv + '</td>' +
             '</tr>';

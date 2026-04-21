@@ -544,3 +544,159 @@ func TestGetNodeClockSkew_NormalNodeWithDrift(t *testing.T) {
 func formatInt64(n int64) string {
 	return fmt.Sprintf("%d", n)
 }
+
+// ── #789: Recent-window severity & robust drift ───────────────────────────────
+
+// TestSeverityUsesRecentNotMedian: 100 historical bad samples (skew=-60s,
+// each ~5min apart) followed by 5 fresh good samples (skew=-1s). All-time
+// median is still huge-ish but recent-window severity must reflect the
+// current healthy state.
+func TestSeverityUsesRecentNotMedian(t *testing.T) {
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+
+	baseObs := int64(1700000000)
+	var txs []*StoreTx
+	for i := 0; i < 105; i++ {
+		obsTS := baseObs + int64(i)*300 // 5 min apart
+		var skew int64 = -60
+		if i >= 100 {
+			skew = -1 // good samples at the tail
+		}
+		advTS := obsTS + skew
+		tx := &StoreTx{
+			Hash:        fmt.Sprintf("recent-h%03d", i),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+	ps.mu.Lock()
+	ps.byNode["RECENT"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	r := ps.GetNodeClockSkew("RECENT")
+	if r == nil {
+		t.Fatal("nil result")
+	}
+	if r.Severity != SkewOK {
+		t.Errorf("severity = %v, want ok (recent samples are healthy)", r.Severity)
+	}
+	if math.Abs(r.RecentMedianSkewSec) > 5 {
+		t.Errorf("recentMedianSkewSec = %v, want ~-1", r.RecentMedianSkewSec)
+	}
+	// Historical median should still be retained for context.
+	if math.Abs(r.MedianSkewSec) < 30 {
+		t.Errorf("medianSkewSec = %v, expected historical median to remain large", r.MedianSkewSec)
+	}
+}
+
+// TestDriftRejectsCorrectionJump: 30 minutes of clean linear drift, then a
+// single 60-second skew jump. The pre-jump slope should win — drift must
+// not be catastrophically inflated by the correction event.
+func TestDriftRejectsCorrectionJump(t *testing.T) {
+	pairs := []tsSkewPair{}
+	// 30 min of stable, ~12 sec/day drift: 1s per 7200s.
+	for i := 0; i < 12; i++ {
+		ts := int64(i) * 300
+		skew := float64(i) * (1.0 / 24.0) // ~0.04s per 5min step → 12 s/day
+		pairs = append(pairs, tsSkewPair{ts: ts, skew: skew})
+	}
+	// Wait an hour, then a single 1000-sec correction jump (clearly outlier).
+	pairs = append(pairs, tsSkewPair{ts: 3600 + 12*300, skew: 1000})
+
+	drift := computeDrift(pairs)
+	// Without rejection this would be ~ (1000-0)/(end-0) * 86400 = enormous.
+	if math.Abs(drift) > 100 {
+		t.Errorf("drift = %v, expected small (~12 s/day), correction jump should be filtered", drift)
+	}
+}
+
+// TestTheilSenMatchesOLSWhenClean: on clean linear data Theil-Sen should
+// produce essentially the OLS answer.
+func TestTheilSenMatchesOLSWhenClean(t *testing.T) {
+	// 1 sec drift per hour = 24 sec/day, 20 evenly-spaced samples.
+	pairs := []tsSkewPair{}
+	for i := 0; i < 20; i++ {
+		pairs = append(pairs, tsSkewPair{
+			ts:   int64(i) * 600,
+			skew: float64(i) * (600.0 / 3600.0),
+		})
+	}
+	drift := computeDrift(pairs)
+	if math.Abs(drift-24.0) > 0.25 { // ~1%
+		t.Errorf("drift = %v, want ~24", drift)
+	}
+}
+
+// TestReporterScenario_789: reproduce the exact scenario from issue #789.
+// Reporter saw mean=-52565156, median=-59063561, last=-0.8, sample count
+// 1662, drift +1793549.9 s/day, severity=absurd. After the fix, severity
+// must be ok (recent samples are healthy) and drift must be sane.
+func TestReporterScenario_789(t *testing.T) {
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+
+	baseObs := int64(1700000000)
+	var txs []*StoreTx
+	// 1657 samples with the bad ~-683-day skew (the historical poison),
+	// then 5 freshly corrected samples at -0.8s — totals 1662.
+	for i := 0; i < 1662; i++ {
+		obsTS := baseObs + int64(i)*60 // 1 min apart
+		var skew int64
+		if i < 1657 {
+			skew = -59063561 // ~ -683 days
+		} else {
+			skew = -1 // corrected (rounded; reporter saw -0.8)
+		}
+		advTS := obsTS + skew
+		tx := &StoreTx{
+			Hash:        fmt.Sprintf("rep-%04d", i),
+			PayloadType: &pt,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			Observations: []*StoreObs{
+				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
+			},
+		}
+		txs = append(txs, tx)
+	}
+	ps.mu.Lock()
+	ps.byNode["REPNODE"] = txs
+	for _, tx := range txs {
+		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
+	}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	r := ps.GetNodeClockSkew("REPNODE")
+	if r == nil {
+		t.Fatal("nil result")
+	}
+	// Severity must reflect current health, not the all-time median.
+	if r.Severity != SkewOK && r.Severity != SkewWarning {
+		t.Errorf("severity = %v, want ok/warning (recent samples are healthy)", r.Severity)
+	}
+	if math.Abs(r.RecentMedianSkewSec) > 5 {
+		t.Errorf("recentMedianSkewSec = %v, want near 0", r.RecentMedianSkewSec)
+	}
+	// Drift must not be absurd. The historical jump is one event between
+	// the 1657th and 1658th sample; outlier rejection must contain it.
+	if math.Abs(r.DriftPerDaySec) > maxReasonableDriftPerDay {
+		t.Errorf("drift = %v, must be <= cap %v", r.DriftPerDaySec, maxReasonableDriftPerDay)
+	}
+	// And it should be close to zero (stable historical + stable corrected).
+	if math.Abs(r.DriftPerDaySec) > 1000 {
+		t.Errorf("drift = %v, expected near zero after outlier rejection", r.DriftPerDaySec)
+	}
+	// Historical median is preserved as context.
+	if math.Abs(r.MedianSkewSec) < 1e6 {
+		t.Errorf("medianSkewSec = %v, expected historical poison preserved as context", r.MedianSkewSec)
+	}
+}

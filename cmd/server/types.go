@@ -72,6 +72,22 @@ type StatsResponse struct {
 	BackfillProgress       float64    `json:"backfillProgress"`
 	SignatureDrops         int64      `json:"signatureDrops,omitempty"`
 	HashMigrationComplete  bool       `json:"hashMigrationComplete"`
+
+	// Memory accounting (issue #832). All values in MB.
+	//
+	// StoreDataMB ("trackedMB" historically) is the in-store packet byte
+	// estimate — useful packet bytes only. Subset of HeapInuse. Used as
+	// the eviction watermark input. NOT a proxy for RSS; ops dashboards
+	// should prefer ProcessRSSMB for capacity decisions.
+	//
+	// Old field name TrackedMB is retained for backward compatibility
+	// with pre-v3.6 consumers; it carries the same value as StoreDataMB
+	// and is deprecated.
+	TrackedMB     float64 `json:"trackedMB"`     // deprecated alias for storeDataMB
+	StoreDataMB   float64 `json:"storeDataMB"`   // in-store packet bytes (subset of heap)
+	ProcessRSSMB  float64 `json:"processRSSMB"`  // process RSS from /proc (Linux) or runtime.Sys fallback
+	GoHeapInuseMB float64 `json:"goHeapInuseMB"` // runtime.MemStats.HeapInuse
+	GoSysMB       float64 `json:"goSysMB"`       // runtime.MemStats.Sys (total Go-managed)
 }
 
 // ─── Health ────────────────────────────────────────────────────────────────────
@@ -269,7 +285,6 @@ type TransmissionResp struct {
 	SNR              interface{}      `json:"snr"`
 	RSSI             interface{}      `json:"rssi"`
 	PathJSON         interface{}      `json:"path_json"`
-	ResolvedPath     []*string        `json:"resolved_path,omitempty"`
 	Direction        interface{}      `json:"direction"`
 	Score            interface{}      `json:"score,omitempty"`
 	Observations     []ObservationResp `json:"observations,omitempty"`
@@ -284,7 +299,6 @@ type ObservationResp struct {
 	SNR            interface{} `json:"snr"`
 	RSSI           interface{} `json:"rssi"`
 	PathJSON       interface{} `json:"path_json"`
-	ResolvedPath   []*string   `json:"resolved_path,omitempty"`
 	Timestamp      interface{} `json:"timestamp"`
 }
 

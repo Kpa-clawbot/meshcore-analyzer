@@ -384,6 +384,7 @@ type PacketQuery struct {
 	Until    string
 	Region   string
 	Node     string
+	Channel  string // channel_hash filter (#812). Plain names like "#test"/"public" or "enc_<HEX>" for encrypted
 	Order               string // ASC or DESC
 	ExpandObservations  bool   // when true, include observation sub-maps in txToMap output
 }
@@ -620,6 +621,11 @@ func (db *DB) buildTransmissionWhere(q PacketQuery) ([]string, []interface{}) {
 		where = append(where, "t.decoded_json LIKE ?")
 		args = append(args, "%"+pk+"%")
 	}
+	if q.Channel != "" {
+		// channel_hash column is indexed for payload_type = 5; filter is exact match.
+		where = append(where, "t.channel_hash = ?")
+		args = append(args, q.Channel)
+	}
 	if q.Observer != "" {
 		ids := strings.Split(q.Observer, ",")
 		placeholders := strings.Repeat("?,", len(ids))
@@ -684,6 +690,20 @@ func (db *DB) GetPacketByHash(hash string) (map[string]interface{}, error) {
 		return db.scanTransmissionRow(rows), nil
 	}
 	return nil, nil
+}
+
+// GetObservationsForHash returns all observations for the transmission with
+// the given content hash. Used as a fallback by the packet-detail handler
+// when the in-memory PacketStore has pruned the entry but the DB still has it.
+func (db *DB) GetObservationsForHash(hash string) []map[string]interface{} {
+	var txID int
+	err := db.conn.QueryRow("SELECT id FROM transmissions WHERE hash = ?",
+		strings.ToLower(hash)).Scan(&txID)
+	if err != nil {
+		return nil
+	}
+	obsByTx := db.getObservationsForTransmissions([]int{txID})
+	return obsByTx[txID]
 }
 
 

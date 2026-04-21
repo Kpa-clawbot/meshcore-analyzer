@@ -318,8 +318,11 @@
   function init(app, routeParam) {
     directNode = routeParam || null;
 
-    if (directNode && window.innerWidth <= 640) {
-      // Full-screen single node view (mobile only)
+    if (directNode) {
+      // Full-screen single node view (desktop + mobile).
+      // Reached via the 🔍 Details link or a deep link to #/nodes/{pubkey}.
+      // Row clicks use history.replaceState (no hashchange → no re-init),
+      // so the split-panel UX on desktop is preserved.
       app.innerHTML = `<div class="node-fullscreen">
         <div class="node-full-header">
           <button class="detail-back-btn node-back-btn" id="nodeBackBtn" aria-label="Back to nodes">←</button>
@@ -628,34 +631,9 @@
         headerSelector: '#fullNeighborsHeader'
       });
 
-      // #690 — Clock Skew detail section
-      (async function loadClockSkew() {
-        var container = document.getElementById('node-clock-skew');
-        if (!container) return;
-        try {
-          var cs = await api('/nodes/' + encodeURIComponent(n.public_key) + '/clock-skew', { ttl: 30000 });
-          if (!cs || !cs.severity) return;
-          container.style.display = '';
-          var severityColor = SKEW_SEVERITY_COLORS[cs.severity] || 'var(--text-muted)';
-          var severityLabel = SKEW_SEVERITY_LABELS[cs.severity] || cs.severity;
-          var driftHtml = cs.driftPerDaySec ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Drift: ' + formatDrift(cs.driftPerDaySec) + '</div>' : '';
-          var sparkHtml = renderSkewSparkline(cs.samples, 200, 32);
-          var skewDisplay = cs.severity === 'no_clock'
-            ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
-            : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(cs.medianSkewSec) + '</span>';
-          container.innerHTML =
-            '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
-            '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
-              skewDisplay +
-              renderSkewBadge(cs.severity, cs.medianSkewSec) +
-              (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
-            '</div>' +
-            driftHtml +
-            (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '');
-        } catch (e) {
-          // Non-fatal — section stays hidden
-        }
-      })();
+      // #690 — Clock Skew detail section (full-screen view)
+      loadClockSkewInto(document.getElementById('node-clock-skew'), n.public_key);
+
 
       // Affinity debug panel — show if debugAffinity is enabled
       (function loadAffinityDebug() {
@@ -810,7 +788,38 @@
   let _themeRefreshHandler = null;
 
   let _allNodes = null; // cached full node list
-  let _fleetSkew = null; // cached clock skew map: pubkey → {severity, medianSkewSec, ...}
+  let _fleetSkew = null; // cached clock skew map: pubkey → {severity, recentMedianSkewSec, medianSkewSec, ...}
+
+  /**
+   * Fetch per-node clock skew and render into the given container element.
+   * Shared between the full-screen detail page and the side panel (#813, #690).
+   * No-op if the container is missing, the API errors, or the response lacks severity.
+   */
+  async function loadClockSkewInto(container, pubkey) {
+    if (!container) return;
+    try {
+      var cs = await api('/nodes/' + encodeURIComponent(pubkey) + '/clock-skew', { ttl: 30000 });
+      if (!cs || !cs.severity) return;
+      container.style.display = '';
+      var driftHtml = cs.driftPerDaySec ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Drift: ' + formatDrift(cs.driftPerDaySec) + '</div>' : '';
+      var sparkHtml = renderSkewSparkline(cs.samples, 200, 32);
+      var skewVal = window.currentSkewValue(cs);
+      var skewDisplay = cs.severity === 'no_clock'
+        ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
+        : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(skewVal) + '</span>';
+      container.innerHTML =
+        '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
+          skewDisplay +
+          renderSkewBadge(cs.severity, skewVal) +
+          (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
+        '</div>' +
+        driftHtml +
+        (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '');
+    } catch (e) {
+      // Non-fatal — section stays hidden
+    }
+  }
 
   /** Fetch fleet clock skew once, return map keyed by pubkey */
   async function getFleetSkew() {
@@ -1108,7 +1117,7 @@
       const status = getNodeStatus(n.role || 'companion', lastSeenTime ? new Date(lastSeenTime).getTime() : 0);
       const lastSeenClass = status === 'active' ? 'last-seen-active' : 'last-seen-stale';
       const cs = _fleetSkew && _fleetSkew[n.public_key];
-      const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, cs.medianSkewSec) : '';
+      const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, window.currentSkewValue(cs)) : '';
       return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}${isClaimed ? ' claimed-row' : ''}">
         <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh">★</span> ' : ''}<strong>${n.name || '(unnamed)'}</strong>${dupNameBadge(n.name, n.public_key, dupMap)}${skewBadgeHtml}</td>
         <td class="mono col-pubkey">${truncate(n.public_key, 16)}</td>
@@ -1193,6 +1202,8 @@
             ${hasLoc ? `<dt>Location</dt><dd>${Number(n.lat).toFixed(5)}, ${Number(n.lon).toFixed(5)}</dd>` : ''}
           </dl>
         </div>
+
+        <div class="node-detail-section skew-detail-section" id="node-clock-skew" style="display:none"></div>
 
         ${observers.length ? `<div class="node-detail-section">
           ${(() => { const regions = [...new Set(observers.map(o => o.iata).filter(Boolean))]; return regions.length ? `<div style="margin-bottom:6px;font-size:12px"><strong>Regions:</strong> ${regions.join(', ')}</div>` : ''; })()}
@@ -1286,6 +1297,10 @@
       headerSelector: '#panelNeighborsHeader',
       viewAllPubkey: n.public_key
     });
+
+    // #813 — Clock Skew section in side panel (mirrors full-screen view)
+    loadClockSkewInto(document.getElementById('node-clock-skew'), n.public_key);
+
 
     // Fetch paths through this node
     api('/nodes/' + encodeURIComponent(n.public_key) + '/paths', { ttl: CLIENT_TTL.nodeDetail }).then(pathData => {

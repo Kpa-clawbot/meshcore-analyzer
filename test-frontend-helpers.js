@@ -2807,6 +2807,126 @@ console.log('\n=== channels.js: encrypted channel without key shows lock message
     const messageApiFetched = apiCallPaths.some(p => p.indexOf('/messages') !== -1);
     assert.ok(!messageApiFetched, 'should NOT fetch messages API for encrypted channel without key');
   });
+
+  // #825 regression: deep link to a `#`-named channel not in the loaded list.
+  // The 3 acceptance cases (unencrypted / encrypted-no-key / encrypted-with-key)
+  // must each behave correctly without the unconditional lock affordance.
+  async function runHashDeepLinkScenario(opts) {
+    // opts: { includeEncryptedChannels: [...], storedKey: { name, hex } | null, target: '#name' }
+    const ctx = makeSandbox();
+    const dom = {};
+    function makeEl(id) {
+      if (dom[id]) return dom[id];
+      dom[id] = {
+        id, innerHTML: '', textContent: '', value: '',
+        scrollTop: 0, scrollHeight: 100, clientHeight: 80,
+        style: {}, dataset: {},
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        addEventListener() {}, removeEventListener() {},
+        querySelector() { return null; }, querySelectorAll() { return []; },
+        getBoundingClientRect() { return { left: 0, bottom: 0, width: 0 }; },
+        setAttribute() {}, removeAttribute() {}, focus() {},
+      };
+      return dom[id];
+    }
+    const headerText = { textContent: '' };
+    makeEl('chHeader').querySelector = (sel) => (sel === '.ch-header-text' ? headerText : null);
+    ['chMessages', 'chList', 'chScrollBtn', 'chAriaLive', 'chBackBtn', 'chRegionFilter'].forEach(makeEl);
+    const appEl = {
+      innerHTML: '',
+      querySelector(sel) {
+        if (sel === '.ch-sidebar' || sel === '.ch-sidebar-resize' || sel === '.ch-main') return makeEl(sel);
+        if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+        return makeEl(sel);
+      },
+      addEventListener() {},
+    };
+    let apiCallPaths = [];
+    ctx.document.getElementById = makeEl;
+    ctx.document.querySelector = (sel) => {
+      if (sel === '.ch-layout') return { classList: { add() {}, remove() {}, contains() { return false; } } };
+      return null;
+    };
+    ctx.document.querySelectorAll = () => [];
+    ctx.document.addEventListener = () => {};
+    ctx.document.removeEventListener = () => {};
+    ctx.document.documentElement = { getAttribute: () => null, setAttribute: () => {} };
+    ctx.document.body = { appendChild() {}, removeChild() {}, contains() { return false; } };
+    ctx.history = { replaceState() {} };
+    ctx.matchMedia = () => ({ matches: false });
+    ctx.window.matchMedia = ctx.matchMedia;
+    ctx.MutationObserver = function () { this.observe = () => {}; this.disconnect = () => {}; };
+    ctx.RegionFilter = { init() {}, onChange() { return () => {}; }, offChange() {}, getRegionParam() { return ''; } };
+    ctx.debouncedOnWS = (fn) => fn;
+    ctx.onWS = () => {};
+    ctx.offWS = () => {};
+    ctx.api = (path) => {
+      apiCallPaths.push(path);
+      if (path.indexOf('/observers') === 0) return Promise.resolve({ observers: [] });
+      if (path.indexOf('/channels') === 0 && path.indexOf('/messages') === -1) {
+        // Toggle-off list never includes encrypted channels for the initial load
+        if (path.indexOf('includeEncrypted=true') !== -1) {
+          return Promise.resolve({ channels: opts.includeEncryptedChannels || [] });
+        }
+        return Promise.resolve({ channels: [] });
+      }
+      if (path.indexOf('/messages') !== -1) {
+        return Promise.resolve({ messages: [{ sender: 'X', text: 'hello', timestamp: '2025-01-01T00:00:00Z' }] });
+      }
+      return Promise.resolve({});
+    };
+    ctx.CLIENT_TTL = { observers: 120000, channels: 15000, channelMessages: 10000, nodeDetail: 10000 };
+    ctx.ROLE_EMOJI = {}; ctx.ROLE_LABELS = {};
+    ctx.timeAgo = () => '1m ago';
+    ctx.registerPage = (name, handlers) => { ctx._pageHandlers = handlers; };
+    ctx.btoa = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+    ctx.atob = (s) => Buffer.from(String(s), 'base64').toString('utf8');
+    ctx.crypto = { subtle: require('crypto').webcrypto.subtle };
+    ctx.TextEncoder = TextEncoder; ctx.TextDecoder = TextDecoder; ctx.Uint8Array = Uint8Array;
+    loadInCtx(ctx, 'public/channel-decrypt.js');
+    loadInCtx(ctx, 'public/channels.js');
+    if (opts.storedKey) {
+      ctx.ChannelDecrypt.saveKey(opts.storedKey.name, opts.storedKey.hex);
+    }
+    ctx._pageHandlers.init(appEl);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    apiCallPaths = [];
+    await ctx.window._channelsSelectChannelForTest(opts.target);
+    return { msgHtml: dom['chMessages'].innerHTML, apiCallPaths };
+  }
+
+  test('#825: deep link to unencrypted #channel falls through to REST and renders messages', async () => {
+    const r = await runHashDeepLinkScenario({
+      target: '#test',
+      includeEncryptedChannels: [{ hash: '#test', name: '#test', messageCount: 3, lastActivity: null, encrypted: null }],
+      storedKey: null,
+    });
+    assert.ok(!r.msgHtml.includes('🔒'), 'unencrypted #channel must NOT show lock affordance');
+    const messageApiFetched = r.apiCallPaths.some(p => p.indexOf('/messages') !== -1);
+    assert.ok(messageApiFetched, 'unencrypted #channel must fetch messages REST endpoint');
+  });
+
+  test('#811 preserved: deep link to encrypted #channel without key shows lock', async () => {
+    const r = await runHashDeepLinkScenario({
+      target: '#private',
+      includeEncryptedChannels: [{ hash: '#private', name: '#private', messageCount: 5, lastActivity: null, encrypted: true }],
+      storedKey: null,
+    });
+    assert.ok(r.msgHtml.includes('🔒'), 'encrypted #channel without key must show lock affordance');
+    assert.ok(r.msgHtml.includes('no decryption key'), 'lock should mention no decryption key');
+    const messageApiFetched = r.apiCallPaths.some(p => p.indexOf('/messages') !== -1);
+    assert.ok(!messageApiFetched, 'must NOT fetch /messages REST for encrypted channel without key');
+  });
+
+  test('#815 preserved: deep link to #channel with stored key triggers decrypt path (no lock)', async () => {
+    const r = await runHashDeepLinkScenario({
+      target: '#private',
+      includeEncryptedChannels: [{ hash: '#private', name: '#private', messageCount: 5, lastActivity: null, encrypted: true }],
+      storedKey: { name: '#private', hex: 'abcd1234abcd1234abcd1234abcd1234' },
+    });
+    assert.ok(!r.msgHtml.includes('no decryption key'), 'must not show no-key lock when key is stored');
+    // Decrypt path either renders something or shows decrypt-specific empty/wrong-key state — never the no-key lock.
+  });
 }
 // ===== PACKETS.JS: savedTimeWindowMin default guard =====
 console.log('\n=== packets.js: savedTimeWindowMin defaults ===');

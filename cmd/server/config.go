@@ -115,7 +115,8 @@ type NeighborGraphConfig struct {
 // PacketStoreConfig controls in-memory packet store limits.
 type PacketStoreConfig struct {
 	RetentionHours float64 `json:"retentionHours"` // max age of packets in hours (0 = unlimited)
-	MaxMemoryMB    int     `json:"maxMemoryMB"`     // hard memory ceiling in MB (0 = unlimited)
+	MaxMemoryMB                    int `json:"maxMemoryMB"`                    // hard memory ceiling in MB (0 = unlimited)
+	MaxResolvedPubkeyIndexEntries  int `json:"maxResolvedPubkeyIndexEntries"`  // warning threshold for index size (0 = 5M default)
 }
 
 // GeoFilterConfig is an alias for the shared geofilter.Config type.

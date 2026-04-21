@@ -52,26 +52,26 @@ func TestEstimateStoreTxBytes_ManyHopsSubpaths(t *testing.T) {
 	}
 }
 
-// TestEstimateStoreObsBytes_WithResolvedPath verifies that observations with
-// ResolvedPath estimate more than those without.
-func TestEstimateStoreObsBytes_WithResolvedPath(t *testing.T) {
-	s1, s2, s3 := "node1", "node2", "node3"
-
-	obsNoRP := &StoreObs{
+// TestEstimateStoreObsBytes_AfterRefactor verifies that after #800 refactor,
+// observations no longer have ResolvedPath overhead in their estimate.
+func TestEstimateStoreObsBytes_AfterRefactor(t *testing.T) {
+	obs := &StoreObs{
 		ObserverID: "obs1",
 		PathJSON:   `["a","b"]`,
 	}
-	obsWithRP := &StoreObs{
-		ObserverID:   "obs1",
-		PathJSON:     `["a","b"]`,
-		ResolvedPath: []*string{&s1, &s2, &s3},
+
+	est := estimateStoreObsBytes(obs)
+	if est <= 0 {
+		t.Errorf("estimate should be positive, got %d", est)
 	}
-
-	estNo := estimateStoreObsBytes(obsNoRP)
-	estWith := estimateStoreObsBytes(obsWithRP)
-
-	if estWith <= estNo {
-		t.Errorf("obs with ResolvedPath (%d) should estimate more than without (%d)", estWith, estNo)
+	// After #800, all obs estimates should be the same (no RP field variation)
+	obs2 := &StoreObs{
+		ObserverID: "obs1",
+		PathJSON:   `["a","b"]`,
+	}
+	est2 := estimateStoreObsBytes(obs2)
+	if est != est2 {
+		t.Errorf("estimates should be equal after #800 (no RP field), got %d vs %d", est, est2)
 	}
 }
 
@@ -155,11 +155,9 @@ func BenchmarkEstimateStoreTxBytes(b *testing.B) {
 
 // BenchmarkEstimateStoreObsBytes verifies the obs estimate function is fast.
 func BenchmarkEstimateStoreObsBytes(b *testing.B) {
-	s := "resolvedNodePubkey123456"
 	obs := &StoreObs{
-		ObserverID:   "observer1234",
-		PathJSON:     `["a","b","c"]`,
-		ResolvedPath: []*string{&s, &s, &s},
+		ObserverID: "observer1234",
+		PathJSON:   `["a","b","c"]`,
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

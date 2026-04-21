@@ -3681,66 +3681,54 @@ func TestNodePathsPrefixCollisionFilter(t *testing.T) {
 func TestNodeInResolvedPath(t *testing.T) {
 	target := "aabbccdd11223344"
 
-	// Case 1: tx.ResolvedPath contains target
-	pk := "aabbccdd11223344"
-	tx1 := &StoreTx{ResolvedPath: []*string{&pk}}
-	if !nodeInResolvedPath(tx1, target) {
-		t.Error("should match when ResolvedPath contains target")
+	// After #800, nodeInResolvedPath is replaced by nodeInResolvedPathViaIndex
+	// which uses the membership index. Test the index-based approach.
+	store := &PacketStore{
+		byNode:               make(map[string][]*StoreTx),
+		nodeHashes:           make(map[string]map[string]bool),
+		useResolvedPathIndex: true,
+	}
+	store.initResolvedPathIndex()
+
+	// Case 1: tx indexed with target pubkey
+	tx1 := &StoreTx{ID: 1}
+	store.addToResolvedPubkeyIndex(1, []string{target})
+	if !store.nodeInResolvedPathViaIndex(tx1, target) {
+		t.Error("should match when index contains target")
 	}
 
-	// Case 2: tx.ResolvedPath contains different node
-	other := "aacafe0000000000"
-	tx2 := &StoreTx{ResolvedPath: []*string{&other}}
-	if nodeInResolvedPath(tx2, target) {
-		t.Error("should not match when ResolvedPath contains different node")
+	// Case 2: tx indexed with different pubkey
+	tx2 := &StoreTx{ID: 2}
+	store.addToResolvedPubkeyIndex(2, []string{"aacafe0000000000"})
+	if store.nodeInResolvedPathViaIndex(tx2, target) {
+		t.Error("should not match when index contains different node")
 	}
 
-	// Case 3: nil ResolvedPath — should match (no data to disambiguate, keep it)
-	tx3 := &StoreTx{}
-	if !nodeInResolvedPath(tx3, target) {
-		t.Error("should match when ResolvedPath is nil (no data to disambiguate)")
-	}
-
-	// Case 4: ResolvedPath with nil elements only — has data but no match
-	tx4 := &StoreTx{ResolvedPath: []*string{nil, nil}}
-	if nodeInResolvedPath(tx4, target) {
-		t.Error("should not match when all ResolvedPath elements are nil")
-	}
-
-	// Case 5: target in observation but not in tx.ResolvedPath
-	tx5 := &StoreTx{
-		ResolvedPath: []*string{&other},
-		Observations: []*StoreObs{
-			{ResolvedPath: []*string{&pk}},
-		},
-	}
-	if !nodeInResolvedPath(tx5, target) {
-		t.Error("should match when observation's ResolvedPath contains target")
+	// Case 3: tx not in index at all — should match (no data to disambiguate)
+	tx3 := &StoreTx{ID: 3}
+	if !store.nodeInResolvedPathViaIndex(tx3, target) {
+		t.Error("should match when tx has no index entries (no data to disambiguate)")
 	}
 }
 
 func TestPathHopIndexIncrementalUpdate(t *testing.T) {
-	// Test that addTxToPathHopIndex and removeTxFromPathHopIndex work correctly
+	// After #800, addTxToPathHopIndex only indexes raw hops (not resolved pubkeys).
+	// Resolved pubkeys are handled by the resolved pubkey membership index.
 	idx := make(map[string][]*StoreTx)
 
-	pk1 := "fullpubkey1"
 	tx1 := &StoreTx{
 		ID:       1,
 		PathJSON: `["ab","cd"]`,
-		ResolvedPath: []*string{&pk1, nil},
 	}
 
 	addTxToPathHopIndex(idx, tx1)
 
-	// Should be indexed under "ab", "cd", and "fullpubkey1"
+	// Should be indexed under "ab" and "cd" only (no resolved pubkey)
 	if len(idx["ab"]) != 1 {
 		t.Errorf("expected 1 entry for 'ab', got %d", len(idx["ab"]))
 	}
 	if len(idx["cd"]) != 1 {
 		t.Errorf("expected 1 entry for 'cd', got %d", len(idx["cd"]))
-	}
-	if len(idx["fullpubkey1"]) != 1 {
-		t.Errorf("expected 1 entry for resolved pubkey, got %d", len(idx["fullpubkey1"]))
 	}
 
 	// Add another tx with overlapping hop
@@ -3765,9 +3753,6 @@ func TestPathHopIndexIncrementalUpdate(t *testing.T) {
 	}
 	if _, ok := idx["cd"]; ok {
 		t.Error("expected 'cd' key to be deleted after removal")
-	}
-	if _, ok := idx["fullpubkey1"]; ok {
-		t.Error("expected resolved pubkey key to be deleted after removal")
 	}
 }
 
@@ -3806,5 +3791,184 @@ func TestMetricsAPIEndpoints(t *testing.T) {
 	observers, ok := resp2["observers"].([]interface{})
 	if !ok || len(observers) != 1 {
 		t.Errorf("expected 1 observer in summary, got %v", resp2["observers"])
+	}
+}
+
+// TestNodeHealth_RecentPackets_ResolvedPath verifies that recentPackets in the
+// node health endpoint include resolved_path (regression for Codex review item #2).
+func TestNodeHealth_RecentPackets_ResolvedPath(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/nodes/aabbccdd11223344/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	rp, ok := body["recentPackets"].([]interface{})
+	if !ok || len(rp) == 0 {
+		t.Fatal("expected non-empty recentPackets")
+	}
+	// At least one packet should have resolved_path (tx 1 has observations with resolved_path)
+	found := false
+	for _, p := range rp {
+		pm, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if pm["resolved_path"] != nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected at least one recentPacket with resolved_path")
+	}
+}
+
+// TestPacketsExpand_ResolvedPath verifies that expandObservations=true includes
+// resolved_path on expanded observations (regression for Codex review item #3).
+func TestPacketsExpand_ResolvedPath(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/packets?expand=observations&limit=10", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json decode: %v", err)
+	}
+	packets, ok := body["packets"].([]interface{})
+	if !ok || len(packets) == 0 {
+		t.Fatal("expected non-empty packets")
+	}
+	// Find a packet with observations that should have resolved_path
+	found := false
+	for _, p := range packets {
+		pm, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		obs, ok := pm["observations"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, o := range obs {
+			om, ok := o.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if om["resolved_path"] != nil {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Error("expected at least one expanded observation with resolved_path")
+	}
+}
+
+// TestPacketDetailFallsBackToDBWhenStoreMisses verifies that handlePacketDetail
+// serves transmissions present in the DB but absent from the in-memory store.
+// This is the recentAdverts → "Not found" bug (#827).
+func TestPacketDetailFallsBackToDBWhenStoreMisses(t *testing.T) {
+	srv, router := setupTestServer(t)
+	// Insert a transmission directly into the DB AFTER store.Load(), so the
+	// in-memory PacketStore won't see it. Mirrors the production case where
+	// the store has pruned an entry but the DB still has it.
+	const dbOnlyHash = "deadbeef00112233"
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := srv.db.conn.Exec(`INSERT INTO transmissions
+		(raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
+		VALUES ('FFEE', ?, ?, 1, 4, '{"type":"ADVERT"}')`, dbOnlyHash, now); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var txID int
+	if err := srv.db.conn.QueryRow("SELECT id FROM transmissions WHERE hash = ?", dbOnlyHash).Scan(&txID); err != nil {
+		t.Fatalf("lookup tx id: %v", err)
+	}
+	if _, err := srv.db.conn.Exec(`INSERT INTO observations
+		(transmission_id, observer_idx, snr, rssi, path_json, timestamp)
+		VALUES (?, 1, 7.5, -99, '[]', ?)`, txID, time.Now().Unix()); err != nil {
+		t.Fatalf("insert obs: %v", err)
+	}
+
+	// Confirm the store really doesn't have it (precondition for the fix).
+	if got := srv.store.GetPacketByHash(dbOnlyHash); got != nil {
+		t.Fatalf("test precondition failed: store unexpectedly has %s", dbOnlyHash)
+	}
+
+	req := httptest.NewRequest("GET", "/api/packets/"+dbOnlyHash, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	pkt, ok := body["packet"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected packet object")
+	}
+	if pkt["hash"] != dbOnlyHash {
+		t.Errorf("expected hash %s, got %v", dbOnlyHash, pkt["hash"])
+	}
+	// Observations fallback should populate from DB too.
+	obs, _ := body["observations"].([]interface{})
+	if len(obs) == 0 {
+		t.Errorf("expected DB observations to be returned, got 0")
+	}
+}
+
+// TestPacketDetail404WhenAbsentFromBoth verifies that a hash present in
+// neither store nor DB still returns 404 (no false positives from the fallback).
+func TestPacketDetail404WhenAbsentFromBoth(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/packets/0011223344556677", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 404 {
+		t.Errorf("expected 404, got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+// TestPacketDetailPrefersStoreOverDB verifies the store result wins when the
+// hash exists in both — the DB fallback must not double-fetch / overwrite.
+func TestPacketDetailPrefersStoreOverDB(t *testing.T) {
+	srv, router := setupTestServer(t)
+	// abc123def4567890 is seeded in both DB and (after Load) the store.
+	const hash = "abc123def4567890"
+	if got := srv.store.GetPacketByHash(hash); got == nil {
+		t.Fatalf("test precondition failed: store should have %s", hash)
+	}
+
+	req := httptest.NewRequest("GET", "/api/packets/"+hash, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	pkt, _ := body["packet"].(map[string]interface{})
+	if pkt == nil || pkt["hash"] != hash {
+		t.Fatalf("expected packet with hash %s, got %v", hash, pkt)
+	}
+	// observation_count comes from store observations (2 seeded for tx 1).
+	if cnt, _ := body["observation_count"].(float64); cnt != 2 {
+		t.Errorf("expected observation_count=2 (from store), got %v", body["observation_count"])
 	}
 }

@@ -132,7 +132,7 @@
 
 /* ---- Node Detail Panel ---- */
 .live-node-detail {
-  top: 60px;
+  top: 64px;
   right: 12px;
   width: 320px;
   max-height: calc(100vh - 140px);
@@ -325,11 +325,14 @@
   }
   .live-stats-row { flex-wrap: wrap; gap: 4px; }
   .live-stat-pill { font-size: 11px; padding: 2px 7px; }
-  .live-toggles { font-size: 10px; gap: 6px; margin-left: 0; }
+  .live-toggles { font-size: 10px; gap: 6px; margin-left: 0; overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; width: 100%; min-width: 0; }
   .live-title { font-size: 12px; letter-spacing: 1px; }
   /* #203 — bottom-sheet node detail on mobile */
-  .live-node-detail { width: 100%; right: 0; left: 0; top: auto; bottom: 0; max-height: 60vh; border-radius: 16px 16px 0 0; overflow-y: auto; }
+  .live-node-detail { width: 100%; right: 0; left: 0; top: auto; bottom: 0; max-height: 60dvh; border-radius: 16px 16px 0 0; overflow-y: auto; z-index: 1050; }
   .live-node-detail.hidden { transform: translateY(100%); }
+  /* Close button was unreachable: panel-header collapsed to 8px on mobile, panel-content
+     scroll area started at y=8, overlapping the button's 36px tap target (y=6–42) */
+  .live-node-detail .panel-header { min-height: 44px; }
   .feed-detail-card {
     position: fixed !important;
     right: 0 !important;
@@ -688,6 +691,18 @@
 /* Adjust feed position to not overlap VCR bar */
 .live-feed { bottom: 68px; }
 .feed-show-btn { bottom: 68px !important; }
+
+/* Backdrop for mobile tap-outside-to-close (#797) */
+.node-detail-backdrop {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 1049;
+  background: rgba(0, 0, 0, 0.25);
+}
+@media (max-width: 640px) {
+  .node-detail-backdrop.active { display: block; }
+}
 
 /* Mobile VCR */
 @media (max-width: 640px) {

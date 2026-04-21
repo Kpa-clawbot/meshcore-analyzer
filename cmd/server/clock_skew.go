@@ -33,6 +33,31 @@ const (
 	// maxReasonableDriftPerDay caps drift display. Physically impossible
 	// drift rates (> 1 day/day) indicate insufficient or outlier samples.
 	maxReasonableDriftPerDay = 86400.0
+
+	// recentSkewWindowCount is the number of most-recent advert samples
+	// used to derive the "current" skew for severity classification (see
+	// issue #789). The all-time median is poisoned by historical bad
+	// samples (e.g. a node that was off and then GPS-corrected); severity
+	// must reflect current health, not lifetime statistics.
+	recentSkewWindowCount = 5
+
+	// recentSkewWindowSec bounds the recent-window in time as well: only
+	// samples from the last N seconds count as "recent" for severity.
+	// The effective window is min(recentSkewWindowCount, samples in 1h).
+	recentSkewWindowSec = 3600
+
+	// maxPlausibleSkewJumpSec is the largest skew change between
+	// consecutive samples that we treat as physical drift. Anything larger
+	// (e.g. a GPS sync that jumps the clock by minutes/days) is rejected
+	// as an outlier when computing drift. Real microcontroller drift is
+	// fractions of a second per advert; 60s is a generous safety factor.
+	maxPlausibleSkewJumpSec = 60.0
+
+	// theilSenMaxPoints caps the number of points fed to Theil-Sen
+	// regression (O(n²) in pairs). For nodes with thousands of samples we
+	// keep the most-recent points, which are also the most relevant for
+	// current drift.
+	theilSenMaxPoints = 200
 )
 
 // classifySkew maps absolute skew (seconds) to a severity level.
@@ -76,6 +101,7 @@ type NodeClockSkew struct {
 	MeanSkewSec     float64      `json:"meanSkewSec"`     // corrected mean skew (positive = node ahead)
 	MedianSkewSec   float64      `json:"medianSkewSec"`   // corrected median skew
 	LastSkewSec     float64      `json:"lastSkewSec"`     // most recent corrected skew
+	RecentMedianSkewSec float64  `json:"recentMedianSkewSec"` // median across most-recent samples (drives severity, see #789)
 	DriftPerDaySec  float64      `json:"driftPerDaySec"`  // linear drift rate (sec/day)
 	Severity        SkewSeverity `json:"severity"`
 	SampleCount     int          `json:"sampleCount"`
@@ -419,8 +445,52 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 
 	medSkew := median(allSkews)
 	meanSkew := mean(allSkews)
-	absMedian := math.Abs(medSkew)
-	severity := classifySkew(absMedian)
+
+	// Severity is derived from RECENT samples only (issue #789). The
+	// all-time median is poisoned by historical bad data — a node that
+	// was off for hours and then GPS-corrected can have median = -59M sec
+	// while its current skew is -0.8s. Operators need severity to reflect
+	// current health, so they trust the dashboard.
+	//
+	// Sort tsSkews by time and take the last recentSkewWindowCount samples
+	// (or all samples within recentSkewWindowSec of the latest, whichever
+	// gives FEWER samples — we want the more-current view; a chatty node
+	// can fit dozens of samples in 1h, in which case the count cap wins).
+	sort.Slice(tsSkews, func(i, j int) bool { return tsSkews[i].ts < tsSkews[j].ts })
+
+	recentSkew := lastSkew
+	if n := len(tsSkews); n > 0 {
+		latestTS := tsSkews[n-1].ts
+		// Index-based window: last K samples.
+		startByCount := n - recentSkewWindowCount
+		if startByCount < 0 {
+			startByCount = 0
+		}
+		// Time-based window: samples newer than latestTS - windowSec.
+		startByTime := n - 1
+		for i := n - 1; i >= 0; i-- {
+			if latestTS-tsSkews[i].ts <= recentSkewWindowSec {
+				startByTime = i
+			} else {
+				break
+			}
+		}
+		// Pick the narrower (larger-index) of the two windows — the most
+		// current view of the node's clock health.
+		start := startByCount
+		if startByTime > start {
+			start = startByTime
+		}
+		recentVals := make([]float64, 0, n-start)
+		for i := start; i < n; i++ {
+			recentVals = append(recentVals, tsSkews[i].skew)
+		}
+		if len(recentVals) > 0 {
+			recentSkew = median(recentVals)
+		}
+	}
+
+	severity := classifySkew(math.Abs(recentSkew))
 
 	// For no_clock nodes (uninitialized RTC), skip drift — data is meaningless.
 	var drift float64
@@ -432,25 +502,25 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		}
 	}
 
-	// Build sparkline samples from tsSkews (sorted by time).
-	sort.Slice(tsSkews, func(i, j int) bool { return tsSkews[i].ts < tsSkews[j].ts })
+	// Build sparkline samples from tsSkews (already sorted by time above).
 	samples := make([]SkewSample, len(tsSkews))
 	for i, p := range tsSkews {
 		samples[i] = SkewSample{Timestamp: p.ts, SkewSec: round(p.skew, 1)}
 	}
 
 	return &NodeClockSkew{
-		Pubkey:         pubkey,
-		MeanSkewSec:    round(meanSkew, 1),
-		MedianSkewSec:  round(medSkew, 1),
-		LastSkewSec:    round(lastSkew, 1),
-		DriftPerDaySec: round(drift, 2),
-		Severity:       severity,
-		SampleCount:    totalSamples,
-		Calibrated:     anyCal,
-		LastAdvertTS:   lastAdvTS,
-		LastObservedTS: lastObsTS,
-		Samples:        samples,
+		Pubkey:              pubkey,
+		MeanSkewSec:         round(meanSkew, 1),
+		MedianSkewSec:       round(medSkew, 1),
+		LastSkewSec:         round(lastSkew, 1),
+		RecentMedianSkewSec: round(recentSkew, 1),
+		DriftPerDaySec:      round(drift, 2),
+		Severity:            severity,
+		SampleCount:         totalSamples,
+		Calibrated:          anyCal,
+		LastAdvertTS:        lastAdvTS,
+		LastObservedTS:      lastObsTS,
+		Samples:             samples,
 	}
 }
 
@@ -544,7 +614,18 @@ type tsSkewPair struct {
 }
 
 // computeDrift estimates linear drift in seconds per day from time-ordered
-// (timestamp, skew) pairs using simple linear regression.
+// (timestamp, skew) pairs. Issue #789: a single GPS-correction event (huge
+// skew jump in seconds) used to dominate ordinary least squares and produce
+// absurd drift like 1.7M sec/day. We now:
+//
+//  1. Drop pairs whose consecutive skew jump exceeds maxPlausibleSkewJumpSec
+//     (clock corrections, not physical drift). This protects both OLS-style
+//     consumers and Theil-Sen.
+//  2. Use Theil-Sen regression — the slope is the median of all pairwise
+//     slopes, naturally robust to remaining outliers (breakdown point ~29%).
+//
+// For very small samples after filtering we fall back to a simple slope
+// between first and last calibrated samples.
 func computeDrift(pairs []tsSkewPair) float64 {
 	if len(pairs) < 2 {
 		return 0
@@ -560,21 +641,55 @@ func computeDrift(pairs []tsSkewPair) float64 {
 		return 0
 	}
 
-	// Simple linear regression: skew = a + b*t
-	n := float64(len(pairs))
-	var sumX, sumY, sumXY, sumX2 float64
-	for _, p := range pairs {
-		x := float64(p.ts - pairs[0].ts) // normalize to avoid large numbers
-		y := p.skew
-		sumX += x
-		sumY += y
-		sumXY += x * y
-		sumX2 += x * x
+	// Outlier filter: drop samples where the skew jumps more than
+	// maxPlausibleSkewJumpSec from the running "stable" baseline.
+	// We anchor on the first sample, then accept each subsequent point
+	// that's within the threshold of the most recent accepted point —
+	// this preserves a slow drift while rejecting correction events.
+	filtered := make([]tsSkewPair, 0, len(pairs))
+	filtered = append(filtered, pairs[0])
+	for i := 1; i < len(pairs); i++ {
+		prev := filtered[len(filtered)-1]
+		if math.Abs(pairs[i].skew-prev.skew) <= maxPlausibleSkewJumpSec {
+			filtered = append(filtered, pairs[i])
+		}
 	}
-	denom := n*sumX2 - sumX*sumX
-	if denom == 0 {
+	// If the filter killed too much (e.g. unstable node), fall back to the
+	// raw series so we at least produce *something* — it'll be capped by
+	// maxReasonableDriftPerDay downstream.
+	if len(filtered) < 2 || float64(filtered[len(filtered)-1].ts-filtered[0].ts) < 3600 {
+		filtered = pairs
+	}
+
+	// Cap point count for Theil-Sen (O(n²) on pairs). Keep most-recent.
+	if len(filtered) > theilSenMaxPoints {
+		filtered = filtered[len(filtered)-theilSenMaxPoints:]
+	}
+
+	return theilSenSlope(filtered) * 86400 // sec/sec → sec/day
+}
+
+// theilSenSlope returns the Theil-Sen estimator: median of all pairwise
+// slopes (yj - yi) / (tj - ti) for i < j. Naturally robust to outliers.
+// Pairs must be sorted by timestamp ascending.
+func theilSenSlope(pairs []tsSkewPair) float64 {
+	n := len(pairs)
+	if n < 2 {
 		return 0
 	}
-	slope := (n*sumXY - sumX*sumY) / denom // seconds of drift per second
-	return slope * 86400                     // convert to seconds per day
+	// Pre-allocate: n*(n-1)/2 pairs.
+	slopes := make([]float64, 0, n*(n-1)/2)
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			dt := float64(pairs[j].ts - pairs[i].ts)
+			if dt <= 0 {
+				continue
+			}
+			slopes = append(slopes, (pairs[j].skew-pairs[i].skew)/dt)
+		}
+	}
+	if len(slopes) == 0 {
+		return 0
+	}
+	return median(slopes)
 }
