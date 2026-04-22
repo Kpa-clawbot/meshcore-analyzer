@@ -315,7 +315,6 @@ type PacketTimestampsResponse struct {
 type PacketDetailResponse struct {
 	Packet           interface{}       `json:"packet"`
 	Path             []interface{}     `json:"path"`
-	Breakdown        *Breakdown        `json:"breakdown"`
 	ObservationCount int               `json:"observation_count"`
 	Observations     []ObservationResp `json:"observations,omitempty"`
 }

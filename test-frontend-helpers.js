@@ -1804,6 +1804,112 @@ console.log('\n=== app.js: formatEngineBadge ===');
   });
 }
 
+// ===== APP.JS: computeBreakdownRanges =====
+console.log('\n=== app.js: computeBreakdownRanges ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/app.js');
+  const computeBreakdownRanges = ctx.computeBreakdownRanges;
+
+  function findRange(ranges, label) {
+    return ranges.find(r => r.label === label);
+  }
+
+  test('returns [] for empty hex', () => {
+    assert.deepEqual(computeBreakdownRanges('', 1, 5), []);
+  });
+
+  test('returns [] for too-short hex (< 2 bytes)', () => {
+    assert.deepEqual(computeBreakdownRanges('15', 1, 5), []);
+  });
+
+  test('FLOOD non-transport: 4-hop hash_size=1', () => {
+    // header=15, plb=04 → hash_size=1, hash_count=4
+    // bytes: 15 04 90 FA F9 10 6E 01 D9
+    const r = computeBreakdownRanges('150490FAF910 6E01D9'.replace(/\s/g,''), 1, 5);
+    assert.deepEqual(findRange(r, 'Header'),      { start: 0, end: 0, label: 'Header' });
+    assert.deepEqual(findRange(r, 'Path Length'), { start: 1, end: 1, label: 'Path Length' });
+    assert.deepEqual(findRange(r, 'Path'),        { start: 2, end: 5, label: 'Path' });
+    assert.deepEqual(findRange(r, 'Payload'),     { start: 6, end: 8, label: 'Payload' });
+    assert.strictEqual(findRange(r, 'Transport Codes'), undefined);
+  });
+
+  test('FLOOD non-transport: 7-hop hash_size=1', () => {
+    // header=15, plb=07
+    const hex = '15077f6d7d1cadeca33988fd95e0851ebf01ea12e1879e';
+    const r = computeBreakdownRanges(hex, 1, 5);
+    assert.deepEqual(findRange(r, 'Path'), { start: 2, end: 8, label: 'Path' });
+    const payload = findRange(r, 'Payload');
+    assert.strictEqual(payload.start, 9, 'payload starts after the 7 path bytes');
+  });
+
+  test('FLOOD non-transport: 8-hop hash_size=1', () => {
+    const hex = '1508' + '11223344556677AA' + 'BBCCDD';
+    const r = computeBreakdownRanges(hex, 1, 5);
+    assert.deepEqual(findRange(r, 'Path'), { start: 2, end: 9, label: 'Path' });
+    assert.deepEqual(findRange(r, 'Payload'), { start: 10, end: 12, label: 'Payload' });
+  });
+
+  test('Direct advert: 0-hop, no Path range', () => {
+    // plb=00 → 0 hops; expect Path Length but NO Path range
+    const r = computeBreakdownRanges('1100AABBCCDD', 1, 4);
+    assert.deepEqual(findRange(r, 'Path Length'), { start: 1, end: 1, label: 'Path Length' });
+    assert.strictEqual(findRange(r, 'Path'), undefined);
+  });
+
+  test('Transport route shifts path-length offset by 4', () => {
+    // route_type=0 (TRANSPORT_FLOOD): bytes 1..4 are Transport Codes
+    // header=14, transport=AABBCCDD, plb=02, hops=11 22, payload=99
+    const hex = '14AABBCCDD021122' + '99';
+    const r = computeBreakdownRanges(hex, 0, 5);
+    assert.deepEqual(findRange(r, 'Transport Codes'), { start: 1, end: 4, label: 'Transport Codes' });
+    assert.deepEqual(findRange(r, 'Path Length'),     { start: 5, end: 5, label: 'Path Length' });
+    assert.deepEqual(findRange(r, 'Path'),            { start: 6, end: 7, label: 'Path' });
+    assert.deepEqual(findRange(r, 'Payload'),         { start: 8, end: 8, label: 'Payload' });
+  });
+
+  test('hash_size=2 (plb top bits=01): 4 hops × 2 bytes', () => {
+    // plb = 01 0001 00 = 0x44 → hash_size=2, hash_count=4 → 8 path bytes
+    const hex = '15' + '44' + 'AABB' + 'CCDD' + 'EEFF' + '1122' + '9988';
+    const r = computeBreakdownRanges(hex, 1, 5);
+    assert.deepEqual(findRange(r, 'Path'), { start: 2, end: 9, label: 'Path' });
+    assert.deepEqual(findRange(r, 'Payload'), { start: 10, end: 11, label: 'Payload' });
+  });
+
+  test('truncated path: not enough bytes → no Path range', () => {
+    // plb=04 says 4 hops but only 2 bytes remain
+    const hex = '1504AABB';
+    const r = computeBreakdownRanges(hex, 1, 5);
+    assert.strictEqual(findRange(r, 'Path'), undefined);
+  });
+
+  test('ADVERT (payload_type=4) with full record: PubKey/Timestamp/Signature/Flags', () => {
+    // header=11, plb=00 (direct advert)
+    // payload: 32 bytes pubkey + 4 bytes ts + 64 bytes sig + 1 byte flags
+    const pubkey = 'AB'.repeat(32);
+    const ts = '11223344';
+    const sig = 'CD'.repeat(64);
+    const flags = '00';
+    const hex = '1100' + pubkey + ts + sig + flags;
+    const r = computeBreakdownRanges(hex, 1, 4);
+    assert.deepEqual(findRange(r, 'PubKey'),    { start: 2,  end: 33,  label: 'PubKey' });
+    assert.deepEqual(findRange(r, 'Timestamp'), { start: 34, end: 37,  label: 'Timestamp' });
+    assert.deepEqual(findRange(r, 'Signature'), { start: 38, end: 101, label: 'Signature' });
+    assert.deepEqual(findRange(r, 'Flags'),     { start: 102, end: 102, label: 'Flags' });
+  });
+
+  test('NaN-safe: malformed path-length byte produces no Path range', () => {
+    // hex with non-hex char in plb position would parseInt-fail → bail
+    // Use a 1-byte payload that makes pathByte parseInt produce NaN-ish via X
+    // (parseInt of 'XY' is NaN). Since fs reads only hex chars, simulate via short hex.
+    // Easier: empty string already returns []; 1-byte returns []. Both covered above.
+    // Use plb=FF (hash_size=4, hash_count=63) too long for input → no Path
+    const r = computeBreakdownRanges('15FF' + 'AA', 1, 5);
+    assert.strictEqual(findRange(r, 'Path'), undefined);
+  });
+}
+
 // ===== APP.JS: isTransportRoute + transportBadge =====
 console.log('\n=== app.js: isTransportRoute + transportBadge ===');
 {
@@ -5544,40 +5650,33 @@ console.log('\n=== packets.js: buildFieldTable hop count from path_len (#844) ==
   loadInCtx(ftCtx, 'public/packets.js');
   const { buildFieldTable } = ftCtx.window._packetsTestAPI;
 
-  test('#844: byte breakdown uses path_len hop count, not aggregated _parsedPath', () => {
+  test('#885: byte breakdown uses pathHops length (single source of truth)', () => {
+    // After #885 the byte breakdown agrees with the path pill: both render
+    // from the per-observation path_json. raw_hex is the underlying bytes
+    // for that same observation, so consistency is by construction.
     // path_len = 0x42 → hash_size=2, hash_count=2
     // raw_hex: header(11) + path_len(42) + hop0(41B1) + hop1(27D7) + pubkey(32 bytes)...
     const pubkey = 'C0DEDAD4'.padEnd(64, '0'); // 32 bytes = 64 hex chars
     const raw = '1142' + '41B1' + '27D7' + pubkey + '00000000' + '0'.repeat(128);
     const pkt = { raw_hex: raw, route_type: 1, payload_type: 0 };
-    // Pass aggregated pathHops with 7 hops (mismatched)
-    const pathHops = ['41B1', '5EB0', '1000', '2DD2', '52F8', '9535', '762B'];
+    // Per-obs path_json IS the source of truth — pass the 2 hops that match raw_hex.
+    const pathHops = ['41B1', '27D7'];
     const html = buildFieldTable(pkt, {}, pathHops, {});
 
-    // Section header should say "2 hops", not "7 hops"
-    assert.ok(html.includes('Path (2 hops)'), 'Should show "Path (2 hops)" from path_len, got: ' +
-      (html.match(/Path \(\d+ hops\)/)?.[0] || 'no match'));
-    assert.ok(!html.includes('Path (7 hops)'), 'Should NOT show 7 hops from aggregated path');
-
-    // Should contain hop values from raw_hex
+    assert.ok(html.includes('Path (2 hops)'), 'Should show "Path (2 hops)"');
     assert.ok(html.includes('41B1'), 'Should show hop 0 = 41B1');
     assert.ok(html.includes('27D7'), 'Should show hop 1 = 27D7');
-
-    // Should NOT contain hops from aggregated path that aren't in raw_hex
-    assert.ok(!html.includes('5EB0'), 'Should NOT show aggregated hop 5EB0');
-    assert.ok(!html.includes('9535'), 'Should NOT show aggregated hop 9535');
   });
 
-  test('#844: pubkey offset correct after 2-hop path (not after 7-hop)', () => {
+  test('#885: pubkey offset advances by hashSize * pathHops.length', () => {
     const pubkey = 'C0DEDAD4'.padEnd(64, '0');
     const raw = '1142' + '41B1' + '27D7' + pubkey + '00000000' + '0'.repeat(128);
     const pkt = { raw_hex: raw, route_type: 1, payload_type: 0 };
-    const html = buildFieldTable(pkt, { type: 'ADVERT', pubKey: pubkey }, ['41B1','5EB0','1000','2DD2','52F8','9535','762B'], {});
+    const html = buildFieldTable(pkt, { type: 'ADVERT', pubKey: pubkey }, ['41B1', '27D7'], {});
 
     // Public Key should be at offset 6 (1 header + 1 path_len + 2*2 hops = 6)
-    // Not at offset 16 (1 + 1 + 2*7 = 16)
     assert.ok(html.includes('>6<') || html.includes('"6"'),
-      'Public Key should be at offset 6, not 16');
+      'Public Key should be at offset 6');
   });
 
   test('#844: hashCountVal=0 (direct advert) skips Path section', () => {

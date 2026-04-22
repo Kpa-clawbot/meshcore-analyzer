@@ -389,7 +389,7 @@
               expandedHashes.add(h);
               const obsPacket = {...data.packet, observer_id: obs.observer_id, observer_name: obs.observer_name, snr: obs.snr, rssi: obs.rssi, path_json: obs.path_json, resolved_path: obs.resolved_path, direction: obs.direction, timestamp: obs.timestamp, first_seen: obs.timestamp};
               clearParsedCache(obsPacket);
-              selectPacket(obs.id, h, {packet: obsPacket, breakdown: data.breakdown, observations: data.observations}, obs.id);
+              selectPacket(obs.id, h, {packet: obsPacket, observations: data.observations}, obs.id);
             } else {
               selectPacket(data.packet.id, h, data);
             }
@@ -706,7 +706,7 @@
             group._children = obs.length
               ? obs.map(o => clearParsedCache({...pkt, ...o, _isObservation: true}))
               : [pkt];
-            group._fetchedData = { packet: pkt, observations: obs, breakdown: data.breakdown };
+            group._fetchedData = { packet: pkt, observations: obs };
             sortGroupChildren(group);
           }
         }
@@ -1260,7 +1260,7 @@
             const parentData = group._fetchedData;
             const obsPacket = parentData ? {...parentData.packet, observer_id: child.observer_id, observer_name: child.observer_name, snr: child.snr, rssi: child.rssi, path_json: child.path_json, resolved_path: child.resolved_path, direction: child.direction, timestamp: child.timestamp, first_seen: child.timestamp} : child;
             if (parentData) { clearParsedCache(obsPacket); }
-            selectPacket(child.id, parentHash, {packet: obsPacket, breakdown: parentData?.breakdown, observations: parentData?.observations}, child.id);
+            selectPacket(child.id, parentHash, {packet: obsPacket, observations: parentData?.observations}, child.id);
           }
         }
         else if (action === 'select-hash') pktSelectHash(value);
@@ -1818,7 +1818,6 @@
 
   async function renderDetail(panel, data, chosenObsId) {
     const pkt = data.packet;
-    const breakdown = data.breakdown || {};
     const observations = data.observations || [];
 
     // Per-observation rendering (issue #849):
@@ -1840,13 +1839,13 @@
     const pathHops = getParsedPath(effectivePkt) || [];
 
     // Compute breakdown ranges from the actually-rendered raw_hex (per-observation).
-    // Server-supplied breakdown is computed once from the top-level packet's raw_hex,
-    // but per-obs raw_hex (#882) can differ in path length, making the server breakdown
-    // off-by-N for the displayed bytes.
+    // Single source of truth — derived from the same bytes we display, so a
+    // post-#882 per-obs raw_hex with a different path length than the top-level
+    // packet's raw_hex still gets accurate byte highlights.
     const obsRawHexForRanges = effectivePkt.raw_hex || pkt.raw_hex || '';
     const ranges = obsRawHexForRanges
       ? computeBreakdownRanges(obsRawHexForRanges, pkt.route_type, pkt.payload_type)
-      : (breakdown.ranges || []);
+      : [];
 
     // Cross-check: hop count from raw_hex path_len byte vs path_json length
     const obsRawHex = effectivePkt.raw_hex || pkt.raw_hex || '';
