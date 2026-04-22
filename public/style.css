@@ -173,6 +173,45 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
 }
 .nav-btn:hover { background: var(--nav-bg2); color: var(--nav-text); }
+
+/* === Theme Toggle Switch === */
+.theme-toggle {
+  display: inline-flex; align-items: center; cursor: pointer;
+  padding: 0; margin: 0; border: none; background: none;
+  min-width: 44px; min-height: 44px; justify-content: center;
+}
+.theme-toggle input[type="checkbox"] {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.theme-toggle-track {
+  position: relative; width: 46px; height: 24px;
+  background: var(--border); border-radius: 12px;
+  transition: background 0.2s ease; display: flex; align-items: center;
+  border: 1px solid var(--border);
+}
+.theme-toggle input:checked ~ .theme-toggle-track {
+  background: var(--accent);
+}
+.theme-toggle-thumb {
+  position: absolute; left: 3px; width: 18px; height: 18px;
+  background: var(--nav-text); border-radius: 50%;
+  box-shadow: 0 1px 3px var(--shadow, rgba(0,0,0,0.3));
+  transition: transform 0.2s ease;
+  z-index: 1;
+}
+.theme-toggle input:checked ~ .theme-toggle-track .theme-toggle-thumb {
+  transform: translateX(22px);
+}
+.theme-toggle-icon {
+  position: absolute; font-size: 10px; line-height: 1;
+  top: 50%; transform: translateY(-50%);
+  pointer-events: none; user-select: none;
+  transition: opacity 0.2s ease;
+}
+.theme-toggle-sun { right: 4px; opacity: 1; }
+.theme-toggle-moon { left: 4px; opacity: 0; }
+.theme-toggle input:checked ~ .theme-toggle-track .theme-toggle-sun { opacity: 0; }
+.theme-toggle input:checked ~ .theme-toggle-track .theme-toggle-moon { opacity: 1; }
 /* === Nav Stats === */
 .nav-stats {
   display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--nav-text-muted);

@@ -69,7 +69,14 @@
       </div>
       <button class="nav-btn" id="searchToggle" title="Search (Ctrl+K)">🔍</button>
       <button class="nav-btn" id="customizeToggle" title="Customize theme & branding">🎨</button>
-      <button class="nav-btn" id="darkModeToggle" title="Toggle dark mode">☀️</button>
+      <label class="theme-toggle" id="darkModeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+        <input type="checkbox" id="darkModeCheckbox" aria-hidden="true">
+        <span class="theme-toggle-track">
+          <span class="theme-toggle-thumb"></span>
+          <span class="theme-toggle-icon theme-toggle-sun">☀️</span>
+          <span class="theme-toggle-icon theme-toggle-moon">🌙</span>
+        </span>
+      </label>
       <button class="nav-btn hamburger" id="hamburger" title="Menu" aria-label="Toggle navigation menu">☰</button>
     </div>
   </nav>

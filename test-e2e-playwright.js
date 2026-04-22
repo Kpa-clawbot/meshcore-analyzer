@@ -152,17 +152,30 @@ async function run() {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('nav, .navbar, .nav, [class*="nav"]');
     const themeBefore = await page.$eval('html', el => el.getAttribute('data-theme'));
-    // Find toggle button
-    const allButtons = await page.$$('button');
+
+    // The toggle may be a <label#darkModeToggle> wrapping a checkbox (new toggle-switch
+    // design) or a <button#darkModeToggle> (legacy button design). Try the checkbox path
+    // first, then fall back to the old button scan.
     let toggled = false;
-    for (const b of allButtons) {
-      const text = await b.textContent();
-      if (text.includes('\u2600') || text.includes('\ud83c\udf19') || text.includes('\ud83c\udf11') || text.includes('\ud83c\udf15')) {
-        await b.click();
-        toggled = true;
-        break;
+
+    // New toggle-switch: click the label or directly set the checkbox
+    const toggleLabel = await page.$('#darkModeToggle');
+    if (toggleLabel) {
+      await toggleLabel.click();
+      toggled = true;
+    } else {
+      // Legacy fallback: scan buttons for sun/moon emoji
+      const allButtons = await page.$$('button');
+      for (const b of allButtons) {
+        const text = await b.textContent();
+        if (text.includes('\u2600') || text.includes('\ud83c\udf19') || text.includes('\ud83c\udf11') || text.includes('\ud83c\udf15')) {
+          await b.click();
+          toggled = true;
+          break;
+        }
       }
     }
+
     assert(toggled, 'Could not find dark mode toggle button');
     await page.waitForFunction(
       (before) => document.documentElement.getAttribute('data-theme') !== before,
