@@ -542,10 +542,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // --- Dark Mode ---
   const darkToggle = document.getElementById('darkModeToggle');
+  const darkCheckbox = document.getElementById('darkModeCheckbox');
   const savedTheme = localStorage.getItem('meshcore-theme');
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    darkToggle.textContent = theme === 'dark' ? '🌙' : '☀️';
+    if (darkCheckbox) darkCheckbox.checked = theme === 'dark';
     localStorage.setItem('meshcore-theme', theme);
     // Re-apply user theme CSS vars for the correct mode (light/dark)
     reapplyUserThemeVars(theme === 'dark');
@@ -593,10 +594,19 @@ window.addEventListener('DOMContentLoaded', () => {
   } else {
     applyTheme('light');
   }
-  darkToggle.addEventListener('click', () => {
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    applyTheme(isDark ? 'light' : 'dark');
-  });
+  if (darkCheckbox) {
+    darkCheckbox.addEventListener('change', () => {
+      applyTheme(darkCheckbox.checked ? 'dark' : 'light');
+    });
+    // Prevent click from bubbling to any legacy handler
+    darkToggle.addEventListener('click', (e) => { e.stopPropagation(); });
+  } else {
+    // Fallback for button-style toggle (upstream compatibility)
+    darkToggle.addEventListener('click', () => {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      applyTheme(isDark ? 'light' : 'dark');
+    });
+  }
 
   // --- Hamburger Menu ---
   const hamburger = document.getElementById('hamburger');
