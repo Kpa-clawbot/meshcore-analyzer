@@ -1850,7 +1850,7 @@
       if (!isNaN(plByte)) rawHopCount = plByte & 0x3F;
     }
     if (rawHopCount != null && pathHops.length !== rawHopCount) {
-      console.warn(`[CoreScope] Hop count inconsistency for packet ${pkt.hash}: path_json has ${pathHops.length} hops but raw_hex path_len has ${rawHopCount}. Trusting raw_hex.`);
+      console.warn(`[CoreScope] Hop count inconsistency for packet ${pkt.hash}: path_json has ${pathHops.length} hops but raw_hex path_len has ${rawHopCount}. UI shows path_json.`);
     }
 
     // Resolve sender GPS — from packet directly, or from known node in DB
@@ -1987,8 +1987,10 @@
       ? `<div class="anomaly-banner" style="background:var(--warning, #f0ad4e); color:#000; padding:8px 12px; border-radius:4px; margin-bottom:8px; font-weight:600;">⚠️ Anomaly: ${escapeHtml(decoded.anomaly)}</div>`
       : '';
 
-    // Hop count display: trust raw_hex (firmware truth) over path_json
-    const displayHopCount = rawHopCount != null ? rawHopCount : pathHops.length;
+    // Hop count display: use pathHops length (= effective observation's path_json).
+    // The raw_hex/path_json mismatch warning is logged above for diagnostics; the UI
+    // must stay self-consistent — top pill names and byte breakdown rows must agree.
+    const displayHopCount = pathHops.length;
     const obsIndicator = currentObs && observations.length > 1
       ? `<span style="font-size:0.8em;color:var(--text-muted);margin-left:6px">(observation ${observations.indexOf(currentObs) + 1} of ${observations.length})</span>`
       : '';
@@ -2193,18 +2195,19 @@
     rows += fieldRow(off, 'Path Length', '0x' + (buf.slice(off * 2, off * 2 + 2) || '??'), hashCountVal === 0 ? `hash_count=0 (direct advert)` : `hash_size=${hashSizeVal} byte${hashSizeVal !== 1 ? 's' : ''}, hash_count=${hashCountVal}`);
     off += 1;
 
-    // Path — derive hop count from path_len byte (firmware truth), not aggregated _parsedPath
+    // Path — render hops from path_json (what this observation reported).
+    // Byte offsets advance by hashSize * pathHops.length to match.
     const hashSize = isNaN(pathByte0) ? 1 : ((pathByte0 >> 6) + 1);
-    if (typeof hashCountVal === 'number' && hashCountVal > 0) {
-      rows += sectionRow('Path (' + hashCountVal + ' hops)', 'section-path');
-      for (let i = 0; i < hashCountVal; i++) {
+    if (pathHops.length > 0) {
+      rows += sectionRow('Path (' + pathHops.length + ' hops)', 'section-path');
+      for (let i = 0; i < pathHops.length; i++) {
         const hopOff = off + i * hashSize;
-        const hex = buf.slice(hopOff * 2, (hopOff + hashSize) * 2).toUpperCase();
+        const hex = String(pathHops[i] || '').toUpperCase();
         const hopHtml = HopDisplay.renderHop(hex, hopNameCache[hex]);
         const label = `Hop ${i} — ${hopHtml}`;
         rows += fieldRow(hopOff, label, hex, '');
       }
-      off += hashSize * hashCountVal;
+      off += hashSize * pathHops.length;
     }
 
     // Payload

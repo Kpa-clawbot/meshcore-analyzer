@@ -15,6 +15,11 @@ async function test(name, fn) {
     results.push({ name, pass: true });
     console.log(`  \u2705 ${name}`);
   } catch (err) {
+    if (err.skip) {
+      results.push({ name, pass: true, skipped: true });
+      console.log(`  ⏭ ${name}: ${err.message}`);
+      return;
+    }
     results.push({ name, pass: false, error: err.message });
     console.log(`  \u274c ${name}: ${err.message}`);
     console.log(`\nFail-fast: stopping after first failure.`);
@@ -1899,12 +1904,93 @@ async function run() {
     }
   });
 
+  // Test: path pill (top) and byte breakdown (bottom) agree on hop count
+  // Regression for visual mismatch where badge said "1 hop" but path text listed N names
+  await test('Packet detail path pill and byte breakdown agree on hop count', async () => {
+    await page.goto(BASE + '#/packets', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+    await page.waitForTimeout(500);
+
+    // Click rows until we find one whose detail pane renders a multi-hop path
+    const rows = await page.$$('table tbody tr[data-action]');
+    let found = false;
+    for (let i = 0; i < Math.min(rows.length, 15); i++) {
+      await rows[i].click({ timeout: 3000 }).catch(() => null);
+      await page.waitForTimeout(500);
+
+      const result = await page.evaluate(() => {
+        // Path pill: <dt>Path</dt><dd><span class="badge ...">N hops</span> ...names...</dd>
+        const dts = document.querySelectorAll('dl.detail-meta dt');
+        let pillBadgeCount = null;
+        let pillNameCount = null;
+        for (const dt of dts) {
+          if (dt.textContent.trim() === 'Path') {
+            const dd = dt.nextElementSibling;
+            if (!dd) break;
+            const badge = dd.querySelector('.badge');
+            if (badge) {
+              const m = badge.textContent.match(/(\d+)\s*hop/);
+              if (m) pillBadgeCount = parseInt(m[1], 10);
+            }
+            // Count rendered hop links/spans (HopDisplay.renderHop output)
+            const hops = dd.querySelectorAll('.hop-link, [data-hop-link], .hop-named, .hop-anonymous');
+            pillNameCount = hops.length;
+            break;
+          }
+        }
+        // Byte breakdown: section row "Path (N hops)" + N "Hop X — ..." rows
+        let breakdownSectionCount = null;
+        let breakdownRowCount = 0;
+        const fieldTable = document.querySelector('table.field-table');
+        if (fieldTable) {
+          for (const tr of fieldTable.querySelectorAll('tr')) {
+            const txt = tr.textContent.trim();
+            const sec = txt.match(/^Path\s*\((\d+)\s*hops?\)/);
+            if (sec) breakdownSectionCount = parseInt(sec[1], 10);
+            if (/^\s*\d+\s*Hop\s+\d+\s*—/.test(txt) || /^Hop\s+\d+\s*—/.test(txt.replace(/^\d+/, '').trim())) {
+              breakdownRowCount++;
+            }
+          }
+        }
+        return { pillBadgeCount, pillNameCount, breakdownSectionCount, breakdownRowCount };
+      });
+
+      if (result.pillBadgeCount && result.pillBadgeCount > 0 && result.breakdownSectionCount != null) {
+        found = true;
+        // Top badge count must equal bottom section count
+        assert(result.pillBadgeCount === result.breakdownSectionCount,
+          `Path pill badge says ${result.pillBadgeCount} hops but byte breakdown says ${result.breakdownSectionCount} hops`);
+        // Number of rendered hop names in pill should also match (within 1, since renderPath may add separators)
+        if (result.pillNameCount != null && result.pillNameCount > 0) {
+          assert(Math.abs(result.pillNameCount - result.pillBadgeCount) <= 1,
+            `Path pill badge ${result.pillBadgeCount} but rendered ${result.pillNameCount} hop names`);
+        }
+        // And breakdown rendered rows should match its own section count
+        assert(result.breakdownRowCount > 0,
+          'breakdown rows selector matched nothing — selector or DOM changed');
+        assert(result.breakdownRowCount === result.breakdownSectionCount,
+          `Byte breakdown section says ${result.breakdownSectionCount} hops but rendered ${result.breakdownRowCount} hop rows`);
+        console.log(`    ✓ Path pill (${result.pillBadgeCount}) and byte breakdown (${result.breakdownSectionCount}) agree`);
+        break;
+      }
+    }
+    if (!found) {
+      if (process.env.E2E_REQUIRE_PATH_TEST === '1') {
+        throw new Error('BLOCKED — no multi-hop packet found in first 15 rows (E2E_REQUIRE_PATH_TEST=1 requires it)');
+      }
+      const skipErr = new Error('SKIP: No multi-hop packet with byte breakdown found in first 15 rows — needs fixture');
+      skipErr.skip = true;
+      throw skipErr;
+    }
+  });
+
   await browser.close();
 
   // Summary
-  const passed = results.filter(r => r.pass).length;
+  const skipped = results.filter(r => r.skipped).length;
+  const passed = results.filter(r => r.pass && !r.skipped).length;
   const failed = results.filter(r => !r.pass).length;
-  console.log(`\n${passed}/${results.length} tests passed${failed ? `, ${failed} failed` : ''}`);
+  console.log(`\n${passed}/${results.length} tests passed${skipped ? `, ${skipped} skipped` : ''}${failed ? `, ${failed} failed` : ''}`);
   process.exit(failed > 0 ? 1 : 0);
 }
 
