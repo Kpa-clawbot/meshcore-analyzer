@@ -133,8 +133,11 @@ func main() {
 			opts.SetPassword(source.Password)
 		}
 		if source.RejectUnauthorized != nil && !*source.RejectUnauthorized {
-			opts.SetTLSConfig(&tls.Config{InsecureSkipVerify: true})
-		} else if strings.HasPrefix(source.Broker, "ssl://") {
+			// rejectUnauthorized: false — skip TLS verification (self-signed certs)
+			opts.SetTLSConfig(&tls.Config{InsecureSkipVerify: true}) //nolint:gosec
+		} else if strings.HasPrefix(source.Broker, "ssl://") || strings.HasPrefix(source.Broker, "wss://") {
+			// TLS with system CA pool — valid for Caddy-proxied endpoints and
+			// any broker with a publicly-trusted certificate.
 			opts.SetTLSConfig(&tls.Config{})
 		}
 

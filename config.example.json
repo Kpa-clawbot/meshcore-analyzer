@@ -125,6 +125,16 @@
         "OAK",
         "MRY"
       ]
+    },
+    {
+      "_comment": "WebSocket MQTT broker (e.g. meshcore-mqtt-broker). Use ws:// for plain WebSocket or wss:// for TLS. Username/password supported.",
+      "name": "wsmqtt",
+      "broker": "wss://wsmqtt.example.com/mqtt",
+      "username": "corescope",
+      "password": "your-password",
+      "topics": [
+        "meshcore/#"
+      ]
     }
   ],
   "channelKeys": {
@@ -218,7 +228,7 @@
     "maxAgeDays": 5,
     "_comment": "Neighbor edges older than this many days are pruned on startup and daily. Default: 5."
   },
-  "_comment_mqttSources": "Each source connects to an MQTT broker. topics: what to subscribe to. iataFilter: only ingest packets from these regions (optional).",
+  "_comment_mqttSources": "Each source connects to an MQTT broker. Supported schemes: mqtt:// (plain TCP), mqtts:// (TLS), ws:// (WebSocket), wss:// (WebSocket TLS). topics: what to subscribe to. iataFilter: only ingest packets from these regions (optional).",
   "_comment_channelKeys": "Hex keys for decrypting channel messages. Key name = channel display name. public channel key is well-known.",
   "_comment_hashChannels": "Channel names whose keys are derived via SHA256. Key = SHA256(name)[:16]. Listed here so the ingestor can auto-derive keys.",
   "_comment_defaultRegion": "IATA code shown by default in region filters.",

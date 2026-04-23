@@ -162,15 +162,24 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // ResolvedSources returns the final list of MQTT sources to connect to.
+//
+// Scheme mapping:
+//
+//	mqtt://  → tcp://   (paho plain TCP)
+//	mqtts:// → ssl://   (paho TLS over TCP)
+//	ws://               (paho WebSocket — passed through, no mapping needed)
+//	wss://              (paho WebSocket TLS — passed through, no mapping needed)
 func (c *Config) ResolvedSources() []MQTTSource {
 	for i := range c.MQTTSources {
-		// paho uses tcp:// and ssl:// not mqtt:// and mqtts://
+		// paho uses tcp:// and ssl:// for plain MQTT; ws:// and wss:// are accepted natively.
 		b := c.MQTTSources[i].Broker
 		if strings.HasPrefix(b, "mqtt://") {
 			c.MQTTSources[i].Broker = "tcp://" + b[7:]
 		} else if strings.HasPrefix(b, "mqtts://") {
 			c.MQTTSources[i].Broker = "ssl://" + b[8:]
 		}
+		// ws:// and wss:// pass through unchanged — paho handles WebSocket
+		// connections natively via gorilla/websocket.
 	}
 	return c.MQTTSources
 }
