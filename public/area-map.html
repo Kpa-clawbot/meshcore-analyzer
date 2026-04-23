@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Area Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 10px 16px; background: #fff; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 1rem; font-weight: 600; color: #1a6abf; white-space: nowrap; }
+  #base-url-form { display: flex; gap: 8px; align-items: center; }
+  #base-url-form label { font-size: 0.8rem; color: #666; }
+  #base-url { background: #f5f5f5; border: 1px solid #ccc; border-radius: 6px; padding: 5px 10px; color: #222; font-size: 0.85rem; width: 260px; }
+  #btn-load { padding: 5px 14px; background: #1a6abf; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+  #btn-load:hover { background: #155299; }
+  #status { font-size: 0.8rem; color: #888; margin-left: auto; }
+  #status.err { color: #cc2222; }
+  #main { flex: 1; display: flex; overflow: hidden; }
+  #sidebar { width: 250px; min-width: 250px; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* --- existing areas --- */
+  .section-title { padding: 8px 14px; font-size: 0.72rem; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #eee; background: #fafafa; }
+  #area-list { overflow-y: auto; padding: 4px 0; max-height: 220px; }
+  .area-item { display: flex; align-items: center; gap: 10px; padding: 7px 14px; user-select: none; }
+  .area-swatch { width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; }
+  .area-label { font-size: 0.84rem; flex: 1; }
+  .area-key { font-size: 0.71rem; color: #999; }
+  .area-check { width: 15px; height: 15px; cursor: pointer; accent-color: #1a6abf; }
+  #node-toggle-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid #eee; }
+  #node-toggle-row label { font-size: 0.82rem; color: #444; cursor: pointer; }
+  #show-nodes { accent-color: #1a6abf; cursor: pointer; }
+  #node-count { font-size: 0.75rem; color: #999; margin-left: auto; }
+
+  /* --- builder --- */
+  #builder { flex: 1; display: flex; flex-direction: column; border-top: 2px solid #e0e8f4; overflow: hidden; }
+  #builder .section-title { background: #eef4fd; color: #1a6abf; border-bottom-color: #ccddf5; }
+  #builder-fields { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .field-row { display: flex; flex-direction: column; gap: 3px; }
+  .field-row label { font-size: 0.75rem; color: #666; }
+  .field-row input { padding: 5px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 0.84rem; background: #f9f9f9; color: #222; }
+  .field-row input:focus { outline: none; border-color: #1a6abf; background: #fff; }
+  #builder-controls { padding: 0 14px 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  #btn-draw { padding: 5px 12px; background: #1a6abf; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+  #btn-draw.active { background: #c04020; }
+  #btn-draw:hover { opacity: 0.88; }
+  #btn-undo { padding: 5px 10px; background: #e8e8e8; color: #444; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+  #btn-undo:hover { background: #ddd; }
+  #btn-clear-draw { padding: 5px 10px; background: #fde8e8; color: #b02020; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+  #btn-clear-draw:hover { background: #f8cccc; }
+  #draw-hint { padding: 0 14px 6px; font-size: 0.75rem; color: #888; }
+  #builder-output { flex: 1; margin: 0 14px 10px; background: #f0f4f8; border: 1px solid #ccd; border-radius: 6px; padding: 9px 11px; font-family: monospace; font-size: 0.76rem; color: #1a5080; white-space: pre; overflow: auto; min-height: 60px; cursor: text; }
+  #builder-output.empty { color: #aaa; font-style: italic; }
+  #btn-copy-area { margin: 0 14px 12px; padding: 5px 14px; background: #1a6abf; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+  #btn-copy-area:hover { background: #155299; }
+  #btn-copy-area.copied { background: #1a7a3a; }
+
+  #map { flex: 1; }
+  .node-popup { font-size: 0.8rem; line-height: 1.5; }
+  .node-popup strong { color: #1a6abf; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Area Map</h1>
+  <div id="base-url-form">
+    <label for="base-url">Server:</label>
+    <input id="base-url" type="text" value="" placeholder="(same server)"/>
+    <button id="btn-load">Load</button>
+  </div>
+  <span id="status">Click Load to fetch areas and nodes</span>
+</header>
+
+<div id="main">
+  <div id="sidebar">
+    <div class="section-title">Existing Areas</div>
+    <div id="area-list"><div style="padding:10px 14px;color:#aaa;font-size:0.8rem;">Not loaded</div></div>
+    <div id="node-toggle-row">
+      <input type="checkbox" id="show-nodes"/>
+      <label for="show-nodes">All nodes (grey)</label>
+      <span id="node-count"></span>
+    </div>
+
+    <div id="builder">
+      <div class="section-title">Draw New Area</div>
+      <div id="builder-fields">
+        <div class="field-row">
+          <label for="area-key">Key (e.g. BAY)</label>
+          <input id="area-key" type="text" placeholder="BAY" maxlength="12"/>
+        </div>
+        <div class="field-row">
+          <label for="area-label">Label</label>
+          <input id="area-label" type="text" placeholder="Bay Area"/>
+        </div>
+      </div>
+      <div id="builder-controls">
+        <button id="btn-draw">Draw</button>
+        <button id="btn-undo">↩ Undo</button>
+        <button id="btn-clear-draw">✕ Clear</button>
+      </div>
+      <div id="draw-hint">0 points — need ≥ 3</div>
+      <div id="builder-output" class="empty">Fill key + label, then draw polygon points…</div>
+      <button id="btn-copy-area">Copy JSON</button>
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script>
+const COLORS = ['#1a6abf','#e03030','#1a9a40','#d07000','#8830cc','#d05010','#0a9080','#c03070','#2080d0','#608020'];
+
+const map = L.map('map').setView([37.5, -122.0], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+// ---- state ----
+let areaLayers = {};
+let allNodeLayer = L.layerGroup();
+let areas = [];
+let allNodes = [];
+let baseUrl = '';
+
+// ---- draw state ----
+let drawing = false;
+let drawPoints = [];
+let drawMarkers = [];
+let drawPolygon = null;
+
+function setStatus(msg, isErr) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isErr ? 'err' : '';
+}
+
+// ---- load from server ----
+async function load() {
+  baseUrl = document.getElementById('base-url').value.replace(/\/$/, '');
+  setStatus('Loading…');
+
+  Object.values(areaLayers).forEach(g => { map.removeLayer(g.poly); map.removeLayer(g.nodes); });
+  areaLayers = {};
+  allNodeLayer.clearLayers();
+  map.removeLayer(allNodeLayer);
+  document.getElementById('area-list').innerHTML = '';
+  document.getElementById('node-count').textContent = '';
+  document.getElementById('show-nodes').checked = false;
+
+  try {
+    const [areasResp, nodesResp] = await Promise.all([
+      fetch(`${baseUrl}/api/config/areas/polygons`),
+      fetch(`${baseUrl}/api/nodes?limit=9999`)
+    ]);
+    if (!areasResp.ok) throw new Error(`areas/polygons: ${areasResp.status}`);
+    if (!nodesResp.ok) throw new Error(`nodes: ${nodesResp.status}`);
+
+    areas = await areasResp.json();
+    const nodesData = await nodesResp.json();
+    allNodes = nodesData.nodes || nodesData || [];
+
+    buildSidebar();
+    buildNodeLayer();
+
+    const msg = areas.length
+      ? `${areas.length} area(s), ${allNodes.length} node(s)`
+      : `No areas in config — ${allNodes.length} node(s) loaded`;
+    setStatus(msg);
+
+    if (areas.length) {
+      const allBounds = [];
+      areas.forEach(a => getLatLngs(a).forEach(p => allBounds.push(p)));
+      if (allBounds.length) map.fitBounds(L.latLngBounds(allBounds).pad(0.1));
+    }
+  } catch(e) {
+    setStatus('Error: ' + e.message, true);
+  }
+}
+
+function getLatLngs(area) {
+  if (area.polygon && area.polygon.length) return area.polygon.map(p => [p[0], p[1]]);
+  if (area.latMin != null) return [
+    [area.latMin, area.lonMin], [area.latMin, area.lonMax],
+    [area.latMax, area.lonMax], [area.latMax, area.lonMin],
+  ];
+  return [];
+}
+
+function buildSidebar() {
+  const list = document.getElementById('area-list');
+  list.innerHTML = areas.length
+    ? ''
+    : '<div style="padding:10px 14px;color:#aaa;font-size:0.8rem;">None defined</div>';
+
+  areas.forEach((area, i) => {
+    const color = COLORS[i % COLORS.length];
+    const item = document.createElement('div');
+    item.className = 'area-item';
+    item.innerHTML = `
+      <div class="area-swatch" style="background:${color}33;border:1px solid ${color}"></div>
+      <div style="flex:1;min-width:0">
+        <div class="area-label">${area.label || area.key}</div>
+        <div class="area-key">${area.key}</div>
+      </div>
+      <input type="checkbox" class="area-check" data-key="${area.key}" checked/>
+    `;
+    item.querySelector('.area-check').addEventListener('change', e => toggleArea(area.key, e.target.checked));
+    list.appendChild(item);
+
+    const lls = getLatLngs(area);
+    if (!lls.length) return;
+    const poly = L.polygon(lls, { color, fillColor: color, fillOpacity: 0.1, weight: 2 }).addTo(map);
+    poly.bindTooltip(area.label || area.key, { sticky: true });
+
+    const nodesGroup = L.layerGroup().addTo(map);
+    loadAreaNodes(area.key, color, nodesGroup);
+    areaLayers[area.key] = { poly, nodes: nodesGroup };
+  });
+}
+
+async function loadAreaNodes(areaKey, color, group) {
+  try {
+    const resp = await fetch(`${baseUrl}/api/nodes?area=${encodeURIComponent(areaKey)}&limit=9999`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    (data.nodes || data || []).forEach(n => {
+      if (!n.lat || !n.lon) return;
+      const m = L.circleMarker([n.lat, n.lon], { radius: 7, color, fillColor: color, fillOpacity: 0.85, weight: 2 });
+      m.bindPopup(`<div class="node-popup"><strong>${n.name || n.public_key?.slice(0,8) || '?'}</strong><br>
+        ${n.public_key?.slice(0,16)}…<br>GPS: ${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}<br><em>${areaKey}</em></div>`);
+      group.addLayer(m);
+    });
+  } catch(_) {}
+}
+
+function buildNodeLayer() {
+  allNodeLayer.clearLayers();
+  let count = 0;
+  allNodes.forEach(n => {
+    if (!n.lat || !n.lon || (Math.abs(n.lat) < 0.001 && Math.abs(n.lon) < 0.001)) return;
+    count++;
+    const m = L.circleMarker([n.lat, n.lon], { radius: 4, color: '#999', fillColor: '#bbb', fillOpacity: 0.6, weight: 1 });
+    m.bindPopup(`<div class="node-popup"><strong>${n.name || n.public_key?.slice(0,8) || '?'}</strong><br>
+      ${n.public_key?.slice(0,16)}…<br>GPS: ${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}</div>`);
+    allNodeLayer.addLayer(m);
+  });
+  document.getElementById('node-count').textContent = count;
+}
+
+function toggleArea(key, visible) {
+  const g = areaLayers[key];
+  if (!g) return;
+  if (visible) { g.poly.addTo(map); g.nodes.addTo(map); }
+  else { map.removeLayer(g.poly); map.removeLayer(g.nodes); }
+}
+
+// ---- builder ----
+function setDrawing(on) {
+  drawing = on;
+  const btn = document.getElementById('btn-draw');
+  btn.textContent = on ? 'Stop Drawing' : 'Draw';
+  btn.classList.toggle('active', on);
+  map.getContainer().style.cursor = on ? 'crosshair' : '';
+}
+
+function updateDrawOutput() {
+  const hint = document.getElementById('draw-hint');
+  const out = document.getElementById('builder-output');
+  hint.textContent = `${drawPoints.length} point${drawPoints.length !== 1 ? 's' : ''} — need ≥ 3`;
+
+  const key = document.getElementById('area-key').value.trim().toUpperCase();
+  const label = document.getElementById('area-label').value.trim();
+
+  if (drawPoints.length < 3 || !key) {
+    out.textContent = drawPoints.length < 3
+      ? 'Draw at least 3 points…'
+      : 'Enter a key name above…';
+    out.classList.add('empty');
+    return;
+  }
+  out.classList.remove('empty');
+  const entry = { label: label || key, polygon: drawPoints };
+  out.textContent = `"${key}": ${JSON.stringify(entry, null, 2)}`;
+}
+
+function renderDrawPolygon() {
+  if (drawPolygon) { map.removeLayer(drawPolygon); drawPolygon = null; }
+  if (drawPoints.length >= 2) {
+    drawPolygon = L.polygon(drawPoints, {
+      color: '#e06020', fillColor: '#e06020', fillOpacity: 0.1, weight: 2, dashArray: drawPoints.length < 3 ? '6,4' : null
+    }).addTo(map);
+  }
+  updateDrawOutput();
+}
+
+map.on('click', function(e) {
+  if (!drawing) return;
+  const pt = [parseFloat(e.latlng.lat.toFixed(6)), parseFloat(e.latlng.lng.toFixed(6))];
+  drawPoints.push(pt);
+  const idx = drawPoints.length;
+  const m = L.circleMarker(e.latlng, {
+    radius: 6, color: '#e06020', weight: 2, fillColor: '#e06020', fillOpacity: 0.9
+  }).addTo(map).bindTooltip(String(idx), { permanent: true, direction: 'top', offset: [0,-8] });
+  drawMarkers.push(m);
+  renderDrawPolygon();
+});
+
+document.getElementById('btn-draw').addEventListener('click', () => setDrawing(!drawing));
+
+document.getElementById('btn-undo').addEventListener('click', () => {
+  if (!drawPoints.length) return;
+  drawPoints.pop();
+  const m = drawMarkers.pop();
+  if (m) map.removeLayer(m);
+  renderDrawPolygon();
+});
+
+document.getElementById('btn-clear-draw').addEventListener('click', () => {
+  drawPoints = [];
+  drawMarkers.forEach(m => map.removeLayer(m));
+  drawMarkers = [];
+  if (drawPolygon) { map.removeLayer(drawPolygon); drawPolygon = null; }
+  setDrawing(false);
+  updateDrawOutput();
+});
+
+document.getElementById('area-key').addEventListener('input', updateDrawOutput);
+document.getElementById('area-label').addEventListener('input', updateDrawOutput);
+
+document.getElementById('btn-copy-area').addEventListener('click', () => {
+  const text = document.getElementById('builder-output').textContent;
+  if (!text || document.getElementById('builder-output').classList.contains('empty')) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('btn-copy-area');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy JSON'; btn.classList.remove('copied'); }, 2000);
+  });
+});
+
+document.getElementById('btn-load').addEventListener('click', load);
+document.getElementById('base-url').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+document.getElementById('show-nodes').addEventListener('change', e => {
+  if (e.target.checked) allNodeLayer.addTo(map);
+  else map.removeLayer(allNodeLayer);
+});
+</script>
+</body>
+</html>

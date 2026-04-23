@@ -1714,22 +1714,25 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
   .perf-table th, .perf-table td { padding: 4px 6px; }
 }
 
-/* ─── Region filter bar ─── */
+/* ─── Region / Area filter bars ─── */
 .region-filter-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; }
+.area-dropdown-menu { min-width: 160px; }
+.area-dropdown-item.area-item-active { color: var(--accent); font-weight: 600; }
 .region-filter-container { margin: 0; padding: 0; display: inline-flex; align-items: center; }
 .region-pill {
   display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 16px;
   font-size: 12px; font-weight: 500; cursor: pointer; border: 1.5px solid var(--border);
-  background: transparent; color: var(--text-muted); transition: all 0.15s;
+  background: transparent; color: var(--text-muted); transition: all 0.15s; white-space: nowrap;
+  flex-shrink: 0;
 }
 .region-pill:hover { border-color: var(--accent); color: var(--accent); }
-.region-pill-active {
+button.region-pill-active {
   background: var(--accent); color: #fff; border-color: var(--accent);
 }
-.region-pill-active:hover { opacity: 0.85; }
+button.region-pill-active:hover { opacity: 0.85; color: #fff; }
 .region-filter-label {
   font-size: 12px; font-weight: 600; color: var(--text-muted); align-self: center;
-  margin-right: 2px; user-select: none;
+  margin-right: 2px; user-select: none; white-space: nowrap; flex-shrink: 0;
 }
 .region-dropdown-wrap { position: relative; display: inline-flex; align-items: center; }
 .region-dropdown-trigger {

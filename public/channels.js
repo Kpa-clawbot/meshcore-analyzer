@@ -438,7 +438,7 @@
 
     // Fetch packets from API — get all payload_type=5 (GRP_TXT/CHAN)
     var rp = RegionFilter.getRegionParam();
-    var qs = rp ? '&region=' + encodeURIComponent(rp) : '';
+    var qs = (rp ? '&region=' + encodeURIComponent(rp) : '');
     var data;
     try {
       data = await api('/packets?limit=1000&payloadType=5' + qs, { ttl: 10000 });
@@ -663,7 +663,6 @@
         await refreshMessages({ regionSwitch: true, forceNoCache: true });
       });
     });
-
     // Channel key input handler (#725 M2, improved UX #759)
     var chKeyForm = document.getElementById('chKeyForm');
     if (chKeyForm) {
@@ -1231,7 +1230,7 @@
       const requestHash = selectedHash;
       const rp = RegionFilter.getRegionParam() || '';
       const request = beginMessageRequest(requestHash, rp);
-      const regionQs = rp ? '&region=' + encodeURIComponent(rp) : '';
+      const regionQs = (rp ? '&region=' + encodeURIComponent(rp) : '');
       const data = await api(`/channels/${encodeURIComponent(requestHash)}/messages?limit=200${regionQs}`, { ttl: CLIENT_TTL.channelMessages, bust: !!opts.forceNoCache });
       if (isStaleMessageRequest(request)) return;
       const newMsgs = data.messages || [];

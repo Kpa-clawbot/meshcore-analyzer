@@ -319,8 +319,8 @@
   .feed-show-btn { display: none !important; }
   .live-legend { display: none !important; }
   .legend-toggle-btn { display: none !important; }
-  .live-header { 
-    flex-wrap: wrap; gap: 6px; padding: 6px 10px;
+  .live-header {
+    gap: 6px; padding: 6px 10px;
     top: 56px; left: 8px; right: 8px; max-width: calc(100vw - 16px);
   }
   .live-stats-row { flex-wrap: wrap; gap: 4px; }

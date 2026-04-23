@@ -622,6 +622,8 @@
       params.set('limit', String(PACKET_LIMIT));
       const regionParam = RegionFilter.getRegionParam();
       if (regionParam) params.set('region', regionParam);
+      const areaParam = AreaFilter.getAreaParam();
+      if (areaParam) params.set('area', areaParam);
       if (filters.hash) params.set('hash', filters.hash);
       if (filters.node) params.set('node', filters.node);
       if (filters.observer) params.set('observer', filters.observer);
@@ -762,6 +764,7 @@
             <div class="multi-select-menu" id="observerMenu"></div>
           </div>
           <div id="packetsRegionFilter" class="region-filter-container" style="display:inline-block;vertical-align:middle"></div>
+          <div id="packetsAreaFilter" style="display:none;vertical-align:middle"></div>
           <div class="multi-select-wrap" id="typeFilterWrap">
             <button class="multi-select-trigger" id="typeTrigger" title="Filter by packet type">All Types ▾</button>
             <div class="multi-select-menu" id="typeMenu"></div>
@@ -818,11 +821,13 @@
 
     // Init shared RegionFilter component
     RegionFilter.init(document.getElementById('packetsRegionFilter'), { dropdown: true });
+    AreaFilter.init(document.getElementById('packetsAreaFilter'));
     if (_pendingUrlRegion) {
       RegionFilter.setSelected(_pendingUrlRegion.split(',').filter(Boolean));
       _pendingUrlRegion = null;
     }
     RegionFilter.onChange(function() { updatePacketsUrl(); loadPackets(); });
+    AreaFilter.onChange(function() { updatePacketsUrl(); loadPackets(); });
 
     // --- Packet Filter Language ---
     (function() {

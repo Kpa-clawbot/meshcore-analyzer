@@ -75,6 +75,7 @@
           <h2>📊 Mesh Analytics</h2>
           <p class="text-muted">Deep dive into your mesh network data</p>
           <div id="analyticsRegionFilter" class="region-filter-container"></div>
+          <div id="analyticsAreaFilter" style="display:none"></div>
           <div class="analytics-tabs" id="analyticsTabs" role="tablist" aria-label="Analytics tabs">
             <button class="tab-btn active" data-tab="overview">Overview</button>
             <button class="tab-btn" data-tab="rf">RF / Signal</button>
@@ -96,6 +97,14 @@
         </div>
       </div>`;
 
+    // Tabs where the area filter is meaningful (transmitter GPS attribution)
+    const AREA_FILTER_TABS = new Set(['overview', 'rf', 'topology', 'hashsizes', 'collisions', 'nodes', 'clock-health']);
+
+    function setAreaFilterVisibility(tab) {
+      const el = document.getElementById('analyticsAreaFilter');
+      if (el) el.style.display = AREA_FILTER_TABS.has(tab) ? '' : 'none';
+    }
+
     // Tab handling
     const analyticsTabs = document.getElementById('analyticsTabs');
     initTabBar(analyticsTabs);
@@ -105,6 +114,7 @@
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _currentTab = btn.dataset.tab;
+      setAreaFilterVisibility(_currentTab);
       renderTab(_currentTab);
     });
 
@@ -121,7 +131,10 @@
     }
 
     RegionFilter.init(document.getElementById('analyticsRegionFilter'));
+    AreaFilter.init(document.getElementById('analyticsAreaFilter'));
+    setAreaFilterVisibility(_currentTab);
     RegionFilter.onChange(function () { loadAnalytics(); });
+    AreaFilter.onChange(function () { loadAnalytics(); });
 
     // Delegated click/keyboard handler for clickable table rows
     const analyticsContent = document.getElementById('analyticsContent');
@@ -151,12 +164,14 @@
     try {
       _analyticsData = {};
       const rqs = RegionFilter.regionQueryString();
-      const sep = rqs ? '?' + rqs.slice(1) : '';
+      const aqs = AreaFilter.areaQueryString();
+      const sep = (rqs + aqs) ? '?' + (rqs + aqs).slice(1) : '';
+      const sepNoArea = rqs ? '?' + rqs.slice(1) : '';
       const [hashData, rfData, topoData, chanData, collisionData] = await Promise.all([
         api('/analytics/hash-sizes' + sep, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/rf' + sep, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/topology' + sep, { ttl: CLIENT_TTL.analyticsRF }),
-        api('/analytics/channels' + sep, { ttl: CLIENT_TTL.analyticsRF }),
+        api('/analytics/channels' + sepNoArea, { ttl: CLIENT_TTL.analyticsRF }),
         api('/analytics/hash-collisions' + sep, { ttl: CLIENT_TTL.analyticsRF }),
       ]);
       _analyticsData = { hashData, rfData, topoData, chanData, collisionData };
@@ -1777,7 +1792,7 @@
   async function renderNodesTab(el) {
     el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading node analytics…</div>';
     try {
-      const rq = RegionFilter.regionQueryString();
+      const rq = RegionFilter.regionQueryString() + AreaFilter.areaQueryString();
       const [nodesResp, bulkHealth] = await Promise.all([
         api('/nodes?limit=10000&sortBy=lastSeen' + rq, { ttl: CLIENT_TTL.nodeList }),
         api('/nodes/bulk-health?limit=50' + rq, { ttl: CLIENT_TTL.analyticsRF })
@@ -2509,7 +2524,7 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
   async function renderPrefixTool(el) {
     el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading prefix data…</div>';
 
-    const rq = RegionFilter.regionQueryString();
+    const rq = RegionFilter.regionQueryString() + AreaFilter.areaQueryString();
     const regionLabel = rq ? (new URLSearchParams(rq.slice(1)).get('region') || '') : '';
 
     let nodesResp;
@@ -3464,7 +3479,8 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
   async function renderClockHealthTab(el) {
     el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading clock health data…</div>';
     try {
-      var data = await (await fetch('/api/nodes/clock-skew')).json();
+      const aqs = AreaFilter.areaQueryString();
+      var data = await (await fetch('/api/nodes/clock-skew' + (aqs ? '?' + aqs.slice(1) : ''))).json();
       if (!Array.isArray(data) || !data.length) {
         el.innerHTML = '<div class="text-center text-muted" style="padding:40px">No clock skew data available. Nodes need recent adverts for clock analysis.</div>';
         return;

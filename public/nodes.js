@@ -377,6 +377,7 @@
         <div class="nodes-counts" id="nodeCounts"></div>
       </div>
       <div id="nodesRegionFilter" class="region-filter-container"></div>
+      <div id="nodesAreaFilter" style="display:none"></div>
       <div class="split-layout">
         <div class="panel-left" id="nodesLeft" aria-live="polite" aria-relevant="additions removals"></div>
         <div class="panel-right empty" id="nodesRight"><span>Select a node to view details</span></div>
@@ -384,7 +385,9 @@
     </div>`;
 
     RegionFilter.init(document.getElementById('nodesRegionFilter'));
+    AreaFilter.init(document.getElementById('nodesAreaFilter'));
     regionChangeHandler = RegionFilter.onChange(function () { _allNodes = null; _fleetSkew = null; loadNodes(); });
+    AreaFilter.onChange(function () { _allNodes = null; _fleetSkew = null; loadNodes(); });
 
     if (search) {
       var _si = document.getElementById('nodeSearch');
@@ -890,6 +893,8 @@
         const params = new URLSearchParams({ limit: '5000' });
         const rp = RegionFilter.getRegionParam();
         if (rp) params.set('region', rp);
+        const ap = AreaFilter.getAreaParam();
+        if (ap) params.set('area', ap);
         const [data] = await Promise.all([
           api('/nodes?' + params, { ttl: CLIENT_TTL.nodeList }),
           getFleetSkew() // pre-fetch clock skew in parallel

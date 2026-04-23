@@ -127,6 +127,7 @@
             <label for="mcHashLabels"><input type="checkbox" id="mcHashLabels"> Hash prefix labels</label>
             <label id="mcGeoFilterLabel" for="mcGeoFilter" style="display:none"><input type="checkbox" id="mcGeoFilter"> Mesh live area</label>
           </fieldset>
+          <div id="mapAreaFilter"></div>
           <fieldset class="mc-section">
             <legend class="mc-label">Status</legend>
             <div class="filter-group" id="mcStatusFilter">
@@ -283,6 +284,9 @@
       hashLabelEl.addEventListener('change', e => { filters.hashLabels = e.target.checked; localStorage.setItem('meshcore-map-hash-labels', filters.hashLabels); renderMarkers(); });
     }
     document.getElementById('mcLastHeard').addEventListener('change', e => { filters.lastHeard = e.target.value; loadNodes(); });
+
+    AreaFilter.init(document.getElementById('mapAreaFilter'));
+    AreaFilter.onChange(function () { loadNodes(); });
 
     // Status filter buttons
     document.querySelectorAll('#mcStatusFilter .btn').forEach(btn => {
@@ -516,7 +520,8 @@
       // Load regions from config + observed IATAs
       try { REGION_NAMES = await api('/config/regions', { ttl: 3600 }); } catch {}
 
-      const data = await api(`/nodes?limit=10000&lastHeard=${filters.lastHeard}`, { ttl: CLIENT_TTL.nodeList });
+      const aqs = AreaFilter.areaQueryString();
+      const data = await api(`/nodes?limit=10000&lastHeard=${filters.lastHeard}${aqs}`, { ttl: CLIENT_TTL.nodeList });
       nodes = data.nodes || [];
 
       // Load observers for jump buttons + map markers

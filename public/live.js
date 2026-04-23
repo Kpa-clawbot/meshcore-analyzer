@@ -835,6 +835,7 @@
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
             <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
           </div>
+          <div id="liveAreaFilter"></div>
           <div class="audio-controls hidden" id="audioControls">
             <label class="audio-slider-label">Voice <select id="audioVoiceSelect" class="audio-voice-select"></select></label>
             <label class="audio-slider-label">BPM <input type="range" id="audioBpmSlider" min="40" max="300" value="120" class="audio-slider"><span id="audioBpmVal">120</span></label>
@@ -938,6 +939,8 @@
     animLayer = L.layerGroup().addTo(map);
 
     injectSVGFilters();
+    AreaFilter.init(document.getElementById('liveAreaFilter'));
+    AreaFilter.onChange(function () { loadNodes(); });
     await loadNodes();
     showHeatMap();
     connectWS();
@@ -1566,9 +1569,17 @@
 
   async function loadNodes(beforeTs) {
     try {
+      const aqs = AreaFilter.areaQueryString();
       const url = beforeTs
-        ? `/api/nodes?limit=2000&before=${encodeURIComponent(new Date(beforeTs).toISOString())}`
-        : '/api/nodes?limit=2000';
+        ? `/api/nodes?limit=2000&before=${encodeURIComponent(new Date(beforeTs).toISOString())}${aqs}`
+        : `/api/nodes?limit=2000${aqs}`;
+      // Full reload (no beforeTs): clear existing markers so switching areas
+      // removes nodes that no longer belong to the selected area.
+      if (!beforeTs) {
+        if (nodesLayer) nodesLayer.clearLayers();
+        nodeMarkers = {};
+        nodeData = {};
+      }
       const resp = await fetch(url);
       const nodes = await resp.json();
       const list = Array.isArray(nodes) ? nodes : (nodes.nodes || []);
