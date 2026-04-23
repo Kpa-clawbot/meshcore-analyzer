@@ -752,12 +752,29 @@ func deriveHashtagChannelKey(channelName string) string {
 	return hex.EncodeToString(h[:16])
 }
 
+// builtinChannelKeys returns channel keys that are part of the MeshCore firmware
+// defaults and should always be available, regardless of the rainbow file or config.
+// Adding new entries here is the right move when a key is part of the protocol spec
+// (not a community-named hashtag channel).
+func builtinChannelKeys() map[string]string {
+	return map[string]string{
+		// Default Public channel — well-known PSK from the MeshCore companion
+		// protocol spec. Channel-hash byte = 0x11.
+		"Public": "8b3387e9c5cdea6ac9e5edbaa115cd72",
+	}
+}
+
 // loadChannelKeys loads channel decryption keys from config and/or a JSON file.
-// Merge priority: rainbow (lowest) → derived from hashChannels → explicit config (highest).
+// Merge priority: builtin (lowest) → rainbow → derived from hashChannels → explicit config (highest).
 func loadChannelKeys(cfg *Config, configPath string) map[string]string {
 	keys := make(map[string]string)
 
-	// 1. Rainbow table keys (lowest priority)
+	// 0. Built-in firmware-default keys (lowest priority — overridable by everything else)
+	for k, v := range builtinChannelKeys() {
+		keys[k] = v
+	}
+
+	// 1. Rainbow table keys
 	keysPath := os.Getenv("CHANNEL_KEYS_PATH")
 	if keysPath == "" {
 		keysPath = cfg.ChannelKeysPath

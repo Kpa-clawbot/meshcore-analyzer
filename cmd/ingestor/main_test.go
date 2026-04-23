@@ -607,8 +607,41 @@ func TestLoadChannelKeysHashChannelsNormalization(t *testing.T) {
 	if _, ok := keys["#Spaced"]; !ok {
 		t.Error("should derive key for #Spaced (trimmed)")
 	}
-	if len(keys) != 3 {
-		t.Errorf("expected 3 keys, got %d", len(keys))
+	// 3 derived + builtins (Public)
+	expected := 3 + len(builtinChannelKeys())
+	if len(keys) != expected {
+		t.Errorf("expected %d keys, got %d", expected, len(keys))
+	}
+}
+
+// Default Public channel must always be present from the built-in floor,
+// regardless of whether a rainbow file is provided.
+func TestLoadChannelKeysBuiltinPublic(t *testing.T) {
+	t.Setenv("CHANNEL_KEYS_PATH", "")
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := &Config{}
+
+	keys := loadChannelKeys(cfg, cfgPath)
+
+	if got := keys["Public"]; got != "8b3387e9c5cdea6ac9e5edbaa115cd72" {
+		t.Errorf("Public key = %q, want firmware-default 8b3387e9c5cdea6ac9e5edbaa115cd72", got)
+	}
+}
+
+// Explicit config and rainbow entries must still override the built-in floor.
+func TestLoadChannelKeysBuiltinOverridable(t *testing.T) {
+	t.Setenv("CHANNEL_KEYS_PATH", "")
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := &Config{
+		ChannelKeys: map[string]string{"Public": "deadbeefdeadbeefdeadbeefdeadbeef"},
+	}
+
+	keys := loadChannelKeys(cfg, cfgPath)
+
+	if got := keys["Public"]; got != "deadbeefdeadbeefdeadbeefdeadbeef" {
+		t.Errorf("Public key = %q, want explicit override deadbeef...", got)
 	}
 }
 
