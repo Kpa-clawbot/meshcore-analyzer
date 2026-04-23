@@ -782,6 +782,13 @@
           // Server-known channel: keep the row, just unmark as user-added so
           // the ✕ disappears until they re-add a key.
           ch.userAdded = false;
+          // If this was the selected channel, clear decrypted messages since
+          // the key is gone — they can't be re-decrypted without re-adding it.
+          if (selectedHash === channelHash) {
+            messages = [];
+            var msgEl2 = document.getElementById('chMessages');
+            if (msgEl2) msgEl2.innerHTML = '<div class="ch-empty">Key removed — add a key to decrypt messages</div>';
+          }
         }
         renderChannelList();
         return;
