@@ -440,8 +440,8 @@ func (s *Store) prepareStatements() error {
 	}
 
 	s.stmtInsertTransmission, err = s.db.Prepare(`
-		INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, payload_version, decoded_json, channel_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, payload_version, decoded_json, channel_hash, scope_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -570,6 +570,7 @@ func (s *Store) InsertTransmission(data *PacketData) (bool, error) {
 			data.RawHex, hash, now,
 			data.RouteType, data.PayloadType, data.PayloadVersion,
 			data.DecodedJSON, nilIfEmpty(data.ChannelHash),
+			scopeNameForDB(data),
 		)
 		if err != nil {
 			s.Stats.WriteErrors.Add(1)
@@ -967,21 +968,23 @@ func (s *Store) BackfillScopeNames(regionKeys map[string][]byte) {
 
 // PacketData holds the data needed to insert a packet into the DB.
 type PacketData struct {
-	RawHex         string
-	Timestamp      string
-	ObserverID     string
-	ObserverName   string
-	SNR            *float64
-	RSSI           *float64
-	Score          *float64
-	Direction      *string
-	Hash           string
-	RouteType      int
-	PayloadType    int
-	PayloadVersion int
-	PathJSON       string
-	DecodedJSON    string
-	ChannelHash    string // grouping key for channel queries (#762)
+	RawHex            string
+	Timestamp         string
+	ObserverID        string
+	ObserverName      string
+	SNR               *float64
+	RSSI              *float64
+	Score             *float64
+	Direction         *string
+	Hash              string
+	RouteType         int
+	PayloadType       int
+	PayloadVersion    int
+	PathJSON          string
+	DecodedJSON       string
+	ChannelHash       string // grouping key for channel queries (#762)
+	ScopeName         string // matched region name, or "" for unknown-scoped
+	IsTransportScoped bool   // true when route_type IN (0,3) AND Code1 ≠ "0000"
 }
 
 // nilIfEmpty returns nil for empty strings (for nullable DB columns).
@@ -990,6 +993,15 @@ func nilIfEmpty(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// scopeNameForDB encodes PacketData scope semantics for DB storage:
+// non-transport-scoped → NULL; transport-scoped → ScopeName (may be "" for unknown).
+func scopeNameForDB(data *PacketData) interface{} {
+	if !data.IsTransportScoped {
+		return nil
+	}
+	return data.ScopeName // "" or "#regionname"
 }
 
 // MQTTPacketMessage is the JSON payload from an MQTT raw packet message.
@@ -1006,7 +1018,7 @@ type MQTTPacketMessage struct {
 // path_json is derived directly from raw_hex header bytes (not decoded.Path.Hops)
 // to guarantee the stored path always matches the raw bytes. This matters for
 // TRACE packets where decoded.Path.Hops is overwritten with payload hops (#886).
-func BuildPacketData(msg *MQTTPacketMessage, decoded *DecodedPacket, observerID, region string) *PacketData {
+func BuildPacketData(msg *MQTTPacketMessage, decoded *DecodedPacket, observerID, region string, regionKeys map[string][]byte) *PacketData {
 	now := time.Now().UTC().Format(time.RFC3339)
 	pathJSON := "[]"
 	// For TRACE packets, path_json must be the payload-decoded route hops
@@ -1046,6 +1058,11 @@ func BuildPacketData(msg *MQTTPacketMessage, decoded *DecodedPacket, observerID,
 		} else if decoded.Payload.Type == "GRP_TXT" && decoded.Payload.ChannelHashHex != "" {
 			pd.ChannelHash = "enc_" + decoded.Payload.ChannelHashHex
 		}
+	}
+
+	if decoded.TransportCodes != nil && decoded.TransportCodes.Code1 != "0000" {
+		pd.IsTransportScoped = true
+		pd.ScopeName = matchScope(regionKeys, byte(decoded.Header.PayloadType), decoded.PayloadRaw, decoded.TransportCodes.Code1)
 	}
 
 	return pd

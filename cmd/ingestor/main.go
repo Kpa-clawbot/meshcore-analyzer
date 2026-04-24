@@ -113,6 +113,9 @@ func main() {
 		log.Printf("No channel keys loaded — GRP_TXT packets will not be decrypted")
 	}
 
+	regionKeys := loadRegionKeys(cfg)
+	go store.BackfillScopeNames(regionKeys)
+
 	// Connect to each MQTT source
 	var clients []mqtt.Client
 	for _, source := range sources {
@@ -163,7 +166,7 @@ func main() {
 		// Capture source for closure
 		src := source
 		opts.SetDefaultPublishHandler(func(c mqtt.Client, m mqtt.Message) {
-			handleMessage(store, tag, src, m, channelKeys, cfg)
+			handleMessage(store, tag, src, m, channelKeys, regionKeys, cfg)
 		})
 
 		client := mqtt.NewClient(opts)
@@ -198,7 +201,7 @@ func main() {
 	log.Println("Done.")
 }
 
-func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, cfg *Config) {
+func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, regionKeys map[string][]byte, cfg *Config) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("MQTT [%s] panic in handler: %v", tag, r)
@@ -352,7 +355,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 			if !NodePassesGeoFilter(decoded.Payload.Lat, decoded.Payload.Lon, cfg.GeoFilter) {
 				return
 			}
-			pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionKeys)
 			isNew, err := store.InsertTransmission(pktData)
 			if err != nil {
 				log.Printf("MQTT [%s] db insert error: %v", tag, err)
@@ -375,7 +378,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		} else {
 			// Non-ADVERT packets: store normally (routing/channel messages from
 			// in-area observers are relevant regardless of relay hop origin).
-			pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionKeys)
 			if _, err := store.InsertTransmission(pktData); err != nil {
 				log.Printf("MQTT [%s] db insert error: %v", tag, err)
 			}
