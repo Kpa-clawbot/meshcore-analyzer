@@ -4003,3 +4003,32 @@ func TestHandleScopeStats(t *testing.T) {
 		t.Error("byRegion is nil, want empty slice")
 	}
 }
+
+func TestHandleScopeStatsInvalidWindow(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	if _, err := srv.db.conn.Exec(`ALTER TABLE transmissions ADD COLUMN scope_name TEXT DEFAULT NULL`); err != nil {
+		t.Fatalf("add scope_name column: %v", err)
+	}
+	srv.db.hasScopeName = true
+
+	req := httptest.NewRequest("GET", "/api/scope-stats?window=invalid", nil)
+	w := httptest.NewRecorder()
+	srv.handleScopeStats(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestHandleScopeStatsNoColumn(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	// hasScopeName stays false (not set)
+
+	req := httptest.NewRequest("GET", "/api/scope-stats?window=24h", nil)
+	w := httptest.NewRecorder()
+	srv.handleScopeStats(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
+	}
+}
