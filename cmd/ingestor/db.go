@@ -942,6 +942,10 @@ func (s *Store) BackfillScopeNames(regionKeys map[string][]byte) {
 			pending = append(pending, r)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[backfill] scope_name iteration error: %v", err)
+		return
+	}
 
 	updated := 0
 	for _, r := range pending {
