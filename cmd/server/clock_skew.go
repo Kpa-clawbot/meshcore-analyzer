@@ -56,10 +56,17 @@ const (
 // [epoch, epoch + maxPlausibleUptimeSec] for any known firmware default.
 // If matched, returns the matched epoch; otherwise returns 0.
 func isDefaultEpoch(advertTS int64) (bool, int64) {
+	// Find the largest epoch <= advertTS (closest match). Since ranges
+	// overlap, picking the closest avoids attributing a 2023-firmware
+	// node's timestamp to the 2024 epoch.
+	bestEpoch := int64(-1)
 	for _, epoch := range defaultEpochs {
-		if advertTS >= epoch && advertTS <= epoch+maxPlausibleUptimeSec {
-			return true, epoch
+		if epoch <= advertTS && epoch > bestEpoch {
+			bestEpoch = epoch
 		}
+	}
+	if bestEpoch >= 0 && advertTS <= bestEpoch+maxPlausibleUptimeSec {
+		return true, bestEpoch
 	}
 	return false, 0
 }

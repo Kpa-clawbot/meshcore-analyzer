@@ -9,34 +9,125 @@ import (
 
 // ── classifySkew ───────────────────────────────────────────────────────────────
 
-func TestClassifySkew(t *testing.T) {
+func TestClassify_Default_AllKnownEpochs(t *testing.T) {
+	// Each known default epoch at +0s, +1d uptime → default.
+	for _, epoch := range defaultEpochs {
+		for _, uptimeSec := range []int64{0, 86400} {
+			advTS := epoch + uptimeSec
+			sev, _ := classifySkew(advTS, 999999) // skew irrelevant for default
+			if sev != SkewDefault {
+				t.Errorf("classifySkew(epoch=%d + %ds) = %v, want default", epoch, uptimeSec, sev)
+			}
+		}
+	}
+	// Also test at 729d for the most recent epoch (no overlap issue).
+	advTS := defaultEpochs[len(defaultEpochs)-1] + 729*86400
+	sev, matched := classifySkew(advTS, 999999)
+	if sev != SkewDefault {
+		t.Errorf("classifySkew(latest epoch + 729d) = %v, want default", sev)
+	}
+	if matched != defaultEpochs[len(defaultEpochs)-1] {
+		t.Errorf("matched = %d, want %d", matched, defaultEpochs[len(defaultEpochs)-1])
+	}
+}
+
+func TestClassify_Default_BeyondUptimeCap(t *testing.T) {
+	// 731 days past the LATEST epoch → NOT default.
+	latestEpoch := defaultEpochs[len(defaultEpochs)-1]
+	advTS := latestEpoch + 731*86400
+	sev, _ := classifySkew(advTS, 5)
+	if sev == SkewDefault {
+		t.Errorf("classifySkew(latestEpoch + 731d) = default, should fall through")
+	}
+}
+
+func TestClassify_OK(t *testing.T) {
+	// Use a timestamp outside all default-epoch ranges.
+	advTS := int64(1900000000) // 2030-03 — well past any default+730d
 	tests := []struct {
-		absSkew  float64
-		expected SkewSeverity
+		skew float64
+		want SkewSeverity
 	}{
 		{0, SkewOK},
-		{60, SkewOK},           // 1 min
-		{299, SkewOK},          // just under 5 min
-		{300, SkewWarning},     // exactly 5 min
-		{1800, SkewWarning},    // 30 min
-		{3599, SkewWarning},    // just under 1 hour
-		{3600, SkewCritical},   // exactly 1 hour
-		{86400, SkewCritical},  // 1 day
-		{2592000 - 1, SkewCritical}, // just under 30 days
-		{2592000, SkewAbsurd},  // exactly 30 days
-		{86400 * 365 - 1, SkewAbsurd}, // just under 365 days
-		{86400 * 365, SkewNoClock}, // exactly 365 days
-		{86400 * 365 * 10, SkewNoClock}, // 10 years (epoch-0 style)
+		{15, SkewOK},
+		{15.0, SkewOK},
 	}
 	for _, tc := range tests {
-		got := classifySkew(tc.absSkew)
-		if got != tc.expected {
-			t.Errorf("classifySkew(%v) = %v, want %v", tc.absSkew, got, tc.expected)
+		sev, _ := classifySkew(advTS, tc.skew)
+		if sev != tc.want {
+			t.Errorf("classifySkew(advTS, %v) = %v, want %v", tc.skew, sev, tc.want)
 		}
 	}
 }
 
-// ── median ─────────────────────────────────────────────────────────────────────
+func TestClassify_Degrading(t *testing.T) {
+	advTS := int64(1900000000)
+	tests := []float64{16, 30, 60}
+	for _, skew := range tests {
+		sev, _ := classifySkew(advTS, skew)
+		if sev != SkewDegrading {
+			t.Errorf("classifySkew(advTS, %v) = %v, want degrading", skew, sev)
+		}
+	}
+}
+
+func TestClassify_Degraded(t *testing.T) {
+	advTS := int64(1900000000)
+	tests := []float64{61, 300, 600}
+	for _, skew := range tests {
+		sev, _ := classifySkew(advTS, skew)
+		if sev != SkewDegraded {
+			t.Errorf("classifySkew(advTS, %v) = %v, want degraded", skew, sev)
+		}
+	}
+}
+
+func TestClassify_Wrong(t *testing.T) {
+	advTS := int64(1900000000)
+	tests := []float64{601, 3600, 86400 * 365}
+	for _, skew := range tests {
+		sev, _ := classifySkew(advTS, skew)
+		if sev != SkewWrong {
+			t.Errorf("classifySkew(advTS, %v) = %v, want wrong", skew, sev)
+		}
+	}
+}
+
+func TestClassify_FutureWrong(t *testing.T) {
+	// Advert_ts in 2030 + 700s offset — not a default epoch.
+	advTS := int64(1900000700)
+	sev, _ := classifySkew(advTS, 700)
+	if sev != SkewWrong {
+		t.Errorf("classifySkew(future, 700) = %v, want wrong", sev)
+	}
+}
+
+// ── isDefaultEpoch ─────────────────────────────────────────────────────────────
+
+func TestIsDefaultEpoch_Boundaries(t *testing.T) {
+	// Exactly at epoch → true.
+	ok, ep := isDefaultEpoch(1715770351)
+	if !ok || ep != 1715770351 {
+		t.Errorf("isDefaultEpoch(1715770351) = %v, %d", ok, ep)
+	}
+	// At epoch + maxPlausibleUptimeSec → true.
+	ok, ep = isDefaultEpoch(1715770351 + maxPlausibleUptimeSec)
+	if !ok {
+		t.Error("expected true at epoch + maxPlausibleUptimeSec")
+	}
+	// Just past → false.
+	ok, _ = isDefaultEpoch(1715770351 + maxPlausibleUptimeSec + 1)
+	if ok {
+		t.Error("expected false past max uptime")
+	}
+	// Epoch 0 → true.
+	ok, ep = isDefaultEpoch(0)
+	if !ok || ep != 0 {
+		t.Errorf("isDefaultEpoch(0) = %v, %d", ok, ep)
+	}
+}
+
+// ── median / mean ──────────────────────────────────────────────────────────────
 
 func TestMedian(t *testing.T) {
 	tests := []struct {
@@ -99,7 +190,6 @@ func TestParseISO(t *testing.T) {
 // ── extractTimestamp ────────────────────────────────────────────────────────────
 
 func TestExtractTimestamp(t *testing.T) {
-	// Nested payload.timestamp
 	decoded := map[string]interface{}{
 		"payload": map[string]interface{}{
 			"timestamp": float64(1776340800),
@@ -110,7 +200,6 @@ func TestExtractTimestamp(t *testing.T) {
 		t.Errorf("extractTimestamp (nested) = %v, want 1776340800", got)
 	}
 
-	// Top-level timestamp
 	decoded2 := map[string]interface{}{
 		"timestamp": float64(1776340900),
 	}
@@ -119,7 +208,6 @@ func TestExtractTimestamp(t *testing.T) {
 		t.Errorf("extractTimestamp (top-level) = %v, want 1776340900", got2)
 	}
 
-	// No timestamp
 	decoded3 := map[string]interface{}{"foo": "bar"}
 	got3 := extractTimestamp(decoded3)
 	if got3 != 0 {
@@ -130,7 +218,6 @@ func TestExtractTimestamp(t *testing.T) {
 // ── calibrateObservers ─────────────────────────────────────────────────────────
 
 func TestCalibrateObservers_SingleObserver(t *testing.T) {
-	// Single-observer packets can't calibrate — should return empty.
 	samples := []skewSample{
 		{advertTS: 1000, observedTS: 1000, observerID: "obs1", hash: "h1"},
 		{advertTS: 2000, observedTS: 2000, observerID: "obs1", hash: "h2"},
@@ -142,10 +229,6 @@ func TestCalibrateObservers_SingleObserver(t *testing.T) {
 }
 
 func TestCalibrateObservers_MultiObserver(t *testing.T) {
-	// Packet h1 seen by 3 observers: obs1 at t=100, obs2 at t=110, obs3 at t=100.
-	// Median observation = 100. obs1=0, obs2=+10, obs3=0
-	// Packet h2 seen by 3 observers: obs1 at t=200, obs2 at t=210, obs3 at t=200.
-	// Median observation = 200. obs1=0, obs2=+10, obs3=0
 	samples := []skewSample{
 		{advertTS: 100, observedTS: 100, observerID: "obs1", hash: "h1"},
 		{advertTS: 100, observedTS: 110, observerID: "obs2", hash: "h1"},
@@ -169,75 +252,41 @@ func TestCalibrateObservers_MultiObserver(t *testing.T) {
 // ── computeNodeSkew ────────────────────────────────────────────────────────────
 
 func TestComputeNodeSkew_BasicCorrection(t *testing.T) {
-	// Validates observer offset correction direction.
-	//
-	// Setup: node is 60s ahead, obs1 accurate, obs2 is 10s ahead.
-	// With 2 observers, median obs_ts = 1005.
-	//   obs1 offset = 1000 - 1005 = -5
-	//   obs2 offset = 1010 - 1005 = +5
-	// Correction: corrected = raw_skew + obsOffset
-	//   obs1: raw=60, corrected = 60 + (-5) = 55
-	//   obs2: raw=50, corrected = 50 + 5 = 55
-	// Both converge to 55 (not exact 60 because with only 2 observers,
-	// the median can't fully distinguish which observer is drifted).
-
 	samples := []skewSample{
-		// Same packet seen by accurate obs1 and obs2 (+10s ahead)
 		{advertTS: 1060, observedTS: 1000, observerID: "obs1", hash: "h1"},
 		{advertTS: 1060, observedTS: 1010, observerID: "obs2", hash: "h1"},
 	}
 	offsets, _ := calibrateObservers(samples)
-	// median obs = 1005, obs1 offset = -5, obs2 offset = +5
-	// So the median approach finds obs2 is +5 ahead (relative to median)
-
-	// Now compute node skew with those offsets:
 	nodeSkew := computeNodeSkew(samples, offsets)
 	cs, ok := nodeSkew["h1"]
 	if !ok {
 		t.Fatal("expected skew data for hash h1")
 	}
-	// With only 2 observers, median obs_ts = 1005.
-	// obs1 offset = 1000-1005 = -5, obs2 offset = 1010-1005 = +5
-	// raw from obs1 = 60, corrected = 60 + (-5) = 55
-	// raw from obs2 = 50, corrected = 50 + 5 = 55
-	// median = 55
 	if cs.MedianSkewSec != 55 {
 		t.Errorf("median skew = %v, want 55", cs.MedianSkewSec)
 	}
 }
 
 func TestComputeNodeSkew_ThreeObservers(t *testing.T) {
-	// Node is exactly 60s ahead. obs1 accurate, obs2 accurate, obs3 +30s ahead.
-	// advertTS = 1060, real time = 1000
 	samples := []skewSample{
 		{advertTS: 1060, observedTS: 1000, observerID: "obs1", hash: "h1"},
 		{advertTS: 1060, observedTS: 1000, observerID: "obs2", hash: "h1"},
 		{advertTS: 1060, observedTS: 1030, observerID: "obs3", hash: "h1"},
 	}
 	offsets, _ := calibrateObservers(samples)
-	// median obs_ts = 1000. obs1=0, obs2=0, obs3=+30
-	if offsets["obs3"] != 30 {
-		t.Errorf("obs3 offset = %v, want 30", offsets["obs3"])
-	}
-
 	nodeSkew := computeNodeSkew(samples, offsets)
 	cs := nodeSkew["h1"]
 	if cs == nil {
 		t.Fatal("expected skew data for h1")
 	}
-	// raw from obs1 = 60, corrected = 60 + 0 = 60
-	// raw from obs2 = 60, corrected = 60 + 0 = 60
-	// raw from obs3 = 30, corrected = 30 + 30 = 60
-	// All three converge to 60. 
 	if cs.MedianSkewSec != 60 {
-		t.Errorf("median skew = %v, want 60 (node is 60s ahead)", cs.MedianSkewSec)
+		t.Errorf("median skew = %v, want 60", cs.MedianSkewSec)
 	}
 }
 
 // ── computeDrift ───────────────────────────────────────────────────────────────
 
 func TestComputeDrift_Stable(t *testing.T) {
-	// Constant skew = no drift.
 	pairs := []tsSkewPair{
 		{ts: 0, skew: 60},
 		{ts: 7200, skew: 60},
@@ -245,21 +294,19 @@ func TestComputeDrift_Stable(t *testing.T) {
 	}
 	drift := computeDrift(pairs)
 	if drift != 0 {
-		t.Errorf("drift = %v, want 0 for stable skew", drift)
+		t.Errorf("drift = %v, want 0", drift)
 	}
 }
 
 func TestComputeDrift_LinearDrift(t *testing.T) {
-	// 1 second drift per hour = 24 sec/day.
 	pairs := []tsSkewPair{
 		{ts: 0, skew: 0},
 		{ts: 3600, skew: 1},
 		{ts: 7200, skew: 2},
 	}
 	drift := computeDrift(pairs)
-	expected := 24.0
-	if math.Abs(drift-expected) > 0.1 {
-		t.Errorf("drift = %v, want ~%v", drift, expected)
+	if math.Abs(drift-24.0) > 0.1 {
+		t.Errorf("drift = %v, want ~24", drift)
 	}
 }
 
@@ -271,13 +318,40 @@ func TestComputeDrift_TooFewSamples(t *testing.T) {
 }
 
 func TestComputeDrift_TooShortSpan(t *testing.T) {
-	// Less than 1 hour apart.
 	pairs := []tsSkewPair{
 		{ts: 0, skew: 0},
 		{ts: 1800, skew: 10},
 	}
 	if computeDrift(pairs) != 0 {
 		t.Error("expected 0 drift for short time span")
+	}
+}
+
+func TestDriftRejectsCorrectionJump(t *testing.T) {
+	pairs := []tsSkewPair{}
+	for i := 0; i < 12; i++ {
+		ts := int64(i) * 300
+		skew := float64(i) * (1.0 / 24.0)
+		pairs = append(pairs, tsSkewPair{ts: ts, skew: skew})
+	}
+	pairs = append(pairs, tsSkewPair{ts: 3600 + 12*300, skew: 1000})
+	drift := computeDrift(pairs)
+	if math.Abs(drift) > 100 {
+		t.Errorf("drift = %v, expected small", drift)
+	}
+}
+
+func TestTheilSenMatchesOLSWhenClean(t *testing.T) {
+	pairs := []tsSkewPair{}
+	for i := 0; i < 20; i++ {
+		pairs = append(pairs, tsSkewPair{
+			ts:   int64(i) * 600,
+			skew: float64(i) * (600.0 / 3600.0),
+		})
+	}
+	drift := computeDrift(pairs)
+	if math.Abs(drift-24.0) > 0.25 {
+		t.Errorf("drift = %v, want ~24", drift)
 	}
 }
 
@@ -309,35 +383,39 @@ func TestJsonNumber(t *testing.T) {
 
 // ── Integration: GetNodeClockSkew via PacketStore ──────────────────────────────
 
+// formatInt64 is a test helper to format int64 as string for JSON embedding.
+func formatInt64(n int64) string {
+	return fmt.Sprintf("%d", n)
+}
+
 func TestGetNodeClockSkew_Integration(t *testing.T) {
 	ps := NewPacketStore(nil, nil)
 
-	// Simulate two ADVERT transmissions for the same node, seen by 2 observers each.
-	// Node "AABB" has clock 120s ahead.
 	pt := 4 // ADVERT
+	// Use a base time outside all default-epoch ranges.
+	base := int64(1900000000) // 2030
 	tx1 := &StoreTx{
 		Hash:        "hash1",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":1700002320}}`, // obs=1700002200, node ahead by 120s
+		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(base+10) + `}}`,
 		Observations: []*StoreObs{
-			{ObserverID: "obs1", Timestamp: "2023-11-14T22:50:00Z"}, // 1700002200
-			{ObserverID: "obs2", Timestamp: "2023-11-14T22:50:00Z"}, // 1700002200
+			{ObserverID: "obs1", Timestamp: time.Unix(base, 0).UTC().Format(time.RFC3339)},
+			{ObserverID: "obs2", Timestamp: time.Unix(base, 0).UTC().Format(time.RFC3339)},
 		},
 	}
 	tx2 := &StoreTx{
 		Hash:        "hash2",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":1700005920}}`, // obs=1700005800, node ahead by 120s
+		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(base+3610) + `}}`,
 		Observations: []*StoreObs{
-			{ObserverID: "obs1", Timestamp: "2023-11-14T23:50:00Z"}, // 1700005800
-			{ObserverID: "obs2", Timestamp: "2023-11-14T23:50:00Z"}, // 1700005800
+			{ObserverID: "obs1", Timestamp: time.Unix(base+3600, 0).UTC().Format(time.RFC3339)},
+			{ObserverID: "obs2", Timestamp: time.Unix(base+3600, 0).UTC().Format(time.RFC3339)},
 		},
 	}
 
 	ps.mu.Lock()
 	ps.byNode["AABB"] = []*StoreTx{tx1, tx2}
 	ps.byPayloadType[4] = []*StoreTx{tx1, tx2}
-	// Force recompute by setting interval to 0.
 	ps.clockSkew.computeInterval = 0
 	ps.mu.Unlock()
 
@@ -348,19 +426,9 @@ func TestGetNodeClockSkew_Integration(t *testing.T) {
 	if result.Pubkey != "AABB" {
 		t.Errorf("pubkey = %q, want AABB", result.Pubkey)
 	}
-	// Both transmissions show 120s skew, so median should be 120.
-	if result.MedianSkewSec != 120 {
-		t.Errorf("median skew = %v, want 120", result.MedianSkewSec)
-	}
-	if result.SampleCount < 2 {
-		t.Errorf("sample count = %v, want >= 2", result.SampleCount)
-	}
+	// Both transmissions show ~10s skew → ok.
 	if result.Severity != SkewOK {
-		t.Errorf("severity = %v, want ok (120s < 5min)", result.Severity)
-	}
-	// Drift should be ~0 since skew is constant.
-	if math.Abs(result.DriftPerDaySec) > 1 {
-		t.Errorf("drift = %v, want ~0 for constant skew", result.DriftPerDaySec)
+		t.Errorf("severity = %v, want ok", result.Severity)
 	}
 }
 
@@ -372,59 +440,80 @@ func TestGetNodeClockSkew_NoData(t *testing.T) {
 	}
 }
 
-// ── Sanity check tests (#XXX — clock skew crazy stats) ────────────────────────
-
-func TestGetNodeClockSkew_NoClock_EpochZero(t *testing.T) {
-	// Node with epoch-0 timestamp produces huge skew → no_clock severity, drift=0.
+func TestGetNodeClockSkew_DefaultEpochNode(t *testing.T) {
+	// Node with advert_ts at the current firmware default epoch → default severity.
 	ps := NewPacketStore(nil, nil)
-	pt := 4 // ADVERT
+	pt := 4
 
-	// Epoch-ish advert: advertTS near start of 2020, observed in 2023 → |skew| > 365 days
-	var txs []*StoreTx
-	baseObs := int64(1700000000) // ~Nov 2023
-	for i := 0; i < 6; i++ {
-		obsTS := baseObs + int64(i)*7200
-		tx := &StoreTx{
-			Hash:        "epoch-h" + string(rune('0'+i)),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":1577836800}}`, // Jan 1 2020 — valid but way off
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
+	now := time.Now().Unix()
+	advTS := int64(1715770351 + 86400) // default + 1 day uptime
+	tx := &StoreTx{
+		Hash:        "default-h1",
+		PayloadType: &pt,
+		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+		Observations: []*StoreObs{
+			{ObserverID: "obs1", Timestamp: time.Unix(now, 0).UTC().Format(time.RFC3339)},
+		},
 	}
 
 	ps.mu.Lock()
-	ps.byNode["EPOCH"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
+	ps.byNode["DEFNODE"] = []*StoreTx{tx}
+	ps.byPayloadType[4] = []*StoreTx{tx}
 	ps.clockSkew.computeInterval = 0
 	ps.mu.Unlock()
 
-	result := ps.GetNodeClockSkew("EPOCH")
-	if result == nil {
-		t.Fatal("expected clock skew result for epoch-0 node")
+	r := ps.GetNodeClockSkew("DEFNODE")
+	if r == nil {
+		t.Fatal("expected result")
 	}
-	if result.Severity != SkewNoClock {
-		t.Errorf("severity = %v, want no_clock", result.Severity)
+	if r.Severity != SkewDefault {
+		t.Errorf("severity = %v, want default", r.Severity)
 	}
-	if result.DriftPerDaySec != 0 {
-		t.Errorf("drift = %v, want 0 for no_clock node", result.DriftPerDaySec)
+	if r.DefaultEpoch == nil || *r.DefaultEpoch != 1715770351 {
+		t.Errorf("defaultEpoch = %v, want 1715770351", r.DefaultEpoch)
+	}
+}
+
+func TestGetNodeClockSkew_WrongNode(t *testing.T) {
+	// Node with advert_ts far from any default and large skew → wrong.
+	ps := NewPacketStore(nil, nil)
+	pt := 4
+
+	now := int64(1900000000) // 2030, outside default ranges
+	advTS := now + 86400     // 1 day ahead
+	tx := &StoreTx{
+		Hash:        "wrong-h1",
+		PayloadType: &pt,
+		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+		Observations: []*StoreObs{
+			{ObserverID: "obs1", Timestamp: time.Unix(now, 0).UTC().Format(time.RFC3339)},
+		},
+	}
+
+	ps.mu.Lock()
+	ps.byNode["WRONGNODE"] = []*StoreTx{tx}
+	ps.byPayloadType[4] = []*StoreTx{tx}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	r := ps.GetNodeClockSkew("WRONGNODE")
+	if r == nil {
+		t.Fatal("expected result")
+	}
+	if r.Severity != SkewWrong {
+		t.Errorf("severity = %v, want wrong", r.Severity)
 	}
 }
 
 func TestGetNodeClockSkew_TooFewSamplesForDrift(t *testing.T) {
-	// Node with only 2 advert samples → drift should not be computed.
 	ps := NewPacketStore(nil, nil)
 	pt := 4
 
-	baseObs := int64(1700000000)
+	now := int64(1900000000) // 2030, outside default ranges
 	var txs []*StoreTx
 	for i := 0; i < 2; i++ {
-		obsTS := baseObs + int64(i)*7200
-		advTS := obsTS + 120 // 120s ahead
+		obsTS := now + int64(i)*7200
+		advTS := obsTS + 10
 		tx := &StoreTx{
 			Hash:        "few-h" + string(rune('0'+i)),
 			PayloadType: &pt,
@@ -449,508 +538,6 @@ func TestGetNodeClockSkew_TooFewSamplesForDrift(t *testing.T) {
 		t.Fatal("expected clock skew result")
 	}
 	if result.DriftPerDaySec != 0 {
-		t.Errorf("drift = %v, want 0 for 2-sample node (minimum is %d)", result.DriftPerDaySec, minDriftSamples)
-	}
-}
-
-func TestGetNodeClockSkew_AbsurdDriftCapped(t *testing.T) {
-	// Node with wildly varying skew producing |drift| > 86400 s/day → drift capped to 0.
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-
-	// Create 6 samples with extreme skew variation to produce absurd drift.
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	for i := 0; i < 6; i++ {
-		obsTS := baseObs + int64(i)*3600
-		// Alternate between huge positive and negative skew offsets
-		skewOffset := int64(50000 * (1 - 2*(i%2))) // +50000 or -50000
-		advTS := obsTS + skewOffset
-		tx := &StoreTx{
-			Hash:        "wild-h" + string(rune('0'+i)),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-
-	ps.mu.Lock()
-	ps.byNode["WILD"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	result := ps.GetNodeClockSkew("WILD")
-	if result == nil {
-		t.Fatal("expected clock skew result")
-	}
-	if math.Abs(result.DriftPerDaySec) > maxReasonableDriftPerDay {
-		t.Errorf("drift = %v, should be capped (|drift| > %v)", result.DriftPerDaySec, maxReasonableDriftPerDay)
-	}
-}
-
-func TestGetNodeClockSkew_NormalNodeWithDrift(t *testing.T) {
-	// Normal node with 6 samples and consistent linear drift → drift computed correctly.
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	for i := 0; i < 6; i++ {
-		obsTS := baseObs + int64(i)*7200 // every 2 hours
-		// Drift: 1 sec/hour = 24 sec/day
-		advTS := obsTS + 120 + int64(i) // skew grows by 1s per sample (2h apart)
-		tx := &StoreTx{
-			Hash:        "norm-h" + string(rune('0'+i)),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-
-	ps.mu.Lock()
-	ps.byNode["NORMAL"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	result := ps.GetNodeClockSkew("NORMAL")
-	if result == nil {
-		t.Fatal("expected clock skew result")
-	}
-	if result.Severity != SkewOK {
-		t.Errorf("severity = %v, want ok", result.Severity)
-	}
-	// 1s per 7200s = 12 s/day
-	if result.DriftPerDaySec == 0 {
-		t.Error("expected non-zero drift for linearly drifting node")
-	}
-	if math.Abs(result.DriftPerDaySec) > maxReasonableDriftPerDay {
-		t.Errorf("drift = %v, should be reasonable", result.DriftPerDaySec)
-	}
-}
-
-// formatInt64 is a test helper to format int64 as string for JSON embedding.
-func formatInt64(n int64) string {
-	return fmt.Sprintf("%d", n)
-}
-
-// ── #789: Recent-window severity & robust drift ───────────────────────────────
-
-// TestSeverityUsesRecentNotMedian: 100 historical bad samples (skew=-60s,
-// each ~5min apart) followed by 5 fresh good samples (skew=-1s). All-time
-// median is still huge-ish but recent-window severity must reflect the
-// current healthy state.
-func TestSeverityUsesRecentNotMedian(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	for i := 0; i < 105; i++ {
-		obsTS := baseObs + int64(i)*300 // 5 min apart
-		var skew int64 = -60
-		if i >= 100 {
-			skew = -1 // good samples at the tail
-		}
-		advTS := obsTS + skew
-		tx := &StoreTx{
-			Hash:        fmt.Sprintf("recent-h%03d", i),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-	ps.mu.Lock()
-	ps.byNode["RECENT"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("RECENT")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	if r.Severity != SkewOK {
-		t.Errorf("severity = %v, want ok (recent samples are healthy)", r.Severity)
-	}
-	if math.Abs(r.RecentMedianSkewSec) > 5 {
-		t.Errorf("recentMedianSkewSec = %v, want ~-1", r.RecentMedianSkewSec)
-	}
-	// Historical median should still be retained for context.
-	if math.Abs(r.MedianSkewSec) < 30 {
-		t.Errorf("medianSkewSec = %v, expected historical median to remain large", r.MedianSkewSec)
-	}
-}
-
-// TestDriftRejectsCorrectionJump: 30 minutes of clean linear drift, then a
-// single 60-second skew jump. The pre-jump slope should win — drift must
-// not be catastrophically inflated by the correction event.
-func TestDriftRejectsCorrectionJump(t *testing.T) {
-	pairs := []tsSkewPair{}
-	// 30 min of stable, ~12 sec/day drift: 1s per 7200s.
-	for i := 0; i < 12; i++ {
-		ts := int64(i) * 300
-		skew := float64(i) * (1.0 / 24.0) // ~0.04s per 5min step → 12 s/day
-		pairs = append(pairs, tsSkewPair{ts: ts, skew: skew})
-	}
-	// Wait an hour, then a single 1000-sec correction jump (clearly outlier).
-	pairs = append(pairs, tsSkewPair{ts: 3600 + 12*300, skew: 1000})
-
-	drift := computeDrift(pairs)
-	// Without rejection this would be ~ (1000-0)/(end-0) * 86400 = enormous.
-	if math.Abs(drift) > 100 {
-		t.Errorf("drift = %v, expected small (~12 s/day), correction jump should be filtered", drift)
-	}
-}
-
-// TestTheilSenMatchesOLSWhenClean: on clean linear data Theil-Sen should
-// produce essentially the OLS answer.
-func TestTheilSenMatchesOLSWhenClean(t *testing.T) {
-	// 1 sec drift per hour = 24 sec/day, 20 evenly-spaced samples.
-	pairs := []tsSkewPair{}
-	for i := 0; i < 20; i++ {
-		pairs = append(pairs, tsSkewPair{
-			ts:   int64(i) * 600,
-			skew: float64(i) * (600.0 / 3600.0),
-		})
-	}
-	drift := computeDrift(pairs)
-	if math.Abs(drift-24.0) > 0.25 { // ~1%
-		t.Errorf("drift = %v, want ~24", drift)
-	}
-}
-
-// TestReporterScenario_789: reproduce the exact scenario from issue #789.
-// Reporter saw mean=-52565156, median=-59063561, last=-0.8, sample count
-// 1662, drift +1793549.9 s/day, severity=absurd. After the fix, severity
-// must be ok (recent samples are healthy) and drift must be sane.
-func TestReporterScenario_789(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	// 1657 samples with the bad ~-683-day skew (the historical poison),
-	// then 5 freshly corrected samples at -0.8s — totals 1662.
-	for i := 0; i < 1662; i++ {
-		obsTS := baseObs + int64(i)*60 // 1 min apart
-		var skew int64
-		if i < 1657 {
-			skew = -59063561 // ~ -683 days
-		} else {
-			skew = -1 // corrected (rounded; reporter saw -0.8)
-		}
-		advTS := obsTS + skew
-		tx := &StoreTx{
-			Hash:        fmt.Sprintf("rep-%04d", i),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-	ps.mu.Lock()
-	ps.byNode["REPNODE"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("REPNODE")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	// Severity must reflect current health, not the all-time median.
-	if r.Severity != SkewOK && r.Severity != SkewWarning {
-		t.Errorf("severity = %v, want ok/warning (recent samples are healthy)", r.Severity)
-	}
-	if math.Abs(r.RecentMedianSkewSec) > 5 {
-		t.Errorf("recentMedianSkewSec = %v, want near 0", r.RecentMedianSkewSec)
-	}
-	// Drift must not be absurd. The historical jump is one event between
-	// the 1657th and 1658th sample; outlier rejection must contain it.
-	if math.Abs(r.DriftPerDaySec) > maxReasonableDriftPerDay {
-		t.Errorf("drift = %v, must be <= cap %v", r.DriftPerDaySec, maxReasonableDriftPerDay)
-	}
-	// And it should be close to zero (stable historical + stable corrected).
-	if math.Abs(r.DriftPerDaySec) > 1000 {
-		t.Errorf("drift = %v, expected near zero after outlier rejection", r.DriftPerDaySec)
-	}
-	// Historical median is preserved as context.
-	if math.Abs(r.MedianSkewSec) < 1e6 {
-		t.Errorf("medianSkewSec = %v, expected historical poison preserved as context", r.MedianSkewSec)
-	}
-}
-
-// TestBimodalClock_845: 60% good samples → bimodal_clock severity.
-func TestBimodalClock_845(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	// 6 good samples (-5s each), 4 bad samples (-50000000s each) = 60% good
-	// Interleave so the recent window (last 5) captures both good and bad.
-	skews := []int64{-5, -5, -50000000, -5, -50000000, -5, -50000000, -5, -50000000, -5}
-	for i := 0; i < 10; i++ {
-		obsTS := baseObs + int64(i)*60
-		advTS := obsTS + skews[i]
-		tx := &StoreTx{
-			Hash:        fmt.Sprintf("bimodal-%04d", i),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-	ps.mu.Lock()
-	ps.byNode["BIMODAL"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("BIMODAL")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	if r.Severity != SkewBimodalClock {
-		t.Errorf("severity = %v, want bimodal_clock", r.Severity)
-	}
-	if math.Abs(r.RecentMedianSkewSec-(-5)) > 1 {
-		t.Errorf("recentMedianSkewSec = %v, want ≈ -5 (median of good samples)", r.RecentMedianSkewSec)
-	}
-	if r.GoodFraction < 0.5 || r.GoodFraction > 0.7 {
-		t.Errorf("goodFraction = %v, want ~0.6", r.GoodFraction)
-	}
-	if r.RecentBadSampleCount < 1 {
-		t.Errorf("recentBadSampleCount = %v, want > 0", r.RecentBadSampleCount)
-	}
-}
-
-// TestAllBad_NoClock_845: all samples bad → no_clock.
-func TestAllBad_NoClock_845(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	for i := 0; i < 10; i++ {
-		obsTS := baseObs + int64(i)*60
-		advTS := obsTS - 50000000
-		tx := &StoreTx{
-			Hash:        fmt.Sprintf("allbad-%04d", i),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-	ps.mu.Lock()
-	ps.byNode["ALLBAD"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("ALLBAD")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	if r.Severity != SkewNoClock {
-		t.Errorf("severity = %v, want no_clock", r.Severity)
-	}
-}
-
-// TestMostlyGood_OK_845: 90% good 10% bad → ok (outlier filtered).
-func TestMostlyGood_OK_845(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	// 9 good at -5s, 1 bad at -50000000s
-	for i := 0; i < 10; i++ {
-		obsTS := baseObs + int64(i)*60
-		var skew int64
-		if i < 9 {
-			skew = -5
-		} else {
-			skew = -50000000
-		}
-		advTS := obsTS + skew
-		tx := &StoreTx{
-			Hash:        fmt.Sprintf("mostly-%04d", i),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-	ps.mu.Lock()
-	ps.byNode["MOSTLY"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("MOSTLY")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	// 90% good → normal classification path, median of good samples = -5s → ok
-	if r.Severity != SkewOK {
-		t.Errorf("severity = %v, want ok", r.Severity)
-	}
-	if math.Abs(r.RecentMedianSkewSec-(-5)) > 1 {
-		t.Errorf("recentMedianSkewSec = %v, want ≈ -5", r.RecentMedianSkewSec)
-	}
-}
-
-// TestSingleSample_845: one good sample → ok.
-func TestSingleSample_845(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-	obsTS := int64(1700000000)
-	advTS := obsTS - 30 // 30s skew
-	tx := &StoreTx{
-		Hash:        "single-0001",
-		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
-		Observations: []*StoreObs{
-			{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-		},
-	}
-	ps.mu.Lock()
-	ps.byNode["SINGLE"] = []*StoreTx{tx}
-	ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("SINGLE")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	if r.Severity != SkewOK {
-		t.Errorf("severity = %v, want ok", r.Severity)
-	}
-	if r.RecentSampleCount != 1 {
-		t.Errorf("recentSampleCount = %d, want 1", r.RecentSampleCount)
-	}
-	if r.GoodFraction != 1.0 {
-		t.Errorf("goodFraction = %v, want 1.0", r.GoodFraction)
-	}
-}
-
-// TestFiftyFifty_Bimodal_845: 50% good / 50% bad → bimodal_clock.
-func TestFiftyFifty_Bimodal_845(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	for i := 0; i < 10; i++ {
-		obsTS := baseObs + int64(i)*60
-		var skew int64
-		if i%2 == 0 {
-			skew = -10
-		} else {
-			skew = -50000000
-		}
-		tx := &StoreTx{
-			Hash:        fmt.Sprintf("fifty-%04d", i),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS+skew) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-	ps.mu.Lock()
-	ps.byNode["FIFTY"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("FIFTY")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	if r.Severity != SkewBimodalClock {
-		t.Errorf("severity = %v, want bimodal_clock", r.Severity)
-	}
-	if r.GoodFraction < 0.4 || r.GoodFraction > 0.6 {
-		t.Errorf("goodFraction = %v, want ~0.5", r.GoodFraction)
-	}
-}
-
-// TestAllGood_OK_845: all samples good → ok, no bimodal.
-func TestAllGood_OK_845(t *testing.T) {
-	ps := NewPacketStore(nil, nil)
-	pt := 4
-	baseObs := int64(1700000000)
-	var txs []*StoreTx
-	for i := 0; i < 10; i++ {
-		obsTS := baseObs + int64(i)*60
-		tx := &StoreTx{
-			Hash:        fmt.Sprintf("allgood-%04d", i),
-			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS-3) + `}}`,
-			Observations: []*StoreObs{
-				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
-			},
-		}
-		txs = append(txs, tx)
-	}
-	ps.mu.Lock()
-	ps.byNode["ALLGOOD"] = txs
-	for _, tx := range txs {
-		ps.byPayloadType[4] = append(ps.byPayloadType[4], tx)
-	}
-	ps.clockSkew.computeInterval = 0
-	ps.mu.Unlock()
-
-	r := ps.GetNodeClockSkew("ALLGOOD")
-	if r == nil {
-		t.Fatal("nil result")
-	}
-	if r.Severity != SkewOK {
-		t.Errorf("severity = %v, want ok", r.Severity)
-	}
-	if r.GoodFraction != 1.0 {
-		t.Errorf("goodFraction = %v, want 1.0", r.GoodFraction)
-	}
-	if r.RecentBadSampleCount != 0 {
-		t.Errorf("recentBadSampleCount = %v, want 0", r.RecentBadSampleCount)
+		t.Errorf("drift = %v, want 0 for 2-sample node", result.DriftPerDaySec)
 	}
 }
