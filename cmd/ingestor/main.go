@@ -114,7 +114,6 @@ func main() {
 	}
 
 	regionKeys := loadRegionKeys(cfg)
-	go store.BackfillScopeNames(regionKeys)
 
 	// Connect to each MQTT source
 	var clients []mqtt.Client

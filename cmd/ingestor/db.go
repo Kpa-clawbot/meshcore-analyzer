@@ -915,56 +915,6 @@ func (s *Store) PruneDroppedPackets(retentionDays int) (int64, error) {
 	return n, nil
 }
 
-// BackfillScopeNames sets scope_name on existing transport-route transmissions that
-// lack it, using the provided region HMAC keys. Safe to re-run — only processes
-// rows where scope_name IS NULL and route_type IN (0, 3).
-func (s *Store) BackfillScopeNames(regionKeys map[string][]byte) {
-	if len(regionKeys) == 0 {
-		return
-	}
-	rows, err := s.db.Query(`
-		SELECT id, raw_hex FROM transmissions
-		WHERE route_type IN (0, 3) AND scope_name IS NULL AND raw_hex IS NOT NULL
-	`)
-	if err != nil {
-		log.Printf("[backfill] scope_name query: %v", err)
-		return
-	}
-	defer rows.Close()
-
-	type row struct {
-		id     int64
-		rawHex string
-	}
-	var pending []row
-	for rows.Next() {
-		var r row
-		if rows.Scan(&r.id, &r.rawHex) == nil && r.rawHex != "" {
-			pending = append(pending, r)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		log.Printf("[backfill] scope_name iteration error: %v", err)
-		return
-	}
-
-	updated := 0
-	for _, r := range pending {
-		decoded, err := DecodePacket(r.rawHex, nil, false)
-		if err != nil || decoded.TransportCodes == nil {
-			continue
-		}
-		if decoded.TransportCodes.Code1 == "0000" {
-			continue
-		}
-		scopeName := matchScope(regionKeys, byte(decoded.Header.PayloadType), decoded.PayloadRaw, decoded.TransportCodes.Code1)
-		s.db.Exec(`UPDATE transmissions SET scope_name = ? WHERE id = ?`, scopeName, r.id)
-		updated++
-	}
-	if updated > 0 {
-		log.Printf("[backfill] scope_name set for %d/%d transport-route rows", updated, len(pending))
-	}
-}
 
 // PacketData holds the data needed to insert a packet into the DB.
 type PacketData struct {

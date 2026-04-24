@@ -1,10 +1,7 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -2159,50 +2156,3 @@ func TestScopeNameMigration(t *testing.T) {
 	}
 }
 
-func TestBackfillScopeNames(t *testing.T) {
-	dir := t.TempDir()
-	store, err := OpenStore(filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("OpenStore: %v", err)
-	}
-	defer store.Close()
-
-	// Insert a transport-route packet with known Code1
-	regionName := "#test"
-	h := sha256.Sum256([]byte(regionName))
-	key := h[:16]
-	payloadType := byte(0x05)
-	payloadRaw := []byte("hello")
-
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte{payloadType})
-	mac.Write(payloadRaw)
-	hmacBytes := mac.Sum(nil)
-	code := uint16(hmacBytes[0]) | uint16(hmacBytes[1])<<8
-	if code == 0 {
-		code = 1
-	} else if code == 0xFFFF {
-		code = 0xFFFE
-	}
-	codeBytes := [2]byte{byte(code & 0xFF), byte(code >> 8)}
-
-	// Build raw packet bytes: header(1) + Code1(2) + Code2(2) + path_len(1) + payload
-	header := byte(0x00) | (payloadType << 2) // TRANSPORT_FLOOD + payload_type in bits 2-5
-	raw := []byte{header}
-	raw = append(raw, codeBytes[:]...)
-	raw = append(raw, 0x00, 0x00) // Code2 = 0000
-	raw = append(raw, 0x00)       // path_len = 0 hops
-	raw = append(raw, payloadRaw...)
-	rawHex := strings.ToUpper(hex.EncodeToString(raw))
-
-	store.db.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, payload_version, decoded_json)
-		VALUES (?, 'testhash1', datetime('now'), 0, 5, 0, '{}')`, rawHex)
-
-	store.BackfillScopeNames(map[string][]byte{regionName: key})
-
-	var scopeName *string
-	store.db.QueryRow(`SELECT scope_name FROM transmissions WHERE hash = 'testhash1'`).Scan(&scopeName)
-	if scopeName == nil || *scopeName != regionName {
-		t.Errorf("scope_name = %v, want %q", scopeName, regionName)
-	}
-}
