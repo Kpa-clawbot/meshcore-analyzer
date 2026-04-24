@@ -45,6 +45,11 @@ type Server struct {
 	neighborMu    sync.Mutex
 	neighborGraph *NeighborGraph
 
+	// Cached /api/scope-stats response — per-window, recomputed at most once every 30s
+	scopeStatsMu       sync.Mutex
+	scopeStatsCache    map[string]*ScopeStatsResponse
+	scopeStatsCachedAt map[string]time.Time
+
 	// Router reference for OpenAPI spec generation
 	router *mux.Router
 }
@@ -121,6 +126,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	// System endpoints
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
+	r.HandleFunc("/api/scope-stats", s.handleScopeStats).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.Handle("/api/perf/reset", s.requireAPIKey(http.HandlerFunc(s.handlePerfReset))).Methods("POST")
 	r.Handle("/api/admin/prune", s.requireAPIKey(http.HandlerFunc(s.handleAdminPrune))).Methods("POST")
@@ -2711,4 +2717,44 @@ func (s *Server) handleDroppedPackets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, results)
+}
+
+func (s *Server) handleScopeStats(w http.ResponseWriter, r *http.Request) {
+	const scopeStatsTTL = 30 * time.Second
+
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "24h"
+	}
+	if window != "1h" && window != "24h" && window != "7d" {
+		writeError(w, 400, "window must be 1h, 24h, or 7d")
+		return
+	}
+
+	s.scopeStatsMu.Lock()
+	if s.scopeStatsCache != nil {
+		if cached, ok := s.scopeStatsCache[window]; ok && time.Since(s.scopeStatsCachedAt[window]) < scopeStatsTTL {
+			s.scopeStatsMu.Unlock()
+			writeJSON(w, cached)
+			return
+		}
+	}
+	s.scopeStatsMu.Unlock()
+
+	resp, err := s.db.GetScopeStats(window)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	s.scopeStatsMu.Lock()
+	if s.scopeStatsCache == nil {
+		s.scopeStatsCache = make(map[string]*ScopeStatsResponse)
+		s.scopeStatsCachedAt = make(map[string]time.Time)
+	}
+	s.scopeStatsCache[window] = resp
+	s.scopeStatsCachedAt[window] = time.Now()
+	s.scopeStatsMu.Unlock()
+
+	writeJSON(w, resp)
 }

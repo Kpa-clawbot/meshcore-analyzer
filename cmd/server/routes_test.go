@@ -3972,3 +3972,34 @@ func TestPacketDetailPrefersStoreOverDB(t *testing.T) {
 		t.Errorf("expected observation_count=2 (from store), got %v", body["observation_count"])
 	}
 }
+
+func TestHandleScopeStats(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	// Add scope_name column and mark hasScopeName on the test DB
+	if _, err := srv.db.conn.Exec(`ALTER TABLE transmissions ADD COLUMN scope_name TEXT DEFAULT NULL`); err != nil {
+		t.Fatalf("add scope_name column: %v", err)
+	}
+	srv.db.hasScopeName = true
+
+	req := httptest.NewRequest("GET", "/api/scope-stats?window=24h", nil)
+	w := httptest.NewRecorder()
+	srv.handleScopeStats(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp ScopeStatsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Window != "24h" {
+		t.Errorf("window = %q, want 24h", resp.Window)
+	}
+	// TimeSeries and ByRegion are always non-nil slices
+	if resp.TimeSeries == nil {
+		t.Error("timeSeries is nil, want empty slice")
+	}
+	if resp.ByRegion == nil {
+		t.Error("byRegion is nil, want empty slice")
+	}
+}

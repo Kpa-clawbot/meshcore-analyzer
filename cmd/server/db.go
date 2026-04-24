@@ -2394,8 +2394,8 @@ func (db *DB) GetScopeStats(window string) (*ScopeStatsResponse, error) {
 		SELECT
 			COUNT(*) AS transport_total,
 			COUNT(scope_name) AS scoped,
-			SUM(CASE WHEN scope_name IS NULL THEN 1 ELSE 0 END) AS unscoped,
-			SUM(CASE WHEN scope_name = '' THEN 1 ELSE 0 END) AS unknown_scope
+			COALESCE(SUM(CASE WHEN scope_name IS NULL THEN 1 ELSE 0 END), 0) AS unscoped,
+			COALESCE(SUM(CASE WHEN scope_name = '' THEN 1 ELSE 0 END), 0) AS unknown_scope
 		FROM transmissions
 		WHERE route_type IN (0, 3) AND first_seen >= ?
 	`, since)
