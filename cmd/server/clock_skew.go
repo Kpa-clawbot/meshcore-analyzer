@@ -120,6 +120,8 @@ type NodeClockSkew struct {
 	GoodFraction        float64  `json:"goodFraction"`        // fraction of recent samples with |skew| <= 1h
 	RecentBadSampleCount int     `json:"recentBadSampleCount"` // count of recent samples with |skew| > 1h
 	RecentSampleCount    int     `json:"recentSampleCount"`    // total recent samples in window
+	RecentHashEvidence  []HashEvidence      `json:"recentHashEvidence,omitempty"`
+	CalibrationSummary  *CalibrationSummary `json:"calibrationSummary,omitempty"`
 	NodeName        string       `json:"nodeName,omitempty"` // populated in fleet responses
 	NodeRole        string       `json:"nodeRole,omitempty"` // populated in fleet responses
 }
@@ -128,6 +130,31 @@ type NodeClockSkew struct {
 type SkewSample struct {
 	Timestamp int64   `json:"ts"`   // Unix epoch of observation
 	SkewSec   float64 `json:"skew"` // corrected skew in seconds
+}
+
+// HashEvidenceObserver is one observer's contribution to a per-hash evidence entry.
+type HashEvidenceObserver struct {
+	ObserverID      string  `json:"observerID"`
+	ObserverName    string  `json:"observerName"`
+	RawSkewSec      float64 `json:"rawSkewSec"`
+	CorrectedSkewSec float64 `json:"correctedSkewSec"`
+	ObserverOffsetSec float64 `json:"observerOffsetSec"`
+	Calibrated      bool    `json:"calibrated"`
+}
+
+// HashEvidence is per-hash clock skew evidence showing individual observer contributions.
+type HashEvidence struct {
+	Hash                  string                 `json:"hash"`
+	Observers             []HashEvidenceObserver `json:"observers"`
+	MedianCorrectedSkewSec float64              `json:"medianCorrectedSkewSec"`
+	Timestamp             int64                  `json:"timestamp"`
+}
+
+// CalibrationSummary counts how many samples were corrected via observer calibration.
+type CalibrationSummary struct {
+	TotalSamples       int `json:"totalSamples"`
+	CalibratedSamples  int `json:"calibratedSamples"`
+	UncalibratedSamples int `json:"uncalibratedSamples"`
 }
 
 // txSkewResult maps tx hash → per-transmission skew stats. This is an
@@ -143,8 +170,19 @@ type ClockSkewEngine struct {
 	observerOffsets  map[string]float64 // observerID → calibrated offset (seconds)
 	observerSamples  map[string]int     // observerID → number of multi-observer packets used
 	nodeSkew         txSkewResult
+	hashEvidence     map[string][]hashEvidenceEntry // hash → per-observer raw/corrected data
 	lastComputed     time.Time
 	computeInterval  time.Duration
+}
+
+// hashEvidenceEntry stores raw evidence per observer per hash, cached during Recompute.
+type hashEvidenceEntry struct {
+	observerID  string
+	rawSkew     float64
+	corrected   float64
+	offset      float64
+	calibrated  bool
+	observedTS  int64
 }
 
 func NewClockSkewEngine() *ClockSkewEngine {
@@ -152,6 +190,7 @@ func NewClockSkewEngine() *ClockSkewEngine {
 		observerOffsets:  make(map[string]float64),
 		observerSamples: make(map[string]int),
 		nodeSkew:       make(txSkewResult),
+		hashEvidence:   make(map[string][]hashEvidenceEntry),
 		computeInterval: 30 * time.Second,
 	}
 }
@@ -176,14 +215,16 @@ func (e *ClockSkewEngine) Recompute(store *PacketStore) {
 	var newOffsets map[string]float64
 	var newSamples map[string]int
 	var newNodeSkew txSkewResult
+	var newHashEvidence map[string][]hashEvidenceEntry
 
 	if len(samples) > 0 {
 		newOffsets, newSamples = calibrateObservers(samples)
-		newNodeSkew = computeNodeSkew(samples, newOffsets)
+		newNodeSkew, newHashEvidence = computeNodeSkew(samples, newOffsets)
 	} else {
 		newOffsets = make(map[string]float64)
 		newSamples = make(map[string]int)
 		newNodeSkew = make(txSkewResult)
+		newHashEvidence = make(map[string][]hashEvidenceEntry)
 	}
 
 	// Swap results under brief write lock.
@@ -196,6 +237,7 @@ func (e *ClockSkewEngine) Recompute(store *PacketStore) {
 	e.observerOffsets = newOffsets
 	e.observerSamples = newSamples
 	e.nodeSkew = newNodeSkew
+	e.hashEvidence = newHashEvidence
 	e.lastComputed = time.Now()
 	e.mu.Unlock()
 }
@@ -332,7 +374,7 @@ func calibrateObservers(samples []skewSample) (map[string]float64, map[string]in
 // ── Phase 3: Per-Node Skew ─────────────────────────────────────────────────────
 
 // computeNodeSkew calculates corrected skew statistics for each node.
-func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkewResult {
+func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) (txSkewResult, map[string][]hashEvidenceEntry) {
 	// Compute corrected skew per sample, grouped by hash (each hash = one
 	// node's advert transmission). The caller maps hash → pubkey via byNode.
 	type correctedSample struct {
@@ -343,6 +385,7 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 
 	byHash := make(map[string][]correctedSample)
 	hashAdvertTS := make(map[string]int64)
+	evidence := make(map[string][]hashEvidenceEntry) // hash → per-observer evidence
 
 	for _, s := range samples {
 		obsOffset, hasCal := obsOffsets[s.observerID]
@@ -359,6 +402,14 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 			calibrated: hasCal,
 		})
 		hashAdvertTS[s.hash] = s.advertTS
+		evidence[s.hash] = append(evidence[s.hash], hashEvidenceEntry{
+			observerID: s.observerID,
+			rawSkew:    round(rawSkew, 1),
+			corrected:  round(corrected, 1),
+			offset:     round(obsOffset, 1),
+			calibrated: hasCal,
+			observedTS: s.observedTS,
+		})
 	}
 
 	// Each hash represents one advert from one node. Compute median corrected
@@ -397,7 +448,7 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 			LastObservedTS: latestObsTS,
 		}
 	}
-	return result
+	return result, evidence
 }
 
 // ── Integration with PacketStore ───────────────────────────────────────────────
@@ -558,6 +609,70 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		samples[i] = SkewSample{Timestamp: p.ts, SkewSec: round(p.skew, 1)}
 	}
 
+	// Build per-hash evidence (most recent 10 hashes with ≥1 observer).
+	// Observer name lookup from store observations.
+	obsNameMap := make(map[string]string)
+	type hashMeta struct {
+		hash string
+		ts   int64
+	}
+	var evidenceHashes []hashMeta
+	for _, tx := range txs {
+		if tx.PayloadType == nil || *tx.PayloadType != PayloadADVERT {
+			continue
+		}
+		ev, ok := s.clockSkew.hashEvidence[tx.Hash]
+		if !ok || len(ev) == 0 {
+			continue
+		}
+		// Collect observer names from tx observations.
+		for _, obs := range tx.Observations {
+			if obs.ObserverID != "" && obs.ObserverName != "" {
+				obsNameMap[obs.ObserverID] = obs.ObserverName
+			}
+		}
+		evidenceHashes = append(evidenceHashes, hashMeta{hash: tx.Hash, ts: ev[0].observedTS})
+	}
+	// Sort by timestamp descending, take most recent 10.
+	sort.Slice(evidenceHashes, func(i, j int) bool { return evidenceHashes[i].ts > evidenceHashes[j].ts })
+	if len(evidenceHashes) > 10 {
+		evidenceHashes = evidenceHashes[:10]
+	}
+	var recentEvidence []HashEvidence
+	var calSummary CalibrationSummary
+	for _, eh := range evidenceHashes {
+		entries := s.clockSkew.hashEvidence[eh.hash]
+		var observers []HashEvidenceObserver
+		var corrSkews []float64
+		for _, e := range entries {
+			name := obsNameMap[e.observerID]
+			if name == "" {
+				name = e.observerID
+			}
+			observers = append(observers, HashEvidenceObserver{
+				ObserverID:       e.observerID,
+				ObserverName:     name,
+				RawSkewSec:       e.rawSkew,
+				CorrectedSkewSec: e.corrected,
+				ObserverOffsetSec: e.offset,
+				Calibrated:       e.calibrated,
+			})
+			corrSkews = append(corrSkews, e.corrected)
+			calSummary.TotalSamples++
+			if e.calibrated {
+				calSummary.CalibratedSamples++
+			} else {
+				calSummary.UncalibratedSamples++
+			}
+		}
+		recentEvidence = append(recentEvidence, HashEvidence{
+			Hash:                   eh.hash,
+			Observers:              observers,
+			MedianCorrectedSkewSec: round(median(corrSkews), 1),
+			Timestamp:              eh.ts,
+		})
+	}
+
 	return &NodeClockSkew{
 		Pubkey:               pubkey,
 		MeanSkewSec:          round(meanSkew, 1),
@@ -574,6 +689,8 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		GoodFraction:         round(goodFraction, 2),
 		RecentBadSampleCount: recentBadCount,
 		RecentSampleCount:    recentSampleCount,
+		RecentHashEvidence:   recentEvidence,
+		CalibrationSummary:   &calSummary,
 	}
 }
 
@@ -601,8 +718,10 @@ func (s *PacketStore) GetFleetClockSkew() []*NodeClockSkew {
 			cs.NodeName = ni.Name
 			cs.NodeRole = ni.Role
 		}
-		// Omit samples in fleet response (too much data).
+		// Omit samples and evidence in fleet response (too much data).
 		cs.Samples = nil
+		cs.RecentHashEvidence = nil
+		cs.CalibrationSummary = nil
 		results = append(results, cs)
 	}
 	return results

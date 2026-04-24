@@ -191,7 +191,7 @@ func TestComputeNodeSkew_BasicCorrection(t *testing.T) {
 	// So the median approach finds obs2 is +5 ahead (relative to median)
 
 	// Now compute node skew with those offsets:
-	nodeSkew := computeNodeSkew(samples, offsets)
+	nodeSkew, _ := computeNodeSkew(samples, offsets)
 	cs, ok := nodeSkew["h1"]
 	if !ok {
 		t.Fatal("expected skew data for hash h1")
@@ -220,7 +220,7 @@ func TestComputeNodeSkew_ThreeObservers(t *testing.T) {
 		t.Errorf("obs3 offset = %v, want 30", offsets["obs3"])
 	}
 
-	nodeSkew := computeNodeSkew(samples, offsets)
+	nodeSkew, _ := computeNodeSkew(samples, offsets)
 	cs := nodeSkew["h1"]
 	if cs == nil {
 		t.Fatal("expected skew data for h1")
@@ -952,5 +952,106 @@ func TestAllGood_OK_845(t *testing.T) {
 	}
 	if r.RecentBadSampleCount != 0 {
 		t.Errorf("recentBadSampleCount = %v, want 0", r.RecentBadSampleCount)
+	}
+}
+
+func TestNodeClockSkew_EvidencePayload(t *testing.T) {
+	// 3-observer scenario: obs1 ahead by +2s, obs2 on time, obs3 behind by -1s.
+	// Node clock is 60s ahead. Raw skew = advertTS - obsTS.
+	// Hash has 3 observations, each observer sees same advert.
+	ps := NewPacketStore(nil, nil)
+
+	pt := 4 // ADVERT
+	// Advert timestamp: 1700000060 (node 60s ahead of true time 1700000000)
+	// obs1 sees at 1700000002 (2s ahead of true time)  → raw = 60 - 2 = 58
+	// obs2 sees at 1700000000 (on time)                 → raw = 60 - 0 = 60
+	// obs3 sees at 1699999999 (-1s, behind)             → raw = 60 + 1 = 61
+	// Median obsTS = 1700000000, so:
+	//   obs1 offset = 1700000002 - 1700000000 = +2
+	//   obs2 offset = 0
+	//   obs3 offset = 1699999999 - 1700000000 = -1
+	// Corrected: raw + offset → obs1: 58+2=60, obs2: 60+0=60, obs3: 61+(-1)=60
+
+	tx1 := &StoreTx{
+		Hash:        "evidence_hash_1",
+		PayloadType: &pt,
+		DecodedJSON: `{"payload":{"timestamp":1700000060}}`,
+		Observations: []*StoreObs{
+			{ObserverID: "obs1", ObserverName: "Observer Alpha", Timestamp: "2023-11-14T22:13:22Z"},
+			{ObserverID: "obs2", ObserverName: "Observer Beta", Timestamp: "2023-11-14T22:13:20Z"},
+			{ObserverID: "obs3", ObserverName: "Observer Gamma", Timestamp: "2023-11-14T22:13:19Z"},
+		},
+	}
+	// Second hash to ensure we get multiple evidence entries.
+	tx2 := &StoreTx{
+		Hash:        "evidence_hash_2",
+		PayloadType: &pt,
+		DecodedJSON: `{"payload":{"timestamp":1700003660}}`,
+		Observations: []*StoreObs{
+			{ObserverID: "obs1", ObserverName: "Observer Alpha", Timestamp: "2023-11-14T23:13:22Z"},
+			{ObserverID: "obs2", ObserverName: "Observer Beta", Timestamp: "2023-11-14T23:13:20Z"},
+			{ObserverID: "obs3", ObserverName: "Observer Gamma", Timestamp: "2023-11-14T23:13:19Z"},
+		},
+	}
+
+	ps.mu.Lock()
+	ps.byNode["NODETEST"] = []*StoreTx{tx1, tx2}
+	ps.byPayloadType[4] = []*StoreTx{tx1, tx2}
+	ps.clockSkew.computeInterval = 0
+	ps.mu.Unlock()
+
+	r := ps.GetNodeClockSkew("NODETEST")
+	if r == nil {
+		t.Fatal("expected clock skew result")
+	}
+
+	// Check recentHashEvidence exists.
+	if len(r.RecentHashEvidence) == 0 {
+		t.Fatal("expected recentHashEvidence to be populated")
+	}
+	if len(r.RecentHashEvidence) != 2 {
+		t.Errorf("recentHashEvidence length = %d, want 2", len(r.RecentHashEvidence))
+	}
+
+	// Check first evidence entry has 3 observers.
+	ev := r.RecentHashEvidence[0]
+	if len(ev.Observers) != 3 {
+		t.Fatalf("evidence observers = %d, want 3", len(ev.Observers))
+	}
+
+	// Verify corrected = raw + offset for each observer.
+	for _, o := range ev.Observers {
+		expected := o.RawSkewSec + o.ObserverOffsetSec
+		if math.Abs(o.CorrectedSkewSec-expected) > 0.2 {
+			t.Errorf("observer %s: corrected=%.1f, expected raw(%.1f)+offset(%.1f)=%.1f",
+				o.ObserverID, o.CorrectedSkewSec, o.RawSkewSec, o.ObserverOffsetSec, expected)
+		}
+	}
+
+	// All corrected values should be ~60s (node is 60s ahead).
+	if math.Abs(ev.MedianCorrectedSkewSec-60) > 1 {
+		t.Errorf("median corrected = %.1f, want ~60", ev.MedianCorrectedSkewSec)
+	}
+
+	// Check calibration summary.
+	if r.CalibrationSummary == nil {
+		t.Fatal("expected calibrationSummary")
+	}
+	if r.CalibrationSummary.TotalSamples != 6 { // 3 observers × 2 hashes
+		t.Errorf("calibration total = %d, want 6", r.CalibrationSummary.TotalSamples)
+	}
+	if r.CalibrationSummary.CalibratedSamples != 6 {
+		t.Errorf("calibrated = %d, want 6 (all multi-observer)", r.CalibrationSummary.CalibratedSamples)
+	}
+
+	// Check observer names are populated.
+	nameFound := false
+	for _, o := range ev.Observers {
+		if o.ObserverName == "Observer Alpha" || o.ObserverName == "Observer Beta" {
+			nameFound = true
+		}
+	}
+	if !nameFound {
+		t.Error("expected observer names to be populated from tx observations")
 	}
 }
