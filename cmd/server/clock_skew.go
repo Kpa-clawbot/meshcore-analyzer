@@ -71,19 +71,21 @@ func isDefaultEpoch(advertTS int64) (bool, int64) {
 	return false, 0
 }
 
-// classifySkew maps a raw advert timestamp and corrected absolute skew
-// to a severity level. Default detection runs on the raw advert_ts
+// classifySkew maps a raw advert timestamp and corrected skew (signed)
+// to a severity level. Takes math.Abs internally so callers may pass
+// signed values. Default detection runs on the raw advert_ts
 // (independent of observer calibration).
-func classifySkew(advertTS int64, absCorrectedSkewSec float64) (SkewSeverity, int64) {
+func classifySkew(advertTS int64, skewSec float64) (SkewSeverity, int64) {
 	if ok, epoch := isDefaultEpoch(advertTS); ok {
 		return SkewDefault, epoch
 	}
+	abs := math.Abs(skewSec)
 	switch {
-	case absCorrectedSkewSec <= skewThresholdOKSec:
+	case abs <= skewThresholdOKSec:
 		return SkewOK, 0
-	case absCorrectedSkewSec <= skewThresholdDegradingSec:
+	case abs <= skewThresholdDegradingSec:
 		return SkewDegrading, 0
-	case absCorrectedSkewSec <= skewThresholdDegradedSec:
+	case abs <= skewThresholdDegradedSec:
 		return SkewDegraded, 0
 	default:
 		return SkewWrong, 0
@@ -395,7 +397,7 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 		}
 		lastCorrectedSkew := latest.skew
 		advTS := hashAdvertTS[hash]
-		severity, matchedEpoch := classifySkew(advTS, math.Abs(lastCorrectedSkew))
+		severity, matchedEpoch := classifySkew(advTS, lastCorrectedSkew)
 
 		ncs := &NodeClockSkew{
 			MeanSkewSec:    round(meanSkew, 1),
@@ -476,7 +478,7 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 	// Classify using the most recent advert's raw timestamp and
 	// the most recent corrected skew. No windowing or median-driven
 	// severity — per-advert classification per the spec.
-	severity, matchedEpoch := classifySkew(lastAdvTS, math.Abs(lastSkew))
+	severity, matchedEpoch := classifySkew(lastAdvTS, lastSkew)
 
 	// Drift: display only, not a classifier input.
 	var drift float64

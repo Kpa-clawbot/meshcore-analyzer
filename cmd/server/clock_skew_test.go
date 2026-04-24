@@ -102,6 +102,28 @@ func TestClassify_FutureWrong(t *testing.T) {
 	}
 }
 
+func TestClassify_NegativeSkewUsesAbsoluteValue(t *testing.T) {
+	advTS := int64(1900000000) // outside default-epoch ranges
+	cases := []struct {
+		skew float64
+		want SkewSeverity
+	}{
+		{-10, SkewOK},
+		{-30, SkewDegrading},
+		{-300, SkewDegraded},
+		{-1000, SkewWrong},
+		{10, SkewOK},
+		{30, SkewDegrading},
+		{300, SkewDegraded},
+		{1000, SkewWrong},
+	}
+	for _, c := range cases {
+		if got, _ := classifySkew(advTS, c.skew); got != c.want {
+			t.Errorf("classifySkew(advTS, %v) = %v, want %v", c.skew, got, c.want)
+		}
+	}
+}
+
 // ── isDefaultEpoch ─────────────────────────────────────────────────────────────
 
 func TestIsDefaultEpoch_Boundaries(t *testing.T) {
