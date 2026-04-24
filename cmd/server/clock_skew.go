@@ -381,18 +381,19 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 		medSkew := median(skews)
 		meanSkew := mean(skews)
 
-		var latestObsTS int64
+		// Pick the skew from the most recent observation (max observedTS),
+		// not the last-appended sample which may be non-chronological.
+		var latest correctedSample
 		var anyCal bool
 		for _, c := range cs {
-			if c.observedTS > latestObsTS {
-				latestObsTS = c.observedTS
+			if c.observedTS > latest.observedTS {
+				latest = c
 			}
 			if c.calibrated {
 				anyCal = true
 			}
 		}
-
-		lastCorrectedSkew := cs[len(cs)-1].skew
+		lastCorrectedSkew := latest.skew
 		advTS := hashAdvertTS[hash]
 		severity, matchedEpoch := classifySkew(advTS, math.Abs(lastCorrectedSkew))
 
@@ -404,7 +405,7 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 			SampleCount:    len(cs),
 			Calibrated:     anyCal,
 			LastAdvertTS:   advTS,
-			LastObservedTS: latestObsTS,
+			LastObservedTS: latest.observedTS,
 		}
 		if severity == SkewDefault {
 			ep := matchedEpoch
