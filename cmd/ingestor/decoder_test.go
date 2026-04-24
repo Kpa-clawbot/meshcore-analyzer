@@ -447,6 +447,28 @@ func TestValidateAdvert(t *testing.T) {
 	}
 }
 
+func TestDecodePacketPayloadRaw(t *testing.T) {
+	// Build a minimal TRANSPORT_FLOOD packet (route_type=0):
+	// header(1) + transport_codes(4) + path_len(1) + payload(N)
+	// Header 0x00 = route_type=TRANSPORT_FLOOD, payload_type=0, version=0
+	// Code1=9A52, Code2=0000, path_len=0x00 (0 hops, hash_size=1)
+	payload := []byte("hello")
+	raw := []byte{0x00, 0x9A, 0x52, 0x00, 0x00, 0x00}
+	raw = append(raw, payload...)
+	hexStr := strings.ToUpper(hex.EncodeToString(raw))
+
+	decoded, err := DecodePacket(hexStr, nil, false)
+	if err != nil {
+		t.Fatalf("DecodePacket: %v", err)
+	}
+	if decoded.TransportCodes == nil {
+		t.Fatal("expected TransportCodes, got nil")
+	}
+	if string(decoded.PayloadRaw) != string(payload) {
+		t.Errorf("PayloadRaw = %v, want %v", decoded.PayloadRaw, payload)
+	}
+}
+
 func TestDecodeGrpTxtShort(t *testing.T) {
 	p := decodeGrpTxt([]byte{0x01, 0x02}, nil)
 	if p.Error != "too short" {
