@@ -157,34 +157,27 @@ TTL cache: 30 seconds (heavier query than `/api/stats`).
 
 ## Frontend
 
-### Navigation
+### Placement
 
-Add nav link between Channels and Nodes in `public/index.html`:
-```html
-<a href="#/scopes" class="nav-link" data-route="scopes">Scopes</a>
-```
+Add a **"Scopes" tab** to the existing Analytics page (`public/analytics.js`) — no new nav item, no new JS file. Tab button added after the existing "Clock Health" tab in the `analyticsTabs` div.
 
-### `public/scopes.js`
+Deep-link: `#/analytics?tab=scopes`
 
-Three sections on the page:
+### Tab content — three sections
 
-**1. Summary cards** (reuse existing card CSS pattern from home/analytics pages)  
+**1. Summary cards** (reuse existing Analytics card CSS)  
 - Transport total, Scoped, Unscoped, Unknown scope  
 - Each card shows count + percentage of transport total
 
 **2. Per-region table**  
 Columns: Region, Messages, % of Scoped  
-Sorted by count descending. Last row: "Unknown scope" (italic) if unknownScope > 0.  
-Shows "No regions configured" message if `byRegion` is empty and `unknownScope = 0`.
+Sorted by count descending. Last row: "Unknown scope" (italic) if `unknownScope > 0`.  
+Shows a "No regions configured — add `hashRegions` to your config" hint if `byRegion` is empty and `unknownScope = 0`.
 
 **3. Time-series chart**  
 - Window selector: `1h / 24h / 7d` (default 24h)  
 - Two lines: **Scoped** (blue) and **Unscoped** (grey)  
-- Uses the same lightweight canvas chart pattern as other pages (no external chart lib)
-
-### Cache buster
-
-`scopes.js` added to the `__BUST__` entries in `index.html` in the same commit.
+- Uses the same inline SVG chart helpers already present in `analytics.js` (no external lib)
 
 ---
 
