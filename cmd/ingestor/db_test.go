@@ -606,6 +606,8 @@ func TestLastPacketAtUpdatedOnPacketOnly(t *testing.T) {
 	if !lastPacketAt.Valid {
 		t.Fatal("expected last_packet_at to be non-NULL after InsertTransmission")
 	}
+	// InsertTransmission uses `now = data.Timestamp || time.Now()`, so last_packet_at
+	// should match the packet's Timestamp when provided (same source-of-truth as last_seen).
 	if lastPacketAt.String != "2026-04-24T12:00:00Z" {
 		t.Errorf("expected last_packet_at=2026-04-24T12:00:00Z, got %s", lastPacketAt.String)
 	}

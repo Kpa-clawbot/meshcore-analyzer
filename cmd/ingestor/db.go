@@ -423,9 +423,16 @@ func applySchema(db *sql.DB) error {
 	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'observers_last_packet_at_v1'")
 	if row.Scan(&migDone) != nil {
 		log.Println("[migration] Adding last_packet_at column to observers...")
-		db.Exec(`ALTER TABLE observers ADD COLUMN last_packet_at TEXT DEFAULT NULL`)
-		// Backfill: set last_packet_at = last_seen only for observers that have received packets
-		res, err := db.Exec(`UPDATE observers SET last_packet_at = last_seen WHERE packet_count > 0`)
+		_, alterErr := db.Exec(`ALTER TABLE observers ADD COLUMN last_packet_at TEXT DEFAULT NULL`)
+		if alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
+			return fmt.Errorf("observers last_packet_at ALTER: %w", alterErr)
+		}
+		// Backfill: set last_packet_at = last_seen only for observers that actually have
+		// observation rows (packet_count alone is unreliable — UpsertObserver sets it to 1
+		// on INSERT even for status-only observers).
+		res, err := db.Exec(`UPDATE observers SET last_packet_at = last_seen
+			WHERE last_packet_at IS NULL
+			AND rowid IN (SELECT DISTINCT observer_idx FROM observations WHERE observer_idx IS NOT NULL)`)
 		if err == nil {
 			n, _ := res.RowsAffected()
 			log.Printf("[migration] Backfilled last_packet_at for %d observers with packets", n)
