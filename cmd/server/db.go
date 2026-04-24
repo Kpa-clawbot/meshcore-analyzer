@@ -125,6 +125,9 @@ func (db *DB) transmissionBaseSQL() (selectCols, observerJoin string) {
 				ORDER BY length(COALESCE(path_json,'')) DESC LIMIT 1
 			)`
 	}
+	if db.hasScopeName {
+		selectCols += `, t.scope_name`
+	}
 	return
 }
 
@@ -135,13 +138,18 @@ func (db *DB) scanTransmissionRow(rows *sql.Rows) map[string]interface{} {
 	var rawHex, hash, firstSeen, decodedJSON, observerID, observerName, pathJSON, direction sql.NullString
 	var routeType, payloadType sql.NullInt64
 	var snr, rssi sql.NullFloat64
+	var scopeName sql.NullString
 
-	if err := rows.Scan(&id, &rawHex, &hash, &firstSeen, &routeType, &payloadType, &decodedJSON,
-		&observationCount, &observerID, &observerName, &snr, &rssi, &pathJSON, &direction); err != nil {
+	scanArgs := []interface{}{&id, &rawHex, &hash, &firstSeen, &routeType, &payloadType, &decodedJSON,
+		&observationCount, &observerID, &observerName, &snr, &rssi, &pathJSON, &direction}
+	if db.hasScopeName {
+		scanArgs = append(scanArgs, &scopeName)
+	}
+	if err := rows.Scan(scanArgs...); err != nil {
 		return nil
 	}
 
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"id":                id,
 		"raw_hex":           nullStr(rawHex),
 		"hash":              nullStr(hash),
@@ -158,6 +166,10 @@ func (db *DB) scanTransmissionRow(rows *sql.Rows) map[string]interface{} {
 		"path_json":         nullStr(pathJSON),
 		"direction":         nullStr(direction),
 	}
+	if db.hasScopeName {
+		m["scope_name"] = nullStr(scopeName)
+	}
+	return m
 }
 
 // Node represents a row from the nodes table.
