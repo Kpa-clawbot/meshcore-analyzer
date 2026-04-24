@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -808,6 +809,51 @@ func loadChannelKeys(cfg *Config, configPath string) map[string]string {
 	}
 
 	return keys
+}
+
+func loadRegionKeys(cfg *Config) map[string][]byte {
+	keys := make(map[string][]byte)
+	for _, raw := range cfg.HashRegions {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if !strings.HasPrefix(name, "#") {
+			name = "#" + name
+		}
+		if _, exists := keys[name]; exists {
+			continue
+		}
+		h := sha256.Sum256([]byte(name))
+		keys[name] = h[:16]
+	}
+	if len(keys) > 0 {
+		log.Printf("[regions] %d region key(s) loaded", len(keys))
+	}
+	return keys
+}
+
+func matchScope(regionKeys map[string][]byte, payloadType byte, payloadRaw []byte, code1 string) string {
+	if code1 == "0000" || len(regionKeys) == 0 || len(payloadRaw) == 0 {
+		return ""
+	}
+	for name, key := range regionKeys {
+		mac := hmac.New(sha256.New, key)
+		mac.Write([]byte{payloadType})
+		mac.Write(payloadRaw)
+		hmacBytes := mac.Sum(nil)
+		code := uint16(hmacBytes[0]) | uint16(hmacBytes[1])<<8
+		if code == 0 {
+			code = 1
+		} else if code == 0xFFFF {
+			code = 0xFFFE
+		}
+		codeBytes := [2]byte{byte(code & 0xFF), byte(code >> 8)}
+		if strings.ToUpper(hex.EncodeToString(codeBytes[:])) == code1 {
+			return name
+		}
+	}
+	return ""
 }
 
 // Version info (set via ldflags)

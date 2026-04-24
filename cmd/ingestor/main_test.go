@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -778,5 +783,69 @@ func TestIATAFilterDoesNotDropStatusMessages(t *testing.T) {
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&count)
 	if count != 0 {
 		t.Error("packet from out-of-region BFL should still be filtered by IATA")
+	}
+}
+
+func TestLoadRegionKeys(t *testing.T) {
+	cfg := &Config{HashRegions: []string{"#belgium", "eu", "  #Test  ", "", "#belgium"}}
+	keys := loadRegionKeys(cfg)
+
+	// Deduplication + normalization
+	if len(keys) != 3 {
+		t.Fatalf("len(keys) = %d, want 3", len(keys))
+	}
+	// "#belgium" key = SHA256("#belgium")[:16]
+	h := sha256.Sum256([]byte("#belgium"))
+	want := h[:16]
+	if got := keys["#belgium"]; !bytes.Equal(got, want) {
+		t.Errorf("#belgium key mismatch: got %x, want %x", got, want)
+	}
+	// "eu" should be normalized to "#eu"
+	if _, ok := keys["#eu"]; !ok {
+		t.Error("expected #eu key")
+	}
+	// "  #Test  " should be normalized to "#Test"
+	if _, ok := keys["#Test"]; !ok {
+		t.Error("expected #Test key")
+	}
+}
+
+func TestMatchScope(t *testing.T) {
+	// Build a known Code1 for region "#test" and payload type 5, payload "hello"
+	name := "#test"
+	h := sha256.Sum256([]byte(name))
+	key := h[:16]
+
+	payloadType := byte(0x05)
+	payloadRaw := []byte("hello")
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte{payloadType})
+	mac.Write(payloadRaw)
+	hmacBytes := mac.Sum(nil)
+	code := uint16(hmacBytes[0]) | uint16(hmacBytes[1])<<8
+	if code == 0 {
+		code = 1
+	} else if code == 0xFFFF {
+		code = 0xFFFE
+	}
+	code1Bytes := [2]byte{byte(code & 0xFF), byte(code >> 8)}
+	code1 := strings.ToUpper(hex.EncodeToString(code1Bytes[:]))
+
+	regionKeys := map[string][]byte{name: key}
+
+	got := matchScope(regionKeys, payloadType, payloadRaw, code1)
+	if got != name {
+		t.Errorf("matchScope = %q, want %q", got, name)
+	}
+
+	// Unscoped (Code1 = 0000) → empty
+	if got := matchScope(regionKeys, payloadType, payloadRaw, "0000"); got != "" {
+		t.Errorf("unscoped: matchScope = %q, want empty", got)
+	}
+
+	// Scoped but no match → empty string sentinel
+	if got := matchScope(regionKeys, payloadType, payloadRaw, "BEEF"); got != "" {
+		t.Errorf("no match: matchScope = %q, want empty", got)
 	}
 }
