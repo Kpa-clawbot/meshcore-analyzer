@@ -113,7 +113,8 @@ func applySchema(db *sql.DB) error {
 			battery_mv INTEGER,
 			uptime_secs INTEGER,
 			noise_floor REAL,
-			inactive INTEGER DEFAULT 0
+			inactive INTEGER DEFAULT 0,
+			last_packet_at TEXT DEFAULT NULL
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
@@ -418,6 +419,21 @@ func applySchema(db *sql.DB) error {
 		log.Println("[migration] observations.raw_hex column added")
 	}
 
+	// Migration: add last_packet_at column to observers (#last-packet-at)
+	row = db.QueryRow("SELECT 1 FROM _migrations WHERE name = 'observers_last_packet_at_v1'")
+	if row.Scan(&migDone) != nil {
+		log.Println("[migration] Adding last_packet_at column to observers...")
+		db.Exec(`ALTER TABLE observers ADD COLUMN last_packet_at TEXT DEFAULT NULL`)
+		// Backfill: set last_packet_at = last_seen only for observers that have received packets
+		res, err := db.Exec(`UPDATE observers SET last_packet_at = last_seen WHERE packet_count > 0`)
+		if err == nil {
+			n, _ := res.RowsAffected()
+			log.Printf("[migration] Backfilled last_packet_at for %d observers with packets", n)
+		}
+		db.Exec(`INSERT INTO _migrations (name) VALUES ('observers_last_packet_at_v1')`)
+		log.Println("[migration] observers.last_packet_at column added")
+	}
+
 	return nil
 }
 
@@ -501,7 +517,7 @@ func (s *Store) prepareStatements() error {
 		return err
 	}
 
-	s.stmtUpdateObserverLastSeen, err = s.db.Prepare("UPDATE observers SET last_seen = ? WHERE rowid = ?")
+	s.stmtUpdateObserverLastSeen, err = s.db.Prepare("UPDATE observers SET last_seen = ?, last_packet_at = ? WHERE rowid = ?")
 	if err != nil {
 		return err
 	}
@@ -580,9 +596,9 @@ func (s *Store) InsertTransmission(data *PacketData) (bool, error) {
 		err := s.stmtGetObserverRowid.QueryRow(data.ObserverID).Scan(&rowid)
 		if err == nil {
 			observerIdx = &rowid
-			// Update observer last_seen on every packet to prevent
+			// Update observer last_seen and last_packet_at on every packet to prevent
 			// low-traffic observers from appearing offline (#463)
-			_, _ = s.stmtUpdateObserverLastSeen.Exec(now, rowid)
+			_, _ = s.stmtUpdateObserverLastSeen.Exec(now, now, rowid)
 		}
 	}
 
