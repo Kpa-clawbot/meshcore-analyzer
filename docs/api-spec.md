@@ -1501,7 +1501,7 @@ Scope-based packet statistics over a time window. Requires ingestor `scope_name_
 ### Response `400`
 
 ```json
-{ "error": "invalid window parameter" }
+{ "error": "window must be 1h, 24h, or 7d" }
 ```
 
 ---

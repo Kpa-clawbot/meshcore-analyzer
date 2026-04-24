@@ -2426,6 +2426,9 @@ func (db *DB) GetScopeStats(window string) (*ScopeStatsResponse, error) {
 			resp.ByRegion = append(resp.ByRegion, rc)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scope byRegion iteration: %w", err)
+	}
 	if resp.ByRegion == nil {
 		resp.ByRegion = []ScopeRegionCount{}
 	}
@@ -2450,6 +2453,9 @@ func (db *DB) GetScopeStats(window string) (*ScopeStatsResponse, error) {
 		if tsRows.Scan(&pt.T, &pt.Scoped, &pt.Unscoped) == nil {
 			resp.TimeSeries = append(resp.TimeSeries, pt)
 		}
+	}
+	if err := tsRows.Err(); err != nil {
+		return nil, fmt.Errorf("scope timeseries iteration: %w", err)
 	}
 	if resp.TimeSeries == nil {
 		resp.TimeSeries = []ScopeTimePoint{}
