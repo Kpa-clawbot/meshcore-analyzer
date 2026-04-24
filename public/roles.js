@@ -397,17 +397,16 @@
 
   // #690 — Clock Skew shared helpers
   var SKEW_SEVERITY_COLORS = {
+    default: 'var(--text-muted)',
     ok: 'var(--status-green)',
-    warning: 'var(--status-yellow)',
-    critical: 'var(--status-orange)',
-    absurd: 'var(--status-purple)',
-    bimodal_clock: 'var(--status-amber)',
-    no_clock: 'var(--text-muted)'
+    degrading: 'var(--status-yellow)',
+    degraded: 'var(--status-orange)',
+    wrong: 'var(--status-red)'
   };
   var SKEW_SEVERITY_LABELS = {
-    ok: 'OK', warning: 'Warning', critical: 'Critical', absurd: 'Absurd', bimodal_clock: 'Bimodal', no_clock: 'No Clock'
+    default: 'Default', ok: 'OK', degrading: 'Degrading', degraded: 'Degraded', wrong: 'Wrong'
   };
-  var SKEW_SEVERITY_ORDER = { no_clock: 0, bimodal_clock: 1, absurd: 2, critical: 3, warning: 4, ok: 5 };
+  var SKEW_SEVERITY_ORDER = { default: 0, wrong: 1, degraded: 2, degrading: 3, ok: 4 };
 
   window.SKEW_SEVERITY_COLORS = SKEW_SEVERITY_COLORS;
   window.SKEW_SEVERITY_LABELS = SKEW_SEVERITY_LABELS;
@@ -430,26 +429,19 @@
     return (secPerDay >= 0 ? '+' : '') + secPerDay.toFixed(1) + ' s/day';
   };
 
-  /** Pick the skew value that drives current-health UI: prefer the
-   *  recent-window median (#789, current health) over the all-time median
-   *  (poisoned by historical bad samples). Falls back gracefully if the
-   *  field isn't present (older API responses). */
+  /** Pick the skew value that drives current-health UI. Uses lastSkewSec
+   *  (most recent corrected skew) when available, falls back to medianSkewSec. */
   window.currentSkewValue = function(cs) {
     if (!cs) return null;
-    return cs.recentMedianSkewSec != null ? cs.recentMedianSkewSec : cs.medianSkewSec;
+    return cs.lastSkewSec != null ? cs.lastSkewSec : cs.medianSkewSec;
   };
 
   /** Render a clock skew badge HTML */
   window.renderSkewBadge = function(severity, skewSec, cs) {
     if (!severity) return '';
     var cls = 'skew-badge skew-badge--' + severity;
-    if (severity === 'no_clock') {
-      return '<span class="' + cls + '" title="Uninitialized RTC — no valid clock">🚫 No Clock</span>';
-    }
-    if (severity === 'bimodal_clock' && cs) {
-      var badPct = cs.goodFraction != null ? Math.round((1 - cs.goodFraction) * 100) : '?';
-      var label = '⏰ ' + window.formatSkew(skewSec);
-      return '<span class="' + cls + '" title="Clock skew: ' + window.formatSkew(skewSec) + ' (bimodal: ' + badPct + '% of recent adverts have nonsense timestamps)">' + label + '</span>';
+    if (severity === 'default') {
+      return '<span class="' + cls + '" title="Firmware default clock — volatile RTC not yet user-set since boot">⏰ Default</span>';
     }
     var label = severity === 'ok' ? '⏰' : '⏰ ' + window.formatSkew(skewSec);
     return '<span class="' + cls + '" title="Clock skew: ' + window.formatSkew(skewSec) + ' (' + (SKEW_SEVERITY_LABELS[severity] || severity) + ')">' + label + '</span>';

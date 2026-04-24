@@ -2291,12 +2291,11 @@ th.sort-active { color: var(--accent, #60a5fa); }
 
 /* #690 — Clock Skew badges & fleet table */
 .skew-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 4px; font-weight: 600; white-space: nowrap; }
+.skew-badge--default { background: var(--text-muted); color: #fff; }
 .skew-badge--ok { background: var(--status-green); color: #fff; }
-.skew-badge--warning { background: var(--status-yellow); color: #000; }
-.skew-badge--critical { background: var(--status-orange); color: #fff; }
-.skew-badge--absurd { background: var(--status-purple); color: #fff; }
-.skew-badge--no_clock { background: var(--text-muted); color: #fff; }
-.skew-badge--bimodal_clock { background: var(--status-amber-light); color: var(--status-amber-text); border: 1px solid var(--status-amber); }
+.skew-badge--degrading { background: var(--status-yellow); color: #000; }
+.skew-badge--degraded { background: var(--status-orange); color: #fff; }
+.skew-badge--wrong { background: var(--status-red); color: #fff; }
 
 .skew-detail-section { padding: 10px 16px; margin-bottom: 8px; }
 .skew-sparkline-wrap { margin-top: 6px; }
@@ -2305,8 +2304,8 @@ th.sort-active { color: var(--accent, #60a5fa); }
 
 .clock-fleet-row--warning { background: color-mix(in srgb, var(--status-yellow) 10%, transparent); }
 .clock-fleet-row--critical { background: color-mix(in srgb, var(--status-orange) 10%, transparent); }
-.clock-fleet-row--absurd { background: color-mix(in srgb, var(--status-purple) 10%, transparent); }
-.clock-fleet-row--no_clock { background: color-mix(in srgb, var(--text-muted) 10%, transparent); }
+.clock-fleet-row--wrong { background: color-mix(in srgb, var(--status-red) 10%, transparent); }
+.clock-fleet-row--default { background: color-mix(in srgb, var(--text-muted) 10%, transparent); }
 
 .clock-filter-btn { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card-bg, #fff); color: var(--text); cursor: pointer; margin-right: 4px; }
 .clock-filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }

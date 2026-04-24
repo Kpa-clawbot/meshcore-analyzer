@@ -824,14 +824,9 @@
       var driftHtml = cs.driftPerDaySec ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Drift: ' + formatDrift(cs.driftPerDaySec) + '</div>' : '';
       var sparkHtml = renderSkewSparkline(cs.samples, 200, 32);
       var skewVal = window.currentSkewValue(cs);
-      var skewDisplay = cs.severity === 'no_clock'
-        ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">No Clock</span>'
+      var skewDisplay = cs.severity === 'default'
+        ? '<span style="font-size:18px;font-weight:700;color:var(--text-muted)">Default</span>'
         : '<span style="font-size:18px;font-weight:700;font-family:var(--mono)">' + formatSkew(skewVal) + '</span>';
-      var bimodalWarning = '';
-      if (cs.severity === 'bimodal_clock') {
-        var totalRecent = cs.recentSampleCount || 0;
-        bimodalWarning = '<div style="font-size:12px;color:var(--status-amber-text);margin-top:4px">⚠️ ' + (cs.recentBadSampleCount || '?') + ' of last ' + (totalRecent || '?') + ' adverts had nonsense timestamps (likely RTC reset)</div>';
-      }
       container.innerHTML =
         '<h4 style="margin:0 0 6px">⏰ Clock Skew</h4>' +
         '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">' +
@@ -840,8 +835,7 @@
           (cs.calibrated ? ' <span style="font-size:10px;color:var(--text-muted)" title="Observer-calibrated">✓ calibrated</span>' : '') +
         '</div>' +
         driftHtml +
-        (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '') +
-        bimodalWarning;
+        (sparkHtml ? '<div class="skew-sparkline-wrap" style="margin-top:8px">' + sparkHtml + '<div style="font-size:10px;color:var(--text-muted)">Skew over time (' + (cs.samples || []).length + ' samples)</div></div>' : '');
     } catch (e) {
       // Non-fatal — section stays hidden
     }
