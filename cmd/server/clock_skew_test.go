@@ -127,6 +127,30 @@ func TestIsDefaultEpoch_Boundaries(t *testing.T) {
 	}
 }
 
+func TestIsDefault_OverlappingWindowsPicksLargest(t *testing.T) {
+	// 1715770351 (2024-05-15) falls in the range of BOTH epoch 1672531200
+	// (2023-01-01, +730d covers through 2025) AND epoch 1715770351 itself.
+	// The classifier must pick the largest epoch ≤ advertTS.
+	ok, ep := isDefaultEpoch(1715770351)
+	if !ok || ep != 1715770351 {
+		t.Errorf("isDefaultEpoch(1715770351) = %v, epoch %d; want true, 1715770351", ok, ep)
+	}
+
+	// 1672531200 + 100 days — only falls in epoch 1672531200's range.
+	ts100d := int64(1672531200 + 100*86400)
+	ok, ep = isDefaultEpoch(ts100d)
+	if !ok || ep != 1672531200 {
+		t.Errorf("isDefaultEpoch(%d) = %v, epoch %d; want true, 1672531200", ts100d, ok, ep)
+	}
+
+	// Timestamp between 1672531200 and 1715770351 but closer to 1715770351
+	// — e.g. 1715770350 (1 second before the 2024 epoch). Should match 1672531200.
+	ok, ep = isDefaultEpoch(1715770350)
+	if !ok || ep != 1672531200 {
+		t.Errorf("isDefaultEpoch(1715770350) = %v, epoch %d; want true, 1672531200", ok, ep)
+	}
+}
+
 // ── median / mean ──────────────────────────────────────────────────────────────
 
 func TestMedian(t *testing.T) {

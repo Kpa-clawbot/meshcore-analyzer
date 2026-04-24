@@ -808,7 +808,7 @@
   let _themeRefreshHandler = null;
 
   let _allNodes = null; // cached full node list
-  let _fleetSkew = null; // cached clock skew map: pubkey → {severity, recentMedianSkewSec, medianSkewSec, ...}
+  let _fleetSkew = null; // cached clock skew map: pubkey → {severity, medianSkewSec, ...}
 
   /**
    * Fetch per-node clock skew and render into the given container element.
