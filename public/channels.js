@@ -393,17 +393,25 @@
     }
   }
 
-  // Merge user-stored keys into the channel list
+  // Merge user-stored keys into the channel list.
+  // If a stored key matches a server-known channel, mark that channel as
+  // userAdded so the ✕ button appears — otherwise the user has no way to
+  // remove a key they added but that the server already knows about.
   function mergeUserChannels() {
     var keys = ChannelDecrypt.getStoredKeys();
     var names = Object.keys(keys);
     for (var i = 0; i < names.length; i++) {
       var name = names[i];
-      // Check if channel already exists by name
-      var exists = channels.some(function (ch) {
-        return ch.name === name || ch.hash === name || ch.hash === ('user:' + name);
-      });
-      if (!exists) {
+      var matched = false;
+      for (var j = 0; j < channels.length; j++) {
+        var ch = channels[j];
+        if (ch.name === name || ch.hash === name || ch.hash === ('user:' + name)) {
+          ch.userAdded = true;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
         channels.push({
           hash: 'user:' + name,
           name: name,
@@ -749,19 +757,38 @@
         e.stopPropagation();
         var channelHash = removeBtn.getAttribute('data-remove-channel');
         if (!channelHash) return;
-        var chName = channelHash.startsWith('user:') ? channelHash.substring(5) : channelHash;
+        // The localStorage key is the channel name. For user:-prefixed entries
+        // strip the prefix; for server-known channels look up the channel
+        // object so we use its display name (the hash itself isn't the key).
+        var ch = channels.find(function (c) { return c.hash === channelHash; });
+        var chName = channelHash.startsWith('user:')
+          ? channelHash.substring(5)
+          : (ch && ch.name) || channelHash;
         if (!confirm('Remove channel "' + chName + '"? This will clear saved keys and cached messages.')) return;
         ChannelDecrypt.removeKey(chName);
-        // Remove from channels array
-        channels = channels.filter(function (c) { return c.hash !== channelHash; });
-        if (selectedHash === channelHash) {
-          selectedHash = null;
-          messages = [];
-          history.replaceState(null, '', '#/channels');
-          var msgEl2 = document.getElementById('chMessages');
-          if (msgEl2) msgEl2.innerHTML = '<div class="ch-empty">Choose a channel from the sidebar to view messages</div>';
-          var header2 = document.getElementById('chHeader');
-          if (header2) header2.querySelector('.ch-header-text').textContent = 'Select a channel';
+        if (channelHash.startsWith('user:')) {
+          // Pure user-added channel — drop from the list entirely.
+          channels = channels.filter(function (c) { return c.hash !== channelHash; });
+          if (selectedHash === channelHash) {
+            selectedHash = null;
+            messages = [];
+            history.replaceState(null, '', '#/channels');
+            var msgEl2 = document.getElementById('chMessages');
+            if (msgEl2) msgEl2.innerHTML = '<div class="ch-empty">Choose a channel from the sidebar to view messages</div>';
+            var header2 = document.getElementById('chHeader');
+            if (header2) header2.querySelector('.ch-header-text').textContent = 'Select a channel';
+          }
+        } else if (ch) {
+          // Server-known channel: keep the row, just unmark as user-added so
+          // the ✕ disappears until they re-add a key.
+          ch.userAdded = false;
+          // If this was the selected channel, clear decrypted messages since
+          // the key is gone — they can't be re-decrypted without re-adding it.
+          if (selectedHash === channelHash) {
+            messages = [];
+            var msgEl2 = document.getElementById('chMessages');
+            if (msgEl2) msgEl2.innerHTML = '<div class="ch-empty">Key removed — add a key to decrypt messages</div>';
+          }
         }
         renderChannelList();
         return;

@@ -135,7 +135,7 @@ jobs:
   e2e-test:
     name: "🎭 Playwright E2E Tests"
     needs: [go-test]
-    runs-on: [self-hosted, Linux]
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
@@ -144,13 +144,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-      - name: Free disk space
-        run: |
-          # Prune old runner diagnostic logs (can accumulate 50MB+)
-          find ~/actions-runner/_diag/ -name '*.log' -mtime +3 -delete 2>/dev/null || true
-          # Show available disk space
-          df -h / | tail -1
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v5
@@ -252,16 +245,10 @@ jobs:
   build-and-publish:
     name: "🏗️ Build & Publish Docker Image"
     needs: [e2e-test]
-    runs-on: [self-hosted, meshcore-runner-2]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-
-      - name: Free disk space
-        run: |
-          docker system prune -af 2>/dev/null || true
-          docker builder prune -af 2>/dev/null || true
-          df -h /
 
       - name: Compute build metadata
         id: meta
@@ -372,7 +359,7 @@ jobs:
   # ───────────────────────────────────────────────────────────────
   deploy:
     name: "🚀 Deploy Staging"
-    if: github.event_name == 'push'
+    if: false  # disabled: staging VM offline, manual deploy required
     needs: [build-and-publish]
     runs-on: [self-hosted, meshcore-runner-2]
     steps:
@@ -461,8 +448,8 @@ jobs:
   publish:
     name: "📝 Publish Badges & Summary"
     if: github.event_name == 'push'
-    needs: [deploy]
-    runs-on: [self-hosted, Linux]
+    needs: [build-and-publish]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
