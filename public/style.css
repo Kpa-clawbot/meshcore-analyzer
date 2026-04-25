@@ -1556,7 +1556,7 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 
 /* #20 — Observers table horizontal scroll on mobile */
 .obs-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.obs-table-scroll .obs-table { min-width: 640px; }
+.obs-table-scroll .obs-table { min-width: 720px; }
 
 /* #206 — Analytics/Compare tables scroll wrappers on mobile */
 .analytics-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }

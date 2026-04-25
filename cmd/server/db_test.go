@@ -48,7 +48,8 @@ func setupTestDB(t *testing.T) *DB {
 			radio TEXT,
 			battery_mv INTEGER,
 			uptime_secs INTEGER,
-			noise_floor REAL
+			noise_floor REAL,
+			last_packet_at TEXT DEFAULT NULL
 		);
 
 		CREATE TABLE transmissions (
@@ -355,6 +356,10 @@ func TestGetObservers(t *testing.T) {
 	if observers[0].ID != "obs1" {
 		t.Errorf("expected obs1 first (most recent), got %s", observers[0].ID)
 	}
+	// last_packet_at should be nil since seedTestData doesn't set it
+	if observers[0].LastPacketAt != nil {
+		t.Errorf("expected nil LastPacketAt for obs1 from seed, got %v", *observers[0].LastPacketAt)
+	}
 }
 
 func TestGetObserverByID(t *testing.T) {
@@ -368,6 +373,48 @@ func TestGetObserverByID(t *testing.T) {
 	}
 	if obs.ID != "obs1" {
 		t.Errorf("expected obs1, got %s", obs.ID)
+	}
+	// Verify last_packet_at is nil by default
+	if obs.LastPacketAt != nil {
+		t.Errorf("expected nil LastPacketAt, got %v", *obs.LastPacketAt)
+	}
+}
+
+func TestGetObserverLastPacketAt(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedTestData(t, db)
+
+	// Set last_packet_at for obs1
+	ts := "2026-04-24T12:00:00Z"
+	db.conn.Exec(`UPDATE observers SET last_packet_at = ? WHERE id = ?`, ts, "obs1")
+
+	// Verify via GetObservers
+	observers, err := db.GetObservers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obs1 *Observer
+	for i := range observers {
+		if observers[i].ID == "obs1" {
+			obs1 = &observers[i]
+			break
+		}
+	}
+	if obs1 == nil {
+		t.Fatal("obs1 not found")
+	}
+	if obs1.LastPacketAt == nil || *obs1.LastPacketAt != ts {
+		t.Errorf("expected LastPacketAt=%s via GetObservers, got %v", ts, obs1.LastPacketAt)
+	}
+
+	// Verify via GetObserverByID
+	obs, err := db.GetObserverByID("obs1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.LastPacketAt == nil || *obs.LastPacketAt != ts {
+		t.Errorf("expected LastPacketAt=%s via GetObserverByID, got %v", ts, obs.LastPacketAt)
 	}
 }
 
@@ -1109,7 +1156,8 @@ func setupTestDBV2(t *testing.T) *DB {
 			iata TEXT,
 			last_seen TEXT,
 			first_seen TEXT,
-			packet_count INTEGER DEFAULT 0
+			packet_count INTEGER DEFAULT 0,
+			last_packet_at TEXT DEFAULT NULL
 		);
 
 		CREATE TABLE transmissions (

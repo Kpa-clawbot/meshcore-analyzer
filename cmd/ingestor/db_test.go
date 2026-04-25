@@ -569,6 +569,61 @@ func TestInsertTransmissionUpdatesObserverLastSeen(t *testing.T) {
 	}
 }
 
+func TestLastPacketAtUpdatedOnPacketOnly(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Insert observer via status path — last_packet_at should be NULL
+	if err := s.UpsertObserver("obs1", "Observer1", "SJC", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var lastPacketAt sql.NullString
+	s.db.QueryRow("SELECT last_packet_at FROM observers WHERE id = ?", "obs1").Scan(&lastPacketAt)
+	if lastPacketAt.Valid {
+		t.Fatalf("expected last_packet_at to be NULL after UpsertObserver, got %s", lastPacketAt.String)
+	}
+
+	// Insert a packet from this observer — last_packet_at should be set
+	data := &PacketData{
+		RawHex:      "0A00D69F",
+		Timestamp:   "2026-04-24T12:00:00Z",
+		ObserverID:  "obs1",
+		Hash:        "lastpackettest123456",
+		RouteType:   2,
+		PayloadType: 2,
+		PathJSON:    "[]",
+		DecodedJSON: `{"type":"TXT_MSG"}`,
+	}
+	if _, err := s.InsertTransmission(data); err != nil {
+		t.Fatal(err)
+	}
+
+	s.db.QueryRow("SELECT last_packet_at FROM observers WHERE id = ?", "obs1").Scan(&lastPacketAt)
+	if !lastPacketAt.Valid {
+		t.Fatal("expected last_packet_at to be non-NULL after InsertTransmission")
+	}
+	// InsertTransmission uses `now = data.Timestamp || time.Now()`, so last_packet_at
+	// should match the packet's Timestamp when provided (same source-of-truth as last_seen).
+	if lastPacketAt.String != "2026-04-24T12:00:00Z" {
+		t.Errorf("expected last_packet_at=2026-04-24T12:00:00Z, got %s", lastPacketAt.String)
+	}
+
+	// UpsertObserver again (status path) — last_packet_at should NOT change
+	if err := s.UpsertObserver("obs1", "Observer1", "SJC", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var lastPacketAtAfterStatus sql.NullString
+	s.db.QueryRow("SELECT last_packet_at FROM observers WHERE id = ?", "obs1").Scan(&lastPacketAtAfterStatus)
+	if !lastPacketAtAfterStatus.Valid || lastPacketAtAfterStatus.String != lastPacketAt.String {
+		t.Errorf("UpsertObserver should not change last_packet_at; expected %s, got %v", lastPacketAt.String, lastPacketAtAfterStatus)
+	}
+}
+
 func TestEndToEndIngest(t *testing.T) {
 	s, err := OpenStore(tempDBPath(t))
 	if err != nil {
