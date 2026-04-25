@@ -89,6 +89,7 @@
             <button class="tab-btn" data-tab="rf-health">RF Health</button>
             <button class="tab-btn" data-tab="clock-health">Clock Health</button>
             <button class="tab-btn" data-tab="prefix-tool">Prefix Tool</button>
+            <button class="tab-btn" data-tab="scopes">Scopes</button>
           </div>
         </div>
         <div id="analyticsContent" class="analytics-content" aria-live="polite">
@@ -184,6 +185,7 @@
       case 'rf-health': await renderRFHealthTab(el); break;
       case 'clock-health': await renderClockHealthTab(el); break;
       case 'prefix-tool': await renderPrefixTool(el); break;
+      case 'scopes': await renderScopesTab(el); break;
     }
     // Auto-apply column resizing to all analytics tables
     requestAnimationFrame(() => {
@@ -3565,6 +3567,132 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
     } catch (err) {
       el.innerHTML = '<div class="text-center" style="color:var(--status-red);padding:40px">Failed to load clock health data: ' + esc(String(err)) + '</div>';
     }
+  }
+
+  // ===================== SCOPES =====================
+  async function renderScopesTab(el) {
+    var winKey = 'scopes_window';
+    var selectedWindow = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(winKey)) || '24h';
+
+    async function load(w) {
+      el.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading scope stats…</div>';
+      try {
+        var data = await (await fetch('/api/scope-stats?window=' + encodeURIComponent(w))).json();
+        if (data.error) {
+          el.innerHTML = '<div class="text-center text-muted" style="padding:40px">' + esc(data.error) + '</div>';
+          return;
+        }
+        render(data, w);
+      } catch (err) {
+        el.innerHTML = '<div class="text-center" style="color:var(--status-red);padding:40px">Failed to load scope stats: ' + esc(String(err)) + '</div>';
+      }
+    }
+
+    function pct(n, total) {
+      if (!total) return '—';
+      return (n / total * 100).toFixed(1) + '%';
+    }
+
+    function render(d, w) {
+      var s = d.summary;
+      var total = s.transportTotal || 0;
+
+      // Window selector
+      var winHtml = ['1h', '24h', '7d'].map(function(v) {
+        return '<button class="tab-btn' + (w === v ? ' active' : '') + '" data-win="' + v + '">' + v + '</button>';
+      }).join('');
+
+      // Summary cards
+      var cardsHtml = [
+        { label: 'Transport Total', value: total.toLocaleString(), note: '' },
+        { label: 'Scoped', value: s.scoped.toLocaleString(), note: pct(s.scoped, total) },
+        { label: 'Unscoped', value: s.unscoped.toLocaleString(), note: pct(s.unscoped, total) },
+        { label: 'Unknown Scope', value: s.unknownScope.toLocaleString(), note: pct(s.unknownScope, s.scoped) + ' of scoped' },
+      ].map(function(c) {
+        return '<div class="stat-card"><div class="stat-value">' + c.value + '</div>' +
+          '<div class="stat-label">' + c.label + '</div>' +
+          (c.note ? '<div class="stat-note text-muted" style="font-size:11px">' + c.note + '</div>' : '') +
+          '</div>';
+      }).join('');
+
+      // Per-region table
+      var tableBody = '';
+      if (d.byRegion && d.byRegion.length) {
+        tableBody = d.byRegion.map(function(r) {
+          return '<tr><td><code>' + esc(r.name) + '</code></td>' +
+            '<td>' + r.count.toLocaleString() + '</td>' +
+            '<td>' + pct(r.count, s.scoped) + '</td></tr>';
+        }).join('');
+        if (s.unknownScope > 0) {
+          tableBody += '<tr><td><em class="text-muted">Unknown scope</em></td>' +
+            '<td>' + s.unknownScope.toLocaleString() + '</td>' +
+            '<td>' + pct(s.unknownScope, s.scoped) + '</td></tr>';
+        }
+      } else if (s.scoped === 0) {
+        tableBody = '<tr><td colspan="3" class="text-muted" style="text-align:center">No scoped messages in this window</td></tr>';
+      } else {
+        tableBody = '<tr><td colspan="3" class="text-muted" style="text-align:center">No regions configured — add <code>hashRegions</code> to your config</td></tr>';
+      }
+
+      // Time-series chart (two-line SVG)
+      var chartHtml = '';
+      if (d.timeSeries && d.timeSeries.length > 1) {
+        var scopedVals = d.timeSeries.map(function(p) { return p.scoped; });
+        var unscopedVals = d.timeSeries.map(function(p) { return p.unscoped; });
+        var maxVal = Math.max(1, Math.max.apply(null, scopedVals.concat(unscopedVals)));
+        var W = 800, H = 180, padL = 44, padB = 24, padT = 10, padR = 10;
+        var plotW = W - padL - padR, plotH = H - padB - padT;
+        var n = d.timeSeries.length;
+
+        function pts(vals) {
+          return vals.map(function(v, i) {
+            var x = padL + i * plotW / Math.max(n - 1, 1);
+            var y = padT + plotH - (v / maxVal) * plotH;
+            return x.toFixed(1) + ',' + y.toFixed(1);
+          }).join(' ');
+        }
+
+        var grid = '';
+        for (var gi = 0; gi <= 4; gi++) {
+          var gy = padT + plotH * gi / 4;
+          var gv = Math.round(maxVal * (4 - gi) / 4);
+          grid += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + gy.toFixed(1) + '" stroke="var(--border)" stroke-dasharray="2"/>';
+          grid += '<text x="' + (padL - 4) + '" y="' + (gy + 4).toFixed(1) + '" text-anchor="end" font-size="9" fill="var(--text-muted)">' + gv + '</text>';
+        }
+
+        var legendX = padL + plotW - 120;
+        chartHtml = '<div style="margin-top:16px">' +
+          '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-height:' + H + 'px" role="img" aria-label="Scope time series">' +
+          grid +
+          '<polyline points="' + pts(scopedVals) + '" fill="none" stroke="var(--accent)" stroke-width="2"/>' +
+          '<polyline points="' + pts(unscopedVals) + '" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-dasharray="4"/>' +
+          '<rect x="' + legendX + '" y="' + padT + '" width="10" height="10" fill="var(--accent)"/>' +
+          '<text x="' + (legendX + 14) + '" y="' + (padT + 9) + '" font-size="10" fill="var(--text)">Scoped</text>' +
+          '<rect x="' + legendX + '" y="' + (padT + 16) + '" width="10" height="10" fill="var(--text-muted)"/>' +
+          '<text x="' + (legendX + 14) + '" y="' + (padT + 25) + '" font-size="10" fill="var(--text)">Unscoped</text>' +
+          '</svg></div>';
+      }
+
+      el.innerHTML =
+        '<h3 style="margin:0 0 12px">Scope Statistics</h3>' +
+        '<div style="margin-bottom:12px">' + winHtml + '</div>' +
+        '<div class="stats-grid" style="margin-bottom:16px">' + cardsHtml + '</div>' +
+        '<table class="data-table analytics-table" style="margin-bottom:8px">' +
+        '<thead><tr><th>Region</th><th>Messages</th><th>% of Scoped</th></tr></thead>' +
+        '<tbody>' + tableBody + '</tbody></table>' +
+        chartHtml;
+
+      // Bind window selector
+      el.querySelectorAll('[data-win]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          selectedWindow = btn.dataset.win;
+          if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(winKey, selectedWindow);
+          load(selectedWindow);
+        });
+      });
+    }
+
+    load(selectedWindow);
   }
 
   registerPage('analytics', { init, destroy });

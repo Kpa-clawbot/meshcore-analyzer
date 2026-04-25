@@ -90,6 +90,33 @@ type StatsResponse struct {
 	GoSysMB       float64 `json:"goSysMB"`       // runtime.MemStats.Sys (total Go-managed)
 }
 
+// ─── Scope Stats ───────────────────────────────────────────────────────────────
+
+type ScopeStatsSummary struct {
+	TransportTotal int `json:"transportTotal"`
+	Scoped         int `json:"scoped"`
+	Unscoped       int `json:"unscoped"`
+	UnknownScope   int `json:"unknownScope"`
+}
+
+type ScopeRegionCount struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+type ScopeTimePoint struct {
+	T        string `json:"t"`
+	Scoped   int    `json:"scoped"`
+	Unscoped int    `json:"unscoped"`
+}
+
+type ScopeStatsResponse struct {
+	Window     string             `json:"window"`
+	Summary    ScopeStatsSummary  `json:"summary"`
+	ByRegion   []ScopeRegionCount `json:"byRegion"`
+	TimeSeries []ScopeTimePoint   `json:"timeSeries"`
+}
+
 // ─── Health ────────────────────────────────────────────────────────────────────
 
 type MemoryStats struct {

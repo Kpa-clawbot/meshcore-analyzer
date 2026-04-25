@@ -61,7 +61,7 @@ func TestSigValidation_ValidAdvertStored(t *testing.T) {
 	msg := newMockMsg("meshcore/US/obs1/packet", `{"raw":"`+rawHex+`","origin":"TestObs"}`)
 	cfg := &Config{}
 
-	handleMessage(store, "test", source, msg, nil, cfg)
+	handleMessage(store, "test", source, msg, nil, nil, cfg)
 
 	// Verify packet was stored
 	var count int
@@ -98,7 +98,7 @@ func TestSigValidation_TamperedSignatureDropped(t *testing.T) {
 	msg := newMockMsg("meshcore/US/obs1/packet", `{"raw":"`+tamperedHex+`","origin":"TestObs"}`)
 	cfg := &Config{}
 
-	handleMessage(store, "test", source, msg, nil, cfg)
+	handleMessage(store, "test", source, msg, nil, nil, cfg)
 
 	// Verify packet was NOT stored in transmissions
 	var txCount int
@@ -157,7 +157,7 @@ func TestSigValidation_TruncatedAppdataDropped(t *testing.T) {
 	msg := newMockMsg("meshcore/US/obs1/packet", `{"raw":"`+truncatedHex+`","origin":"TestObs"}`)
 	cfg := &Config{}
 
-	handleMessage(store, "test", source, msg, nil, cfg)
+	handleMessage(store, "test", source, msg, nil, nil, cfg)
 
 	var txCount int
 	store.db.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&txCount)
@@ -192,7 +192,7 @@ func TestSigValidation_DisabledByConfig(t *testing.T) {
 	falseVal := false
 	cfg := &Config{ValidateSignatures: &falseVal}
 
-	handleMessage(store, "test", source, msg, nil, cfg)
+	handleMessage(store, "test", source, msg, nil, nil, cfg)
 
 	// With validation disabled, tampered packet should be stored
 	var txCount int
@@ -225,7 +225,7 @@ func TestSigValidation_DropCounterIncrements(t *testing.T) {
 			rawBytes[76] = '0'
 		}
 		msg := newMockMsg("meshcore/US/obs1/packet", `{"raw":"`+string(rawBytes)+`","origin":"Obs"}`)
-		handleMessage(store, "test", source, msg, nil, cfg)
+		handleMessage(store, "test", source, msg, nil, nil, cfg)
 	}
 
 	if store.Stats.SignatureDrops.Load() != 3 {
@@ -258,7 +258,7 @@ func TestSigValidation_LogContainsFields(t *testing.T) {
 	msg := newMockMsg("meshcore/US/obs1/packet", `{"raw":"`+string(rawBytes)+`","origin":"MyObserver"}`)
 	cfg := &Config{}
 
-	handleMessage(store, "test", source, msg, nil, cfg)
+	handleMessage(store, "test", source, msg, nil, nil, cfg)
 
 	var hash, reason, obsID, obsName, pubkey, nodeName string
 	err = store.db.QueryRow("SELECT hash, reason, observer_id, observer_name, node_pubkey, node_name FROM dropped_packets LIMIT 1").

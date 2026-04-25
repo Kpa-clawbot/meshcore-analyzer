@@ -587,7 +587,7 @@ func TestEndToEndIngest(t *testing.T) {
 	msg := &MQTTPacketMessage{
 		Raw: rawHex,
 	}
-	pktData := BuildPacketData(msg, decoded, "obs1", "SJC")
+	pktData := BuildPacketData(msg, decoded, "obs1", "SJC", nil)
 	if _, err := s.InsertTransmission(pktData); err != nil {
 		t.Fatal(err)
 	}
@@ -781,7 +781,7 @@ func TestBuildPacketData(t *testing.T) {
 		Origin: "test-observer",
 	}
 
-	pkt := BuildPacketData(msg, decoded, "obs123", "SJC")
+	pkt := BuildPacketData(msg, decoded, "obs123", "SJC", nil)
 
 	if pkt.RawHex != rawHex {
 		t.Errorf("rawHex mismatch")
@@ -826,7 +826,7 @@ func TestBuildPacketDataWithHops(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := &MQTTPacketMessage{Raw: raw}
-	pkt := BuildPacketData(msg, decoded, "", "")
+	pkt := BuildPacketData(msg, decoded, "", "", nil)
 
 	if pkt.PathJSON == "[]" {
 		t.Error("pathJSON should contain hops")
@@ -839,7 +839,7 @@ func TestBuildPacketDataWithHops(t *testing.T) {
 func TestBuildPacketDataNilSNRRSSI(t *testing.T) {
 	decoded, _ := DecodePacket("0A00"+strings.Repeat("00", 10), nil, false)
 	msg := &MQTTPacketMessage{Raw: "0A00" + strings.Repeat("00", 10)}
-	pkt := BuildPacketData(msg, decoded, "", "")
+	pkt := BuildPacketData(msg, decoded, "", "", nil)
 
 	if pkt.SNR != nil {
 		t.Errorf("SNR should be nil")
@@ -1640,7 +1640,7 @@ func TestBuildPacketDataScoreAndDirection(t *testing.T) {
 		Direction: &dir,
 	}
 
-	pkt := BuildPacketData(msg, decoded, "obs1", "SJC")
+	pkt := BuildPacketData(msg, decoded, "obs1", "SJC", nil)
 	if pkt.Score == nil || *pkt.Score != 42.0 {
 		t.Errorf("Score=%v, want 42.0", pkt.Score)
 	}
@@ -1652,7 +1652,7 @@ func TestBuildPacketDataScoreAndDirection(t *testing.T) {
 func TestBuildPacketDataNilScoreDirection(t *testing.T) {
 	decoded, _ := DecodePacket("0A00"+strings.Repeat("00", 10), nil, false)
 	msg := &MQTTPacketMessage{Raw: "0A00" + strings.Repeat("00", 10)}
-	pkt := BuildPacketData(msg, decoded, "", "")
+	pkt := BuildPacketData(msg, decoded, "", "", nil)
 
 	if pkt.Score != nil {
 		t.Errorf("Score should be nil, got %v", *pkt.Score)
@@ -2084,7 +2084,7 @@ func TestBuildPacketData_TraceUsesPayloadHops(t *testing.T) {
 	}
 
 	msg := &MQTTPacketMessage{Raw: rawHex}
-	pd := BuildPacketData(msg, decoded, "test-obs", "TST")
+	pd := BuildPacketData(msg, decoded, "test-obs", "TST", nil)
 
 	// For TRACE: path_json MUST be the payload-decoded route hops, NOT the SNR bytes
 	expectedPathJSON := `["67","33","D6","33","67"]`
@@ -2116,10 +2116,43 @@ func TestBuildPacketData_NonTracePathJSON(t *testing.T) {
 	}
 
 	msg := &MQTTPacketMessage{Raw: rawHex}
-	pd := BuildPacketData(msg, decoded, "obs1", "TST")
+	pd := BuildPacketData(msg, decoded, "obs1", "TST", nil)
 
 	expectedPathJSON := `["AA","BB"]`
 	if pd.PathJSON != expectedPathJSON {
 		t.Errorf("path_json = %s, want %s", pd.PathJSON, expectedPathJSON)
 	}
 }
+
+func TestScopeNameMigration(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	store, err := OpenStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer store.Close()
+
+	// Verify scope_name column exists
+	rows, err := store.db.Query("PRAGMA table_info(transmissions)")
+	if err != nil {
+		t.Fatalf("PRAGMA: %v", err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid int
+		var colName, colType string
+		var notNull, pk int
+		var dflt interface{}
+		if err := rows.Scan(&cid, &colName, &colType, &notNull, &dflt, &pk); err == nil {
+			if colName == "scope_name" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("scope_name column not found in transmissions")
+	}
+}
+

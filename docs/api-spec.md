@@ -40,6 +40,7 @@
 - [GET /api/analytics/hash-sizes](#get-apianalyticshash-sizes)
 - [GET /api/analytics/subpaths](#get-apianalyticssubpaths)
 - [GET /api/analytics/subpath-detail](#get-apianalyticssubpath-detail)
+- [GET /api/scope-stats](#get-apiscope-stats)
 - [GET /api/resolve-hops](#get-apiresolve-hops)
 - [GET /api/traces/:hash](#get-apitraceshash)
 - [GET /api/config/theme](#get-apiconfigtheme)
@@ -1452,6 +1453,55 @@ Detailed stats for a specific subpath.
     { "name": string, "count": number }
   ]
 }
+```
+
+---
+
+## GET /api/scope-stats
+
+Scope-based packet statistics over a time window. Requires ingestor `scope_name_v1` migration to have run.
+
+### Query Parameters
+
+| Param    | Type   | Default | Description                                    |
+|----------|--------|---------|------------------------------------------------|
+| `window` | string | `24h`   | Time window: `1h`, `24h`, `7d`                |
+
+### Response `200`
+
+```jsonc
+{
+  "window":    string,               // echoed window ("1h", "24h", or "7d")
+  "summary": {
+    "transportTotal": number,        // scoped + unscoped transport-route packets
+    "scoped":         number,        // Code1 ≠ 0000 (named + unknown regions)
+    "unscoped":       number,        // transport-route with Code1 = 0000
+    "unknownScope":   number         // scoped but no configured region matched (subset of scoped)
+  },
+  "byRegion": [
+    { "name": string, "count": number }  // region name and packet count
+  ],
+  "timeSeries": [
+    { "t": string (ISO), "scoped": number, "unscoped": number }  // bucket timestamps and counts
+  ]
+}
+```
+
+**Notes:**
+- `transportTotal` = `scoped` + `unscoped` (only route_type 0 or 3 packets)
+- `scoped` = packets with Code1 ≠ 0000
+- `unscoped` = transport-route packets with Code1 = 0000
+- `unknownScope` = scoped packets that did not match any configured region name
+- Time-series bucket size depends on window:
+  - `1h` window → 5-minute buckets
+  - `24h` window → 1-hour buckets
+  - `7d` window → 6-hour buckets
+- Cached 30 seconds
+
+### Response `400`
+
+```json
+{ "error": "window must be 1h, 24h, or 7d" }
 ```
 
 ---

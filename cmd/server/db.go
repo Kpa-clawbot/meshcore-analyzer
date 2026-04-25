@@ -21,6 +21,7 @@ type DB struct {
 	isV3             bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
 	hasResolvedPath  bool   // observations table has resolved_path column
 	hasObsRawHex     bool   // observations table has raw_hex column (#881)
+	hasScopeName     bool   // transmissions.scope_name column exists (#899)
 
 	// Channel list cache (60s TTL) — avoids repeated GROUP BY scans (#762)
 	channelsCacheMu  sync.Mutex
@@ -82,6 +83,24 @@ func (db *DB) detectSchema() {
 			}
 		}
 	}
+
+	txRows, err := db.conn.Query("PRAGMA table_info(transmissions)")
+	if err != nil {
+		return
+	}
+	defer txRows.Close()
+	for txRows.Next() {
+		var cid int
+		var colName string
+		var colType sql.NullString
+		var notNull, pk int
+		var dflt sql.NullString
+		if txRows.Scan(&cid, &colName, &colType, &notNull, &dflt, &pk) == nil {
+			if colName == "scope_name" {
+				db.hasScopeName = true
+			}
+		}
+	}
 }
 
 // transmissionBaseSQL returns the SELECT columns and JOIN clause for transmission-centric queries.
@@ -106,6 +125,9 @@ func (db *DB) transmissionBaseSQL() (selectCols, observerJoin string) {
 				ORDER BY length(COALESCE(path_json,'')) DESC LIMIT 1
 			)`
 	}
+	if db.hasScopeName {
+		selectCols += `, t.scope_name`
+	}
 	return
 }
 
@@ -116,13 +138,18 @@ func (db *DB) scanTransmissionRow(rows *sql.Rows) map[string]interface{} {
 	var rawHex, hash, firstSeen, decodedJSON, observerID, observerName, pathJSON, direction sql.NullString
 	var routeType, payloadType sql.NullInt64
 	var snr, rssi sql.NullFloat64
+	var scopeName sql.NullString
 
-	if err := rows.Scan(&id, &rawHex, &hash, &firstSeen, &routeType, &payloadType, &decodedJSON,
-		&observationCount, &observerID, &observerName, &snr, &rssi, &pathJSON, &direction); err != nil {
+	scanArgs := []interface{}{&id, &rawHex, &hash, &firstSeen, &routeType, &payloadType, &decodedJSON,
+		&observationCount, &observerID, &observerName, &snr, &rssi, &pathJSON, &direction}
+	if db.hasScopeName {
+		scanArgs = append(scanArgs, &scopeName)
+	}
+	if err := rows.Scan(scanArgs...); err != nil {
 		return nil
 	}
 
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"id":                id,
 		"raw_hex":           nullStr(rawHex),
 		"hash":              nullStr(hash),
@@ -139,6 +166,10 @@ func (db *DB) scanTransmissionRow(rows *sql.Rows) map[string]interface{} {
 		"path_json":         nullStr(pathJSON),
 		"direction":         nullStr(direction),
 	}
+	if db.hasScopeName {
+		m["scope_name"] = nullStr(scopeName)
+	}
+	return m
 }
 
 // Node represents a row from the nodes table.
@@ -2343,4 +2374,104 @@ func (db *DB) GetSignatureDropCount() int64 {
 		return 0
 	}
 	return count
+}
+
+func (db *DB) GetScopeStats(window string) (*ScopeStatsResponse, error) {
+	if !db.hasScopeName {
+		return nil, fmt.Errorf("scope_name column not present — run ingestor to apply migrations")
+	}
+
+	var since string
+	var bucketExpr string
+	switch window {
+	case "1h":
+		since = time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+		// 5-minute buckets
+		bucketExpr = `strftime('%Y-%m-%dT%H:', first_seen) || printf('%02d', (CAST(strftime('%M', first_seen) AS INTEGER) / 5) * 5) || ':00Z'`
+	case "7d":
+		since = time.Now().Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+		// 6-hour buckets
+		bucketExpr = `strftime('%Y-%m-%dT', first_seen) || printf('%02d', (CAST(strftime('%H', first_seen) AS INTEGER) / 6) * 6) || ':00:00Z'`
+	default: // "24h"
+		window = "24h"
+		since = time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+		// 1-hour buckets
+		bucketExpr = `strftime('%Y-%m-%dT%H:00:00Z', first_seen)`
+	}
+
+	resp := &ScopeStatsResponse{Window: window}
+
+	// Summary counts
+	row := db.conn.QueryRow(`
+		SELECT
+			COUNT(*) AS transport_total,
+			COUNT(scope_name) AS scoped,
+			COALESCE(SUM(CASE WHEN scope_name IS NULL THEN 1 ELSE 0 END), 0) AS unscoped,
+			COALESCE(SUM(CASE WHEN scope_name = '' THEN 1 ELSE 0 END), 0) AS unknown_scope
+		FROM transmissions
+		WHERE route_type IN (0, 3) AND first_seen >= ?
+	`, since)
+	if err := row.Scan(
+		&resp.Summary.TransportTotal,
+		&resp.Summary.Scoped,
+		&resp.Summary.Unscoped,
+		&resp.Summary.UnknownScope,
+	); err != nil {
+		return nil, fmt.Errorf("scope summary query: %w", err)
+	}
+
+	// Per-region counts (named regions only)
+	rows, err := db.conn.Query(`
+		SELECT scope_name, COUNT(*) AS cnt
+		FROM transmissions
+		WHERE route_type IN (0, 3) AND scope_name IS NOT NULL AND scope_name != '' AND first_seen >= ?
+		GROUP BY scope_name
+		ORDER BY cnt DESC
+	`, since)
+	if err != nil {
+		return nil, fmt.Errorf("scope byRegion query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rc ScopeRegionCount
+		if rows.Scan(&rc.Name, &rc.Count) == nil {
+			resp.ByRegion = append(resp.ByRegion, rc)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scope byRegion iteration: %w", err)
+	}
+	if resp.ByRegion == nil {
+		resp.ByRegion = []ScopeRegionCount{}
+	}
+
+	// Time series
+	tsQuery := fmt.Sprintf(`
+		SELECT %s AS bucket,
+			COUNT(scope_name) AS scoped,
+			SUM(CASE WHEN scope_name IS NULL THEN 1 ELSE 0 END) AS unscoped
+		FROM transmissions
+		WHERE route_type IN (0, 3) AND first_seen >= ?
+		GROUP BY bucket
+		ORDER BY bucket
+	`, bucketExpr)
+	tsRows, err := db.conn.Query(tsQuery, since)
+	if err != nil {
+		return nil, fmt.Errorf("scope timeseries query: %w", err)
+	}
+	defer tsRows.Close()
+	for tsRows.Next() {
+		var pt ScopeTimePoint
+		if tsRows.Scan(&pt.T, &pt.Scoped, &pt.Unscoped) == nil {
+			resp.TimeSeries = append(resp.TimeSeries, pt)
+		}
+	}
+	if err := tsRows.Err(); err != nil {
+		return nil, fmt.Errorf("scope timeseries iteration: %w", err)
+	}
+	if resp.TimeSeries == nil {
+		resp.TimeSeries = []ScopeTimePoint{}
+	}
+
+	return resp, nil
 }

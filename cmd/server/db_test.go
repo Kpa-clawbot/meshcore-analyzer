@@ -2033,3 +2033,53 @@ func TestPerObservationRawHexEnrich(t *testing.T) {
 		}
 	}
 }
+
+func TestGetScopeStats(t *testing.T) {
+	conn, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	conn.SetMaxOpenConns(1)
+	db := &DB{conn: conn}
+	defer db.conn.Close()
+
+	// Create minimal schema
+	db.conn.Exec(`CREATE TABLE IF NOT EXISTS transmissions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		raw_hex TEXT, hash TEXT, first_seen TEXT, route_type INTEGER,
+		payload_type INTEGER, payload_version INTEGER, decoded_json TEXT,
+		scope_name TEXT DEFAULT NULL
+	)`)
+	// Manually set hasScopeName since we bypassed the detector
+	db.hasScopeName = true
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Transport scoped, known region
+	db.conn.Exec(`INSERT INTO transmissions (hash, first_seen, route_type, scope_name) VALUES ('a', ?, 0, '#belgium')`, now)
+	// Transport scoped, unknown
+	db.conn.Exec(`INSERT INTO transmissions (hash, first_seen, route_type, scope_name) VALUES ('b', ?, 0, '')`, now)
+	// Transport unscoped (NULL)
+	db.conn.Exec(`INSERT INTO transmissions (hash, first_seen, route_type, scope_name) VALUES ('c', ?, 0, NULL)`, now)
+	// Non-transport (should not count)
+	db.conn.Exec(`INSERT INTO transmissions (hash, first_seen, route_type, scope_name) VALUES ('d', ?, 1, NULL)`, now)
+
+	stats, err := db.GetScopeStats("24h")
+	if err != nil {
+		t.Fatalf("GetScopeStats: %v", err)
+	}
+	if stats.Summary.TransportTotal != 3 {
+		t.Errorf("TransportTotal = %d, want 3", stats.Summary.TransportTotal)
+	}
+	if stats.Summary.Scoped != 2 {
+		t.Errorf("Scoped = %d, want 2", stats.Summary.Scoped)
+	}
+	if stats.Summary.Unscoped != 1 {
+		t.Errorf("Unscoped = %d, want 1", stats.Summary.Unscoped)
+	}
+	if stats.Summary.UnknownScope != 1 {
+		t.Errorf("UnknownScope = %d, want 1", stats.Summary.UnknownScope)
+	}
+	if len(stats.ByRegion) != 1 || stats.ByRegion[0].Name != "#belgium" || stats.ByRegion[0].Count != 1 {
+		t.Errorf("ByRegion = %+v, want [{#belgium 1}]", stats.ByRegion)
+	}
+}
