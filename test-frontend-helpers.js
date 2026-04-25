@@ -5904,12 +5904,11 @@ console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===
     assert.strictEqual(ctx.window.renderSkewBadge(null, 0), '');
   });
 
-  test('renderSkewBadge renders bimodal_clock badge with tooltip (#845)', () => {
-    var cs = { goodFraction: 0.6, recentBadSampleCount: 4, recentSampleCount: 10 };
-    var html = ctx.window.renderSkewBadge('bimodal_clock', -5, cs);
-    assert.ok(html.includes('skew-badge--bimodal_clock'), 'should contain bimodal_clock class');
-    assert.ok(html.includes('bimodal'), 'tooltip should mention bimodal');
-    assert.ok(html.includes('40%'), 'tooltip should show bad percentage');
+  test('renderSkewBadge renders default badge with tooltip', () => {
+    var cs = {};
+    var html = ctx.window.renderSkewBadge('default', 0, cs);
+    assert.ok(html.includes('skew-badge--default'), 'should contain default class');
+    assert.ok(html.toLowerCase().includes('firmware default'), 'tooltip should mention firmware default');
     assert.ok(html.includes('⏰'), 'should contain clock emoji');
   });
 
@@ -5933,9 +5932,9 @@ console.log('\n=== channel-decrypt.js: key derivation, MAC, parsing, storage ===
 
   test('SKEW_SEVERITY_ORDER sorts worst first', () => {
     var order = ctx.window.SKEW_SEVERITY_ORDER;
-    assert.ok(order.absurd < order.critical, 'absurd should sort before critical');
-    assert.ok(order.critical < order.warning, 'critical should sort before warning');
-    assert.ok(order.warning < order.ok, 'warning should sort before ok');
+    assert.ok(order.wrong < order.degraded, 'wrong should sort before degraded');
+    assert.ok(order.degraded < order.degrading, 'degraded should sort before degrading');
+    assert.ok(order.degrading < order.ok, 'degrading should sort before ok');
   });
 }
 

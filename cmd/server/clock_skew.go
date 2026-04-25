@@ -12,20 +12,28 @@ import (
 type SkewSeverity string
 
 const (
-	SkewOK       SkewSeverity = "ok"       // < 5 min
-	SkewWarning  SkewSeverity = "warning"  // 5 min – 1 hour
-	SkewCritical SkewSeverity = "critical" // 1 hour – 30 days
-	SkewAbsurd   SkewSeverity = "absurd"   // > 30 days
-	SkewNoClock      SkewSeverity = "no_clock"      // > 365 days — uninitialized RTC
-	SkewBimodalClock SkewSeverity = "bimodal_clock" // mixed good+bad recent samples (flaky RTC)
+	SkewDefault   SkewSeverity = "default"   // firmware-default epoch + uptime
+	SkewOK        SkewSeverity = "ok"        // |skew| <= 15s
+	SkewDegrading SkewSeverity = "degrading" // 15s < |skew| <= 60s
+	SkewDegraded  SkewSeverity = "degraded"  // 60s < |skew| <= 600s
+	SkewWrong     SkewSeverity = "wrong"     // |skew| > 600s and not default
 )
+
+// Known firmware default epochs. Nodes with advert_ts in
+// [epoch, epoch + maxPlausibleUptimeSec] are classified as "default".
+// See docs/clock-skew-redesign.md for provenance of each value.
+var defaultEpochs = []int64{0, 1609459200, 1672531200, 1715770351}
 
 // Default thresholds in seconds.
 const (
-	skewThresholdWarnSec     = 5 * 60          // 5 minutes
-	skewThresholdCriticalSec = 60 * 60         // 1 hour
-	skewThresholdAbsurdSec   = 30 * 24 * 3600  // 30 days
-	skewThresholdNoClockSec  = 365 * 24 * 3600 // 365 days — uninitialized RTC
+	// maxPlausibleUptimeSec caps how far past a default epoch we still
+	// consider "default + uptime ticking". 730 days ≈ 2 years.
+	maxPlausibleUptimeSec = 1095 * 86400 // 3 years — covers solar repeater deployment lifetimes at firmware default
+
+	// Severity band boundaries (absolute skew in seconds).
+	skewThresholdOKSec        = 15
+	skewThresholdDegradingSec = 60
+	skewThresholdDegradedSec  = 600
 
 	// minDriftSamples is the minimum number of advert transmissions needed
 	// to compute a meaningful linear drift rate.
@@ -35,54 +43,52 @@ const (
 	// drift rates (> 1 day/day) indicate insufficient or outlier samples.
 	maxReasonableDriftPerDay = 86400.0
 
-	// recentSkewWindowCount is the number of most-recent advert samples
-	// used to derive the "current" skew for severity classification (see
-	// issue #789). The all-time median is poisoned by historical bad
-	// samples (e.g. a node that was off and then GPS-corrected); severity
-	// must reflect current health, not lifetime statistics.
-	recentSkewWindowCount = 5
-
-	// recentSkewWindowSec bounds the recent-window in time as well: only
-	// samples from the last N seconds count as "recent" for severity.
-	// The effective window is min(recentSkewWindowCount, samples in 1h).
-	recentSkewWindowSec = 3600
-
-	// bimodalSkewThresholdSec is the absolute skew threshold (1 hour)
-	// above which a sample is considered "bad" — likely firmware emitting
-	// a nonsense timestamp from an uninitialized RTC, not real drift.
-	// Chosen to match the warning/critical severity boundary: real clock
-	// drift rarely exceeds 1 hour, while epoch-0 RTCs produce ~1.7B sec.
-	bimodalSkewThresholdSec = 3600.0
-
 	// maxPlausibleSkewJumpSec is the largest skew change between
-	// consecutive samples that we treat as physical drift. Anything larger
-	// (e.g. a GPS sync that jumps the clock by minutes/days) is rejected
-	// as an outlier when computing drift. Real microcontroller drift is
-	// fractions of a second per advert; 60s is a generous safety factor.
+	// consecutive samples that we treat as physical drift.
 	maxPlausibleSkewJumpSec = 60.0
 
 	// theilSenMaxPoints caps the number of points fed to Theil-Sen
-	// regression (O(n²) in pairs). For nodes with thousands of samples we
-	// keep the most-recent points, which are also the most relevant for
-	// current drift.
+	// regression (O(n²) in pairs).
 	theilSenMaxPoints = 200
 )
 
-// classifySkew maps absolute skew (seconds) to a severity level.
-// Float64 comparison is safe: inputs are rounded to 1 decimal via round(),
-// and thresholds are integer multiples of 60 — no rounding artifacts.
-func classifySkew(absSkewSec float64) SkewSeverity {
+// isDefaultEpoch returns true if the raw advert timestamp falls within
+// [epoch, epoch + maxPlausibleUptimeSec] for any known firmware default.
+// If matched, returns the matched epoch; otherwise returns 0.
+func isDefaultEpoch(advertTS int64) (bool, int64) {
+	// Find the largest epoch <= advertTS (closest match). Since ranges
+	// overlap, picking the closest avoids attributing a 2023-firmware
+	// node's timestamp to the 2024 epoch.
+	bestEpoch := int64(-1)
+	for _, epoch := range defaultEpochs {
+		if epoch <= advertTS && epoch > bestEpoch {
+			bestEpoch = epoch
+		}
+	}
+	if bestEpoch >= 0 && advertTS <= bestEpoch+maxPlausibleUptimeSec {
+		return true, bestEpoch
+	}
+	return false, 0
+}
+
+// classifySkew maps a raw advert timestamp and corrected skew (signed)
+// to a severity level. Takes math.Abs internally so callers may pass
+// signed values. Default detection runs on the raw advert_ts
+// (independent of observer calibration).
+func classifySkew(advertTS int64, skewSec float64) (SkewSeverity, int64) {
+	if ok, epoch := isDefaultEpoch(advertTS); ok {
+		return SkewDefault, epoch
+	}
+	abs := math.Abs(skewSec)
 	switch {
-	case absSkewSec >= skewThresholdNoClockSec:
-		return SkewNoClock
-	case absSkewSec >= skewThresholdAbsurdSec:
-		return SkewAbsurd
-	case absSkewSec >= skewThresholdCriticalSec:
-		return SkewCritical
-	case absSkewSec >= skewThresholdWarnSec:
-		return SkewWarning
+	case abs <= skewThresholdOKSec:
+		return SkewOK, 0
+	case abs <= skewThresholdDegradingSec:
+		return SkewDegrading, 0
+	case abs <= skewThresholdDegradedSec:
+		return SkewDegraded, 0
 	default:
-		return SkewOK
+		return SkewWrong, 0
 	}
 }
 
@@ -90,38 +96,35 @@ func classifySkew(absSkewSec float64) SkewSeverity {
 
 // skewSample is a single raw skew measurement from one advert observation.
 type skewSample struct {
-	advertTS    int64  // node's advert Unix timestamp
-	observedTS  int64  // observation Unix timestamp
-	observerID  string // which observer saw this
-	hash        string // transmission hash (for multi-observer grouping)
+	advertTS   int64  // node's advert Unix timestamp
+	observedTS int64  // observation Unix timestamp
+	observerID string // which observer saw this
+	hash       string // transmission hash (for multi-observer grouping)
 }
 
 // ObserverCalibration holds the computed clock offset for an observer.
 type ObserverCalibration struct {
 	ObserverID string  `json:"observerID"`
-	OffsetSec  float64 `json:"offsetSec"`  // positive = observer clock ahead
-	Samples    int     `json:"samples"`    // number of multi-observer packets used
+	OffsetSec  float64 `json:"offsetSec"` // positive = observer clock ahead
+	Samples    int     `json:"samples"`   // number of multi-observer packets used
 }
 
 // NodeClockSkew is the API response for a single node's clock skew data.
 type NodeClockSkew struct {
-	Pubkey          string       `json:"pubkey"`
-	MeanSkewSec     float64      `json:"meanSkewSec"`     // corrected mean skew (positive = node ahead)
-	MedianSkewSec   float64      `json:"medianSkewSec"`   // corrected median skew
-	LastSkewSec     float64      `json:"lastSkewSec"`     // most recent corrected skew
-	RecentMedianSkewSec float64  `json:"recentMedianSkewSec"` // median across most-recent samples (drives severity, see #789)
-	DriftPerDaySec  float64      `json:"driftPerDaySec"`  // linear drift rate (sec/day)
-	Severity        SkewSeverity `json:"severity"`
-	SampleCount     int          `json:"sampleCount"`
-	Calibrated      bool         `json:"calibrated"`      // true if observer calibration was applied
-	LastAdvertTS    int64        `json:"lastAdvertTS"`     // most recent advert timestamp
-	LastObservedTS  int64        `json:"lastObservedTS"`   // most recent observation timestamp
-	Samples         []SkewSample `json:"samples,omitempty"` // time-series for sparklines
-	GoodFraction        float64  `json:"goodFraction"`        // fraction of recent samples with |skew| <= 1h
-	RecentBadSampleCount int     `json:"recentBadSampleCount"` // count of recent samples with |skew| > 1h
-	RecentSampleCount    int     `json:"recentSampleCount"`    // total recent samples in window
-	NodeName        string       `json:"nodeName,omitempty"` // populated in fleet responses
-	NodeRole        string       `json:"nodeRole,omitempty"` // populated in fleet responses
+	Pubkey         string       `json:"pubkey"`
+	MeanSkewSec    float64      `json:"meanSkewSec"`    // corrected mean skew (positive = node ahead)
+	MedianSkewSec  float64      `json:"medianSkewSec"`  // corrected median skew
+	LastSkewSec    float64      `json:"lastSkewSec"`    // most recent corrected skew
+	DriftPerDaySec float64      `json:"driftPerDaySec"` // linear drift rate (sec/day)
+	Severity       SkewSeverity `json:"severity"`
+	SampleCount    int          `json:"sampleCount"`
+	Calibrated     bool         `json:"calibrated"`     // true if observer calibration was applied
+	LastAdvertTS   int64        `json:"lastAdvertTS"`    // most recent advert timestamp
+	LastObservedTS int64        `json:"lastObservedTS"`  // most recent observation timestamp
+	DefaultEpoch   *int64       `json:"defaultEpoch,omitempty"` // matched epoch when severity=default
+	Samples        []SkewSample `json:"samples,omitempty"` // time-series for sparklines
+	NodeName       string       `json:"nodeName,omitempty"` // populated in fleet responses
+	NodeRole       string       `json:"nodeRole,omitempty"` // populated in fleet responses
 }
 
 // SkewSample is a single (timestamp, skew) point for sparkline rendering.
@@ -130,28 +133,26 @@ type SkewSample struct {
 	SkewSec   float64 `json:"skew"` // corrected skew in seconds
 }
 
-// txSkewResult maps tx hash → per-transmission skew stats. This is an
-// intermediate result keyed by hash (not pubkey); the store maps hash → pubkey
-// when building the final per-node view.
+// txSkewResult maps tx hash → per-transmission skew stats.
 type txSkewResult = map[string]*NodeClockSkew
 
 // ── Clock Skew Engine ──────────────────────────────────────────────────────────
 
 // ClockSkewEngine computes and caches clock skew data for nodes and observers.
 type ClockSkewEngine struct {
-	mu               sync.RWMutex
-	observerOffsets  map[string]float64 // observerID → calibrated offset (seconds)
-	observerSamples  map[string]int     // observerID → number of multi-observer packets used
-	nodeSkew         txSkewResult
-	lastComputed     time.Time
-	computeInterval  time.Duration
+	mu              sync.RWMutex
+	observerOffsets map[string]float64 // observerID → calibrated offset (seconds)
+	observerSamples map[string]int     // observerID → number of multi-observer packets used
+	nodeSkew        txSkewResult
+	lastComputed    time.Time
+	computeInterval time.Duration
 }
 
 func NewClockSkewEngine() *ClockSkewEngine {
 	return &ClockSkewEngine{
-		observerOffsets:  make(map[string]float64),
+		observerOffsets: make(map[string]float64),
 		observerSamples: make(map[string]int),
-		nodeSkew:       make(txSkewResult),
+		nodeSkew:        make(txSkewResult),
 		computeInterval: 30 * time.Second,
 	}
 }
@@ -188,7 +189,6 @@ func (e *ClockSkewEngine) Recompute(store *PacketStore) {
 
 	// Swap results under brief write lock.
 	e.mu.Lock()
-	// Re-check: another goroutine may have computed while we were working.
 	if time.Since(e.lastComputed) < e.computeInterval {
 		e.mu.Unlock()
 		return
@@ -214,13 +214,13 @@ func collectSamples(store *PacketStore) []skewSample {
 		if decoded == nil {
 			continue
 		}
-		// Extract advert timestamp from decoded JSON.
 		advertTS := extractTimestamp(decoded)
-		if advertTS <= 0 {
+		if advertTS < 0 {
 			continue
 		}
-		// Sanity: skip timestamps before year 2020 or after year 2100.
-		if advertTS < 1577836800 || advertTS > 4102444800 {
+		// Allow epoch 0 and above (needed for default-epoch detection).
+		// Upper bound: year 2100.
+		if advertTS > 4102444800 {
 			continue
 		}
 
@@ -240,21 +240,43 @@ func collectSamples(store *PacketStore) []skewSample {
 	return samples
 }
 
+// timestampMissing is the sentinel returned by extractTimestamp when no
+// timestamp field is present in the decoded advert. Using -1 lets us
+// distinguish "field absent" from a real epoch-0 timestamp (ts == 0).
+const timestampMissing int64 = -1
+
 // extractTimestamp gets the Unix timestamp from a decoded ADVERT payload.
+// Returns timestampMissing (-1) if no timestamp field is found.
 func extractTimestamp(decoded map[string]interface{}) int64 {
-	// Try payload.timestamp first (nested in "payload" key).
 	if payload, ok := decoded["payload"]; ok {
 		if pm, ok := payload.(map[string]interface{}); ok {
-			if ts := jsonNumber(pm, "timestamp"); ts > 0 {
+			if ts, ok := jsonNumberOk(pm, "timestamp"); ok {
 				return ts
 			}
 		}
 	}
-	// Fallback: top-level timestamp.
-	if ts := jsonNumber(decoded, "timestamp"); ts > 0 {
+	if ts, ok := jsonNumberOk(decoded, "timestamp"); ok {
 		return ts
 	}
-	return 0
+	return timestampMissing
+}
+
+// jsonNumberOk extracts an int64 from a JSON-parsed map, returning (value, true)
+// if the key exists and is numeric, or (0, false) otherwise.
+func jsonNumberOk(m map[string]interface{}, key string) (int64, bool) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	}
+	return 0, false
 }
 
 // jsonNumber extracts an int64 from a JSON-parsed map (handles float64 and json.Number).
@@ -281,7 +303,6 @@ func parseISO(s string) int64 {
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		// Try with fractional seconds.
 		t, err = time.Parse("2006-01-02T15:04:05.999999999Z07:00", s)
 		if err != nil {
 			return 0
@@ -295,19 +316,16 @@ func parseISO(s string) int64 {
 // calibrateObservers computes each observer's clock offset using multi-observer
 // packets. Returns offset map and sample count map.
 func calibrateObservers(samples []skewSample) (map[string]float64, map[string]int) {
-	// Group observations by packet hash.
 	byHash := make(map[string][]skewSample)
 	for _, s := range samples {
 		byHash[s.hash] = append(byHash[s.hash], s)
 	}
 
-	// For each multi-observer packet, compute per-observer deviation from median.
-	deviations := make(map[string][]float64) // observerID → list of deviations
+	deviations := make(map[string][]float64)
 	for _, group := range byHash {
 		if len(group) < 2 {
-			continue // single-observer packet, can't calibrate
+			continue
 		}
-		// Compute median observation timestamp for this packet.
 		obsTimes := make([]float64, len(group))
 		for i, s := range group {
 			obsTimes[i] = float64(s.observedTS)
@@ -319,7 +337,6 @@ func calibrateObservers(samples []skewSample) (map[string]float64, map[string]in
 		}
 	}
 
-	// Each observer's offset = median of its deviations.
 	offsets := make(map[string]float64, len(deviations))
 	counts := make(map[string]int, len(deviations))
 	for obsID, devs := range deviations {
@@ -333,8 +350,6 @@ func calibrateObservers(samples []skewSample) (map[string]float64, map[string]in
 
 // computeNodeSkew calculates corrected skew statistics for each node.
 func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkewResult {
-	// Compute corrected skew per sample, grouped by hash (each hash = one
-	// node's advert transmission). The caller maps hash → pubkey via byNode.
 	type correctedSample struct {
 		skew       float64
 		observedTS int64
@@ -349,8 +364,6 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 		rawSkew := float64(s.advertTS - s.observedTS)
 		corrected := rawSkew
 		if hasCal {
-			// Observer offset = obs_ts - median(all_obs_ts). If observer is ahead,
-			// its obs_ts is inflated, making raw_skew too low. Add offset to correct.
 			corrected = rawSkew + obsOffset
 		}
 		byHash[s.hash] = append(byHash[s.hash], correctedSample{
@@ -361,10 +374,7 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 		hashAdvertTS[s.hash] = s.advertTS
 	}
 
-	// Each hash represents one advert from one node. Compute median corrected
-	// skew per hash (across multiple observers).
-
-	result := make(map[string]*NodeClockSkew) // keyed by hash for now
+	result := make(map[string]*NodeClockSkew)
 	for hash, cs := range byHash {
 		skews := make([]float64, len(cs))
 		for i, c := range cs {
@@ -373,29 +383,37 @@ func computeNodeSkew(samples []skewSample, obsOffsets map[string]float64) txSkew
 		medSkew := median(skews)
 		meanSkew := mean(skews)
 
-		// Find latest observation.
-		var latestObsTS int64
+		// Pick the skew from the most recent observation (max observedTS),
+		// not the last-appended sample which may be non-chronological.
+		var latest correctedSample
 		var anyCal bool
 		for _, c := range cs {
-			if c.observedTS > latestObsTS {
-				latestObsTS = c.observedTS
+			if c.observedTS > latest.observedTS {
+				latest = c
 			}
 			if c.calibrated {
 				anyCal = true
 			}
 		}
+		lastCorrectedSkew := latest.skew
+		advTS := hashAdvertTS[hash]
+		severity, matchedEpoch := classifySkew(advTS, lastCorrectedSkew)
 
-		absMedian := math.Abs(medSkew)
-		result[hash] = &NodeClockSkew{
+		ncs := &NodeClockSkew{
 			MeanSkewSec:    round(meanSkew, 1),
 			MedianSkewSec:  round(medSkew, 1),
-			LastSkewSec:    round(cs[len(cs)-1].skew, 1),
-			Severity:       classifySkew(absMedian),
+			LastSkewSec:    round(lastCorrectedSkew, 1),
+			Severity:       severity,
 			SampleCount:    len(cs),
 			Calibrated:     anyCal,
-			LastAdvertTS:   hashAdvertTS[hash],
-			LastObservedTS: latestObsTS,
+			LastAdvertTS:   advTS,
+			LastObservedTS: latest.observedTS,
 		}
+		if severity == SkewDefault {
+			ep := matchedEpoch
+			ncs.DefaultEpoch = &ep
+		}
+		result[hash] = ncs
 	}
 	return result
 }
@@ -457,124 +475,45 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 	medSkew := median(allSkews)
 	meanSkew := mean(allSkews)
 
-	// Severity is derived from RECENT samples only (issue #789). The
-	// all-time median is poisoned by historical bad data — a node that
-	// was off for hours and then GPS-corrected can have median = -59M sec
-	// while its current skew is -0.8s. Operators need severity to reflect
-	// current health, so they trust the dashboard.
-	//
-	// Sort tsSkews by time and take the last recentSkewWindowCount samples
-	// (or all samples within recentSkewWindowSec of the latest, whichever
-	// gives FEWER samples — we want the more-current view; a chatty node
-	// can fit dozens of samples in 1h, in which case the count cap wins).
-	sort.Slice(tsSkews, func(i, j int) bool { return tsSkews[i].ts < tsSkews[j].ts })
+	// Classify using the most recent advert's raw timestamp and
+	// the most recent corrected skew. No windowing or median-driven
+	// severity — per-advert classification per the spec.
+	severity, matchedEpoch := classifySkew(lastAdvTS, lastSkew)
 
-	recentSkew := lastSkew
-	var recentVals []float64
-	if n := len(tsSkews); n > 0 {
-		latestTS := tsSkews[n-1].ts
-		// Index-based window: last K samples.
-		startByCount := n - recentSkewWindowCount
-		if startByCount < 0 {
-			startByCount = 0
-		}
-		// Time-based window: samples newer than latestTS - windowSec.
-		startByTime := n - 1
-		for i := n - 1; i >= 0; i-- {
-			if latestTS-tsSkews[i].ts <= recentSkewWindowSec {
-				startByTime = i
-			} else {
-				break
-			}
-		}
-		// Pick the narrower (larger-index) of the two windows — the most
-		// current view of the node's clock health.
-		start := startByCount
-		if startByTime > start {
-			start = startByTime
-		}
-		recentVals = make([]float64, 0, n-start)
-		for i := start; i < n; i++ {
-			recentVals = append(recentVals, tsSkews[i].skew)
-		}
-		if len(recentVals) > 0 {
-			recentSkew = median(recentVals)
-		}
-	}
-
-	// ── Bimodal detection (#845) ─────────────────────────────────────────
-	// Split recent samples into "good" (|skew| <= 1h, real clock) and
-	// "bad" (|skew| > 1h, firmware nonsense from uninitialized RTC).
-	// Classification order (first match wins):
-	//   no_clock       — goodFraction < 0.10 (essentially no real clock)
-	//   bimodal_clock  — 0.10 <= goodFraction < 0.80 AND badCount > 0
-	//   ok/warn/etc.   — goodFraction >= 0.80 (normal, outliers filtered)
-	var goodSamples []float64
-	for _, v := range recentVals {
-		if math.Abs(v) <= bimodalSkewThresholdSec {
-			goodSamples = append(goodSamples, v)
-		}
-	}
-	recentSampleCount := len(recentVals)
-	recentBadCount := recentSampleCount - len(goodSamples)
-	var goodFraction float64
-	if recentSampleCount > 0 {
-		goodFraction = float64(len(goodSamples)) / float64(recentSampleCount)
-	}
-
-	var severity SkewSeverity
-	if goodFraction < 0.10 {
-		// Essentially no real clock — classify as no_clock regardless
-		// of the raw skew magnitude.
-		severity = SkewNoClock
-	} else if goodFraction < 0.80 && recentBadCount > 0 {
-		// Bimodal: use median of GOOD samples as the "real" skew.
-		severity = SkewBimodalClock
-		if len(goodSamples) > 0 {
-			recentSkew = median(goodSamples)
-		}
-	} else {
-		// Normal path: if there are good samples, use their median
-		// (filters out rare outliers in ≥80% good case).
-		if len(goodSamples) > 0 && recentBadCount > 0 {
-			recentSkew = median(goodSamples)
-		}
-		severity = classifySkew(math.Abs(recentSkew))
-	}
-
-	// For no_clock / bimodal_clock nodes, skip drift when data is unreliable.
+	// Drift: display only, not a classifier input.
 	var drift float64
-	if severity != SkewNoClock && severity != SkewBimodalClock && len(tsSkews) >= minDriftSamples {
+	if severity != SkewDefault && len(tsSkews) >= minDriftSamples {
 		drift = computeDrift(tsSkews)
-		// Cap physically impossible drift rates.
 		if math.Abs(drift) > maxReasonableDriftPerDay {
 			drift = 0
 		}
 	}
 
-	// Build sparkline samples from tsSkews (already sorted by time above).
+	// Build sparkline samples.
+	sort.Slice(tsSkews, func(i, j int) bool { return tsSkews[i].ts < tsSkews[j].ts })
 	samples := make([]SkewSample, len(tsSkews))
 	for i, p := range tsSkews {
 		samples[i] = SkewSample{Timestamp: p.ts, SkewSec: round(p.skew, 1)}
 	}
 
-	return &NodeClockSkew{
-		Pubkey:               pubkey,
-		MeanSkewSec:          round(meanSkew, 1),
-		MedianSkewSec:        round(medSkew, 1),
-		LastSkewSec:          round(lastSkew, 1),
-		RecentMedianSkewSec:  round(recentSkew, 1),
-		DriftPerDaySec:       round(drift, 2),
-		Severity:             severity,
-		SampleCount:          totalSamples,
-		Calibrated:           anyCal,
-		LastAdvertTS:         lastAdvTS,
-		LastObservedTS:       lastObsTS,
-		Samples:              samples,
-		GoodFraction:         round(goodFraction, 2),
-		RecentBadSampleCount: recentBadCount,
-		RecentSampleCount:    recentSampleCount,
+	result := &NodeClockSkew{
+		Pubkey:         pubkey,
+		MeanSkewSec:    round(meanSkew, 1),
+		MedianSkewSec:  round(medSkew, 1),
+		LastSkewSec:    round(lastSkew, 1),
+		DriftPerDaySec: round(drift, 2),
+		Severity:       severity,
+		SampleCount:    totalSamples,
+		Calibrated:     anyCal,
+		LastAdvertTS:   lastAdvTS,
+		LastObservedTS: lastObsTS,
+		Samples:        samples,
 	}
+	if severity == SkewDefault {
+		ep := matchedEpoch
+		result.DefaultEpoch = &ep
+	}
+	return result
 }
 
 // GetFleetClockSkew returns clock skew data for all nodes that have skew data.
@@ -583,7 +522,6 @@ func (s *PacketStore) GetFleetClockSkew() []*NodeClockSkew {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Build name/role lookup from DB cache (requires s.mu held).
 	allNodes, _ := s.getCachedNodesAndPM()
 	nameMap := make(map[string]nodeInfo, len(allNodes))
 	for _, ni := range allNodes {
@@ -596,12 +534,10 @@ func (s *PacketStore) GetFleetClockSkew() []*NodeClockSkew {
 		if cs == nil {
 			continue
 		}
-		// Enrich with node name/role.
 		if ni, ok := nameMap[pubkey]; ok {
 			cs.NodeName = ni.Name
 			cs.NodeRole = ni.Role
 		}
-		// Omit samples in fleet response (too much data).
 		cs.Samples = nil
 		results = append(results, cs)
 	}
@@ -626,7 +562,6 @@ func (s *PacketStore) GetObserverCalibrations() []ObserverCalibration {
 			Samples:    s.clockSkew.observerSamples[obsID],
 		})
 	}
-	// Sort by absolute offset descending.
 	sort.Slice(result, func(i, j int) bool {
 		return math.Abs(result[i].OffsetSec) > math.Abs(result[j].OffsetSec)
 	})
@@ -667,38 +602,20 @@ type tsSkewPair struct {
 }
 
 // computeDrift estimates linear drift in seconds per day from time-ordered
-// (timestamp, skew) pairs. Issue #789: a single GPS-correction event (huge
-// skew jump in seconds) used to dominate ordinary least squares and produce
-// absurd drift like 1.7M sec/day. We now:
-//
-//  1. Drop pairs whose consecutive skew jump exceeds maxPlausibleSkewJumpSec
-//     (clock corrections, not physical drift). This protects both OLS-style
-//     consumers and Theil-Sen.
-//  2. Use Theil-Sen regression — the slope is the median of all pairwise
-//     slopes, naturally robust to remaining outliers (breakdown point ~29%).
-//
-// For very small samples after filtering we fall back to a simple slope
-// between first and last calibrated samples.
+// (timestamp, skew) pairs using Theil-Sen regression with outlier filtering.
 func computeDrift(pairs []tsSkewPair) float64 {
 	if len(pairs) < 2 {
 		return 0
 	}
-	// Sort by timestamp.
 	sort.Slice(pairs, func(i, j int) bool {
 		return pairs[i].ts < pairs[j].ts
 	})
 
-	// Time span too short? Skip.
 	spanSec := float64(pairs[len(pairs)-1].ts - pairs[0].ts)
-	if spanSec < 3600 { // need at least 1 hour of data
+	if spanSec < 3600 {
 		return 0
 	}
 
-	// Outlier filter: drop samples where the skew jumps more than
-	// maxPlausibleSkewJumpSec from the running "stable" baseline.
-	// We anchor on the first sample, then accept each subsequent point
-	// that's within the threshold of the most recent accepted point —
-	// this preserves a slow drift while rejecting correction events.
 	filtered := make([]tsSkewPair, 0, len(pairs))
 	filtered = append(filtered, pairs[0])
 	for i := 1; i < len(pairs); i++ {
@@ -707,30 +624,23 @@ func computeDrift(pairs []tsSkewPair) float64 {
 			filtered = append(filtered, pairs[i])
 		}
 	}
-	// If the filter killed too much (e.g. unstable node), fall back to the
-	// raw series so we at least produce *something* — it'll be capped by
-	// maxReasonableDriftPerDay downstream.
 	if len(filtered) < 2 || float64(filtered[len(filtered)-1].ts-filtered[0].ts) < 3600 {
 		filtered = pairs
 	}
 
-	// Cap point count for Theil-Sen (O(n²) on pairs). Keep most-recent.
 	if len(filtered) > theilSenMaxPoints {
 		filtered = filtered[len(filtered)-theilSenMaxPoints:]
 	}
 
-	return theilSenSlope(filtered) * 86400 // sec/sec → sec/day
+	return theilSenSlope(filtered) * 86400
 }
 
-// theilSenSlope returns the Theil-Sen estimator: median of all pairwise
-// slopes (yj - yi) / (tj - ti) for i < j. Naturally robust to outliers.
-// Pairs must be sorted by timestamp ascending.
+// theilSenSlope returns the Theil-Sen estimator: median of all pairwise slopes.
 func theilSenSlope(pairs []tsSkewPair) float64 {
 	n := len(pairs)
 	if n < 2 {
 		return 0
 	}
-	// Pre-allocate: n*(n-1)/2 pairs.
 	slopes := make([]float64, 0, n*(n-1)/2)
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {

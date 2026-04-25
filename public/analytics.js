@@ -3495,12 +3495,12 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
         });
 
         // Summary
-        var counts = { ok: 0, warning: 0, critical: 0, absurd: 0 };
+        var counts = { ok: 0, degrading: 0, degraded: 0, wrong: 0, default: 0 };
         data.forEach(function(n) { if (counts[n.severity] !== undefined) counts[n.severity]++; });
 
         // Filter buttons (also serve as summary — no separate stats pills needed)
-        var filterColors = { ok: 'var(--status-green)', warning: 'var(--status-yellow)', critical: 'var(--status-orange)', absurd: 'var(--status-purple)', no_clock: 'var(--text-muted)' };
-        var filters = ['all', 'ok', 'warning', 'critical', 'absurd', 'no_clock'];
+        var filterColors = { ok: 'var(--status-green)', degrading: 'var(--status-yellow)', degraded: 'var(--status-orange)', wrong: 'var(--status-red)', default: 'var(--text-muted)' };
+        var filters = ['all', 'ok', 'degrading', 'degraded', 'wrong', 'default'];
         var filterHtml = '<div style="margin-bottom:10px">' + filters.map(function(f) {
           var dot = f !== 'all' ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + filterColors[f] + ';margin-right:4px;vertical-align:middle"></span>' : '';
           return '<button class="clock-filter-btn' + (activeFilter === f ? ' active' : '') + '" data-filter="' + f + '">' +
@@ -3513,8 +3513,8 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
           var rowClass = 'clock-fleet-row--' + (n.severity || 'ok');
           var lastAdv = n.lastObservedTS ? new Date(n.lastObservedTS * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC') : '—';
           var skewVal = window.currentSkewValue(n);
-          var skewText = n.severity === 'no_clock' ? 'No Clock' : formatSkew(skewVal);
-          var driftText = n.severity === 'no_clock' || !n.driftPerDaySec ? '–' : formatDrift(n.driftPerDaySec);
+          var skewText = n.severity === 'default' ? 'Default' : formatSkew(skewVal);
+          var driftText = n.severity === 'default' || !n.driftPerDaySec ? '–' : formatDrift(n.driftPerDaySec);
           return '<tr class="' + rowClass + '" data-pubkey="' + esc(n.pubkey) + '" style="cursor:pointer">' +
             '<td><strong>' + esc(n.nodeName || n.pubkey.slice(0, 12)) + '</strong></td>' +
             '<td style="font-family:var(--mono,monospace)">' + skewText + '</td>' +
