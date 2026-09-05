@@ -2063,6 +2063,46 @@ func normalizeReportTS(raw string) string {
 	return ""
 }
 
+// normalizeScopeList canonicalises the comma-separated region-scope string an
+// observer reports for a node, so configured_scope is directly comparable with
+// default_scope instead of only looking similar (#1865, raised by @cwichura).
+//
+// The OTA scope query returns bare region names ("dk,eu,dk-aarhus"), while
+// everything else in CoreScope carries the leading "#": every stored
+// default_scope value on a live 1425-node instance starts with one (361 of
+// 361), and the hashRegions/hashChannels config paths already prefix a missing
+// "#" before deriving the channel key from it (main.go). The "#" is therefore
+// part of the region's name here, not decoration, so a bare "dk" and a stored
+// "#dk" are the same region and must be written the same way.
+//
+// Rules, in order: entries are trimmed; empty entries are dropped; "*" is a
+// wildcard rather than a region name and is passed through untouched; anything
+// else gains a leading "#" if it lacks one. Order is preserved and duplicates
+// are NOT collapsed, because the observer's ordering carries meaning we do not
+// interpret here. Case is left alone: region keys are derived as
+// sha256("#name"), so folding case would silently retarget a scope.
+//
+// An empty or all-empty input returns "", which UpdateNodeConfiguredScope
+// stores as a valid "responded, no scopes configured" statement.
+func normalizeScopeList(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p != "*" && !strings.HasPrefix(p, "#") {
+			p = "#" + p
+		}
+		out = append(out, p)
+	}
+	return strings.Join(out, ",")
+}
+
 // UpdateNodeConfiguredScope records the region scopes a node has CONFIGURED,
 // as concrete evidence from an observer /neighbors report (#1865). Unlike
 // UpdateNodeDefaultScope (inferred, overwritten on every observation), this is
@@ -2083,6 +2123,10 @@ func (s *Store) UpdateNodeConfiguredScope(pubkey, scope, reportedAt string) erro
 	// chronological, not lexicographic (see normalizeReportTS). Stored values
 	// are therefore always canonical or empty.
 	reportedAt = normalizeReportTS(reportedAt)
+	// Canonicalise the scope syntax for the same reason: a value that is stored
+	// differently from default_scope cannot be compared against it (see
+	// normalizeScopeList).
+	scope = normalizeScopeList(scope)
 	// Last-write-wins: skip if the stored confirmation is newer-or-equal.
 	if reportedAt != "" {
 		var curAt sql.NullString

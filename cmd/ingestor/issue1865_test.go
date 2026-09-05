@@ -78,12 +78,12 @@ func TestHandleNeighborsReportWritesSelfAndResponded(t *testing.T) {
 		t.Errorf("self configured_scope = %v, want '*'", sc)
 	}
 	// responded neighbor written, lowercased.
-	if sc, _ := configuredScope(t, store, respLower); !sc.Valid || sc.String != "de,eu" {
-		t.Errorf("responded configured_scope = %v, want 'de,eu'", sc)
+	if sc, _ := configuredScope(t, store, respLower); !sc.Valid || sc.String != "#de,#eu" {
+		t.Errorf("responded configured_scope = %v, want '#de,#eu'", sc)
 	}
 	// timeout neighbor untouched — prior confirmed value survives.
-	if sc, _ := configuredScope(t, store, timeoutLower); !sc.Valid || sc.String != "eu" {
-		t.Errorf("timeout node configured_scope = %v, want prior 'eu' (must not be cleared)", sc)
+	if sc, _ := configuredScope(t, store, timeoutLower); !sc.Valid || sc.String != "#eu" {
+		t.Errorf("timeout node configured_scope = %v, want prior '#eu' (must not be cleared)", sc)
 	}
 }
 
@@ -139,23 +139,23 @@ func TestUpdateNodeConfiguredScopeLastWriteWins(t *testing.T) {
 	if err := store.UpdateNodeConfiguredScope(pk, "stale", "2026-07-24T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if sc, _ := configuredScope(t, store, pk); sc.String != "eu" {
-		t.Errorf("configured_scope = %q, want 'eu' (older report must not overwrite)", sc.String)
+	if sc, _ := configuredScope(t, store, pk); sc.String != "#eu" {
+		t.Errorf("configured_scope = %q, want '#eu' (older report must not overwrite)", sc.String)
 	}
 	// Newer report updates.
 	if err := store.UpdateNodeConfiguredScope(pk, "de", "2026-07-26T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if sc, _ := configuredScope(t, store, pk); sc.String != "de" {
-		t.Errorf("configured_scope = %q, want 'de' (newer report should update)", sc.String)
+	if sc, _ := configuredScope(t, store, pk); sc.String != "#de" {
+		t.Errorf("configured_scope = %q, want '#de' (newer report should update)", sc.String)
 	}
 	// inactive_nodes mirrored.
 	var inactive sql.NullString
 	if err := store.db.QueryRow(`SELECT configured_scope FROM inactive_nodes WHERE public_key = ?`, pk).Scan(&inactive); err != nil {
 		t.Fatal(err)
 	}
-	if inactive.String != "de" {
-		t.Errorf("inactive_nodes.configured_scope = %q, want 'de'", inactive.String)
+	if inactive.String != "#de" {
+		t.Errorf("inactive_nodes.configured_scope = %q, want '#de'", inactive.String)
 	}
 }
 
@@ -182,8 +182,8 @@ func TestUpdateNodeConfiguredScopeNormalizesAndOrdersByInstant(t *testing.T) {
 	if err := store.UpdateNodeConfiguredScope(pk, "stale", "2026-07-25T13:30:00+02:00"); err != nil {
 		t.Fatal(err)
 	}
-	if sc, _ := configuredScope(t, store, pk); sc.String != "eu" {
-		t.Errorf("configured_scope = %q, want 'eu' (earlier +02:00 report must not win)", sc.String)
+	if sc, _ := configuredScope(t, store, pk); sc.String != "#eu" {
+		t.Errorf("configured_scope = %q, want '#eu' (earlier +02:00 report must not win)", sc.String)
 	}
 
 	// "2026-07-25T15:00:00+02:00" == 13:00Z, chronologically LATER. Must update,
@@ -192,8 +192,8 @@ func TestUpdateNodeConfiguredScopeNormalizesAndOrdersByInstant(t *testing.T) {
 		t.Fatal(err)
 	}
 	sc, at := configuredScope(t, store, pk)
-	if sc.String != "de" {
-		t.Errorf("configured_scope = %q, want 'de' (later +02:00 report should win)", sc.String)
+	if sc.String != "#de" {
+		t.Errorf("configured_scope = %q, want '#de' (later +02:00 report should win)", sc.String)
 	}
 	if at.String != "2026-07-25T13:00:00Z" {
 		t.Errorf("stored at = %q, want canonical '2026-07-25T13:00:00Z'", at.String)
@@ -205,5 +205,40 @@ func TestUpdateNodeConfiguredScopeNormalizesAndOrdersByInstant(t *testing.T) {
 	}
 	if _, at := configuredScope(t, store, pk); at.String != "2026-07-26T09:43:48Z" {
 		t.Errorf("stored at = %q, want canonical '2026-07-26T09:43:48Z'", at.String)
+	}
+}
+
+// #1865: the OTA scope query returns bare region names while every other
+// stored scope in CoreScope carries the leading "#". normalizeScopeList makes
+// configured_scope comparable with default_scope; these cases pin the parts
+// that are easy to get wrong when someone later "simplifies" it.
+func TestNormalizeScopeList(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"empty stays empty (responded, no scopes)", "", ""},
+		{"whitespace only is empty, not \"#\"", "   ", ""},
+		{"bare region gains the hash", "dk", "#dk"},
+		{"already hashed is untouched", "#dk", "#dk"},
+		{"wildcard is not a region name", "*", "*"},
+		{"real observer report, mixed", "*,dk,eu,europe,dk-aarhus", "*,#dk,#eu,#europe,#dk-aarhus"},
+		{"already-hashed report is idempotent", "*,#de,#de-sl", "*,#de,#de-sl"},
+		{"mixed hashed and bare in one report", "#de,sl", "#de,#sl"},
+		{"surrounding spaces are trimmed", " dk , eu ", "#dk,#eu"},
+		{"empty entries are dropped, not turned into \"#\"", "dk,,eu,", "#dk,#eu"},
+		{"order is preserved", "eu,dk", "#eu,#dk"},
+		{"duplicates are kept, not collapsed", "dk,dk", "#dk,#dk"},
+		{"case is left alone (keys are sha256 of the name)", "DK", "#DK"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := normalizeScopeList(c.in); got != c.want {
+				t.Errorf("normalizeScopeList(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+	// Applying it twice must not add a second "#": the ingest path can see the
+	// same report again after a reconnect.
+	once := normalizeScopeList("*,dk,#eu")
+	if twice := normalizeScopeList(once); twice != once {
+		t.Errorf("not idempotent: %q then %q", once, twice)
 	}
 }
