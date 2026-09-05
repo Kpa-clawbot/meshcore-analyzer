@@ -453,23 +453,36 @@
   // default trajectory is 47h flood adverts), so an actively-relaying
   // backbone repeater must not be marked stale just because its last
   // ADVERT is old.
+  // #1845: the single definition of "how recently did we hear from this node",
+  // extracted from getNodeStatus so a caller that needs the AGE gets the same
+  // answer as the caller that needs the STATUS. Before this, nodes.js carried
+  // two notions: getNodeStatus (relay-aware) and a local statusAge computed
+  // from the advert timestamp alone. They disagreed for exactly the nodes
+  // #1598 exists to protect. Returns NaN when nothing is known.
+  window.getEffectiveHeardMs = function (n) {
+    if (!n || typeof n !== 'object') return NaN;
+    var role = String(n.role || 'companion').toLowerCase();
+    // Freshness precedence mirrors the existing call sites:
+    // _liveSeen (live view, ms) > _lastHeard (health API) >
+    // last_heard (in-memory packets) > last_seen (DB, ADVERT).
+    var seenTime = n._lastHeard || n.last_heard || n.last_seen;
+    var effectiveMs = (typeof n._liveSeen === 'number' && n._liveSeen) ||
+                      (seenTime ? new Date(seenTime).getTime() : NaN);
+    // #1598: an infra node that forwards traffic is alive even when its last
+    // ADVERT is old, which operators increasingly cause on purpose (the
+    // firmware default flood advert interval moved to 47h).
+    if ((role === 'repeater' || role === 'room') && n.last_relayed) {
+      var relayedMs = new Date(n.last_relayed).getTime();
+      if (!(effectiveMs >= relayedMs)) effectiveMs = relayedMs;
+    }
+    return effectiveMs;
+  };
+
   window.getNodeStatus = function (roleOrNode, lastSeenMs) {
     var role, effectiveMs;
     if (roleOrNode && typeof roleOrNode === 'object') {
-      var n = roleOrNode;
-      role = n.role || 'companion';
-      // Freshness precedence mirrors the existing call sites:
-      // _liveSeen (live view, ms) > _lastHeard (health API) >
-      // last_heard (in-memory packets) > last_seen (DB, ADVERT).
-      var seenTime = n._lastHeard || n.last_heard || n.last_seen;
-      effectiveMs = (typeof n._liveSeen === 'number' && n._liveSeen) ||
-                    (seenTime ? new Date(seenTime).getTime() : NaN);
-      var infra = String(role).toLowerCase() === 'repeater' ||
-                  String(role).toLowerCase() === 'room';
-      if (infra && n.last_relayed) {
-        var relayedMs = new Date(n.last_relayed).getTime();
-        if (!(effectiveMs >= relayedMs)) effectiveMs = relayedMs;
-      }
+      role = roleOrNode.role || 'companion';
+      effectiveMs = window.getEffectiveHeardMs(roleOrNode);
       if (isNaN(effectiveMs)) effectiveMs = undefined;
     } else {
       role = roleOrNode;

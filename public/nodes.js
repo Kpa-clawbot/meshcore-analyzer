@@ -82,6 +82,12 @@
   }
   let lastHeard = localStorage.getItem('meshcore-nodes-last-heard') || '';
   let statusFilter = localStorage.getItem('meshcore-nodes-status-filter') || 'all';
+  // #1845: "silent longer than N", the inverse of the Last Heard filter. Empty
+  // means off. Ages are relay-aware (getEffectiveHeardMs), so a repeater that
+  // forwards traffic is never counted as silent just because its ADVERT is old.
+  let silentFor = localStorage.getItem('meshcore-nodes-silent-for') || '';
+  const SILENT_MS = { '1d': 86400000, '3d': 259200000, '7d': 604800000, '14d': 1209600000, '30d': 2592000000 };
+  let _silentCounts = null;
   let wsHandler = null;
   let detailMap = null;
 
@@ -180,6 +186,15 @@
       return 'Stale \u2014 not heard for over ' + threshold + '. This sensor may be offline.';
     }
     return 'Stale \u2014 not heard for over ' + threshold + '. This ' + role + ' may be offline or out of range.';
+  }
+
+  // #1845: how long we have heard nothing at all from this node. Infinity when
+  // we have never heard it, which must count as silent for every window rather
+  // than dropping out of the filter. Uses the shared relay-aware definition so
+  // this agrees with the Active/Stale badge instead of contradicting it.
+  function silenceAgeMs(n) {
+    const ms = (typeof window.getEffectiveHeardMs === 'function') ? window.getEffectiveHeardMs(n) : NaN;
+    return (typeof ms === 'number' && !isNaN(ms) && ms > 0) ? (Date.now() - ms) : Infinity;
   }
 
   function getStatusInfo(n) {
@@ -497,6 +512,9 @@
     const _urlSearch = _listUrlParams.get('search');
     if (_urlTab && TABS.some(function(t) { return t.key === _urlTab; })) activeTab = _urlTab;
     if (_urlSearch) search = _urlSearch;
+    // #1845: shareable — "here are the repeaters silent over a week".
+    const _urlSilent = _listUrlParams.get('silent');
+    if (_urlSilent !== null) silentFor = SILENT_MS[_urlSilent] ? _urlSilent : '';
     // #749 — restore sort from URL (overrides localStorage persistence).
     var _urlSort = _listUrlParams.get('sort');
     if (_urlSort && window.URLState) {
@@ -1256,6 +1274,16 @@
       if (statusFilter === 'active' || statusFilter === 'stale') {
         filtered = filtered.filter(n => getNodeStatus(n) === statusFilter); // #1598
       }
+      // #1845: counts are taken BEFORE the silence filter is applied, so the
+      // dropdown keeps showing what each other window would select instead of
+      // collapsing to the one already chosen.
+      _silentCounts = {};
+      for (const k of Object.keys(SILENT_MS)) {
+        _silentCounts[k] = filtered.filter(n => silenceAgeMs(n) >= SILENT_MS[k]).length;
+      }
+      if (silentFor && SILENT_MS[silentFor]) {
+        filtered = filtered.filter(n => silenceAgeMs(n) >= SILENT_MS[silentFor]);
+      }
       nodes = filtered;
 
       // Defensive filter: hide nodes with obviously corrupted data
@@ -1346,6 +1374,10 @@
             <option value="14d" ${lastHeard==='14d'?'selected':''}>14 days</option>
             <option value="30d" ${lastHeard==='30d'?'selected':''}>30 days</option>
           </select>
+          <select id="nodeSilentFor" aria-label="Show only nodes silent longer than">
+            <option value="">Silent for: Any</option>
+            ${['1d','3d','7d','14d','30d'].map(k => `<option value="${k}" ${silentFor===k?'selected':''}>over ${k}${_silentCounts ? ` (${_silentCounts[k]})` : ''}</option>`).join('')}
+          </select>
         </div>
       </div>
       <div class="table-fluid-wrap"><table class="data-table" id="nodesTable">
@@ -1370,6 +1402,20 @@
 
     // Filter changes
     document.getElementById('nodeLastHeard').addEventListener('change', e => { lastHeard = e.target.value; localStorage.setItem('meshcore-nodes-last-heard', lastHeard); loadNodes(); });
+    // #1845: mirrors the Last Heard handler, and additionally keeps the URL in
+    // step so the current view can be pasted to whoever owns the silent gear.
+    document.getElementById('nodeSilentFor').addEventListener('change', e => {
+      silentFor = e.target.value;
+      localStorage.setItem('meshcore-nodes-silent-for', silentFor);
+      try {
+        const base = String(location.hash || '#/nodes').split('?')[0];
+        const params = getHashParams();
+        if (silentFor) { params.set('silent', silentFor); } else { params.delete('silent'); }
+        const qs = params.toString();
+        history.replaceState(null, '', base + (qs ? '?' + qs : ''));
+      } catch (err) { /* URL sync is a convenience; never block the filter on it */ }
+      loadNodes();
+    });
 
     // Status filter buttons
     document.querySelectorAll('#nodeStatusFilter .btn').forEach(btn => {
