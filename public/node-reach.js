@@ -65,11 +65,36 @@
       (on ? ' class="active"' : '') + '>' + label + '</button>';
   }
 
+  // #1865: which region scopes this node serves, on the report itself so a
+  // printed or shared reach page carries it. Two different claims, never
+  // conflated: "Scope" is INFERRED from the transport scope of observed
+  // adverts, while "Configured scope" is CONFIRMED, read back off the node by
+  // an observer /neighbors report. Confirmed wins the line when both exist,
+  // and an empty confirmed value is itself a statement ("responded, none
+  // configured") rather than missing data, so it renders too.
+  function scopeLineHtml(n) {
+    var hasConfirmed = typeof n.configured_scope === 'string';
+    if (!hasConfirmed && !n.default_scope) return '';
+    if (hasConfirmed) {
+      var at = n.configured_scope_at ? ' Last confirmed ' + n.configured_scope_at + '.' : '';
+      var val = n.configured_scope === ''
+        ? '<span class="nq-scope-none">none configured</span>'
+        : '<code>' + escapeHtml(n.configured_scope) + '</code>';
+      return '<div class="nq-scope">Configured scope ' +
+        '<span class="nq-scope-ok" aria-label="confirmed">✓</span> ' + val +
+        '<span class="nq-scope-src" title="Read back off the node via an observer /neighbors report (status=responded).' +
+        escapeHtml(at) + '"> confirmed</span></div>';
+    }
+    return '<div class="nq-scope">Scope <code>' + escapeHtml(n.default_scope) + '</code>' +
+      '<span class="nq-scope-src" title="Inferred from the transport scope of observed adverts, not read back off the node."> observed</span></div>';
+  }
+
   function headerHtml(n, nodeName, days) {
     return '<div class="nq-head">' +
       '<a class="nq-back" href="#/nodes/' + encodeURIComponent(n.pubkey) + '" aria-label="Back to ' + nodeName + ' detail">← Back to ' + nodeName + '</a>' +
       '<h2 class="nq-title">' + nodeName + ' — Reach</h2>' +
       '<div class="nq-sub">' + escapeHtml(n.role || 'Unknown role') + ' · two-way RF link reach</div>' +
+      scopeLineHtml(n) +
       '<div class="nq-note">Reliable by design: built only from unique <b>2–3 byte</b> path-hash (multibyte) matches. 1-byte hops collide between nodes and are excluded, so the links shown are trustworthy.</div>' +
       '<div class="analytics-time-range nq-noprint" id="nqDays" style="margin-top:8px">' +
       dayBtn(1, days, '24h') + dayBtn(7, days, '7d') + dayBtn(14, days, '14d') + dayBtn(30, days, '30d') +
@@ -275,6 +300,13 @@
     if (covHandle) { try { covHandle.off(); } catch (e) {} covHandle = null; }
     if (qmap) { qmap.destroy(); qmap = null; }
     current = null;
+  }
+
+  if (typeof window !== 'undefined') {
+    // #1865: exposed so the helper tests can assert what the scope line RENDERS
+    // rather than grepping this file, the same reason map.js exposes its label
+    // builder (#1356/#1933).
+    window.__meshcoreReachInternals = { scopeLineHtml: scopeLineHtml };
   }
 
   registerPage('node-reach', { init: init, destroy: destroy });

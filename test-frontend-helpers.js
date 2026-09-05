@@ -7007,3 +7007,63 @@ console.log('\n=== observers.js: healthStatus (configurable thresholds) ===');
     assert.strictEqual(r.label, 'Unknown');
   });
 }
+
+// ===== node-reach.js: scopeLineHtml (#1865) =====
+// The reach report states which region a node serves. Two claims that must
+// never be conflated: "Scope" is INFERRED from observed advert transport
+// scopes, "Configured scope" is CONFIRMED by reading it back off the node via
+// an observer /neighbors report. Asserting the rendered markup, not the source.
+console.log('\n=== node-reach.js: scopeLineHtml (#1865) ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/node-reach.js');
+  const scopeLineHtml = ctx.__meshcoreReachInternals.scopeLineHtml;
+
+  test('no scope data at all renders nothing', () => {
+    assert.strictEqual(scopeLineHtml({}), '');
+  });
+
+  test('inferred-only says "Scope" and marks it observed', () => {
+    const h = scopeLineHtml({ default_scope: '#be' });
+    assert.ok(h.includes('>Scope <'), 'should label it Scope');
+    assert.ok(h.includes('#be'), 'should show the value');
+    assert.ok(h.includes('observed'), 'should mark provenance as observed');
+    assert.ok(!h.includes('nq-scope-ok'), 'inferred data must not get the confirmed tick');
+  });
+
+  test('confirmed wins over inferred and gets the tick', () => {
+    const h = scopeLineHtml({ default_scope: '#be', configured_scope: '#be,#eu' });
+    assert.ok(h.includes('Configured scope'), 'should label it Configured scope');
+    assert.ok(h.includes('nq-scope-ok'), 'confirmed data gets the tick');
+    assert.ok(h.includes('#be,#eu'), 'should show the confirmed value');
+    assert.ok(!h.includes('>Scope <'), 'must not also render the inferred line');
+  });
+
+  test('confirmed-but-empty is a statement, not missing data', () => {
+    const h = scopeLineHtml({ configured_scope: '' });
+    assert.ok(h.includes('none configured'), 'empty confirmed value must render explicitly');
+    assert.ok(h.includes('nq-scope-ok'), 'it is still a confirmation');
+  });
+
+  test('empty confirmed value does not fall back to the inferred one', () => {
+    // A node that answered "I have no scopes" must not be shown its old
+    // inferred guess instead: that would silently contradict the node.
+    const h = scopeLineHtml({ default_scope: '#be', configured_scope: '' });
+    assert.ok(h.includes('none configured'));
+    assert.ok(!h.includes('#be'), 'inferred value must not leak back in');
+  });
+
+  test('confirmation instant is carried in the title, not the visible line', () => {
+    const h = scopeLineHtml({ configured_scope: '#dk', configured_scope_at: '2026-07-26T09:43:48Z' });
+    assert.ok(h.includes('2026-07-26T09:43:48Z'), 'timestamp should be present');
+    assert.ok(h.includes('title='), 'and it should live in a title attribute');
+  });
+
+  test('scope values are HTML-escaped', () => {
+    const h = scopeLineHtml({ configured_scope: '<img src=x onerror=alert(1)>' });
+    assert.ok(!h.includes('<img'), 'must not emit raw markup from node-controlled data');
+    assert.ok(h.includes('&lt;img'), 'should be escaped instead');
+  });
+}
