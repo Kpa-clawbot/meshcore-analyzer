@@ -42,6 +42,7 @@ type DB struct {
 	hasObsRawHex        bool   // observations table has raw_hex column (#881)
 	hasScopeName        bool   // transmissions.scope_name column exists (#899)
 	hasDefaultScope     bool   // nodes.default_scope column exists (#899)
+	hasConfiguredScope  bool   // nodes.configured_scope column exists (#1865)
 	hasMultibyteSupCols bool   // nodes/inactive_nodes have multibyte_sup/multibyte_evidence (#903)
 	hasLastSeen         bool   // transmissions.last_seen column exists (#1690)
 
@@ -234,6 +235,7 @@ func (db *DB) detectSchema(ctx context.Context, q rowQuerier) error {
 	}
 	db.hasDefaultScope = nodes["default_scope"]
 	db.hasMultibyteSupCols = nodes["multibyte_sup"]
+	db.hasConfiguredScope = nodes["configured_scope"]
 
 	if db.isV3 {
 		log.Printf("[db] schema mode: v3 (observer_idx)")
@@ -281,6 +283,10 @@ func (db *DB) nodeSelectCols() string {
 	cols := "public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c, foreign_advert"
 	if db.hasDefaultScope {
 		cols += ", default_scope"
+	}
+	// #1865: confirmed scopes appended after default_scope; scan order must match.
+	if db.hasConfiguredScope {
+		cols += ", configured_scope, configured_scope_at"
 	}
 	return cols
 }
@@ -2465,10 +2471,14 @@ func (db *DB) scanNodeRow(rows *sql.Rows) map[string]interface{} {
 	var temperatureC sql.NullFloat64
 	var foreign sql.NullInt64
 	var defaultScope sql.NullString
+	var configuredScope, configuredScopeAt sql.NullString
 
 	scanArgs := []interface{}{&pk, &name, &role, &lat, &lon, &lastSeen, &firstSeen, &advertCount, &batteryMv, &temperatureC, &foreign}
 	if db.hasDefaultScope {
 		scanArgs = append(scanArgs, &defaultScope)
+	}
+	if db.hasConfiguredScope {
+		scanArgs = append(scanArgs, &configuredScope, &configuredScopeAt)
 	}
 	if err := rows.Scan(scanArgs...); err != nil {
 		return nil
@@ -2499,6 +2509,10 @@ func (db *DB) scanNodeRow(rows *sql.Rows) map[string]interface{} {
 	}
 	if db.hasDefaultScope {
 		m["default_scope"] = nullStr(defaultScope)
+	}
+	if db.hasConfiguredScope {
+		m["configured_scope"] = nullStr(configuredScope)
+		m["configured_scope_at"] = nullStr(configuredScopeAt)
 	}
 	return m
 }

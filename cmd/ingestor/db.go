@@ -2044,6 +2044,65 @@ func (s *Store) UpdateNodeDefaultScope(pubkey, scope string) error {
 	return err
 }
 
+// normalizeReportTS parses an observer report timestamp and returns it in
+// canonical UTC RFC3339 form ("2006-01-02T15:04:05Z"). It accepts both the
+// firmware's fractional/offset form (e.g. "2026-07-26T09:43:48.000000+00:00")
+// and plain "Z"/offset variants. An empty or unparseable input returns "" so
+// the caller writes an empty configured_scope_at and skips the ordering guard;
+// this keeps every stored timestamp either canonical or empty, never a mix of
+// offset/precision formats that would break lexicographic last-write-wins.
+func normalizeReportTS(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return ""
+}
+
+// UpdateNodeConfiguredScope records the region scopes a node has CONFIGURED,
+// as concrete evidence from an observer /neighbors report (#1865). Unlike
+// UpdateNodeDefaultScope (inferred, overwritten on every observation), this is
+// only called for the observer's own `self` scopes and for neighbors whose OTA
+// scope query returned status="responded" — so the caller, not this method,
+// gates on status. An empty scope IS a valid "responded, no scopes configured"
+// statement and is stored; a timeout must simply not reach this method.
+//
+// reportedAt is the report envelope timestamp (ISO-8601). It is stored in
+// configured_scope_at and used for last-write-wins: an out-of-order older
+// report must not clobber a newer confirmed value. A blank reportedAt skips
+// the ordering guard (always writes).
+func (s *Store) UpdateNodeConfiguredScope(pubkey, scope, reportedAt string) error {
+	if pubkey == "" {
+		return nil
+	}
+	// Normalize to canonical UTC RFC3339 so the last-write-wins comparison is
+	// chronological, not lexicographic (see normalizeReportTS). Stored values
+	// are therefore always canonical or empty.
+	reportedAt = normalizeReportTS(reportedAt)
+	// Last-write-wins: skip if the stored confirmation is newer-or-equal.
+	if reportedAt != "" {
+		var curAt sql.NullString
+		row := s.db.QueryRow(`SELECT configured_scope_at FROM nodes WHERE public_key = ?`, pubkey)
+		if row.Scan(&curAt) == nil && curAt.Valid && curAt.String != "" && curAt.String >= reportedAt {
+			return nil
+		}
+	}
+	if _, err := s.db.Exec(
+		`UPDATE nodes SET configured_scope = ?, configured_scope_at = ? WHERE public_key = ?`,
+		scope, reportedAt, pubkey); err != nil {
+		return err
+	}
+	// Mirror to inactive_nodes (node may be there if recently moved by retention).
+	_, err := s.db.Exec(
+		`UPDATE inactive_nodes SET configured_scope = ?, configured_scope_at = ? WHERE public_key = ?`,
+		scope, reportedAt, pubkey)
+	return err
+}
+
 // RecordNaiveSkew is called when resolveRxTime() clamps a packet's envelope
 // timestamp because the observer is emitting a zone-less local-time string
 // off from UTC by more than 15 min (issue #1478). Stamps the observer's
