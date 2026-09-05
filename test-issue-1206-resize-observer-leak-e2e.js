@@ -31,7 +31,13 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
 
 async function gotoHash(page, hash) {
   await page.evaluate((h) => { window.location.hash = h; }, hash);
-  await page.waitForTimeout(150);
+  if (hash === '#/live') await waitForVCRTracker(page);
+  else await page.locator('#nodesLeft[data-loaded="true"]').waitFor();
+}
+
+async function waitForVCRTracker(page) {
+  // The tracker publishes this only after live's async node loading finishes.
+  await page.locator('.live-page[style*="--vcr-bar-height"]').waitFor({ state: 'attached' });
 }
 
 // Synthetic nodes keep map lifecycle coverage independent of fixture locations.
@@ -150,7 +156,7 @@ async function advanceMapClock(page, ms) {
   await step('initial /#/live mount constructs at most 1 VCR ResizeObserver', async () => {
     await page.goto(BASE + '/#/live', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#vcrBar', { timeout: 8000 });
-    await page.waitForTimeout(300);
+    await waitForVCRTracker(page);
     // Baseline snapshot — record outstanding right after first /live mount.
     const snap = await page.evaluate(() => ({
       outstanding: window.__roOutstanding,
@@ -165,10 +171,8 @@ async function advanceMapClock(page, ms) {
   await step('3 SPA round-trips /live<->/nodes do NOT grow outstanding observer count', async () => {
     for (let i = 0; i < 3; i++) {
       await gotoHash(page, '#/nodes');
-      await page.waitForTimeout(150);
       await gotoHash(page, '#/live');
       await page.waitForSelector('#vcrBar', { timeout: 8000 });
-      await page.waitForTimeout(200);
     }
     const after = await page.evaluate(() => ({
       outstanding: window.__roOutstanding,
