@@ -12,6 +12,9 @@
  * outstanding (constructed but not disconnected) observers and assert it
  * does NOT grow with each /live mount.
  *
+ * Also exercises node-map disposal with a paused browser clock: navigation,
+ * pane closure and replacement must cancel the old map's delayed resize.
+ *
  * Run: BASE_URL=http://localhost:13581 node test-issue-1206-resize-observer-leak-e2e.js
  */
 'use strict';
@@ -29,6 +32,75 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
 async function gotoHash(page, hash) {
   await page.evaluate((h) => { window.location.hash = h; }, hash);
   await page.waitForTimeout(150);
+}
+
+// Synthetic nodes keep map lifecycle coverage independent of fixture locations.
+const mapNodes = [
+  { public_key: 'a1'.repeat(32), name: 'Map fixture A', lat: 0, lon: 0 },
+  { public_key: 'b2'.repeat(32), name: 'Map fixture B', lat: 1, lon: 1 },
+  { public_key: 'c3'.repeat(32), name: 'No location fixture', lat: null, lon: null },
+].map((node) => ({ ...node, role: 'repeater', advert_count: 1 }));
+
+async function withNodeMaps(browser, fn) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  page.setDefaultTimeout(8000);
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  try {
+    await page.route('**/api/nodes**', (route) => {
+      const path = new URL(route.request().url()).pathname;
+      const node = mapNodes.find((n) => path === '/api/nodes/' + n.public_key);
+      const body = path === '/api/nodes'
+        ? { nodes: mapNodes, total: mapNodes.length, counts: { repeater: mapNodes.length } }
+        : node ? { node, recentAdverts: [] }
+        : path === '/api/nodes/clock-skew' ? []
+        : /\/health$/.test(path) ? { stats: {}, observers: [], recentPackets: [] }
+        : /\/neighbors$/.test(path) ? { neighbors: [] }
+        : /\/paths$/.test(path) ? { paths: [] } : {};
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+    await page.goto(BASE + '/#/nodes', { waitUntil: 'load' });
+    await page.locator('#nodesBody tr[data-key="' + mapNodes[0].public_key + '"]').waitFor();
+    await page.clock.pauseAt(new Date('2026-01-01T00:02:00Z'));
+    // Observe real Leaflet instances through public lifecycle APIs. No app hooks.
+    await page.evaluate(() => {
+      window.__nodeMaps = [];
+      L.Map.addInitHook(function() {
+        const container = this.getContainer();
+        if (container.id !== 'nodeMap' && container.id !== 'nodeFullMap') return;
+        const record = { removed: false, resizes: [] };
+        window.__nodeMaps.push(record);
+        this.on('unload', () => { record.removed = true; });
+        const invalidateSize = this.invalidateSize;
+        this.invalidateSize = function(...args) {
+          record.resizes.push({ removed: record.removed, connected: container.isConnected });
+          return invalidateSize.apply(this, args);
+        };
+      });
+    });
+    const open = async (view, node) => {
+      if (view === 'side') {
+        await page.locator('#nodesBody tr[data-key="' + node.public_key + '"]').click();
+      } else {
+        await page.evaluate((key) => { location.hash = '#/nodes/' + key; }, node.public_key);
+      }
+      const root = view === 'side' ? '#nodesRight' : '#nodeFullBody';
+      await page.locator(root + ' .node-detail-name').filter({ hasText: node.name }).waitFor();
+      if (node.lat != null) await page.locator(root + ' .leaflet-map-pane').waitFor({ state: 'attached' });
+    };
+    await fn(page, open);
+    assert(errors.length === 0, 'unexpected pageerror: ' + errors.join('; '));
+  } finally {
+    await ctx.close();
+  }
+}
+
+async function advanceMapClock(page, ms) {
+  // Playwright also reports exceptions from fake-timer callbacks via runFor.
+  const error = await page.clock.runFor(ms).then(() => null, (error) => error);
+  assert(!error, 'timer callback must not throw: ' + (error && error.message));
 }
 
 (async () => {
@@ -117,7 +189,60 @@ async function gotoHash(page, hash) {
   });
 
   await ctx.close();
+
+  for (const view of ['side', 'full']) {
+    await step(view + ' node map: navigation cancels the pending resize', () => withNodeMaps(browser, async (page, open) => {
+      await open(view, mapNodes[0]);
+      await page.evaluate(() => { location.hash = '#/live'; });
+      await page.locator('#vcrBar').waitFor();
+      await advanceMapClock(page, 100);
+      const maps = await page.evaluate(() => window.__nodeMaps);
+      assert(maps.length === 1 && maps[0].removed, 'navigation must remove the node map');
+      assert(maps[0].resizes.length === 0, 'removed map must not be resized');
+    }));
+
+    await step(view + ' node map: replacement only resizes at its own deadline', () => withNodeMaps(browser, async (page, open) => {
+      await open(view, mapNodes[0]);
+      await advanceMapClock(page, 50);
+      await open(view, mapNodes[1]);
+      await advanceMapClock(page, 50); // First map's deadline; replacement is only 50ms old.
+      let maps = await page.evaluate(() => window.__nodeMaps);
+      assert(maps.length === 2 && maps[0].removed && !maps[1].removed, 'replacement must own the surviving map');
+      assert(maps[0].resizes.length === 0 && maps[1].resizes.length === 0, 'old timer must not resize either map');
+      await advanceMapClock(page, 49);
+      maps = await page.evaluate(() => window.__nodeMaps);
+      assert(maps[1].resizes.length === 0, 'replacement must wait its full 100ms');
+      await advanceMapClock(page, 1);
+      maps = await page.evaluate(() => window.__nodeMaps);
+      assert(maps[1].resizes.length === 1 && !maps[1].resizes[0].removed && maps[1].resizes[0].connected,
+        'surviving map must resize once while connected');
+    }));
+  }
+
+  for (const close of ['button', 'Escape']) {
+    await step('side node map: ' + close + ' disposes the map before resize', () => withNodeMaps(browser, async (page, open) => {
+      await open('side', mapNodes[0]);
+      if (close === 'button') await page.locator('#nodesRight .panel-close-btn').click();
+      else await page.keyboard.press('Escape');
+      await page.locator('#nodesRight.empty').waitFor();
+      await advanceMapClock(page, 100);
+      const maps = await page.evaluate(() => window.__nodeMaps);
+      assert(maps.length === 1 && maps[0].removed, 'closing the pane must remove its map');
+      assert(maps[0].resizes.length === 0, 'closed pane map must not be resized');
+    }));
+  }
+
+  await step('side node map: no-location replacement disposes the pending map', () => withNodeMaps(browser, async (page, open) => {
+    await open('side', mapNodes[0]);
+    await open('side', mapNodes[2]);
+    await advanceMapClock(page, 100);
+    const maps = await page.evaluate(() => window.__nodeMaps);
+    assert(maps.length === 1 && maps[0].removed, 'no-location replacement must remove the previous map');
+    assert(maps[0].resizes.length === 0, 'no-location replacement must cancel the old resize');
+    assert(await page.locator('#nodeMap').count() === 0, 'no-location node must not create a map');
+  }));
+
   await browser.close();
-  console.log('\n#1206 ResizeObserver leak: ' + passed + ' passed, ' + failed + ' failed');
+  console.log('\nSPA observer and node-map lifecycle: ' + passed + ' passed, ' + failed + ' failed');
   process.exit(failed ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
