@@ -70,6 +70,17 @@ type Server struct {
 	scopeStatsCache    map[string]*ScopeStatsResponse
 	scopeStatsCachedAt map[string]time.Time
 
+	// #1975: cached /api/scope-audit response, per window, recomputed at most
+	// once every 30s. Mirrors the scopeStats cache directly above it.
+	scopeAuditMu       sync.Mutex
+	scopeAuditCache    map[string]*ScopeAuditResponse
+	scopeAuditCachedAt map[string]time.Time
+
+	// #1975: /api/scope-audit window cache and its single-flight guard, so a
+	// burst of viewers on a cold cache recomputes the network-wide scan once
+	// rather than once per request. Lives in scope_audit.go.
+	scopes scopesState
+
 	// Router reference for OpenAPI spec generation
 	router *mux.Router
 
@@ -235,6 +246,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/scope-stats", s.handleScopeStats).Methods("GET")
+	r.HandleFunc("/api/scope-audit", s.handleScopeAudit).Methods("GET") // #1975
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.HandleFunc("/api/perf/io", s.handlePerfIO).Methods("GET")
 	r.HandleFunc("/api/perf/sqlite", s.handlePerfSqlite).Methods("GET")

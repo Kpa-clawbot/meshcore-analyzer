@@ -61,6 +61,7 @@
     { route: 'tools',     hash: '#/tools',     label: 'Tools',     ph: 'wrench' },
     { route: 'observers', hash: '#/observers', label: 'Observers', ph: 'eye' },
     { route: 'analytics', hash: '#/analytics', label: 'Analytics', ph: 'chart-bar' },
+    { route: 'scope-audit', hash: '#/scope-audit', label: 'Scope Audit', ph: 'shield-check' },
     { route: 'perf',      hash: '#/perf',      label: 'Perf',      ph: 'lightning' },
     { route: 'audio-lab', hash: '#/audio-lab', label: 'Audio Lab', ph: 'music-note' },
   ];

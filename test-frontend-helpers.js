@@ -7067,3 +7067,74 @@ console.log('\n=== node-reach.js: scopeLineHtml (#1865) ===');
     assert.ok(h.includes('&lt;img'), 'should be escaped instead');
   });
 }
+
+// ===== scope-audit.js: mergedScopeChips =====
+// DECLARED and NOT OBSERVED were merged into one colour-coded Scopes column.
+// They were never independent: notObserved is a strict subset of
+// declaredRegions, so the page printed the same set twice and made the reader
+// diff it. These assert the rendered markup, not the source.
+console.log('\n=== scope-audit.js: mergedScopeChips ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const chips = ctx.__meshcoreScopeAuditInternals.mergedScopeChips;
+  const row = (declared, notObserved) => ({ declaredRegions: declared, notObserved: notObserved });
+
+  test('a declared region absent from notObserved renders as observed', () => {
+    const h = chips(row(['be'], []));
+    assert.ok(h.includes('sa-chip-observed'), 'should carry the observed class');
+    assert.ok(!h.includes('sa-chip-missing'), 'and not the missing one');
+  });
+
+  test('a declared region present in notObserved renders as missing', () => {
+    const h = chips(row(['be'], ['be']));
+    assert.ok(h.includes('sa-chip-missing'));
+    assert.ok(!h.includes('sa-chip-observed'));
+  });
+
+  test('a mixed row renders both colours, one chip per declared region', () => {
+    // The case the merge exists for: on live data a typical mixed row declares
+    // 8 regions of which 6 are unobserved, so the observed ones are the needle.
+    const h = chips(row(['be', 'eu', 'nl'], ['eu', 'nl']));
+    assert.strictEqual((h.match(/sa-chip-observed/g) || []).length, 1);
+    assert.strictEqual((h.match(/sa-chip-missing/g) || []).length, 2);
+    assert.strictEqual((h.match(/<span/g) || []).length, 3, 'one chip per declared region, no more');
+  });
+
+  test('declared order is preserved, not regrouped by colour', () => {
+    // Regrouping would break the operator habit of scanning for a known
+    // region in the position it always sits.
+    const h = chips(row(['be', 'eu', 'nl'], ['eu']));
+    assert.ok(h.indexOf('>be<') < h.indexOf('>eu<'), 'be before eu');
+    assert.ok(h.indexOf('>eu<') < h.indexOf('>nl<'), 'eu before nl');
+  });
+
+  test('no declared regions renders an em dash, not an empty cell', () => {
+    // 68 of 197 rows on live data declare nothing at all; an empty cell reads
+    // as a rendering fault rather than as an answer.
+    assert.ok(chips(row([], [])).includes('—'));
+  });
+
+  test('every chip explains its own colour in a title', () => {
+    const h = chips(row(['be', 'eu'], ['eu']));
+    assert.ok(h.includes('observed forwarding in this window'));
+    assert.ok(h.includes('declared, but no forwarding observed in this window'));
+  });
+
+  test('region names are HTML-escaped', () => {
+    const h = chips(row(['<img src=x onerror=alert(1)>'], []));
+    assert.ok(!h.includes('<img'), 'must not emit raw markup from server-supplied names');
+    assert.ok(h.includes('&lt;img'));
+  });
+
+  test('a notObserved entry that is not declared cannot invent a chip', () => {
+    // Defensive: the server guarantees notObserved is a subset (197 of 197
+    // rows checked), but the column must not grow a phantom chip if that ever
+    // stops holding.
+    const h = chips(row(['be'], ['be', 'ghost']));
+    assert.strictEqual((h.match(/<span/g) || []).length, 1);
+    assert.ok(!h.includes('ghost'));
+  });
+}
