@@ -86,7 +86,9 @@
   let detailMap = null;
   let detailMapResizeTimer = null;
 
-  function removeDetailMap() {
+  function removeDetailMap(owner) {
+    // Async responses may still hold a detached view while another map is active.
+    if (owner && detailMap && !owner.contains(detailMap.getContainer())) return;
     clearTimeout(detailMapResizeTimer);
     detailMapResizeTimer = null;
     if (detailMap) { detailMap.remove(); detailMap = null; }
@@ -645,7 +647,7 @@
       const dupKeys = n.name && dupMap[n.name.toLowerCase()] ? dupMap[n.name.toLowerCase()].filter(function(k) { return k !== n.public_key; }) : [];
       const dupSection = dupKeys.length ? '<div class="dup-also-known" style="font-size:11px;color:var(--text-muted);margin-top:4px">Also known as: ' + dupKeys.map(function(k) { return '<a href="#/nodes/' + encodeURIComponent(k) + '" class="mono" style="font-size:11px">' + escapeHtml(k.slice(0, 12)) + '…</a>'; }).join(', ') + '</div>' : '';
 
-      removeDetailMap();
+      removeDetailMap(body);
       body.innerHTML = `
         <div class="node-full-card" style="padding:12px 16px;margin-bottom:8px">
           <div class="node-detail-name" style="font-size:20px">${escapeHtml(n.name || '(unnamed)')}${dupBadge}</div>
@@ -1026,7 +1028,7 @@
       const detail = is404
         ? 'No node matched the requested public key on this instance. It may exist on another deployment, or it may have been evicted/blacklisted here.'
         : 'The node detail API call failed: ' + escapeHtml(msg);
-      removeDetailMap();
+      removeDetailMap(body);
       body.innerHTML =
         '<div class="node-full-card" style="padding:24px;margin:16px auto;max-width:560px;text-align:center">' +
           '<div style="font-size:18px;font-weight:600;margin-bottom:8px">' + headline + '</div>' +
@@ -1613,8 +1615,10 @@
 
     try {
       const data = await fetchNodeDetail(pubkey);
+      if (selectedKey !== pubkey || !panel.isConnected) return;
       renderDetail(panel, data);
     } catch (e) {
+      if (selectedKey !== pubkey || !panel.isConnected) return;
       panel.innerHTML = `<div class="text-muted">Error: ${e.message}</div>`;
     }
   }
@@ -1639,7 +1643,7 @@
     const dupMap = buildDupNameMap(_allNodes);
     const dupBadge = dupNameBadge(n.name, n.public_key, dupMap);
 
-    removeDetailMap();
+    removeDetailMap(panel);
     panel.innerHTML = `
       <button class="panel-close-btn" title="Close detail pane (Esc)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
       <div class="node-detail">
