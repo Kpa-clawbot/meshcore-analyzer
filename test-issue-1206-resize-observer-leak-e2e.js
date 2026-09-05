@@ -47,7 +47,7 @@ const mapNodes = [
   { public_key: 'c3'.repeat(32), name: 'No location fixture', lat: null, lon: null },
 ].map((node) => ({ ...node, role: 'repeater', advert_count: 1 }));
 
-async function withNodeMaps(browser, fn) {
+async function withNodeMaps(browser, fn, allowedErrors = []) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   page.setDefaultTimeout(8000);
@@ -67,7 +67,7 @@ async function withNodeMaps(browser, fn) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
     });
     await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
-    await page.goto(BASE + '/#/nodes', { waitUntil: 'load' });
+    await page.goto(BASE + '/#/nodes', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.locator('#nodesBody tr[data-key="' + mapNodes[0].public_key + '"]').waitFor();
     await page.clock.pauseAt(new Date('2026-01-01T00:02:00Z'));
     // Observe real Leaflet instances through public lifecycle APIs. No app hooks.
@@ -97,7 +97,8 @@ async function withNodeMaps(browser, fn) {
       if (node.lat != null) await page.locator(root + ' .leaflet-map-pane').waitFor({ state: 'attached' });
     };
     await fn(page, open);
-    assert(errors.length === 0, 'unexpected pageerror: ' + errors.join('; '));
+    const unexpectedErrors = errors.filter((error) => !allowedErrors.includes(error));
+    assert(unexpectedErrors.length === 0, 'unexpected pageerror: ' + unexpectedErrors.join('; '));
   } finally {
     await ctx.close();
   }
@@ -245,6 +246,57 @@ async function advanceMapClock(page, ms) {
     assert(maps[0].resizes.length === 0, 'no-location replacement must cancel the old resize');
     assert(await page.locator('#nodeMap').count() === 0, 'no-location node must not create a map');
   }));
+
+  for (const scenario of [
+    { view: 'full', fails: true },
+    { view: 'full', fails: false },
+    { view: 'side', fails: true },
+    { view: 'side', fails: false },
+  ]) {
+    const expectedError = scenario.fails ? 'API 500: /nodes/' + mapNodes[0].public_key : null;
+    await step(scenario.view + ' node map: stale ' + (scenario.fails ? 'failure' : 'no-location response') + ' preserves the replacement',
+      () => withNodeMaps(browser, async (page, open) => {
+        const requestUrl = '**/api/nodes/' + mapNodes[0].public_key;
+        let releaseResponse;
+        const holdResponse = new Promise((resolve) => { releaseResponse = resolve; });
+        await page.route(requestUrl, async (route) => {
+          await holdResponse;
+          await route.fulfill({ status: scenario.fails ? 500 : 200, contentType: 'application/json', body: JSON.stringify({
+            node: { ...mapNodes[0], lat: null, lon: null }, recentAdverts: [],
+          }) });
+        });
+        const requested = page.waitForRequest(requestUrl);
+        if (scenario.view === 'full') {
+          await page.evaluate((key) => { location.hash = '#/nodes/' + key; }, mapNodes[0].public_key);
+        } else {
+          await page.locator('#nodesBody tr[data-key="' + mapNodes[0].public_key + '"]').click();
+        }
+        await requested;
+        // Join the existing in-flight API promise so assertions run after the
+        // client has decoded/rejected the held response, not merely sent it.
+        const requestCompleted = page.evaluate((key) => api('/nodes/' + key).then(() => null, (error) => error.message), mapNodes[0].public_key);
+        await open(scenario.view, mapNodes[1]);
+        await advanceMapClock(page, 50);
+        // api() may report its rejected finally() derivative as a pageerror.
+        // Only this deliberately injected API failure is allowed by the helper.
+        releaseResponse();
+        let requestTimeout;
+        const result = await Promise.race([
+          requestCompleted,
+          new Promise((_, reject) => {
+            requestTimeout = setTimeout(() => reject(new Error('held response was not handled')), 8000);
+          }),
+        ]).finally(() => clearTimeout(requestTimeout));
+        assert(result === expectedError, 'held response must complete with the intended result');
+        let maps = await page.evaluate(() => window.__nodeMaps);
+        assert(maps.length === 1 && !maps[0].removed, 'stale response must not remove the replacement map');
+        assert(maps[0].resizes.length === 0, 'replacement must wait for its own resize deadline');
+        await advanceMapClock(page, 50);
+        maps = await page.evaluate(() => window.__nodeMaps);
+        assert(maps[0].resizes.length === 1 && maps[0].resizes[0].connected && !maps[0].resizes[0].removed,
+          'replacement must remain connected and receive its own resize');
+      }, expectedError ? [expectedError] : []));
+  }
 
   await browser.close();
   console.log('\nSPA observer and node-map lifecycle: ' + passed + ' passed, ' + failed + ' failed');
