@@ -3071,7 +3071,15 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .hop-unreliable-btn { background: none; border: none; color: var(--status-yellow, #f59e0b); font-size: 13px;
   cursor: help; vertical-align: middle; margin-left: 2px; padding: 0 2px; line-height: 1; }
 .hop-global-fallback { border-bottom: 1px dashed var(--status-red); }
-.hop-current { font-weight: 700 !important; color: var(--link-color) !important; }
+.hop-current {
+  display: inline-block;
+  padding: 0 4px;
+  /* Outline preserves the shared renderer's dashed ambiguity border. */
+  outline: 1px solid var(--link-color);
+  border-radius: 4px;
+  font-weight: 700 !important;
+  color: var(--link-color) !important;
+}
 
 /* Self-loop subpath rows */
 .subpath-selfloop { opacity: 0.6; }

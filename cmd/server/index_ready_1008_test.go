@@ -58,8 +58,12 @@ func TestIssue1008_HandlerReturns503WhileSubpathIndexLoading(t *testing.T) {
 	if err := store.Load(); err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	// Don't wait for the background build — we want to observe the
-	// not-ready window.
+	// Finish the background build before simulating not-ready, so it cannot
+	// flip the flag back to true before the handler checks it.
+	if !store.WaitIndexesReady(5 * time.Second) {
+		t.Fatal("background builds never finished")
+	}
+	store.subpathReady.Store(false)
 	cfg := &Config{}
 	cfg.applyListLimitsDefaults()
 	srv := &Server{store: store, cfg: cfg}
