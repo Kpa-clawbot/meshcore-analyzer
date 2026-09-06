@@ -697,8 +697,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(s.startedAt).Seconds()
 
 	wsClients := 0
+	var wsDeny, wsRate, wsConnCap int64
 	if s.hub != nil {
 		wsClients = s.hub.ClientCount()
+		wsDeny, wsRate, wsConnCap = s.hub.limits.counts() // #1794; nil-safe
 	}
 
 	// Real packet store stats
@@ -770,8 +772,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			P95Ms:        round(percentile(sortedPauses, 0.95), 1),
 			P99Ms:        round(percentile(sortedPauses, 0.99), 1),
 		},
-		Cache:     cs,
-		WebSocket: WebSocketStatsResp{Clients: wsClients},
+		Cache: cs,
+		WebSocket: WebSocketStatsResp{Clients: wsClients,
+			RejectedDeny: wsDeny, RejectedRate: wsRate, RejectedConnCap: wsConnCap},
 		PacketStore: HealthPacketStoreStats{
 			Packets:     pktCount,
 			EstimatedMB: pktEstMB,

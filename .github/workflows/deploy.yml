@@ -18,6 +18,11 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      images_published:
+        description: 'Release fast path already published the tag images'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -235,6 +240,7 @@ jobs:
           node test-issue-1705-subpath-contrast.js
           node test-issue-1770-mobile-row-clamp.js
           node test-a11y-axe-routes-coverage.js
+          node test-issue-1956-release-routing.js
 
       - name: 🛡️ Preflight XSS gate — actual --diff check (PR only)
         # The fixture self-test above (test-preflight-xss-gate.js) only
@@ -322,7 +328,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && !(startsWith(github.ref, 'refs/tags/v') && inputs.images_published)
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -665,7 +671,7 @@ jobs:
     name: "🏗️ Build & Publish Docker Image"
     needs: [e2e-test, changes]
     runs-on: ubuntu-latest
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && !(startsWith(github.ref, 'refs/tags/v') && inputs.images_published)
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -768,8 +774,11 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o ../../corescope-decrypt-linux-arm64 .
 
       - name: Upload release assets
+        # Standard releases upload both assets to a draft before publishing.
+        # Keep one writer: published releases are immutable in this repository.
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: true
           files: |
             corescope-decrypt-linux-amd64
             corescope-decrypt-linux-arm64
