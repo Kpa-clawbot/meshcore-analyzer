@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3279,7 +3280,7 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 				tx.parsedPath, tx.pathParsed = saved, savedFlag
 			}
 			// Remove old path-hop index entries using old hops.
-			// Resolved pubkey entries are managed via resolvedPubkeyIndex, not byPathHop.
+			// Resolved pubkeys remain indexed independently of the best raw path.
 			if len(oldHops) > 0 {
 				saved, savedFlag := tx.parsedPath, tx.pathParsed
 				tx.parsedPath, tx.pathParsed = oldHops, true
@@ -4114,11 +4115,9 @@ func (s *PacketStore) buildPathHopIndex() {
 // resolved relay attribution, leaving relay counts and transported scopes
 // empty after each cold load until live ingestion refilled them (#1904).
 //
-// Only transmissions still in s.packets are carried over. This matters:
-// eviction's removeTxFromPathHopIndex strips raw hops only (it derives them
-// from txGetParsedPath), so evicted transmissions linger in prev under their
-// resolved keys. Filtering them here is what keeps the index bounded by the
-// eviction policy instead of turning that gap into a permanent leak.
+// Only transmissions still in s.packets are carried over. Eviction also
+// prunes raw and resolved keys (#1908); this membership check prevents a
+// rebuild from reintroducing stale entries from the previous index.
 //
 // Cost is O(entries in prev) with one reused scratch map, and it runs only
 // where buildPathHopIndex already runs — cold load and background-fill
@@ -4264,7 +4263,7 @@ func relayMetrics(times []int64, now int64) (count1h, count24h int, lastRelayed 
 }
 
 // removeTxFromPathHopIndex removes a transmission from all its raw path-hop index entries.
-// Resolved pubkey entries are cleaned up via removeFromResolvedPubkeyIndex.
+// Used when the best raw path changes; eviction filters all keys in one batch.
 func removeTxFromPathHopIndex(idx map[string][]*StoreTx, tx *StoreTx) {
 	hops := txGetParsedPath(tx)
 	if len(hops) == 0 {
@@ -4814,8 +4813,22 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 
 		// Remove from subpath index
 		removeTxFromSubpathIndexFull(s.spIndex, s.spTxIndex, tx)
-		// Remove from path-hop index
-		removeTxFromPathHopIndex(s.byPathHop, tx)
+	}
+	// Sweep raw AND resolved hop keys once per batch (#1908). The hash-only
+	// membership index cannot recover full pubkey strings. Reuse the evicted
+	// ID set for O(total path-hop entries) work, with no per-tx string storage
+	// or repeated scans of shared buckets. DeleteFunc clears discarded pointer
+	// slots so backing arrays cannot keep evicted transmissions alive.
+	for key, list := range s.byPathHop {
+		filtered := slices.DeleteFunc(list, func(tx *StoreTx) bool {
+			_, evicted := evictedTxIDs[tx.ID]
+			return evicted
+		})
+		if len(filtered) == 0 {
+			delete(s.byPathHop, key)
+		} else {
+			s.byPathHop[key] = filtered
+		}
 	}
 	s.invalidateRelayStatsCache()
 

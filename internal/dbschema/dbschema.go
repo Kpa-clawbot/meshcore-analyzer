@@ -78,6 +78,9 @@ func Apply(rw *sql.DB, logf Logger) error {
 	if err := ensureDefaultScopeColumns(rw, logf); err != nil {
 		return fmt.Errorf("ensure default_scope: %w", err)
 	}
+	if err := ensureConfiguredScopeColumns(rw, logf); err != nil {
+		return fmt.Errorf("ensure configured_scope: %w", err)
+	}
 	if err := ensureObservationsRawHexColumn(rw, logf); err != nil {
 		return fmt.Errorf("ensure observations.raw_hex: %w", err)
 	}
@@ -149,6 +152,9 @@ func AssertReady(ro *sql.DB) error {
 	mustCol("transmissions", "scope_name")
 	mustCol("nodes", "default_scope")
 	mustCol("inactive_nodes", "default_scope")
+	// #1865: confirmed region scopes from the observer /neighbors report.
+	mustCol("nodes", "configured_scope")
+	mustCol("inactive_nodes", "configured_scope")
 	mustCol("observations", "raw_hex")
 	// Multi-byte capability cache (#1324 follow-up; PR #903 surface).
 	// Owned by ingestor — server reads these for O(1) /api/nodes
@@ -465,6 +471,39 @@ func ensureDefaultScopeColumns(rw *sql.DB, logf Logger) error {
 	}
 	if _, err := rw.Exec(`INSERT OR IGNORE INTO _migrations (name) VALUES ('nodes_default_scope_v1')`); err != nil {
 		return fmt.Errorf("record nodes_default_scope_v1: %w", err)
+	}
+	return nil
+}
+
+// ensureConfiguredScopeColumns adds nodes.configured_scope +
+// nodes.configured_scope_at (and mirrors on inactive_nodes) for #1865.
+// Unlike default_scope (inferred from observed advert transport scope, and
+// overwritten on every observation), configured_scope holds the region scopes
+// a node has CONFIGURED, taken as concrete evidence from the observer
+// /neighbors report — written only for the observer's own `self` scopes and
+// for neighbors whose OTA scope query returned status="responded". The
+// server PRAGMA-detects configured_scope as hasConfiguredScope.
+func ensureConfiguredScopeColumns(rw *sql.DB, logf Logger) error {
+	if err := ensureMigrationsTable(rw); err != nil {
+		return err
+	}
+	for _, table := range []string{"nodes", "inactive_nodes"} {
+		for _, col := range []string{"configured_scope", "configured_scope_at"} {
+			has, err := TableHasColumn(rw, table, col)
+			if err != nil {
+				return fmt.Errorf("inspect %s.%s: %w", table, col, err)
+			}
+			if has {
+				continue
+			}
+			if _, err := rw.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s TEXT DEFAULT NULL`, table, col)); err != nil {
+				return fmt.Errorf("alter %s add %s: %w", table, col, err)
+			}
+			logf("[dbschema] added %s column to %s (#1865)", col, table)
+		}
+	}
+	if _, err := rw.Exec(`INSERT OR IGNORE INTO _migrations (name) VALUES ('nodes_configured_scope_v1')`); err != nil {
+		return fmt.Errorf("record nodes_configured_scope_v1: %w", err)
 	}
 	return nil
 }

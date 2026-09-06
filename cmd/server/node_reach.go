@@ -187,6 +187,48 @@ func newResolver(pm *prefixMap) func(string) string {
 	}
 }
 
+// reachNodeScopes returns the node's inferred default_scope and, when an
+// observer /neighbors report has confirmed it, the configured_scope and the
+// instant that confirmation was reported (#1865).
+//
+// Both columns are optional: they are added by migration and an older database
+// simply lacks them, so each is gated on the schema flag the handle probed at
+// open time. Every return value is best-effort — a missing row, a missing
+// column or a scan error yields empty strings, because a reach report must
+// still render for a node we know nothing else about.
+func (s *Server) reachNodeScopes(ctx context.Context, pubkey string) (string, string, string) {
+	if s.db == nil || s.db.conn == nil {
+		return "", "", ""
+	}
+	cols := make([]string, 0, 3)
+	if s.db.hasDefaultScope {
+		cols = append(cols, "default_scope")
+	}
+	if s.db.hasConfiguredScope {
+		cols = append(cols, "configured_scope", "configured_scope_at")
+	}
+	if len(cols) == 0 {
+		return "", "", ""
+	}
+	vals := make([]sql.NullString, len(cols))
+	args := make([]interface{}, len(cols))
+	for i := range vals {
+		args[i] = &vals[i]
+	}
+	row := s.db.conn.QueryRowContext(ctx,
+		"SELECT "+strings.Join(cols, ", ")+" FROM nodes WHERE public_key = ?", pubkey)
+	if err := row.Scan(args...); err != nil {
+		return "", "", ""
+	}
+	out := map[string]string{}
+	for i, c := range cols {
+		if vals[i].Valid {
+			out[c] = vals[i].String
+		}
+	}
+	return out["default_scope"], out["configured_scope"], out["configured_scope_at"]
+}
+
 type NodeReachInfo struct {
 	Pubkey    string   `json:"pubkey"`
 	Name      string   `json:"name"`
@@ -194,6 +236,15 @@ type NodeReachInfo struct {
 	Lat       *float64 `json:"lat"`
 	Lon       *float64 `json:"lon"`
 	FirstSeen string   `json:"first_seen"`
+	// #1865: region scopes, so a printed reach report says which region the
+	// node actually serves. DefaultScope is INFERRED from the transport scope
+	// of observed adverts; ConfiguredScope is CONFIRMED, read back off the node
+	// itself via an observer /neighbors report. Both omitempty: an instance
+	// whose schema predates either column, or a node that has never been
+	// confirmed, sends neither field and the UI shows nothing.
+	DefaultScope      string `json:"default_scope,omitempty"`
+	ConfiguredScope   string `json:"configured_scope,omitempty"`
+	ConfiguredScopeAt string `json:"configured_scope_at,omitempty"`
 }
 type NodeReachWindow struct {
 	Days  int    `json:"days"`
@@ -512,6 +563,10 @@ func (s *Server) computeNodeReach(ctx context.Context, pubkey string, days int) 
 	// observer-only or pre-first_seen-schema).
 	firstSeen := self.FirstSeen
 
+	// #1865: scopes for the report header. Single-row lookup rather than widening
+	// buildNodeInfoMap's bulk SELECT, which every other consumer would pay for.
+	defScope, confScope, confAt := s.reachNodeScopes(ctx, pubkey)
+
 	// assemble links
 	links := make([]NodeReachLink, 0, len(d.we)+len(d.they))
 	bidir := 0
@@ -576,7 +631,8 @@ func (s *Server) computeNodeReach(ctx context.Context, pubkey string, days int) 
 	selfLat, selfLon := gpsPtrs(self)
 	return NodeReachResponse{
 		Node: NodeReachInfo{Pubkey: pubkey, Name: self.Name, Role: self.Role,
-			Lat: selfLat, Lon: selfLon, FirstSeen: firstSeen},
+			Lat: selfLat, Lon: selfLon, FirstSeen: firstSeen,
+			DefaultScope: defScope, ConfiguredScope: confScope, ConfiguredScopeAt: confAt},
 		Window:         NodeReachWindow{Days: days, Since: since.Format(time.RFC3339)},
 		ReliableTokens: toks,
 		Importance: NodeReachImportance{

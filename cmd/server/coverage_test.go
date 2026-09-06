@@ -2705,7 +2705,12 @@ func TestHandleAnalyticsSubpathsWithStore(t *testing.T) {
 	hub := NewHub()
 	srv := NewServer(db, cfg, hub)
 	store := NewPacketStore(db, nil)
-	store.Load()
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	if !store.WaitIndexesReady(5 * time.Second) {
+		t.Fatal("indexes not ready after 5s")
+	}
 	srv.store = store
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
@@ -2725,7 +2730,12 @@ func TestHandleAnalyticsSubpathDetailWithStore(t *testing.T) {
 	hub := NewHub()
 	srv := NewServer(db, cfg, hub)
 	store := NewPacketStore(db, nil)
-	store.Load()
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
+	if !store.WaitIndexesReady(5 * time.Second) {
+		t.Fatal("indexes not ready after 5s")
+	}
 	srv.store = store
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)

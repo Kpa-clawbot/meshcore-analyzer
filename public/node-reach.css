@@ -72,3 +72,12 @@
   /* Tighter cell padding so the remaining four columns breathe. */
   .nq-table th, .nq-table td { padding:4px 6px; }
 }
+
+/* #1865: region scope on the reach report. Muted like .nq-sub so it reads as
+   report metadata rather than a finding, with the confirmed tick carrying the
+   only colour, because that tick is the one bit of it that is evidence. */
+.nq-scope { color:var(--text-muted); font-size:11px; margin-top:2px; }
+.nq-scope code { font-family:var(--mono); color:var(--link-color); }
+.nq-scope-ok { color:var(--success); }
+.nq-scope-none { font-style:italic; }
+.nq-scope-src { opacity:0.75; }

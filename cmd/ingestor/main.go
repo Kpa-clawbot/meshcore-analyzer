@@ -726,6 +726,17 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		return
 	}
 
+	// Neighbors report topic: meshcore/<region>/<observer_id>/neighbors (#1865).
+	// The ESP32 observer firmware emits a periodic neighbor report carrying its
+	// own configured region scopes (`self`) plus, for each zero-hop neighbor,
+	// the scopes fetched via an OTA scope query. Like /status this is observer
+	// metadata (region-independent), so the per-source packet IATA filter below
+	// does not apply.
+	if len(parts) >= 4 && parts[3] == "neighbors" {
+		handleNeighborsReport(store, tag, parts[2], msg)
+		return
+	}
+
 	// Status topic: meshcore/<region>/<observer_id>/status
 	// Per-source IATA filter does NOT apply here — observer metadata (noise_floor, battery, etc.)
 	// is region-independent and should be accepted from all observers regardless of
@@ -1656,6 +1667,57 @@ func init() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println("corescope-ingestor", version)
 		os.Exit(0)
+	}
+}
+
+// handleNeighborsReport ingests an observer /neighbors report (#1865) and
+// records CONFIRMED region scopes into nodes.configured_scope:
+//   - the observer's own scopes from `self`, keyed by origin_id (the observer
+//     node pubkey), which need no OTA query and are always trusted; and
+//   - each neighbor whose OTA scope query returned status=="responded".
+//
+// Per the report contract: neighbors with any other status (e.g. "timeout")
+// are skipped — a failed query is NOT evidence the scopes were cleared — and a
+// missing neighbor is never a signal (the report is 10 KB-capped and truncates
+// by ordering, so absent != gone). Report pubkeys are uppercase; nodes.public_key
+// is lowercase hex, so keys are lowercased before the UPDATE. Unknown neighbors
+// are a no-op (the UPDATE matches no row) until a later advert creates the node.
+func handleNeighborsReport(store *Store, tag string, observerID string, msg map[string]interface{}) {
+	reportedAt, _ := msg["timestamp"].(string)
+
+	// self: the observer's own configured scopes.
+	originID, _ := msg["origin_id"].(string)
+	if originID == "" {
+		originID = observerID
+	}
+	originID = strings.ToLower(originID)
+	if self, ok := msg["self"].(map[string]interface{}); ok && originID != "" {
+		if sc, ok := self["scopes"].(string); ok {
+			if err := store.UpdateNodeConfiguredScope(originID, sc, reportedAt); err != nil {
+				log.Printf("MQTT [%s] neighbors self scope error: %v", tag, err)
+			}
+		}
+	}
+
+	// neighbors[]: only status=="responded" carries usable scope evidence.
+	neighbors, _ := msg["neighbors"].([]interface{})
+	for _, raw := range neighbors {
+		n, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if status, _ := n["status"].(string); status != "responded" {
+			continue
+		}
+		pubkey, _ := n["pubkey"].(string)
+		pubkey = strings.ToLower(pubkey)
+		if pubkey == "" {
+			continue
+		}
+		scopes, _ := n["scopes"].(string)
+		if err := store.UpdateNodeConfiguredScope(pubkey, scopes, reportedAt); err != nil {
+			log.Printf("MQTT [%s] neighbors scope error for %.8s: %v", tag, pubkey, err)
+		}
 	}
 }
 
