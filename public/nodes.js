@@ -84,6 +84,23 @@
   let statusFilter = localStorage.getItem('meshcore-nodes-status-filter') || 'all';
   let wsHandler = null;
   let detailMap = null;
+  let detailMapResizeTimer = null;
+
+  function removeDetailMap(owner) {
+    // Async responses may still hold a detached view while another map is active.
+    if (owner && detailMap && !owner.contains(detailMap.getContainer())) return;
+    clearTimeout(detailMapResizeTimer);
+    detailMapResizeTimer = null;
+    if (detailMap) { detailMap.remove(); detailMap = null; }
+  }
+
+  function resizeDetailMapAfterLayout() {
+    const map = detailMap;
+    detailMapResizeTimer = setTimeout(() => {
+      detailMapResizeTimer = null;
+      map.invalidateSize();
+    }, 100);
+  }
 
   // #1461 followup: node-detail inset map tile layer that honors the
   // customizer dark-tile-provider pick (#1420/#1430). Falls back to
@@ -630,6 +647,7 @@
       const dupKeys = n.name && dupMap[n.name.toLowerCase()] ? dupMap[n.name.toLowerCase()].filter(function(k) { return k !== n.public_key; }) : [];
       const dupSection = dupKeys.length ? '<div class="dup-also-known" style="font-size:11px;color:var(--text-muted);margin-top:4px">Also known as: ' + dupKeys.map(function(k) { return '<a href="#/nodes/' + encodeURIComponent(k) + '" class="mono" style="font-size:11px">' + escapeHtml(k.slice(0, 12)) + '…</a>'; }).join(', ') + '</div>' : '';
 
+      removeDetailMap(body);
       body.innerHTML = `
         <div class="node-full-card" style="padding:12px 16px;margin-bottom:8px">
           <div class="node-detail-name" style="font-size:20px">${escapeHtml(n.name || '(unnamed)')}${dupBadge}</div>
@@ -786,11 +804,10 @@
       // Map
       if (hasLoc) {
         try {
-          if (detailMap) { detailMap.remove(); detailMap = null; }
           detailMap = L.map('nodeFullMap', { zoomControl: true, attributionControl: false }).setView([n.lat, n.lon], 13);
           _applyTilesToNodeMap(detailMap);
           L.marker([n.lat, n.lon]).addTo(detailMap).bindPopup(escapeHtml(n.name || n.public_key.slice(0, 12)));
-          setTimeout(() => detailMap.invalidateSize(), 100);
+          resizeDetailMapAfterLayout();
         } catch {}
       }
 
@@ -1011,6 +1028,7 @@
       const detail = is404
         ? 'No node matched the requested public key on this instance. It may exist on another deployment, or it may have been evicted/blacklisted here.'
         : 'The node detail API call failed: ' + escapeHtml(msg);
+      removeDetailMap(body);
       body.innerHTML =
         '<div class="node-full-card" style="padding:24px;margin:16px auto;max-width:560px;text-align:center">' +
           '<div style="font-size:18px;font-weight:600;margin-bottom:8px">' + headline + '</div>' +
@@ -1035,7 +1053,7 @@
   function destroy() {
     if (wsHandler) offWS(wsHandler);
     wsHandler = null;
-    if (detailMap) { detailMap.remove(); detailMap = null; }
+    removeDetailMap();
     if (regionChangeHandler) RegionFilter.offChange(regionChangeHandler);
     regionChangeHandler = null;
     nodes = [];
@@ -1413,6 +1431,7 @@
       if (e.key === 'Escape') {
         const panel = document.getElementById('nodesRight');
         if (panel && !panel.classList.contains('empty')) {
+          removeDetailMap();
           panel.classList.add('empty');
           panel.innerHTML = '<span>Select a node to view details</span>';
           selectedKey = null;
@@ -1439,6 +1458,7 @@
       }
       if (e.target.closest('.panel-close-btn')) {
         const panel = document.getElementById('nodesRight');
+        removeDetailMap();
         panel.classList.add('empty');
         panel.innerHTML = '<span>Select a node to view details</span>';
         selectedKey = null;
@@ -1590,12 +1610,15 @@
     renderRows();
     const panel = document.getElementById('nodesRight');
     panel.classList.remove('empty');
+    removeDetailMap();
     panel.innerHTML = '<div class="text-center text-muted" style="padding:40px">Loading…</div>';
 
     try {
       const data = await fetchNodeDetail(pubkey);
+      if (selectedKey !== pubkey || !panel.isConnected) return;
       renderDetail(panel, data);
     } catch (e) {
+      if (selectedKey !== pubkey || !panel.isConnected) return;
       panel.innerHTML = `<div class="text-muted">Error: ${e.message}</div>`;
     }
   }
@@ -1620,6 +1643,7 @@
     const dupMap = buildDupNameMap(_allNodes);
     const dupBadge = dupNameBadge(n.name, n.public_key, dupMap);
 
+    removeDetailMap(panel);
     panel.innerHTML = `
       <button class="panel-close-btn" title="Close detail pane (Esc)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-x"/></svg></button>
       <div class="node-detail">
@@ -1710,11 +1734,10 @@
     // Init map
     if (hasLoc) {
       try {
-        if (detailMap) { detailMap.remove(); detailMap = null; }
         detailMap = L.map('nodeMap', { zoomControl: false, attributionControl: false }).setView([n.lat, n.lon], 13);
         _applyTilesToNodeMap(detailMap);
         L.marker([n.lat, n.lon]).addTo(detailMap).bindPopup(escapeHtml(n.name || n.public_key.slice(0, 12)));
-        setTimeout(() => detailMap.invalidateSize(), 100);
+        resizeDetailMapAfterLayout();
       } catch {}
     }
 
