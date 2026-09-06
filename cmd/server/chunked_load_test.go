@@ -84,7 +84,8 @@ func TestLoadChunked_FirstChunkReadyBeforeComplete(t *testing.T) {
 }
 
 // (b) Middleware stamps X-CoreScope-Load-Status correctly across the
-//     loading→ready transition.
+//
+//	loading→ready transition.
 func TestLoadStatusMiddleware_HeaderTransition(t *testing.T) {
 	store := openChunkedTestStore(t, 100)
 	defer store.db.conn.Close()
@@ -115,7 +116,8 @@ func TestLoadStatusMiddleware_HeaderTransition(t *testing.T) {
 }
 
 // (c) LoadChunked honors the chunkSize argument — progress callback
-//     fires once per chunk.
+//
+//	fires once per chunk.
 func TestLoadChunked_ChunkSizeHonored(t *testing.T) {
 	store := openChunkedTestStore(t, 2500)
 	defer store.db.conn.Close()

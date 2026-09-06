@@ -19,10 +19,10 @@ var hashtagRE = regexp.MustCompile(`#[A-Za-z0-9_\-]+`)
 // preserved so callers can match against canonical channel names directly.
 //
 // Examples:
-//   extractHashtagsFromText("hi #mesh and #fun")       => []string{"#mesh", "#fun"}
-//   extractHashtagsFromText("nothing here")             => nil
-//   extractHashtagsFromText("dup #x and #x again")      => []string{"#x"}
 //
+//	extractHashtagsFromText("hi #mesh and #fun")       => []string{"#mesh", "#fun"}
+//	extractHashtagsFromText("nothing here")             => nil
+//	extractHashtagsFromText("dup #x and #x again")      => []string{"#x"}
 func extractHashtagsFromText(text string) []string {
 	if text == "" {
 		return nil

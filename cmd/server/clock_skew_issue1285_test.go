@@ -18,8 +18,10 @@ import (
 )
 
 // Synthesizes the repro from issue #1285:
-//   30 healthy adverts (skew ~−20s) + 1 historical advert with an RTC reset
-//   (advertTS = 2024-06-13, observed today → −705d skew).
+//
+//	30 healthy adverts (skew ~−20s) + 1 historical advert with an RTC reset
+//	(advertTS = 2024-06-13, observed today → −705d skew).
+//
 // Returns the populated store.
 func seedIssue1285Repro(t *testing.T) *PacketStore {
 	t.Helper()
@@ -29,8 +31,8 @@ func seedIssue1285Repro(t *testing.T) *PacketStore {
 	const pubkey = "RTCRESET"
 	const skewSec = int64(-20) // node clock is 20s BEHIND wall-clock
 
-	baseObs := int64(1779000000)             // ~mid-2026
-	rtcResetAdv := int64(1718281640)         // 2024-06-13 (from the issue repro)
+	baseObs := int64(1779000000)     // ~mid-2026
+	rtcResetAdv := int64(1718281640) // 2024-06-13 (from the issue repro)
 
 	var txs []*StoreTx
 
@@ -41,7 +43,7 @@ func seedIssue1285Repro(t *testing.T) *PacketStore {
 		tx := &StoreTx{
 			Hash:        "healthy-" + formatInt64(int64(i)),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"RTCRESET"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -56,7 +58,7 @@ func seedIssue1285Repro(t *testing.T) *PacketStore {
 	rtcTx := &StoreTx{
 		Hash:        "rtc-reset-0001",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(rtcResetAdv) + `}}`,
+		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(rtcResetAdv) + `},"pubKey":"RTCRESET"}`,
 		Observations: []*StoreObs{
 			{ObserverID: "obs1", Timestamp: time.Unix(rtcResetObs, 0).UTC().Format(time.RFC3339)},
 		},

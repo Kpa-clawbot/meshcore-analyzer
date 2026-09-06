@@ -226,9 +226,9 @@ func TestPhase1EdgeCollection_Unchanged(t *testing.T) {
 		Timestamp:  ts,
 	}}
 	tx := &StoreTx{
-		ID:          1,
-		PayloadType: &payloadType,
-		DecodedJSON: `{"pubKey":"aaaa1111"}`,
+		ID:           1,
+		PayloadType:  &payloadType,
+		DecodedJSON:  `{"pubKey":"aaaa1111"}`,
 		Observations: obs,
 	}
 
@@ -430,10 +430,10 @@ func BenchmarkResolveAmbiguousEdges_500(b *testing.B) {
 		pk = hexPK(i)
 		nodes = append(nodes, nodeInfo{
 			PublicKey: pk,
-			Name:     pk[:8],
-			HasGPS:   true,
-			Lat:      45.0 + float64(i)*0.01,
-			Lon:      -122.0 + float64(i)*0.01,
+			Name:      pk[:8],
+			HasGPS:    true,
+			Lat:       45.0 + float64(i)*0.01,
+			Lon:       -122.0 + float64(i)*0.01,
 		})
 	}
 	pm := buildPrefixMap(nodes)

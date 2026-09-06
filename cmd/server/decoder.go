@@ -85,35 +85,40 @@ type AdvertFlags struct {
 
 // Payload is a generic decoded payload. Fields are populated depending on type.
 type Payload struct {
-	Type            string       `json:"type"`
-	DestHash        string       `json:"destHash,omitempty"`
-	SrcHash         string       `json:"srcHash,omitempty"`
-	MAC             string       `json:"mac,omitempty"`
-	EncryptedData   string       `json:"encryptedData,omitempty"`
-	ExtraHash       string       `json:"extraHash,omitempty"`
+	Type          string `json:"type"`
+	DestHash      string `json:"destHash,omitempty"`
+	SrcHash       string `json:"srcHash,omitempty"`
+	MAC           string `json:"mac,omitempty"`
+	EncryptedData string `json:"encryptedData,omitempty"`
+	ExtraHash     string `json:"extraHash,omitempty"`
 	// Extended ACK fields per firmware 1.16.0 (issue #1610) — populated by
 	// decodeAck once the server-side re-decoder is upgraded (issue #1694).
-	AckLen     *int `json:"ackLen,omitempty"`
-	AckAttempt *int `json:"ackAttempt,omitempty"`
-	AckRand    *int `json:"ackRand,omitempty"`
-	PubKey          string       `json:"pubKey,omitempty"`
-	Timestamp       uint32       `json:"timestamp,omitempty"`
-	TimestampISO    string       `json:"timestampISO,omitempty"`
-	Signature       string       `json:"signature,omitempty"`
-	SignatureValid  *bool        `json:"signatureValid,omitempty"`
-	Flags           *AdvertFlags `json:"flags,omitempty"`
-	Lat             *float64     `json:"lat,omitempty"`
-	Lon             *float64     `json:"lon,omitempty"`
-	Name            string       `json:"name,omitempty"`
-	ChannelHash     int          `json:"channelHash,omitempty"`
-	EphemeralPubKey string       `json:"ephemeralPubKey,omitempty"`
-	PathData        string       `json:"pathData,omitempty"`
-	Tag             uint32       `json:"tag,omitempty"`
-	AuthCode        uint32       `json:"authCode,omitempty"`
-	TraceFlags      *int         `json:"traceFlags,omitempty"`
-	SNRValues       []float64    `json:"snrValues,omitempty"`
-	RawHex          string       `json:"raw,omitempty"`
-	Error           string       `json:"error,omitempty"`
+	AckLen         *int         `json:"ackLen,omitempty"`
+	AckAttempt     *int         `json:"ackAttempt,omitempty"`
+	AckRand        *int         `json:"ackRand,omitempty"`
+	PubKey         string       `json:"pubKey,omitempty"`
+	Timestamp      uint32       `json:"timestamp,omitempty"`
+	TimestampISO   string       `json:"timestampISO,omitempty"`
+	Signature      string       `json:"signature,omitempty"`
+	SignatureValid *bool        `json:"signatureValid,omitempty"`
+	Flags          *AdvertFlags `json:"flags,omitempty"`
+	Lat            *float64     `json:"lat,omitempty"`
+	Lon            *float64     `json:"lon,omitempty"`
+	Name           string       `json:"name,omitempty"`
+	ChannelHash    int          `json:"channelHash,omitempty"`
+	// ANON_REQ carries the sender's FULL 32-byte public key (not a 1-byte
+	// srcHash like REQ) — MeshCore firmware/src/Mesh.cpp. Surfaced as
+	// srcPubKey so store.go's node indexer picks it up and it resolves to a
+	// node name; frontend also reads legacy ephemeralPubKey for pre-rename
+	// packets (#1864).
+	SrcPubKey  string    `json:"srcPubKey,omitempty"`
+	PathData   string    `json:"pathData,omitempty"`
+	Tag        uint32    `json:"tag,omitempty"`
+	AuthCode   uint32    `json:"authCode,omitempty"`
+	TraceFlags *int      `json:"traceFlags,omitempty"`
+	SNRValues  []float64 `json:"snrValues,omitempty"`
+	RawHex     string    `json:"raw,omitempty"`
+	Error      string    `json:"error,omitempty"`
 	// GRP_TXT/GRP_DATA channel envelope helpers — see
 	// firmware/src/helpers/BaseChatMesh.cpp:376-391.
 	ChannelHashHex   string `json:"channelHashHex,omitempty"`
@@ -134,7 +139,7 @@ type Payload struct {
 	InnerAckLen     *int   `json:"innerAckLen,omitempty"`
 	InnerAckAttempt *int   `json:"innerAckAttempt,omitempty"`
 	InnerAckRand    *int   `json:"innerAckRand,omitempty"`
-	InnerPayload  string `json:"innerPayload,omitempty"`
+	InnerPayload    string `json:"innerPayload,omitempty"`
 	// CONTROL (PAYLOAD_TYPE_CONTROL=0x0B) byte0 flags, per
 	// firmware/src/Mesh.cpp:69 — high-bit = zero-hop direct subset.
 	CtrlFlags   string `json:"ctrlFlags,omitempty"`
@@ -331,10 +336,10 @@ func decodeAdvert(buf []byte, validateSignatures bool) Payload {
 			off += 8
 		}
 		if hasFeat1 && len(appdata) >= off+2 {
-			off += 2  // skip feat1 bytes (reserved for future use)
+			off += 2 // skip feat1 bytes (reserved for future use)
 		}
 		if hasFeat2 && len(appdata) >= off+2 {
-			off += 2  // skip feat2 bytes (reserved for future use)
+			off += 2 // skip feat2 bytes (reserved for future use)
 		}
 		if p.Flags.HasName {
 			name := string(appdata[off:])
@@ -466,11 +471,11 @@ func decodeAnonReq(buf []byte) Payload {
 		return Payload{Type: "ANON_REQ", Error: "too short", RawHex: hex.EncodeToString(buf)}
 	}
 	return Payload{
-		Type:            "ANON_REQ",
-		DestHash:        hex.EncodeToString(buf[0:1]),
-		EphemeralPubKey: hex.EncodeToString(buf[1:33]),
-		MAC:             hex.EncodeToString(buf[33:35]),
-		EncryptedData:   hex.EncodeToString(buf[35:]),
+		Type:          "ANON_REQ",
+		DestHash:      hex.EncodeToString(buf[0:1]),
+		SrcPubKey:     hex.EncodeToString(buf[1:33]),
+		MAC:           hex.EncodeToString(buf[33:35]),
+		EncryptedData: hex.EncodeToString(buf[35:]),
 	}
 }
 
@@ -801,7 +806,9 @@ func sanitizeName(s string) string {
 
 // advertRole returns a stable role label for an advert. Follows firmware
 // ADV_TYPE_* constants in firmware/src/helpers/AdvertDataHelpers.h:7-12:
-//   0 NONE, 1 CHAT, 2 REPEATER, 3 ROOM, 4 SENSOR, 5-15 FUTURE.
+//
+//	0 NONE, 1 CHAT, 2 REPEATER, 3 ROOM, 4 SENSOR, 5-15 FUTURE.
+//
 // Previously this coerced both 0 (NONE) and 5-15 (FUTURE) to "companion",
 // silently relabelling unknown/reserved types — see issue #1279 P1 #3.
 func advertRole(f *AdvertFlags) string {

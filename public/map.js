@@ -17,6 +17,10 @@
   let geoFilterLayer = null;
   let affinityLayer = null;
   let affinityData = null;
+  let topRoutesLayer = null;
+  let topRoutesEdges = null; // cached neighbor-graph edges for the Important Links overlay
+  let topRoutesRenderTimer = null; // debounce for the Top-N slider
+  let topRoutesAccentCache = ''; // cached --accent, invalidated on theme-refresh
   let userHasMoved = false;
   let controlsCollapsed = false;
 
@@ -137,16 +141,28 @@
   }
 
   function makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus) {
-    var hs = node.hash_size || 1;
-    // Show the short mesh hash ID (first N bytes of pubkey, uppercased)
-    var shortHash = node.public_key ? node.public_key.slice(0, hs * 2).toUpperCase() : '??';
+    // Show the short mesh hash ID (first N bytes of pubkey, uppercased). When
+    // the width is unobserved the label falls back to one byte — it has to draw
+    // something — but says so instead of asserting a 1-byte config.
+    var hashInfo = hashPrefixInfo(node);
+    var unknownWidth = hashInfo.known ? '' : ' hash-unconfirmed';
     // #1356 V3: glyph is the primary non-color status carrier, hash is the data,
     // status color is a thin left-border (CSS class drives the hue).
+    //
+    // ORDER MATTERS: the hash variable must stay immediately below the glyph
+    // lookup. test-issue-1356-map-a11y.js:133 asserts the glyph-before-hash
+    // ordering with a source grep bounded to 200 characters, so anything
+    // inserted between the two declarations fails the build even though the
+    // rendering is untouched. Deliberately worded without naming either
+    // identifier: spelling them out here would satisfy that grep from inside
+    // this comment and the assertion could then never fail.
     var status = mbStatus || null;
     var glyph = status ? (MB_GLYPHS[status] || MB_GLYPHS.unknown) : '';
+    var shortHash = hashInfo.prefix;
     var statusClass = status ? (' ' + (MB_STATUS_CLASS[status] || MB_STATUS_CLASS.unknown)) : '';
-    var ariaStatus = status ? ('multi-byte ' + status + ', hash ' + shortHash)
-                            : ('repeater hash ' + shortHash);
+    var ariaWidth = hashInfo.known ? '' : ', hash size unknown';
+    var ariaStatus = status ? ('multi-byte ' + status + ', hash ' + shortHash + ariaWidth)
+                            : ('repeater hash ' + shortHash + ariaWidth);
     // Observer indicator stays a star — it is an orthogonal signal, not a status color.
     var obsIndicator = isAlsoObserver
       ? ' <span aria-hidden="true" style="color:' + (ROLE_COLORS.observer || '#f1c40f') + ';font-size:13px;line-height:1;" title="Also an observer"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-star-fill"/></svg></span>'
@@ -154,7 +170,7 @@
     // Glyph + thin-space (U+2009) + hash. Visible content is aria-hidden so AT
     // reads the aria-label only (avoids "check mark 3 E" literal announcements).
     var visible = (glyph ? glyph + '\u2009' : '') + shortHash;
-    var html = '<div class="mc-mb-label' + statusClass + '" role="img" aria-label="' + ariaStatus + '">' +
+    var html = '<div class="mc-mb-label' + statusClass + unknownWidth + '" role="img" aria-label="' + ariaStatus + '">' +
       '<span aria-hidden="true">' + visible + '</span>' + obsIndicator + '</div>';
     return L.divIcon({
       html: html,
@@ -196,6 +212,7 @@
               <button class="btn ${filters.byteSize==='1'?'active':''}" data-byte="1">1-byte</button>
               <button class="btn ${filters.byteSize==='2'?'active':''}" data-byte="2">2-byte</button>
               <button class="btn ${filters.byteSize==='3'?'active':''}" data-byte="3">3-byte</button>
+              <button class="btn ${filters.byteSize==='unknown'?'active':''}" data-byte="unknown" title="No advert-derived hash size in the retention window">Unknown</button>
             </div>
           </fieldset>
           <fieldset class="mc-section">
@@ -221,6 +238,23 @@
             <div id="mcNeighborRef" style="display:none;font-size:11px;color:var(--text-muted);margin-top:2px;padding-left:20px;">Ref: <span id="mcNeighborRefName">—</span></div>
             <div id="mcNeighborHint" style="display:none;font-size:11px;color:var(--text-muted);margin-top:2px;padding-left:20px;">Click a node marker to set the reference node</div>
             <label id="mcAffinityDebugLabel" for="mcAffinityDebug" style="display:none"><input type="checkbox" id="mcAffinityDebug"> <svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg> Affinity Debug</label>
+          </fieldset>
+          <fieldset class="mc-section">
+            <legend class="mc-label">Important Links</legend>
+            <label for="mcTopRoutes"><input type="checkbox" id="mcTopRoutes"> <svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-graph"/></svg> Show important links</label>
+            <div id="mcTopRoutesOpts" style="display:none;padding-left:20px;margin-top:4px">
+              <label for="mcTopRoutesRankBy" style="font-size:11px;color:var(--text-muted)">Rank by</label>
+              <select id="mcTopRoutesRankBy" style="width:100%;margin:2px 0 6px">
+                <option value="usefulness">Usefulness (composite)</option>
+                <option value="bridge">Bridge</option>
+                <option value="redundancy">Redundancy</option>
+                <option value="traffic">Traffic share</option>
+                <option value="affinity">Affinity only</option>
+              </select>
+              <label for="mcTopRoutesN" style="font-size:11px;color:var(--text-muted)">Top <span id="mcTopRoutesNVal">50</span> links</label>
+              <input type="range" id="mcTopRoutesN" min="10" max="200" step="10" value="50" style="width:100%">
+              <div id="mcTopRoutesHint" style="display:none;font-size:11px;color:var(--text-muted);margin-top:4px">No links to show — endpoints may lack GPS, or the chosen axis has no scores yet (the #672 scores need a server that ships them).</div>
+            </div>
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Last Heard</legend>
@@ -507,6 +541,38 @@
       });
     })();
 
+    // Important Links overlay (#672 / D) — public, B-weighted top routes.
+    (function initTopRoutes() {
+      const cb = document.getElementById('mcTopRoutes');
+      if (!cb) return;
+      const opts = document.getElementById('mcTopRoutesOpts');
+      const rankBy = document.getElementById('mcTopRoutesRankBy');
+      const nSlider = document.getElementById('mcTopRoutesN');
+      const nVal = document.getElementById('mcTopRoutesNVal');
+      const savedAxis = localStorage.getItem('meshcore-top-routes-axis');
+      if (savedAxis && rankBy) rankBy.value = savedAxis;
+      const savedN = localStorage.getItem('meshcore-top-routes-n');
+      if (savedN && nSlider) { nSlider.value = savedN; if (nVal) nVal.textContent = savedN; }
+      cb.addEventListener('change', e => {
+        if (opts) opts.style.display = e.target.checked ? '' : 'none';
+        if (e.target.checked) loadTopRoutes(); else clearTopRoutes();
+      });
+      if (rankBy) rankBy.addEventListener('change', e => {
+        localStorage.setItem('meshcore-top-routes-axis', e.target.value);
+        if (cb.checked) renderTopRoutes();
+      });
+      if (nSlider) nSlider.addEventListener('input', e => {
+        if (nVal) nVal.textContent = e.target.value;
+        localStorage.setItem('meshcore-top-routes-n', e.target.value);
+        // Debounce: dragging the slider fires 'input' rapidly; redraw at most
+        // ~every 80ms so a large top-N doesn't lag the map.
+        if (cb.checked) {
+          clearTimeout(topRoutesRenderTimer);
+          topRoutesRenderTimer = setTimeout(renderTopRoutes, 80);
+        }
+      });
+    })();
+
     // Hash Labels toggle
     const hashLabelEl = document.getElementById('mcHashLabels');
     if (hashLabelEl) {
@@ -637,6 +703,34 @@
     // #1689 r1 (adv #4): remember the last route-draw inputs so the
     // mc-hide-1byte-hops-changed listener can re-render in place.
     try { window.__mc_lastRouteDraw = { kind: 'single', hopKeys: hopKeys, origin: origin, opts: opts }; } catch (_e) {}
+    if (window.__mc_routeTrustControl) {
+      try { map.removeControl(window.__mc_routeTrustControl); } catch (_e) {}
+      window.__mc_routeTrustControl = null;
+    }
+    // #1784 — path trust threshold: if ALL hops are below the configured
+    // minimum hash bytes for mapping, don't draw speculative polylines.
+    // The raw hops stay visible in packet detail views; this only gates
+    // derived topology display. Operators can lower the threshold via
+    // pathTrust.minHashBytesForMapping in config.json.
+    if (window.MC_pathBelowTrust && window.MC_pathBelowTrust(hopKeys)) {
+      var _t = window.MC_getPathTrustThreshold ? window.MC_getPathTrustThreshold() : 1;
+      var _hb = 0;
+      if (hopKeys && hopKeys.length) {
+        for (var _hi = 0; _hi < hopKeys.length; _hi++) {
+          _hb = Math.max(_hb, window.MC_hopByteLen(hopKeys[_hi]));
+        }
+      }
+      routeLayer.clearLayers();
+      var _trustMsg = L.control({ position: 'topright' });
+      _trustMsg.onAdd = function () {
+        var d = L.DomUtil.create('div', 'leaflet-bar mc-route-trust-message');
+        d.innerHTML = '<strong>Route not displayed</strong><br><span class="mc-route-trust-message-detail">Packet uses ' + _hb + '-byte path hashes, below configured trust threshold (' + _t + '-byte minimum). Raw hops remain visible in packet detail views. Set <code>pathTrust.minHashBytesForMapping</code> in config.json to trust shorter prefixes.</span>';
+        return d;
+      };
+      _trustMsg.addTo(map);
+      window.__mc_routeTrustControl = _trustMsg;
+      return;
+    }
     // #1422: use the backend's /api/resolve-hops for proper disambiguation
     // (unique_prefix vs multi-byte vs gps_preference vs affinity scoring).
     // Falls back to naive nodes.filter() scan if the API is unreachable.
@@ -1300,6 +1394,11 @@
 
       renderMarkers();
 
+      // Keep the Important Links overlay in sync on a full node reload: re-fetch
+      // the neighbor-graph edges (not just re-render the stale cache) so the
+      // overlay tracks the current graph + scores.
+      if (topRoutesEdges && document.getElementById('mcTopRoutes')?.checked) loadTopRoutes();
+
       // Restore heatmap if previously enabled
       if (localStorage.getItem('meshcore-map-heatmap') === 'true') {
         toggleHeatmap(true);
@@ -1376,8 +1475,7 @@
     for (const n of nodes) {
       const role = (n.role || 'companion').toLowerCase();
       if (!roleCounts[role]) roleCounts[role] = { active: 0, stale: 0 };
-      const lastMs = (n.last_heard || n.last_seen) ? new Date(n.last_heard || n.last_seen).getTime() : 0;
-      const status = getNodeStatus(role, lastMs);
+      const status = getNodeStatus(n); // #1598: relay-aware for infra
       roleCounts[role][status]++;
     }
 
@@ -1583,16 +1681,20 @@
     const filtered = nodes.filter(n => {
       if (!n.lat || !n.lon) return false;
       if (!filters[n.role || 'companion']) return false;
-      // Byte size filter (applies only to repeaters)
+      // Byte size filter (applies only to repeaters). A node with no observed
+      // size is its own bucket — folding it into "1-byte" made that bucket a
+      // mix of measured and merely-unheard nodes.
       if (filters.byteSize !== 'all' && (n.role || 'companion') === 'repeater') {
-        const hs = n.hash_size || 1;
-        if (String(hs) !== filters.byteSize) return false;
+        const hi = hashPrefixInfo(n);
+        if (filters.byteSize === 'unknown') {
+          if (hi.known) return false;
+        } else if (!hi.known || String(hi.bytes) !== filters.byteSize) {
+          return false;
+        }
       }
       // Status filter
       if (filters.statusFilter !== 'all') {
-        const role = (n.role || 'companion').toLowerCase();
-        const lastMs = (n.last_heard || n.last_seen) ? new Date(n.last_heard || n.last_seen).getTime() : 0;
-        const status = getNodeStatus(role, lastMs);
+        const status = getNodeStatus(n); // #1598: relay-aware for infra
         if (status !== filters.statusFilter) return false;
       }
       // Neighbor filter: show only the reference node and its direct neighbors
@@ -1613,7 +1715,7 @@
 
     for (const node of filtered) {
       const lastSeenTime = node.last_heard || node.last_seen;
-      const isStale = getNodeStatus(node.role || 'companion', lastSeenTime ? new Date(lastSeenTime).getTime() : 0) === 'stale';
+      const isStale = getNodeStatus(node) === 'stale'; // #1598: relay-aware for infra
       const pk = (node.public_key || '').toLowerCase();
       const isAlsoObserver = _observerByPubkey.has(pk);
       const useLabel = node.role === 'repeater' && filters.hashLabels;
@@ -1772,10 +1874,14 @@
     // Check if this node is also an observer (combined repeater+observer)
     const matchingObs = node.public_key ? _observerByPubkey.get(node.public_key.toLowerCase()) : null;
     const obsBadge = matchingObs ? ` <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${ROLE_COLORS.observer || '#f1c40f'};color:#fff;">OBSERVER</span>` : '';
-    const hs = node.hash_size || 1;
-    const hashPrefix = node.public_key ? node.public_key.slice(0, hs * 2).toUpperCase() : '—';
+    // Unknown width is reported as unknown, not as 1 — same wording the node
+    // detail page uses (nodes.js), so the two views can't disagree.
+    const hashInfo = hashPrefixInfo(node);
+    const hashPrefixValue = hashInfo.known
+      ? `${safeEsc(hashInfo.prefix)} <span style="font-weight:400;color:var(--text-muted);">(${hashInfo.bytes}B)</span>`
+      : `<span style="font-weight:400;color:var(--text-muted);">Unknown</span>`;
     const hashPrefixRow = `<dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Hash Prefix</dt>
-          <dd style="font-family:var(--mono);font-size:11px;font-weight:700;margin-left:88px;padding:2px 0;">${safeEsc(hashPrefix)} <span style="font-weight:400;color:var(--text-muted);">(${hs}B)</span></dd>`;
+          <dd style="font-family:var(--mono);font-size:11px;font-weight:700;margin-left:88px;padding:2px 0;">${hashPrefixValue}</dd>`;
     // Multi-byte support indicator for repeaters
     var mbRow = '';
     if (node.role === 'repeater' && node.multi_byte_status) {
@@ -2079,9 +2185,123 @@
   }
   // ─── End Affinity Debug ────────────────────────────────────────────────────
 
+  // ─── Important Links (B-weighted top-routes overlay, issue #672 / D) ─────────
+  // A public, user-facing overlay (NOT the API-key-gated Affinity Debug above)
+  // that draws the most IMPORTANT affinity links on the map, weighted by the
+  // #672 repeater-usefulness axes. It joins the loaded `nodes` array (coords +
+  // per-node usefulness/bridge/redundancy/traffic scores from /api/nodes) with
+  // the public neighbor-graph edges, ranks by a chosen axis, and draws the
+  // top-N as weighted polylines so terrain-level chokepoints (the sole link
+  // across a valley) stand out geographically.
+  const TOP_ROUTES_AXES = {
+    usefulness: 'usefulness_score',
+    bridge: 'bridge_score',
+    redundancy: 'redundancy_score',
+    traffic: 'traffic_share_score',
+  };
+
+  // computeTopRouteEdges is the pure ranking core (no DOM/Leaflet): join edges
+  // with node coords + the chosen axis score, compute per-edge importance, and
+  // return the top-N drawable edges (both endpoints geo-located). Importance =
+  // edge affinity × the mean of the two endpoints' axis score; for axis
+  // 'affinity' it is the raw edge affinity. Edges with a missing endpoint coord,
+  // or zero importance (e.g. a non-repeater endpoint with no axis score), are
+  // dropped. Exported shape kept simple for behavioral testing.
+  function computeTopRouteEdges(edges, nodeList, axis, topN) {
+    const pos = {}, score = {};
+    const scoreField = TOP_ROUTES_AXES[axis]; // undefined for 'affinity'
+    (nodeList || []).forEach(n => {
+      if (!n || !n.public_key) return;
+      const k = n.public_key.toLowerCase();
+      if (n.lat != null && n.lon != null && !(n.lat === 0 && n.lon === 0)) pos[k] = [n.lat, n.lon];
+      if (scoreField) score[k] = (n[scoreField] != null ? n[scoreField] : 0);
+    });
+    const scored = [];
+    (edges || []).forEach(e => {
+      const a = (e.source || '').toLowerCase();
+      const b = (e.target || '').toLowerCase();
+      const pa = pos[a], pb = pos[b];
+      if (!pa || !pb) return; // need both endpoints on the map
+      const edgeStrength = e.score != null ? e.score : 0;
+      const importance = scoreField
+        ? edgeStrength * (((score[a] || 0) + (score[b] || 0)) / 2)
+        : edgeStrength;
+      if (!(importance > 0)) return;
+      scored.push({ a, b, pa, pb, importance, edge: e });
+    });
+    scored.sort((x, y) => y.importance - x.importance);
+    return scored.slice(0, Math.max(0, Math.floor(Number(topN) || 0)));
+  }
+
+  function clearTopRoutes() {
+    if (topRoutesLayer) { map.removeLayer(topRoutesLayer); topRoutesLayer = null; }
+  }
+
+  async function loadTopRoutes() {
+    try {
+      const data = await api('/analytics/neighbor-graph?min_count=1&min_score=0', { ttl: CLIENT_TTL.analyticsRF });
+      topRoutesEdges = (data && data.edges) || [];
+      renderTopRoutes();
+    } catch (err) {
+      console.warn('[top-routes] failed to load neighbor graph:', err);
+      const cb = document.getElementById('mcTopRoutes');
+      if (cb) cb.checked = false;
+    }
+  }
+
+  // topRoutesAccent caches --accent (read once, invalidated on theme-refresh)
+  // so the slider re-render loop doesn't hit getComputedStyle every frame.
+  function topRoutesAccent() {
+    if (!topRoutesAccentCache) {
+      topRoutesAccentCache = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4a9eff';
+    }
+    return topRoutesAccentCache;
+  }
+
+  function renderTopRoutes() {
+    if (!map || !topRoutesEdges) return;
+    clearTopRoutes();
+    const axis = (document.getElementById('mcTopRoutesRankBy') || {}).value || 'usefulness';
+    const topN = parseInt((document.getElementById('mcTopRoutesN') || {}).value, 10) || 50;
+    const top = computeTopRouteEdges(topRoutesEdges, nodes, axis, topN);
+    // Empty-state hint: the toggle is on but nothing rendered (no geo-located
+    // endpoints, or the chosen axis has no scores yet).
+    const hint = document.getElementById('mcTopRoutesHint');
+    if (hint) hint.style.display = top.length ? 'none' : '';
+    topRoutesLayer = L.layerGroup();
+    if (top.length) {
+      const maxImp = top[0].importance || 1;
+      const nameByPk = {};
+      nodes.forEach(n => { if (n && n.public_key) nameByPk[n.public_key.toLowerCase()] = n.name || n.public_key.slice(0, 8); });
+      const accent = topRoutesAccent();
+      top.forEach(t => {
+        const rel = maxImp > 0 ? t.importance / maxImp : 0;
+        const line = L.polyline([t.pa, t.pb], {
+          color: accent,
+          weight: 1 + rel * 6,      // 1–7px ∝ importance
+          opacity: 0.25 + rel * 0.55 // 0.25–0.8 ∝ importance
+        });
+        const e = t.edge;
+        line.bindPopup('<b>Important link</b><br>' +
+          escapeHtml(nameByPk[t.a] || t.a.slice(0, 8)) + ' ↔ ' + escapeHtml(nameByPk[t.b] || t.b.slice(0, 8)) + '<br>' +
+          'Importance (' + escapeHtml(axis) + '): ' + t.importance.toFixed(3) + '<br>' +
+          'Affinity: ' + (e.score != null ? e.score.toFixed(3) : '—') +
+          (e.avg_snr != null ? '<br>Avg SNR: ' + e.avg_snr.toFixed(1) + ' dB' : ''));
+        topRoutesLayer.addLayer(line);
+      });
+    }
+    topRoutesLayer.addTo(map);
+  }
+  // ─── End Important Links ─────────────────────────────────────────────────────
+
   registerPage('map', {
     init: function(app, routeParam) {
-      _themeRefreshHandler = () => { if (markerLayer) renderMarkers(); };
+      _themeRefreshHandler = () => {
+        if (markerLayer) renderMarkers();
+        // Re-read --accent on theme change; redraw the overlay if it's on.
+        topRoutesAccentCache = '';
+        if (topRoutesEdges && document.getElementById('mcTopRoutes')?.checked) renderTopRoutes();
+      };
       window.addEventListener('theme-refresh', _themeRefreshHandler);
       return init(app, routeParam);
     },
@@ -2195,6 +2415,12 @@
   }
 
   if (typeof window !== 'undefined') {
-    window.__meshcoreMapInternals = { createClusterGroup: createClusterGroup, makeClusterIcon: makeClusterIcon };
+    window.__meshcoreMapInternals = {
+      createClusterGroup: createClusterGroup,
+      makeClusterIcon: makeClusterIcon,
+      // #1356: exposed so the a11y test can assert what the label RENDERS
+      // instead of grepping map.js for where two identifiers sit.
+      makeRepeaterLabelIcon: makeRepeaterLabelIcon,
+    };
   }
 })();

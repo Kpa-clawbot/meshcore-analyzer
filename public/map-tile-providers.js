@@ -2,6 +2,8 @@
  *
  * Scope:
  *   - Multiple providers: Carto (default), OSM, Stamen, Esri.
+ *   - Carto requires an API key since 2026-08. `tiles.providers.carto.key` is
+ *     appended as `?key=`; without it Carto returns watermarked tiles.
  *   - MC_setDarkTileProvider(id) / MC_setLightTileProvider(id) persist per-browser
  *     to localStorage and dispatch `mc-tile-provider-changed`.
  *   - Resolves localStorage → server default → 'carto-dark' / 'carto-light'.
@@ -29,6 +31,12 @@
   var _cfg = null;
 
   var _getCartoBase = function() { return (_cfg && _cfg.providers && _cfg.providers.carto && _cfg.providers.carto.domain) ? 'https://{s}.' + _cfg.providers.carto.domain + '.cartocdn.com' : 'https://{s}.basemaps.cartocdn.com'; };
+  // Carto started requiring an API key in 2026-08: unauthenticated tiles come back
+  // stamped "API KEY REQUIRED". The key is a query param on the same host, so it is
+  // appended to every Carto style URL. Free keys: https://carto.com/basemaps/apikey
+  // NOTE: like the OSM/Stamen tokens above, this reaches the browser - restrict it
+  // by domain in the Carto dashboard.
+  var _getCartoKey = function() { return (_cfg && _cfg.providers && _cfg.providers.carto && _cfg.providers.carto.key) ? '?key=' + encodeURIComponent(_cfg.providers.carto.key) : ''; };
   var _getStamenUrl = function() { return 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png' + ((_cfg && _cfg.providers && _cfg.providers.stamen && _cfg.providers.stamen.token) ? '?api_key=' + encodeURIComponent(_cfg.providers.stamen.token) : ''); };
   var _getOsmUrl = function() {
     if (_cfg && _cfg.providers && _cfg.providers.osm && _cfg.providers.osm.provider && _cfg.providers.osm.token) {
@@ -42,16 +50,19 @@
   };
 
   var BASE_STYLES = {
-    'carto-dark': { provider: 'carto', label: 'Carto Dark', url: function() { return _getCartoBase() + '/dark_all/{z}/{x}/{y}{r}.png'; }, invertFilter: null, type: 'dark', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
-    'carto-light': { provider: 'carto', label: 'Carto Positron', url: function() { return _getCartoBase() + '/light_all/{z}/{x}/{y}{r}.png'; }, invertFilter: null, type: 'light', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
-    'carto-voyager': { provider: 'carto', label: 'Carto Voyager', url: function() { return _getCartoBase() + '/rastertiles/voyager/{z}/{x}/{y}{r}.png'; }, invertFilter: null, type: 'light', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
-    'carto-voyager-dark': { provider: 'carto', label: 'Carto Voyager', url: function() { return _getCartoBase() + '/rastertiles/voyager/{z}/{x}/{y}{r}.png'; }, invertFilter: INVERT_CSS, type: 'dark', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
-    'positron-dark': { provider: 'carto', label: 'Carto Positron', url: function() { return _getCartoBase() + '/light_all/{z}/{x}/{y}{r}.png'; }, invertFilter: INVERT_CSS, type: 'dark', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
+    'carto-dark': { provider: 'carto', label: 'Carto Dark', url: function() { return _getCartoBase() + '/dark_all/{z}/{x}/{y}{r}.png' + _getCartoKey(); }, invertFilter: null, type: 'dark', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
+    'carto-light': { provider: 'carto', label: 'Carto Positron', url: function() { return _getCartoBase() + '/light_all/{z}/{x}/{y}{r}.png' + _getCartoKey(); }, invertFilter: null, type: 'light', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
+    'carto-voyager': { provider: 'carto', label: 'Carto Voyager', url: function() { return _getCartoBase() + '/rastertiles/voyager/{z}/{x}/{y}{r}.png' + _getCartoKey(); }, invertFilter: null, type: 'light', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
+    'carto-voyager-dark': { provider: 'carto', label: 'Carto Voyager', url: function() { return _getCartoBase() + '/rastertiles/voyager/{z}/{x}/{y}{r}.png' + _getCartoKey(); }, invertFilter: INVERT_CSS, type: 'dark', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
+    'positron-dark': { provider: 'carto', label: 'Carto Positron', url: function() { return _getCartoBase() + '/light_all/{z}/{x}/{y}{r}.png' + _getCartoKey(); }, invertFilter: INVERT_CSS, type: 'dark', attribution: '© OpenStreetMap © CartoDB', maxZoom: 19 },
     'osm-standard': { provider: 'osm', label: 'OSM Standard', url: _getOsmUrl, invertFilter: null, type: 'light', attribution: '© OpenStreetMap contributors, Maps © Mapbox/Thunderforest/MapTiler', maxZoom: 18 },
     'osm-dark': { provider: 'osm', label: 'OSM Standard', url: _getOsmUrl, invertFilter: INVERT_CSS, type: 'dark', attribution: '© OpenStreetMap contributors, Maps © Mapbox/Thunderforest/MapTiler', maxZoom: 18 },
+    'opentopomap': { provider: 'opentopomap', label: 'OpenTopoMap', url: function() { return 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png'; }, invertFilter: null, type: 'light', attribution: '© OpenStreetMap contributors, SRTM, © OpenTopoMap (CC-BY-SA)', maxZoom: 17 },
     'stamen-toner-lite': { provider: 'stamen', label: 'Stamen Toner Lite', url: _getStamenUrl, invertFilter: null, type: 'light', attribution: '© Stadia Maps © Stamen Design © OpenStreetMap', maxZoom: 20 },
     'stamen-toner-dark': { provider: 'stamen', label: 'Stamen Toner Lite', url: _getStamenUrl, invertFilter: INVERT_CSS, type: 'dark', attribution: '© Stadia Maps © Stamen Design © OpenStreetMap', maxZoom: 20 },
-    'esri-darkgray-labels': { provider: 'esri', label: 'Esri Dark Gray Canvas', url: function() { return 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'; }, invertFilter: null, type: 'dark', attribution: 'Tiles © Esri', maxZoom: 19 }
+    'usgs-topo': { provider: 'usgs', label: 'USGS Topographic', url: function() { return 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}'; }, invertFilter: null, type: 'light', attribution: 'U.S. Geological Survey, National Geospatial Program', maxZoom: 16 },
+    'usgs-imagery': { provider: 'usgs', label: 'USGS Imagery', url: function() { return 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}'; }, invertFilter: null, type: 'light', attribution: 'U.S. Geological Survey, National Geospatial Program', maxZoom: 16 },
+    'esri-darkgray-labels': { provider: 'esri', label: 'Esri Dark Gray Canvas', url: function() { return 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'; }, refUrl: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', invertFilter: null, type: 'dark', attribution: 'Tiles © Esri', maxZoom: 19 }
   };
 
   var REGISTRY = {};
@@ -65,6 +76,8 @@
 
     var HAS_CARTO = !_cfg || !_cfg.providers || !_cfg.providers.carto || _cfg.providers.carto.enabled !== false;
     var HAS_OSM = _cfg && _cfg.providers && _cfg.providers.osm && _cfg.providers.osm.enabled;
+    var HAS_OPENTOPOMAP = _cfg && _cfg.providers && _cfg.providers.opentopomap && _cfg.providers.opentopomap.enabled;
+    var HAS_USGS = _cfg && _cfg.providers && _cfg.providers.usgs && _cfg.providers.usgs.enabled;
     var HAS_STAMEN = _cfg && _cfg.providers && _cfg.providers.stamen && _cfg.providers.stamen.enabled && !!_cfg.providers.stamen.token;
     var HAS_ESRI = true; // Kept for backwards compatibility
 
@@ -73,7 +86,9 @@
       var style = BASE_STYLES[key];
       if (style.provider === 'carto' && HAS_CARTO) REGISTRY[key] = style;
       if (style.provider === 'osm' && HAS_OSM) REGISTRY[key] = style;
+      if (style.provider === 'opentopomap' && HAS_OPENTOPOMAP) REGISTRY[key] = style;
       if (style.provider === 'stamen' && HAS_STAMEN) REGISTRY[key] = style;
+      if (style.provider === 'usgs' && HAS_USGS) REGISTRY[key] = style;
       if (style.provider === 'esri' && HAS_ESRI) REGISTRY[key] = style;
     }
 
@@ -184,6 +199,19 @@
   window.MC_setServerDefaultLightTileProvider = setServerDefaultLight;
   window.MC_applyTileFilter             = applyTileFilter;
 
+  /**
+   * Resolve a registry id to a concrete tile-URL string, invoking function-typed
+   * `url` builders so callers never hand L.tileLayer a function (#1614). Returns
+   * `fallback` when the id isn't in the active registry (e.g. provider disabled).
+   * Lets non-map pages request a specific style without duplicating the URL.
+   */
+  window.MC_tileUrlById = function (id, fallback) {
+    var p = _hasId(id) ? REGISTRY[id] : null;
+    var u = p && (p.url || p.baseUrl);
+    if (!u) return fallback;
+    return (typeof u === 'function') ? u() : u;
+  };
+
 
   /**
    * Build and attach a Leaflet layer control listing "Auto (follows theme)"
@@ -250,7 +278,17 @@
       function _makeLayer(id) {
         var p   = REGISTRY[id];
         var url = typeof p.url === 'function' ? p.url() : p.url;
-        var layer = L.tileLayer(url, { attribution: p.attribution || '', maxZoom: p.maxZoom || 19 });
+        var opts = { attribution: p.attribution || '', maxZoom: p.maxZoom || 19 };
+        var layer = L.tileLayer(url, opts);
+
+        // Two-layer providers (Esri Dark Gray Canvas) ship their place labels as
+        // a separate transparent reference tileset that has to be stacked on the
+        // base. The theme-synced path in map.js/live.js already does this; the
+        // layer control did not, so picking such a provider explicitly produced
+        // a map with no place names at all.
+        if (p.refUrl && typeof L.layerGroup === 'function') {
+          layer = L.layerGroup([layer, L.tileLayer(p.refUrl, opts)]);
+        }
         
         // Every explicit layer enforces its own filter and locks the pane
         layer.on('add', function () {

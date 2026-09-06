@@ -9,16 +9,16 @@ import (
 
 // RoleStats summarises one role's population and clock-skew posture.
 type RoleStats struct {
-	Role               string  `json:"role"`
-	NodeCount          int     `json:"nodeCount"`
-	WithSkew           int     `json:"withSkew"`
-	MeanAbsSkewSec     float64 `json:"meanAbsSkewSec"`
-	MedianAbsSkewSec   float64 `json:"medianAbsSkewSec"`
-	OkCount            int     `json:"okCount"`
-	WarningCount       int     `json:"warningCount"`
-	CriticalCount      int     `json:"criticalCount"`
-	AbsurdCount        int     `json:"absurdCount"`
-	NoClockCount       int     `json:"noClockCount"`
+	Role             string  `json:"role"`
+	NodeCount        int     `json:"nodeCount"`
+	WithSkew         int     `json:"withSkew"`
+	MeanAbsSkewSec   float64 `json:"meanAbsSkewSec"`
+	MedianAbsSkewSec float64 `json:"medianAbsSkewSec"`
+	OkCount          int     `json:"okCount"`
+	WarningCount     int     `json:"warningCount"`
+	CriticalCount    int     `json:"criticalCount"`
+	AbsurdCount      int     `json:"absurdCount"`
+	NoClockCount     int     `json:"noClockCount"`
 }
 
 // RoleAnalyticsResponse is the payload returned by /api/analytics/roles.

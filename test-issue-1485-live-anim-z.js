@@ -83,8 +83,13 @@ console.log('\n=== #1485 live anim z-order C: per-shape inheritance ===');
 // (regression detector if someone moves circles to the default pane).
 const animAddTo = (liveSrc.match(/\.addTo\(animLayer\)/g) || []).length;
 const pathsAddTo = (liveSrc.match(/\.addTo\(pathsLayer\)/g) || []).length;
-assert(animAddTo >= 3,
-  'animLayer still hosts >=3 .addTo() animation shapes (got ' + animAddTo + ')');
+// Was >= 3. #1490 moved the flying dot off Leaflet SVG onto a hardware-
+// accelerated <canvas> overlay, retiring one call site by design; only the
+// static fade-tail shapes still go through animLayer. The guard is against
+// shapes drifting to the DEFAULT pane, so the baseline moves with the
+// implementation rather than pinning a count #1490 deliberately reduced.
+assert(animAddTo >= 2,
+  'animLayer still hosts >=2 .addTo() animation shapes (got ' + animAddTo + ')');
 assert(pathsAddTo >= 3,
   'pathsLayer still hosts >=3 .addTo() trail shapes (got ' + pathsAddTo + ')');
 

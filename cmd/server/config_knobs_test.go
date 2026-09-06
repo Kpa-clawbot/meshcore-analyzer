@@ -67,4 +67,3 @@ func TestGraphPruneOlderThan(t *testing.T) {
 		t.Errorf("wrong edge survived prune: %+v", edges[0])
 	}
 }
-

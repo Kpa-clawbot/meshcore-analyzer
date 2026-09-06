@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/meshcore-analyzer/packetpath"
 )
 
 // NeighborEdgesBuilderInterval is how often the ingestor rescans
@@ -35,6 +37,15 @@ const neighborBuilderSlowTickThreshold = 5 * time.Second
 // independent of the server package.
 const payloadADVERT = 0x04
 
+// payloadAnonReq mirrors PayloadANON_REQ in cmd/server/decoder.go (#1777).
+// ANON_REQ carries the sender's full Ed25519 ephemeral pubkey
+// (decoder.go's EphemeralPubKey field), unlike REQ/RESP/PATH/TXT which
+// only carry a 1-byte truncated hash of the originator in src/dst — not
+// enough to seed a trustworthy neighbor edge (~1/256 collision odds).
+// ANON_REQ is therefore treated like ADVERT for the originator↔path[0]
+// edge; other non-ADVERT types are deliberately excluded.
+const payloadAnonReq = 0x07
+
 // edgeRow is one row to upsert into neighbor_edges. (a, b) is already
 // canonical-ordered (a <= b).
 type edgeRow struct {
@@ -49,7 +60,7 @@ type edgeRow struct {
 // The function returns a stop closure. Initial build runs synchronously
 // before the ticker starts so the server's first snapshot load picks
 // up real data instead of an empty table.
-func (s *Store) StartNeighborEdgesBuilder(interval time.Duration) func() {
+func (s *Store) StartNeighborEdgesBuilder(interval time.Duration, trust *packetpath.TrustConfig) func() {
 	if interval <= 0 {
 		interval = NeighborEdgesBuilderInterval
 	}
@@ -74,7 +85,7 @@ func (s *Store) StartNeighborEdgesBuilder(interval time.Duration) func() {
 		log.Printf("[neighbor-build] initial neighbor-graph refresh error: %v", err)
 	}
 	for {
-		n, err := s.buildAndPersistNeighborEdges()
+		n, err := s.buildAndPersistNeighborEdges(trust)
 		if err != nil {
 			log.Printf("[neighbor-build] initial build error: %v", err)
 			break
@@ -100,7 +111,7 @@ func (s *Store) StartNeighborEdgesBuilder(interval time.Duration) func() {
 				if err := s.RefreshPrefixIndex(); err != nil {
 					log.Printf("[neighbor-build] prefix-index refresh error: %v", err)
 				}
-				n, err := s.buildAndPersistNeighborEdges()
+				n, err := s.buildAndPersistNeighborEdges(trust)
 				// Refresh the neighbor-graph snapshot after the edges
 				// build (#1560) so the context-aware resolver picks up
 				// newly persisted adjacencies on the next ingest.
@@ -155,7 +166,7 @@ func (s *Store) StartNeighborEdgesBuilder(interval time.Duration) func() {
 // SELECT of (lowered) pubkey prefixes from nodes. Prefixes with
 // multiple candidates are skipped (matches the conservative
 // resolution rule in cmd/server/extractEdgesFromObs).
-func (s *Store) buildAndPersistNeighborEdges() (int, error) {
+func (s *Store) buildAndPersistNeighborEdges(trust *packetpath.TrustConfig) (int, error) {
 	prefixIdx, err := buildPrefixIndex(s.db)
 	if err != nil {
 		return 0, fmt.Errorf("build prefix index: %w", err)
@@ -202,29 +213,38 @@ func (s *Store) buildAndPersistNeighborEdges() (int, error) {
 		if err := rows.Scan(&payloadType, &decodedJSON, &fromPubkey, &pathJSON, &observerID, &epochTs); err != nil {
 			continue
 		}
+		isAdvert := payloadType.Valid && payloadType.Int64 == int64(payloadADVERT)
+		isAnonReq := payloadType.Valid && payloadType.Int64 == int64(payloadAnonReq)
+		// #1777: ANON_REQ's ephemeralPubKey is as trustworthy an originator
+		// identity as ADVERT's pubKey — see payloadAnonReq doc comment.
+		hasFullOriginator := isAdvert || isAnonReq
+
 		fromNode := strings.ToLower(fromPubkey)
 		if fromNode == "" {
-			fromNode = strings.ToLower(extractPubkeyFromAdvertJSON(decodedJSON))
+			if isAdvert {
+				fromNode = strings.ToLower(extractPubkeyFromAdvertJSON(decodedJSON))
+			} else if isAnonReq {
+				fromNode = strings.ToLower(extractPubkeyFromAnonReqJSON(decodedJSON))
+			}
 		}
-		isAdvert := payloadType.Valid && payloadType.Int64 == int64(payloadADVERT)
 		ts := time.Unix(epochTs, 0).UTC().Format(time.RFC3339)
 		observerPK := strings.ToLower(observerID)
 		path := parsePathArray(pathJSON)
 
 		if len(path) == 0 {
-			if isAdvert && fromNode != "" && fromNode != observerPK && observerPK != "" {
+			if hasFullOriginator && fromNode != "" && fromNode != observerPK && observerPK != "" {
 				edges = append(edges, canonEdge(fromNode, observerPK, ts))
 			}
 			continue
 		}
-		if isAdvert && fromNode != "" {
-			if resolved, ok := resolvePrefix(prefixIdx, path[0]); ok && resolved != fromNode {
+		if hasFullOriginator && fromNode != "" {
+			if resolved, ok := resolvePrefix(prefixIdx, path[0], trust); ok && resolved != fromNode {
 				edges = append(edges, canonEdge(fromNode, resolved, ts))
 			}
 		}
 		if observerPK != "" {
 			last := path[len(path)-1]
-			if resolved, ok := resolvePrefix(prefixIdx, last); ok && resolved != observerPK {
+			if resolved, ok := resolvePrefix(prefixIdx, last, trust); ok && resolved != observerPK {
 				edges = append(edges, canonEdge(observerPK, resolved, ts))
 			}
 		}
@@ -325,7 +345,19 @@ func buildPrefixIndex(db *sql.DB) (prefixIndex, error) {
 // candidate matches, otherwise (zero || multiple), it returns ok=false
 // (matches the conservative server-side resolver in
 // cmd/server/extractEdgesFromObs).
-func resolvePrefix(idx prefixIndex, hop string) (string, bool) {
+func resolvePrefix(idx prefixIndex, hop string, trust *packetpath.TrustConfig) (string, bool) {
+	// #1784: gate on prefix length before consulting the index. A hop
+	// hash short enough to fall below the operator's trust threshold is
+	// not mapping evidence even when it happens to resolve to exactly
+	// one candidate today — uniqueness is relative to the nodes we
+	// currently know about, so an unknown or newly joined repeater
+	// sharing that prefix silently turns it into a wrong edge. Gating
+	// here rather than at each call site means every consumer of the
+	// resolver (originator edge, observer edge, and any future hop
+	// pair) inherits the threshold automatically.
+	if !packetpath.MeetsPathTrust(len(hop)/2, trust) {
+		return "", false
+	}
 	h := strings.ToLower(hop)
 	candidates := idx[h]
 	if len(candidates) != 1 {

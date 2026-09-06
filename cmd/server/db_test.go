@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -2325,5 +2328,162 @@ func TestLoadIndexesRelayHopsFromResolvedPath(t *testing.T) {
 	}
 	if store.byNode[relayPubkey][0].Hash != "relaytest0001hash" {
 		t.Errorf("relay byNode entry has wrong hash: %s", store.byNode[relayPubkey][0].Hash)
+	}
+}
+
+// failingQuerier wraps a real *sql.DB but forces the PRAGMA probe for a chosen
+// table to fail, so the #1901 fail-loud path can be exercised deterministically.
+type failingQuerier struct {
+	real   *sql.DB
+	failOn string // if the query text contains this substring, return err
+	err    error
+}
+
+func (f *failingQuerier) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if f.failOn != "" && strings.Contains(query, f.failOn) {
+		return nil, f.err
+	}
+	return f.real.QueryContext(ctx, query, args...)
+}
+
+// TestDetectSchemaFailsLoudOnProbeError is the regression guard for #1901: a
+// probe-query failure must surface as an error so OpenDB can abort startup,
+// instead of being silently swallowed and leaving the server in v2 mode against
+// a v3 database for the whole process lifetime.
+func TestDetectSchemaFailsLoudOnProbeError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "v3.db")
+	conn, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetMaxOpenConns(1)
+	// v3-shaped: observations carries observer_idx.
+	if _, err := conn.Exec(`CREATE TABLE observations (id INTEGER PRIMARY KEY, observer_idx INTEGER)`); err != nil {
+		conn.Close()
+		t.Fatal(err)
+	}
+	conn.Exec(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY)`)
+	conn.Exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`)
+	conn.Close()
+
+	real, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer real.Close()
+
+	q := &failingQuerier{real: real, failOn: "table_info(observations)", err: errors.New("injected probe failure")}
+	db := &DB{}
+	if err := db.detectSchema(context.Background(), q); err == nil {
+		t.Fatal("detectSchema must return an error when a schema probe fails (#1901)")
+	}
+	if db.isV3 {
+		t.Error("isV3 must not be set when detection failed")
+	}
+}
+
+// TestDetectSchemaV3AndV2 verifies detection sets isV3 correctly for both schema
+// shapes via the real OpenDB path, and that both open cleanly.
+func TestDetectSchemaV3AndV2(t *testing.T) {
+	dir := t.TempDir()
+
+	v3 := filepath.Join(dir, "v3.db")
+	c, err := sql.Open("sqlite", v3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetMaxOpenConns(1)
+	c.Exec(`CREATE TABLE observations (id INTEGER PRIMARY KEY, observer_idx INTEGER)`)
+	c.Exec(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, hash TEXT)`)
+	c.Exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`)
+	c.Close()
+	db, err := OpenDB(v3)
+	if err != nil {
+		t.Fatalf("OpenDB v3: %v", err)
+	}
+	if !db.isV3 {
+		t.Error("isV3 should be true when observations.observer_idx exists")
+	}
+	db.Close()
+
+	v2 := filepath.Join(dir, "v2.db")
+	c2, err := sql.Open("sqlite", v2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2.SetMaxOpenConns(1)
+	c2.Exec(`CREATE TABLE observations (id INTEGER PRIMARY KEY, observer_id INTEGER)`)
+	c2.Exec(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, hash TEXT)`)
+	c2.Exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`)
+	c2.Close()
+	db2, err := OpenDB(v2)
+	if err != nil {
+		t.Fatalf("OpenDB v2: %v", err)
+	}
+	if db2.isV3 {
+		t.Error("isV3 should be false when observations has no observer_idx")
+	}
+	db2.Close()
+}
+
+// #1899: the sidebar preview must come from the region being filtered on.
+//
+// GetChannels scoped msg_count and last_activity through observations/observers,
+// but the sample_json subquery that feeds lastMessage/lastSender did not join
+// either table. It therefore always returned the globally newest message on the
+// channel, so an operator filtering on their own region saw a preview line from
+// a message their observers never heard.
+func TestGetChannelsPreviewRespectsRegionFilter(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs1', 'Observer1', 'SJC')`)
+	db.conn.Exec(`INSERT INTO observers (id, name, iata) VALUES ('obs2', 'Observer2', 'SFO')`)
+
+	// One channel, seen in both regions. The SFO message is the newer one, so it
+	// is what an unscoped preview would show.
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
+		VALUES ('AA', 'hash1', '2026-01-15T10:00:00Z', 1, 5,
+		'{"type":"CHAN","channel":"#shared","text":"Alice: heard in SJC","sender":"Alice"}', '#shared')`)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, timestamp)
+		VALUES (1, 1, 12.0, -90, 1736935200)`)
+
+	db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json, channel_hash)
+		VALUES ('BB', 'hash2', '2026-01-15T10:05:00Z', 1, 5,
+		'{"type":"CHAN","channel":"#shared","text":"Bob: heard in SFO","sender":"Bob"}', '#shared')`)
+	db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, timestamp)
+		VALUES (2, 2, 14.0, -88, 1736935500)`)
+
+	sjc, err := db.GetChannels("SJC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sjc) != 1 {
+		t.Fatalf("expected 1 channel for SJC, got %d", len(sjc))
+	}
+	if got := sjc[0]["lastSender"]; got != "Alice" {
+		t.Errorf("preview sender = %v, want Alice: SJC must not be shown Bob's message, "+
+			"which only SFO heard", got)
+	}
+	if got := sjc[0]["lastMessage"]; got != "heard in SJC" {
+		t.Errorf("preview message = %v, want \"heard in SJC\"", got)
+	}
+
+	// The other direction, so the test cannot pass by always picking the oldest.
+	sfo, err := db.GetChannels("SFO")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sfo[0]["lastSender"]; got != "Bob" {
+		t.Errorf("preview sender = %v, want Bob for SFO", got)
+	}
+
+	// Unscoped still shows the globally newest, which was never in question.
+	all, err := db.GetChannels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := all[0]["lastSender"]; got != "Bob" {
+		t.Errorf("unfiltered preview sender = %v, want Bob (the newest message)", got)
 	}
 }

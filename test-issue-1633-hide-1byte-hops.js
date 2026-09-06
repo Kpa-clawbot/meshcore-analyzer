@@ -444,5 +444,172 @@ test('[kb #1] anti-tautology: tests reference the actual production files (not i
   );
 });
 
+// ─────────────────────────────────────────────────────────────────────
+
+// #1784 path trust threshold — configurable minimum hash bytes for mapping
+// ─────────────────────────────────────────────────────────────────────
+
+console.log('\n=== #1784: path trust threshold ===');
+
+test('#1784: MC_getPathTrustThreshold defaults to 1 (backward compatible)', () => {
+  // Deliberately 1, matching DefaultMinHashBytesForMapping in
+  // internal/packetpath/trust.go. There is no UI control for this threshold —
+  // it is config.json only and needs a restart — so a stricter default would
+  // silently tighten every instance on upgrade with nothing in the UI saying
+  // why the neighbour graph shrank. Operators opt in with
+  // pathTrust.minHashBytesForMapping: 2 or 3.
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  delete ctx.window.PATH_TRUST;
+  assert.strictEqual(ctx.window.MC_getPathTrustThreshold(), 1,
+    'default path trust threshold must be 1 so an upgrade changes nothing');
+});
+
+test('#1784: MC_getPathTrustThreshold reads window.PATH_TRUST', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 2;
+  assert.strictEqual(ctx.window.MC_getPathTrustThreshold(), 2,
+    'must return configured PATH_TRUST');
+  ctx.window.PATH_TRUST = 3;
+  assert.strictEqual(ctx.window.MC_getPathTrustThreshold(), 3,
+    'must return configured PATH_TRUST=3');
+});
+
+test('#1784: MC_meetsPathTrust with threshold 1 (trust-all)', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 1;
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('AB'), true, '1-byte hop meets threshold 1');
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('ABCD'), true, '2-byte hop meets threshold 1');
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('ABCDEF'), true, '3-byte hop meets threshold 1');
+});
+
+test('#1784: MC_meetsPathTrust with threshold 2 (exclude 1-byte)', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 2;
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('AB'), false, '1-byte hop excluded');
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('ABCD'), true, '2-byte hop trusted');
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('ABCDEF'), true, '3-byte hop trusted');
+});
+
+test('#1784: MC_meetsPathTrust with threshold 3 (strictest)', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 3;
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('AB'), false, '1-byte excluded');
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('ABCD'), false, '2-byte excluded');
+  assert.strictEqual(ctx.window.MC_meetsPathTrust('ABCDEF'), true, '3-byte trusted');
+});
+
+test('#1784: MC_pathBelowTrust all-1-byte path at threshold 2', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 2;
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['AB', '12']), true,
+    'all-1-byte path must be below trust');
+});
+
+test('#1784: MC_pathBelowTrust mixed path at threshold 2', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 2;
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['AB', 'CDEF']), false,
+    'mixed 1-byte/2-byte path must NOT be below trust');
+});
+
+test('#1784: MC_pathBelowTrust at threshold 1 (trust-all)', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 1;
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['AB']), false,
+    'no path below trust at threshold 1');
+});
+
+test('#1784: empty/null hops are not below trust', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 2;
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(null), false, 'null is not below trust');
+  assert.strictEqual(ctx.window.MC_pathBelowTrust([]), false, 'empty is not below trust');
+});
+
+test('#1784: MC_meetsPathTrust handles null/undefined safely', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 2;
+  assert.strictEqual(ctx.window.MC_meetsPathTrust(null), false, 'null must not meet trust');
+  assert.strictEqual(ctx.window.MC_meetsPathTrust(undefined), false, 'undefined must not meet trust');
+});
+
+// #1784 consumer wiring — source-grep guards for trust threshold wiring
+// ─────────────────────────────────────────────────────────────────────
+
+console.log('\n=== #1784: consumer wiring guards ===');
+
+test('#1784: map.js references MC_pathBelowTrust for trust-gated route display', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'public/map.js'), 'utf8');
+  assert.ok(src.indexOf('MC_pathBelowTrust') !== -1,
+    'map.js must call MC_pathBelowTrust to gate route drawing on trust threshold');
+  assert.ok(src.indexOf('Route not displayed') !== -1,
+    'map.js must show a clear message when route is below trust threshold');
+  const cleanup = src.indexOf('map.removeControl(window.__mc_routeTrustControl)');
+  const trustGate = src.indexOf('if (window.MC_pathBelowTrust && window.MC_pathBelowTrust(hopKeys))');
+  assert.ok(cleanup >= 0 && cleanup < trustGate,
+    'map.js must remove a previous trust message before evaluating the next route');
+});
+
+test('#1784: analytics.js references MC_meetsPathTrust for subpath filtering', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'public/analytics.js'), 'utf8');
+  assert.ok(src.indexOf('MC_meetsPathTrust') !== -1,
+    'analytics.js must call MC_meetsPathTrust to filter subpaths by trust');
+  assert.ok(src.indexOf('MC_getPathTrustThreshold') !== -1,
+    'analytics.js must read the trust threshold');
+  assert.ok(src.indexOf('trust threshold') !== -1,
+    'analytics.js must mention trust threshold in filter messages');
+});
+
+test('#1784: route-view.js references MC_meetsPathTrust for speculative annotation', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'public/route-view.js'), 'utf8');
+  assert.ok(src.indexOf('MC_meetsPathTrust') !== -1,
+    'route-view.js must call MC_meetsPathTrust to mark paths as speculative');
+  assert.ok(src.indexOf('belowTrust') !== -1,
+    'route-view.js must track belowTrust flag');
+  assert.ok(src.indexOf('speculative') !== -1,
+    'route-view.js must show speculative annotation for paths below trust');
+});
+
+test('#1784: live.js references MC_meetsPathTrust for Paths Through widget', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'public/live.js'), 'utf8');
+  assert.ok(src.indexOf('MC_meetsPathTrust') !== -1,
+    'live.js must call MC_meetsPathTrust in the Paths Through widget');
+  assert.ok(src.indexOf('pathTrust.minHashBytesForMapping') !== -1,
+    'live.js must mention the config key in trust messages');
+});
+
+test('#1784: nodes.js references MC_getPathTrustThreshold for confidence weights', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'public/nodes.js'), 'utf8');
+  assert.ok(src.indexOf('MC_getPathTrustThreshold') !== -1,
+    'nodes.js must read trust threshold for confidence weight adjustment');
+});
+
+test('#1784: anti-tautology — MC_pathBelowTrust returns correct boolean for given hops (not a stub)', () => {
+  const ctx = makeSandbox();
+  load(ctx, 'public/hop-filter.js');
+  ctx.window.PATH_TRUST = 2;
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['aabb']), false,
+    'single 2-byte hop must NOT be below trust at threshold=2');
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['aa']), true,
+    'single 1-byte hop must be below trust at threshold=2');
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['aa', 'bbcc', 'dd']), false,
+    'mixed path with one 2-byte hop must NOT be below trust');
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['aa', 'bb', 'cc']), true,
+    'all-1-byte path must be below trust at threshold=2');
+  ctx.window.PATH_TRUST = 1;
+  assert.strictEqual(ctx.window.MC_pathBelowTrust(['aa', 'bb']), false,
+    'all-1-byte path must NOT be below trust at threshold=1');
+});
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed > 0 ? 1 : 0);

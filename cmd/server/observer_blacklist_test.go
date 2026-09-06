@@ -17,9 +17,9 @@ func TestConfigIsObserverBlacklisted(t *testing.T) {
 		want bool
 	}{
 		{"OBS1", true},
-		{"obs1", true},   // case-insensitive
+		{"obs1", true}, // case-insensitive
 		{"OBS2", true},
-		{"Obs3", true},   // whitespace trimmed
+		{"Obs3", true}, // whitespace trimmed
 		{"obs4", false},
 		{"", false},
 	}

@@ -15,36 +15,36 @@ import (
 // ─── Neighbor API response types ───────────────────────────────────────────────
 
 type NeighborResponse struct {
-	Node              string             `json:"node"`
-	Neighbors         []NeighborEntry    `json:"neighbors"`
-	TotalObservations int                `json:"total_observations"`
+	Node              string          `json:"node"`
+	Neighbors         []NeighborEntry `json:"neighbors"`
+	TotalObservations int             `json:"total_observations"`
 }
 
 type NeighborEntry struct {
-	Pubkey      *string          `json:"pubkey"`
-	Prefix      string           `json:"prefix"`
-	Name        *string          `json:"name"`
-	Role        *string          `json:"role"`
-	Count       int              `json:"count"`
+	Pubkey *string `json:"pubkey"`
+	Prefix string  `json:"prefix"`
+	Name   *string `json:"name"`
+	Role   *string `json:"role"`
+	Count  int     `json:"count"`
 	// CountsByMode breaks Count down by observation hash-prefix mode in bytes
 	// (1, 2, 4, 6). Lets the frontend weight confidence by ambiguity rather
 	// than treating every sighting as equal evidence. Issue #1638.
-	CountsByMode map[int]int     `json:"counts_by_mode,omitempty"`
-	Score       float64          `json:"score"`
-	FirstSeen   string           `json:"first_seen"`
-	LastSeen    string           `json:"last_seen"`
-	AvgSNR      *float64         `json:"avg_snr"`
-	DistanceKm  *float64         `json:"distance_km,omitempty"`
-	Observers   []string         `json:"observers"`
-	Ambiguous   bool             `json:"ambiguous"`
-	Unresolved  bool             `json:"unresolved,omitempty"`
-	Candidates  []CandidateEntry `json:"candidates,omitempty"`
+	CountsByMode map[int]int      `json:"counts_by_mode,omitempty"`
+	Score        float64          `json:"score"`
+	FirstSeen    string           `json:"first_seen"`
+	LastSeen     string           `json:"last_seen"`
+	AvgSNR       *float64         `json:"avg_snr"`
+	DistanceKm   *float64         `json:"distance_km,omitempty"`
+	Observers    []string         `json:"observers"`
+	Ambiguous    bool             `json:"ambiguous"`
+	Unresolved   bool             `json:"unresolved,omitempty"`
+	Candidates   []CandidateEntry `json:"candidates,omitempty"`
 }
 
 type CandidateEntry struct {
-	Pubkey string  `json:"pubkey"`
-	Name   string  `json:"name"`
-	Role   string  `json:"role"`
+	Pubkey string `json:"pubkey"`
+	Name   string `json:"name"`
+	Role   string `json:"role"`
 }
 
 type NeighborGraphResponse struct {
@@ -91,6 +91,7 @@ func (s *Server) getNeighborGraph() *NeighborGraph {
 			if s.cfg != nil {
 				opts.EnableLog = s.cfg.DebugAffinity
 				opts.MaxEdgeKm = s.cfg.NeighborMaxEdgeKm()
+				opts.PathTrust = s.cfg.PathTrust
 			}
 			s.neighborGraph = BuildFromStoreWithOptions(s.store, opts)
 		} else {

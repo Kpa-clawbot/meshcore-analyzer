@@ -229,7 +229,7 @@ func TestNeighborAPI_MinCountFilter(t *testing.T) {
 
 func TestNeighborAPI_MinScoreFilter(t *testing.T) {
 	now := time.Now()
-	e1 := newEdge("aaaa", "bbbb", "bb", 100, now)                               // score ~1.0
+	e1 := newEdge("aaaa", "bbbb", "bb", 100, now)                     // score ~1.0
 	e2 := newEdge("aaaa", "cccc", "cc", 1, now.Add(-30*24*time.Hour)) // very low score
 	srv := makeTestServer(makeTestGraph(e1, e2))
 

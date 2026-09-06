@@ -1,2 +1,5 @@
 # Line ending normalization (CRLF → LF) — no functional changes
 b6e4ebf12eba21c78b72978e55052307ca72dbc1
+
+# gofmt -w sweep across all Go modules — no functional changes (#1859)
+d3a0259925417fb069b860ed8b54e81d02dff175

@@ -44,6 +44,19 @@ func resolveCommit() string {
 }
 
 func resolveVersion() string {
+	// Issue #1807: the release fast-path re-tags :edge -> :vX.Y.Z without a
+	// rebuild, so the ldflags-baked Version still reports "edge" on tagged
+	// releases. Resolution order: operator env override, then the
+	// .image-version file appended by the fast-path retag (mirrors the
+	// .git-commit pattern in resolveCommit), then the baked Version.
+	if v := strings.TrimSpace(os.Getenv("CORESCOPE_VERSION")); v != "" {
+		return v
+	}
+	if data, err := os.ReadFile(".image-version"); err == nil {
+		if v := strings.TrimSpace(string(data)); v != "" && v != "unknown" {
+			return v
+		}
+	}
 	if Version != "" {
 		return Version
 	}
@@ -73,11 +86,11 @@ func main() {
 	}
 
 	var (
-		configDir  string
-		port       int
-		dbPath     string
-		publicDir  string
-		pollMs     int
+		configDir string
+		port      int
+		dbPath    string
+		publicDir string
+		pollMs    int
 	)
 
 	flag.StringVar(&configDir, "config-dir", ".", "Directory containing config.json")
@@ -345,6 +358,8 @@ func main() {
 	// WebSocket hub
 	hub := NewHub()
 	hub.SetAllowedOrigins(cfg.CORSAllowedOrigins)
+	hub.ConfigureLimits(cfg.WSMaxConnsPerIP(), cfg.WSUpgradesPerMinPerIP(),
+		cfg.WSTrustedProxies(), cfg.WSDeny()) // #1794
 	hub.upgrader.EnableCompression = cfg.WSCompressionEnabled()
 
 	// HTTP server

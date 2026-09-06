@@ -46,10 +46,10 @@ var cdnWarned atomic.Bool
 // using them as a CDN signal produces a false positive on every
 // reverse-proxied install (issue #1561 round-1 review).
 var cdnHeaders = []string{
-	"CF-Connecting-IP",  // Cloudflare
-	"CF-Ray",            // Cloudflare
-	"Fastly-Client-IP",  // Fastly
-	"True-Client-IP",    // Akamai (also set by Cloudflare Enterprise)
+	"CF-Connecting-IP", // Cloudflare
+	"CF-Ray",           // Cloudflare
+	"Fastly-Client-IP", // Fastly
+	"True-Client-IP",   // Akamai (also set by Cloudflare Enterprise)
 }
 
 // cdnDetectionMiddleware inspects each incoming request for CDN

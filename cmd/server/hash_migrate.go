@@ -10,9 +10,23 @@ import (
 // both the DB and the in-memory byHash index.  The migration is idempotent:
 // once all hashes match the current formula it completes instantly.
 func migrateContentHashesAsync(store *PacketStore, batchSize int, yieldDuration time.Duration) {
+	// #1856: every DB failure below continues to the next batch, so the loop
+	// always reaches the deferred completion. Setting the flag unconditionally
+	// therefore reported success after migrating nothing, which is exactly what
+	// happens on the read-only handle the server holds since #1283: begin,
+	// prepare and commit all fail, every batch is skipped, and /api/stats then
+	// answers hashMigrationComplete: true.
+	failedBatches := 0
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[hash-migrate] panic recovered: %v", r)
+			failedBatches++
+		}
+		if failedBatches > 0 {
+			log.Printf("[hash-migrate] INCOMPLETE: %d batch(es) could not be written; "+
+				"hashMigrationComplete stays false. On a read-only DB handle this is expected "+
+				"and the migration belongs in the ingestor (#1856).", failedBatches)
+			return
 		}
 		store.hashMigrationComplete.Store(true)
 	}()
@@ -57,12 +71,14 @@ func migrateContentHashesAsync(store *PacketStore, batchSize int, yieldDuration 
 		dbTx, err := store.db.conn.Begin()
 		if err != nil {
 			log.Printf("[hash-migrate] begin tx: %v", err)
+			failedBatches++
 			continue
 		}
 		stmt, err := dbTx.Prepare("UPDATE transmissions SET hash = ? WHERE id = ?")
 		if err != nil {
 			log.Printf("[hash-migrate] prepare: %v", err)
 			dbTx.Rollback()
+			failedBatches++
 			continue
 		}
 
@@ -83,6 +99,7 @@ func migrateContentHashesAsync(store *PacketStore, batchSize int, yieldDuration 
 
 		if err := dbTx.Commit(); err != nil {
 			log.Printf("[hash-migrate] commit: %v", err)
+			failedBatches++
 			continue
 		}
 

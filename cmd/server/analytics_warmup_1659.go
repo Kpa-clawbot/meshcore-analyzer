@@ -19,28 +19,28 @@
 //
 // Two correctness invariants:
 //
-//   1. (#1688 munger #5) Only mark first-pass-done when BOTH:
-//        a. a recomputer pass has completed, AND
-//        b. the chunked loader has finished (s.LoadComplete()).
-//      The gate's `readyGate` callback is wired by
-//      StartAnalyticsRecomputers to `store.LoadComplete`. Passes that
-//      complete while loadComplete is still false leave the gate in
-//      the warming-up state; the NEXT pass after loadComplete flips
-//      true is the one that opens the gate.
+//  1. (#1688 munger #5) Only mark first-pass-done when BOTH:
+//     a. a recomputer pass has completed, AND
+//     b. the chunked loader has finished (s.LoadComplete()).
+//     The gate's `readyGate` callback is wired by
+//     StartAnalyticsRecomputers to `store.LoadComplete`. Passes that
+//     complete while loadComplete is still false leave the gate in
+//     the warming-up state; the NEXT pass after loadComplete flips
+//     true is the one that opens the gate.
 //
-//   2. (#1688 munger #2 + kent-beck #2) The gate MUST lift in bounded
-//      time. If compute() panics on every pass, hangs indefinitely,
-//      or returns nil forever, an unguarded gate would leave the
-//      503 banner permanent. Two safeguards:
-//        a. compute() panics are already caught by runOnce()'s
-//           defer recover(); we additionally call markFirstPassDone
-//           on EVERY pass (even nil-result), so a recomputer that
-//           returns nil but doesn't panic still flips the gate.
-//        b. A hard fallback timeout (warmupForceTimeout, 60s by
-//           default) elapsed since the recomputer was constructed
-//           forces IsWarmingUp_1659() to false — degraded mode
-//           (serve whatever cache exists, possibly empty) is
-//           strictly better than a permanent 503.
+//  2. (#1688 munger #2 + kent-beck #2) The gate MUST lift in bounded
+//     time. If compute() panics on every pass, hangs indefinitely,
+//     or returns nil forever, an unguarded gate would leave the
+//     503 banner permanent. Two safeguards:
+//     a. compute() panics are already caught by runOnce()'s
+//     defer recover(); we additionally call markFirstPassDone
+//     on EVERY pass (even nil-result), so a recomputer that
+//     returns nil but doesn't panic still flips the gate.
+//     b. A hard fallback timeout (warmupForceTimeout, 60s by
+//     default) elapsed since the recomputer was constructed
+//     forces IsWarmingUp_1659() to false — degraded mode
+//     (serve whatever cache exists, possibly empty) is
+//     strictly better than a permanent 503.
 //
 // Concurrency (#1688 munger #3):
 //

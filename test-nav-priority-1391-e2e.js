@@ -197,7 +197,12 @@ async function main() {
         // EXACTLY the non-active non-high routes so the channels link (when
         // active) stays inline and is not orphaned in the dropdown.
         if (w <= 1100) {
-          const ALL_NON_HIGH = ['#/channels', '#/tools', '#/observers', '#/analytics', '#/perf', '#/audio-lab'];
+          // Every nav-link in index.html WITHOUT data-priority="high". Adding a
+          // nav entry means updating this list too, or the exactly-equals
+          // assertion below fails on the new route. That is the fourth place a
+          // nav link has to be registered, after index.html, bottom-nav.js
+          // MORE_ROUTES and nav-drawer.js ROUTES.
+          const ALL_NON_HIGH = ['#/channels', '#/tools', '#/observers', '#/analytics', '#/perf', '#/audio-lab', '#/scope-audit'];
           const expectedMore = ALL_NON_HIGH.filter(h => h !== expectedActive).sort();
           assert.deepStrictEqual(
             [...data.moreItems].sort(),

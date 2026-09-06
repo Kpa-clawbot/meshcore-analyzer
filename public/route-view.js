@@ -361,7 +361,15 @@
           ? window.MC_filterPathHops(rawHops)
           : rawHops;
         var k = hops.length ? hops.join('→') : ('⟨all-1byte⟩::' + rawHops.join('→'));
-        if (!pathGroups[k]) pathGroups[k] = { key: k, observers: [], count: 0, allOneByte: hops.length === 0 && rawHops.length > 0, rawHops: rawHops };
+        var _bt = false;
+        // #1784 — trust threshold: if any raw hop is below the configured
+        // minimum hash bytes, mark for speculative display treatment.
+        if (rawHops.length > 0 && typeof window !== 'undefined' && window.MC_meetsPathTrust) {
+          for (var _bi = 0; _bi < rawHops.length; _bi++) {
+            if (!window.MC_meetsPathTrust(rawHops[_bi])) { _bt = true; break; }
+          }
+        }
+        if (!pathGroups[k]) pathGroups[k] = { key: k, observers: [], count: 0, allOneByte: hops.length === 0 && rawHops.length > 0, belowTrust: _bt, rawHops: rawHops };
         pathGroups[k].observers.push(p.observer || '?');
         pathGroups[k].count++;
       });
@@ -379,6 +387,12 @@
           var hops = g.key.split('→').filter(function(s){return s.length>0;});
           hopsCount = hops.length;
           hopsHtml = hops.map(escapeHtml).join(' → ');
+          // #1784 — trust threshold: append a speculative annotation when any
+          // hop is below the configured minimum hash bytes for mapping.
+          if (g.belowTrust) {
+            var _tt = (typeof window !== 'undefined' && window.MC_getPathTrustThreshold) ? window.MC_getPathTrustThreshold() : 1;
+            hopsHtml += ' <span class="text-muted" style="font-size:0.85em" title="One or more hops in this path have a shorter prefix than the configured ' + _tt + '-byte trust threshold. These observations count as speculative — raise pathTrust.minHashBytesForMapping in config.json for stricter evidence.">(speculative, <' + _tt + '-byte hops)</span>';
+          }
         }
         return '<li class="mc-rt-path-row" data-path-key="' + escapeHtml(g.key) + '" data-obs-count="' + g.count + '" tabindex="0" role="button" aria-label="Isolate path with ' + hopsCount + ' hops, seen by ' + g.count + ' of ' + totalObservers + ' observers">' +
           '<span class="mc-rt-path-count">' + g.count + '/' + totalObservers + '</span>' +

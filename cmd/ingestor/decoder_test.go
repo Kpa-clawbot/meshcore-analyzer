@@ -168,8 +168,8 @@ func TestDecodeAdvertFull(t *testing.T) {
 	signature := strings.Repeat("BB", 64)
 	// flags: 0x92 = repeater(2) | hasLocation(0x10) | hasName(0x80)
 	flags := "92"
-	lat := "40933402" // ~37.0
-	lon := "E0E6B8F8" // ~-122.1
+	lat := "40933402"          // ~37.0
+	lon := "E0E6B8F8"          // ~-122.1
 	name := "546573744E6F6465" // "TestNode"
 
 	hex := "1200" + pubkey + timestamp + signature + flags + lat + lon + name
@@ -230,7 +230,7 @@ func TestDecodeAdvertFull(t *testing.T) {
 func TestDecodeAdvertTypeEnums(t *testing.T) {
 	makeAdvert := func(flagsByte byte) *DecodedPacket {
 		hex := "1200" + strings.Repeat("AA", 32) + "00000000" + strings.Repeat("BB", 64) +
-			strings.ToUpper(string([]byte{hexDigit(flagsByte>>4), hexDigit(flagsByte & 0x0f)}))
+			strings.ToUpper(string([]byte{hexDigit(flagsByte >> 4), hexDigit(flagsByte & 0x0f)}))
 		pkt, err := DecodePacket(hex, nil, false)
 		if err != nil {
 			t.Fatal(err)
@@ -523,6 +523,12 @@ func TestDecodeAnonReqValid(t *testing.T) {
 	if p.MAC != "aabb" {
 		t.Errorf("mac=%s, want aabb", p.MAC)
 	}
+	// #1864: ANON_REQ must capture the FULL 32-byte source pubkey (buf[1:33]),
+	// not a 1-byte srcHash. buf[i]=i for i in 1..32 -> 0102..20.
+	wantPK := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	if p.SrcPubKey != wantPK {
+		t.Errorf("srcPubKey=%s, want %s", p.SrcPubKey, wantPK)
+	}
 }
 
 func TestDecodePathPayloadShort(t *testing.T) {
@@ -567,8 +573,8 @@ func TestDecodeTraceValid(t *testing.T) {
 	// tag(4) + authCode(4) + flags(1) + pathData
 	binary.LittleEndian.PutUint32(buf[0:4], 1)          // tag = 1
 	binary.LittleEndian.PutUint32(buf[4:8], 0xDEADBEEF) // authCode
-	buf[8] = 0x02                                         // flags
-	buf[9] = 0xAA                                         // path data
+	buf[8] = 0x02                                       // flags
+	buf[9] = 0xAA                                       // path data
 	p := decodeTrace(buf)
 	if p.Error != "" {
 		t.Errorf("unexpected error: %s", p.Error)
@@ -940,7 +946,7 @@ func TestComputeContentHashTransportBeyondBuffer(t *testing.T) {
 	// Transport route (0x00 = TRANSPORT_FLOOD) with path claiming some bytes
 	// header=0x00, transport(4), pathByte=0x02 (2 hops, 1-byte hash)
 	// offset=1+4+1+2=8, buffer needs to be >= 8
-	hex := "00" + "AABB" + "CCDD" + "02" + strings.Repeat("CC", 6) // 20 chars = 10 bytes  
+	hex := "00" + "AABB" + "CCDD" + "02" + strings.Repeat("CC", 6) // 20 chars = 10 bytes
 	hash := ComputeContentHash(hex)
 	if len(hash) != 16 {
 		t.Errorf("hash length=%d, want 16", len(hash))
@@ -1026,8 +1032,9 @@ func TestComputeContentHashMatchesFirmware(t *testing.T) {
 // Packet: header=0x25 (FLOOD route=1, payload_type=TRACE=0x09), pathByte=0x02
 // (2 hops, 1-byte hash), path=[AA,BB], payload=[DE,AD,BE,EF].
 // Hash input: [0x09, 0x02, 0x00, 0xDE, 0xAD, 0xBE, 0xEF]
-//   → SHA256 = b1baaf3bf0d0726c2672b1ec9e2665dc...
-//   → first 16 hex chars = "b1baaf3bf0d0726c"
+//
+//	→ SHA256 = b1baaf3bf0d0726c2672b1ec9e2665dc...
+//	→ first 16 hex chars = "b1baaf3bf0d0726c"
 func TestComputeContentHashTraceGoldenValue(t *testing.T) {
 	// TRACE packet: header byte 0x25 = payload_type 9 (TRACE), route_type 1 (FLOOD)
 	// pathByte 0x02 = hash_size 1, hash_count 2
@@ -1983,10 +1990,11 @@ func TestDecodeTracePayloadFailSetsAnomaly(t *testing.T) {
 // extracted by server but never written into decoded_json by ingestor).
 //
 // Packet 26022FF8116A23A80000000001C0DE1000DEDE:
-//   header  0x26 → TRACE (pt=9), DIRECT (rt=2)
-//   pathByte 0x02 → hash_size=1, hash_count=2
-//   header path: 2F F8 → SNR = [int8(0x2F)/4, int8(0xF8)/4] = [11.75, -2.0]
-//   payload (15B): tag=116A23A8 auth=00000000 flags=0x01 pathData=C0DE1000DEDE
+//
+//	header  0x26 → TRACE (pt=9), DIRECT (rt=2)
+//	pathByte 0x02 → hash_size=1, hash_count=2
+//	header path: 2F F8 → SNR = [int8(0x2F)/4, int8(0xF8)/4] = [11.75, -2.0]
+//	payload (15B): tag=116A23A8 auth=00000000 flags=0x01 pathData=C0DE1000DEDE
 func TestDecodeTraceExtractsSNRValues(t *testing.T) {
 	pkt, err := DecodePacket("26022FF8116A23A80000000001C0DE1000DEDE", nil, false)
 	if err != nil {

@@ -170,10 +170,10 @@ func TestRunStartupLoad_BgLoaderRunsAfterLoadChunkedSets_OldestLoaded(t *testing
 	})
 
 	var (
-		mu              sync.Mutex
-		lastChunkAt     time.Time
-		bgEntryAt       time.Time
-		chunkSawOldest  string
+		mu             sync.Mutex
+		lastChunkAt    time.Time
+		bgEntryAt      time.Time
+		chunkSawOldest string
 	)
 	store.OnChunkLoaded(func(rowsThisChunk, totalRows int) {
 		mu.Lock()

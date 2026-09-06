@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,10 +13,10 @@ import (
 type SkewSeverity string
 
 const (
-	SkewOK       SkewSeverity = "ok"       // < 5 min
-	SkewWarning  SkewSeverity = "warning"  // 5 min – 1 hour
-	SkewCritical SkewSeverity = "critical" // 1 hour – 30 days
-	SkewAbsurd   SkewSeverity = "absurd"   // > 30 days
+	SkewOK           SkewSeverity = "ok"            // < 5 min
+	SkewWarning      SkewSeverity = "warning"       // 5 min – 1 hour
+	SkewCritical     SkewSeverity = "critical"      // 1 hour – 30 days
+	SkewAbsurd       SkewSeverity = "absurd"        // > 30 days
 	SkewNoClock      SkewSeverity = "no_clock"      // > 365 days — uninitialized RTC
 	SkewBimodalClock SkewSeverity = "bimodal_clock" // mixed good+bad recent samples (flaky RTC)
 )
@@ -104,41 +105,41 @@ func classifySkew(absSkewSec float64) SkewSeverity {
 
 // skewSample is a single raw skew measurement from one advert observation.
 type skewSample struct {
-	advertTS    int64  // node's advert Unix timestamp
-	observedTS  int64  // observation Unix timestamp
-	observerID  string // which observer saw this
-	hash        string // transmission hash (for multi-observer grouping)
+	advertTS   int64  // node's advert Unix timestamp
+	observedTS int64  // observation Unix timestamp
+	observerID string // which observer saw this
+	hash       string // transmission hash (for multi-observer grouping)
 }
 
 // ObserverCalibration holds the computed clock offset for an observer.
 type ObserverCalibration struct {
 	ObserverID string  `json:"observerID"`
-	OffsetSec  float64 `json:"offsetSec"`  // positive = observer clock ahead
-	Samples    int     `json:"samples"`    // number of multi-observer packets used
+	OffsetSec  float64 `json:"offsetSec"` // positive = observer clock ahead
+	Samples    int     `json:"samples"`   // number of multi-observer packets used
 }
 
 // NodeClockSkew is the API response for a single node's clock skew data.
 type NodeClockSkew struct {
-	Pubkey          string       `json:"pubkey"`
-	MeanSkewSec     float64      `json:"meanSkewSec"`     // corrected mean skew (positive = node ahead)
-	MedianSkewSec   float64      `json:"medianSkewSec"`   // corrected median skew
-	LastSkewSec     float64      `json:"lastSkewSec"`     // most recent corrected skew
-	RecentMedianSkewSec float64  `json:"recentMedianSkewSec"` // median across most-recent samples (drives severity, see #789)
-	DriftPerDaySec  float64      `json:"driftPerDaySec"`  // linear drift rate (sec/day)
-	Severity        SkewSeverity `json:"severity"`
-	SampleCount     int          `json:"sampleCount"`
-	Calibrated      bool         `json:"calibrated"`      // true if observer calibration was applied
-	LastAdvertTS    int64        `json:"lastAdvertTS"`     // most recent advert timestamp
-	LastObservedTS  int64        `json:"lastObservedTS"`   // most recent observation timestamp
-	Samples         []SkewSample `json:"samples,omitempty"` // time-series for sparklines
-	GoodFraction        float64  `json:"goodFraction"`        // fraction of recent samples with |skew| <= 1h
-	RecentBadSampleCount int     `json:"recentBadSampleCount"` // count of recent samples with |skew| > 1h
-	RecentBadSamples     []BadSample `json:"recentBadSamples,omitempty"` // #1094: per-bad-sample evidence (hash + bad advertTS)
-	RecentSampleCount    int     `json:"recentSampleCount"`    // total recent samples in window
-	RecentHashEvidence  []HashEvidence      `json:"recentHashEvidence,omitempty"`
-	CalibrationSummary  *CalibrationSummary `json:"calibrationSummary,omitempty"`
-	NodeName        string       `json:"nodeName,omitempty"` // populated in fleet responses
-	NodeRole        string       `json:"nodeRole,omitempty"` // populated in fleet responses
+	Pubkey               string              `json:"pubkey"`
+	MeanSkewSec          float64             `json:"meanSkewSec"`         // corrected mean skew (positive = node ahead)
+	MedianSkewSec        float64             `json:"medianSkewSec"`       // corrected median skew
+	LastSkewSec          float64             `json:"lastSkewSec"`         // most recent corrected skew
+	RecentMedianSkewSec  float64             `json:"recentMedianSkewSec"` // median across most-recent samples (drives severity, see #789)
+	DriftPerDaySec       float64             `json:"driftPerDaySec"`      // linear drift rate (sec/day)
+	Severity             SkewSeverity        `json:"severity"`
+	SampleCount          int                 `json:"sampleCount"`
+	Calibrated           bool                `json:"calibrated"`                 // true if observer calibration was applied
+	LastAdvertTS         int64               `json:"lastAdvertTS"`               // most recent advert timestamp
+	LastObservedTS       int64               `json:"lastObservedTS"`             // most recent observation timestamp
+	Samples              []SkewSample        `json:"samples,omitempty"`          // time-series for sparklines
+	GoodFraction         float64             `json:"goodFraction"`               // fraction of recent samples with |skew| <= 1h
+	RecentBadSampleCount int                 `json:"recentBadSampleCount"`       // count of recent samples with |skew| > 1h
+	RecentBadSamples     []BadSample         `json:"recentBadSamples,omitempty"` // #1094: per-bad-sample evidence (hash + bad advertTS)
+	RecentSampleCount    int                 `json:"recentSampleCount"`          // total recent samples in window
+	RecentHashEvidence   []HashEvidence      `json:"recentHashEvidence,omitempty"`
+	CalibrationSummary   *CalibrationSummary `json:"calibrationSummary,omitempty"`
+	NodeName             string              `json:"nodeName,omitempty"` // populated in fleet responses
+	NodeRole             string              `json:"nodeRole,omitempty"` // populated in fleet responses
 }
 
 // SkewSample is a single (timestamp, skew) point for sparkline rendering.
@@ -158,26 +159,26 @@ type BadSample struct {
 
 // HashEvidenceObserver is one observer's contribution to a per-hash evidence entry.
 type HashEvidenceObserver struct {
-	ObserverID      string  `json:"observerID"`
-	ObserverName    string  `json:"observerName"`
-	RawSkewSec      float64 `json:"rawSkewSec"`
-	CorrectedSkewSec float64 `json:"correctedSkewSec"`
+	ObserverID        string  `json:"observerID"`
+	ObserverName      string  `json:"observerName"`
+	RawSkewSec        float64 `json:"rawSkewSec"`
+	CorrectedSkewSec  float64 `json:"correctedSkewSec"`
 	ObserverOffsetSec float64 `json:"observerOffsetSec"`
-	Calibrated      bool    `json:"calibrated"`
+	Calibrated        bool    `json:"calibrated"`
 }
 
 // HashEvidence is per-hash clock skew evidence showing individual observer contributions.
 type HashEvidence struct {
-	Hash                  string                 `json:"hash"`
-	Observers             []HashEvidenceObserver `json:"observers"`
-	MedianCorrectedSkewSec float64              `json:"medianCorrectedSkewSec"`
-	Timestamp             int64                  `json:"timestamp"`
+	Hash                   string                 `json:"hash"`
+	Observers              []HashEvidenceObserver `json:"observers"`
+	MedianCorrectedSkewSec float64                `json:"medianCorrectedSkewSec"`
+	Timestamp              int64                  `json:"timestamp"`
 }
 
 // CalibrationSummary counts how many samples were corrected via observer calibration.
 type CalibrationSummary struct {
-	TotalSamples       int `json:"totalSamples"`
-	CalibratedSamples  int `json:"calibratedSamples"`
+	TotalSamples        int `json:"totalSamples"`
+	CalibratedSamples   int `json:"calibratedSamples"`
 	UncalibratedSamples int `json:"uncalibratedSamples"`
 }
 
@@ -190,31 +191,31 @@ type txSkewResult = map[string]*NodeClockSkew
 
 // ClockSkewEngine computes and caches clock skew data for nodes and observers.
 type ClockSkewEngine struct {
-	mu               sync.RWMutex
-	observerOffsets  map[string]float64 // observerID → calibrated offset (seconds)
-	observerSamples  map[string]int     // observerID → number of multi-observer packets used
-	nodeSkew         txSkewResult
-	hashEvidence     map[string][]hashEvidenceEntry // hash → per-observer raw/corrected data
-	lastComputed     time.Time
-	computeInterval  time.Duration
+	mu              sync.RWMutex
+	observerOffsets map[string]float64 // observerID → calibrated offset (seconds)
+	observerSamples map[string]int     // observerID → number of multi-observer packets used
+	nodeSkew        txSkewResult
+	hashEvidence    map[string][]hashEvidenceEntry // hash → per-observer raw/corrected data
+	lastComputed    time.Time
+	computeInterval time.Duration
 }
 
 // hashEvidenceEntry stores raw evidence per observer per hash, cached during Recompute.
 type hashEvidenceEntry struct {
-	observerID  string
-	rawSkew     float64
-	corrected   float64
-	offset      float64
-	calibrated  bool
-	observedTS  int64
+	observerID string
+	rawSkew    float64
+	corrected  float64
+	offset     float64
+	calibrated bool
+	observedTS int64
 }
 
 func NewClockSkewEngine() *ClockSkewEngine {
 	return &ClockSkewEngine{
-		observerOffsets:  make(map[string]float64),
+		observerOffsets: make(map[string]float64),
 		observerSamples: make(map[string]int),
-		nodeSkew:       make(txSkewResult),
-		hashEvidence:   make(map[string][]hashEvidenceEntry),
+		nodeSkew:        make(txSkewResult),
+		hashEvidence:    make(map[string][]hashEvidenceEntry),
 		computeInterval: 30 * time.Second,
 	}
 }
@@ -484,6 +485,34 @@ func (s *PacketStore) GetNodeClockSkew(pubkey string) *NodeClockSkew {
 	return s.getNodeClockSkewLocked(pubkey)
 }
 
+// txOriginatedBy reports whether tx is an ADVERT self-signed by pubkey,
+// as opposed to a transmission merely indexed under pubkey because it was
+// resolved as a relay hop. byNode is an involvement index that
+// intentionally includes relay-hop transmissions for the activity
+// timeline (store.go:1696-1705, indexResolvedPathHops, #1558/#1352).
+// Clock-skew computation must restrict to self-originated adverts only:
+// ADVERTs are self-signed, so decoded["pubKey"] is the originator per
+// protocol (safe key, does not need path-hop resolution). Without this
+// guard, every relay that forwards a broken-clock node's advert inherits
+// that node's skew, producing fleet-wide false no_clock/bimodal
+// classifications and bit-identical skew "clusters" across unrelated
+// relays (#1816), including cases where a node's own adverts are healthy
+// but a couple of relayed adverts from a broken-clock originator dominate
+// its small recent-window sample (#1818). Comparison is case-insensitive
+// as a defensive measure; pubkeys are lowercase hex today (decoder.go),
+// but nothing enforces that at this boundary.
+func txOriginatedBy(tx *StoreTx, pubkey string) bool {
+	decoded := tx.ParsedDecoded()
+	if decoded == nil {
+		return false
+	}
+	pk, ok := decoded["pubKey"].(string)
+	if !ok || pk == "" {
+		return false
+	}
+	return strings.EqualFold(pk, pubkey)
+}
+
 // getNodeClockSkewLocked returns clock skew for a node.
 // Must be called with s.mu held (at least RLock).
 func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
@@ -506,6 +535,12 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 
 	for _, tx := range txs {
 		if tx.PayloadType == nil || *tx.PayloadType != PayloadADVERT {
+			continue
+		}
+		if !txOriginatedBy(tx, pubkey) {
+			// Skip adverts this node merely relayed (byNode is an
+			// involvement index, not an originator index) — see
+			// txOriginatedBy and #1816/#1818.
 			continue
 		}
 		cs, ok := s.clockSkew.nodeSkew[tx.Hash]
@@ -672,6 +707,11 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 		if tx.PayloadType == nil || *tx.PayloadType != PayloadADVERT {
 			continue
 		}
+		if !txOriginatedBy(tx, pubkey) {
+			// Keep evidence consistent with the self-only skew stream
+			// above — don't show relayed adverts as this node's evidence.
+			continue
+		}
 		ev, ok := s.clockSkew.hashEvidence[tx.Hash]
 		if !ok || len(ev) == 0 {
 			continue
@@ -701,12 +741,12 @@ func (s *PacketStore) getNodeClockSkewLocked(pubkey string) *NodeClockSkew {
 				name = e.observerID
 			}
 			observers = append(observers, HashEvidenceObserver{
-				ObserverID:       e.observerID,
-				ObserverName:     name,
-				RawSkewSec:       e.rawSkew,
-				CorrectedSkewSec: e.corrected,
+				ObserverID:        e.observerID,
+				ObserverName:      name,
+				RawSkewSec:        e.rawSkew,
+				CorrectedSkewSec:  e.corrected,
 				ObserverOffsetSec: e.offset,
-				Calibrated:       e.calibrated,
+				Calibrated:        e.calibrated,
 			})
 			corrSkews = append(corrSkews, e.corrected)
 			calSummary.TotalSamples++

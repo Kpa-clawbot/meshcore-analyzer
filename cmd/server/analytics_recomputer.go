@@ -19,13 +19,13 @@ import (
 // in an atomic.Value, refreshed periodically by a background goroutine.
 //
 // Lifecycle:
-//   1. Construct via newAnalyticsRecomputer(...)
-//   2. Call Start() — runs initial compute synchronously, then launches
-//      the recompute goroutine. Initial compute is synchronous so the
-//      first Load() after Start returns never sees a nil cache.
-//   3. Call Load() any number of times concurrently — never blocks
-//      beyond an atomic-pointer load.
-//   4. Call Stop() to terminate the background goroutine cleanly.
+//  1. Construct via newAnalyticsRecomputer(...)
+//  2. Call Start() — runs initial compute synchronously, then launches
+//     the recompute goroutine. Initial compute is synchronous so the
+//     first Load() after Start returns never sees a nil cache.
+//  3. Call Load() any number of times concurrently — never blocks
+//     beyond an atomic-pointer load.
+//  4. Call Stop() to terminate the background goroutine cleanly.
 //
 // Compute func is called WITHOUT any lock held by this struct, so it
 // may freely take any application-level locks it needs.
@@ -172,15 +172,15 @@ func (r *analyticsRecomputer) ComputeRuns() int64 {
 // per-endpoint recompute interval from config.json. Zero values fall
 // back to the defaultInterval passed to StartAnalyticsRecomputers.
 type AnalyticsRecomputeIntervals struct {
-	Topology             time.Duration
-	RF                   time.Duration
-	Distance             time.Duration
-	Channels             time.Duration
-	HashCollisions       time.Duration
-	HashSizes            time.Duration
-	Roles                time.Duration
-	ObserversClockSkew   time.Duration
-	NodesClockSkew       time.Duration
+	Topology           time.Duration
+	RF                 time.Duration
+	Distance           time.Duration
+	Channels           time.Duration
+	HashCollisions     time.Duration
+	HashSizes          time.Duration
+	Roles              time.Duration
+	ObserversClockSkew time.Duration
+	NodesClockSkew     time.Duration
 }
 
 func pickInterval(override, def time.Duration) time.Duration {

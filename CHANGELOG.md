@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [3.10.1] - 2026-09-04
+
+v3.10.0 was tagged and withdrawn before any container image or release asset was published; nothing was ever available under that number. Same release, next number.
+
+See [docs/release-notes/v3.10.1.md](docs/release-notes/v3.10.1.md) for the full notes. 111 commits since v3.9.2, all substantive (no coverage bumps in this range).
+
+### Highlights
+- **CARTO basemaps need an API key now** (#1919, #1926) - unauthenticated tiles come back watermarked with HTTP 200, so this failed silently. Set `map.tiles.providers.carto.key`. **Operator action required.**
+- **Relay `last_seen` is written again** (#1854) - the server-side touch had been a no-op since the `mode=ro` refactor, so it had degraded into an advert timestamp.
+- **Opt-in RF telemetry from mobile clients** (#1905, #1906) - full-packet RF observations and RF environment samples along a GPS track. Both default OFF.
+- **Path-trust threshold for hop attribution** (#1841, #1863) - `pathTrust.minHashBytesForMapping`, shipped at default 1 so nothing changes on upgrade.
+- **Three E2E "flakes" were real product bugs** (#1940, #1944, #1945) - Live view toggles inert for ~100 ms, colour picker arrow keys undone by a deferred focus, analytics filter discarded by a theme-refresh.
+
+### API
+- `/api/paths/inspect` marks a candidate as `speculative` when any hop falls below `pathTrust.minHashBytesForMapping`; consumers can tell this apart from score-based speculation through `evidence.perHop[].trusted`.
+- New per-node fields: `flood_advert_count_7d` (#1831), `unscoped_relay_count_24h` (#1823).
+- New endpoint `/api/nodes/resolve` (#1728).
+
+### Retention
+- New `observerPurgeDays` for hard-deleting long-inactive observers, disabled by default (#1886).
+- New windows for the opt-in client tables: `retention.clientRxDays`, `clientRxObsDays`, `clientRfDays`.
+
+### CI
+- Documentation-only changes skip the pipeline, with root-level markdown covered by the filter (#1949, #1950).
+- Container images are published on a tag ref and not only on a `push` event, so the release fallback in `release-fast-path.yml` can actually publish (#1951).
+
 ## [3.9.1] — 2026-06-12
 
 Patch release on top of v3.9.0 — v3.9.0's container image never published (Playwright flake gated Docker build). See [docs/release-notes/v3.9.1.md](docs/release-notes/v3.9.1.md).

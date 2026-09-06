@@ -10,6 +10,13 @@
  * Wire & store stay intact: every consumer call site reads the toggle
  * via window.MC_getHide1ByteHops() and filters its rendered/aggregated
  * view at the boundary (no upstream mutation).
+ *
+ * #1784 — path trust threshold: the server-side config
+ * (pathTrust.minHashBytesForMapping, default 2) means 1-byte prefix
+ * observations are excluded from topology/mapping evidence. The
+ * MC_getPathTrustThreshold() function exposes this value so consumers
+ * can show "route could not be resolved (1-byte path)" messages instead
+ * of drawing potentially false paths.
  */
 'use strict';
 
@@ -38,6 +45,43 @@
     if (h == null) return 0;
     var s = String(h);
     return s.length >> 1;
+  }
+
+  // #1784 — server-side path trust threshold (minHashBytesForMapping).
+  // Falls back to DefaultMinHashBytesForMapping (2) until MeshConfigReady
+  // resolves. Default 2 excludes 1-byte prefixes (256-value collision
+  // space) from mapping evidence — operator-confirmed to reduce false
+  // positives on denser meshes.
+  function getPathTrustThreshold() {
+    if (typeof window !== 'undefined' && typeof window.PATH_TRUST === 'number') {
+      return window.PATH_TRUST;
+    }
+    return 1;
+  }
+
+  // #1784 — whether a hop meets the server-side path trust threshold.
+  // Used by map/analytics/path-inspect consumers to determine if a resolved
+  // hop should be treated as trusted evidence or speculative.
+  function meetsPathTrust(hop) {
+    var threshold = getPathTrustThreshold();
+    if (threshold <= 1) return true;
+    var bl = hopByteLen(hop);
+    if (bl <= 0) return false;
+    return bl >= threshold;
+  }
+
+  // #1784 — whether a packet's path observations are entirely below the
+  // trust threshold. When true, derived consumers should show a clear
+  // message like "Could not accurately determine route (N-byte path)"
+  // instead of drawing potentially false paths.
+  function pathBelowTrust(hops) {
+    if (!hops || !hops.length) return false;
+    var threshold = getPathTrustThreshold();
+    if (threshold <= 1) return false;
+    for (var i = 0; i < hops.length; i++) {
+      if (hopByteLen(hops[i]) >= threshold) return false;
+    }
+    return true;
   }
 
   // Packet-level path-hash size (1|2|3), or 0 when unresolvable.
@@ -95,6 +139,9 @@
     window.MC_filterPathHops = filterPathHops;
     window.MC_hopByteLen = hopByteLen;
     window.MC_packetHashSize = packetHashSize;
+    window.MC_getPathTrustThreshold = getPathTrustThreshold;
+    window.MC_meetsPathTrust = meetsPathTrust;
+    window.MC_pathBelowTrust = pathBelowTrust;
   }
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -105,6 +152,9 @@
       filterPathHops: filterPathHops,
       hopByteLen: hopByteLen,
       packetHashSize: packetHashSize,
+      getPathTrustThreshold: getPathTrustThreshold,
+      meetsPathTrust: meetsPathTrust,
+      pathBelowTrust: pathBelowTrust,
       _STORAGE_KEY: STORAGE_KEY
     };
   }

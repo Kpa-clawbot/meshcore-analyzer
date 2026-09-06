@@ -69,7 +69,7 @@ func PointInPolygon(lat, lon float64, polygon [][2]float64) bool {
 func DistToSegmentKm(lat, lon float64, a, b [2]float64) float64 {
 	lat1, lon1 := a[0], a[1]
 	lat2, lon2 := b[0], b[1]
-	cosLat := math.Cos((lat1+lat2) / 2.0 * math.Pi / 180.0)
+	cosLat := math.Cos((lat1 + lat2) / 2.0 * math.Pi / 180.0)
 	ax := (lon1 - lon) * 111.0 * cosLat
 	ay := (lat1 - lat) * 111.0
 	bx := (lon2 - lon) * 111.0 * cosLat

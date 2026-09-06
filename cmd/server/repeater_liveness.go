@@ -114,6 +114,11 @@ type relayEntry struct {
 	// scope is the tx's region scope name (transmissions.scope_name).
 	// Empty when absent / on older schemas. Used for TransportedScopes (#1751).
 	scope string
+	// viaPrefix marks an entry that was only reachable through the 1-byte
+	// wire-prefix bucket, i.e. some node whose pubkey starts with the same
+	// byte carried it — not necessarily this one. Counters accept that
+	// ambiguity (#662); scope attribution does not (#1902).
+	viaPrefix bool
 }
 
 // collectRelayEntriesLocked returns deduplicated relayEntry snapshots for
@@ -128,7 +133,9 @@ type relayEntry struct {
 //
 // The 1-byte prefix lookup CAN over-count when multiple nodes share the
 // same first byte. This trades a possible over-count for clearly false
-// zeros (issue #662).
+// zeros (issue #662). Entries reached only that way are flagged viaPrefix
+// so TransportedScopes can refuse them (#1902) while the counters keep the
+// trade-off.
 func (s *PacketStore) collectRelayEntriesLocked(key string) []relayEntry {
 	txList := s.byPathHop[key]
 	var prefixList []*StoreTx
@@ -147,7 +154,7 @@ func (s *PacketStore) collectRelayEntriesLocked(key string) []relayEntry {
 	hint := len(txList) + len(prefixList)
 	entries := make([]relayEntry, 0, hint)
 	seen := make(map[int]bool, hint)
-	collect := func(list []*StoreTx) {
+	collect := func(list []*StoreTx, viaPrefix bool) {
 		for _, tx := range list {
 			if tx == nil || seen[tx.ID] {
 				continue
@@ -161,11 +168,15 @@ func (s *PacketStore) collectRelayEntriesLocked(key string) []relayEntry {
 			if tx.RouteType != nil {
 				rt = *tx.RouteType
 			}
-			entries = append(entries, relayEntry{ts: tx.FirstSeen, pt: pt, rt: rt, scope: tx.ScopeName})
+			scope := ""
+			if tx.ScopeName != nil {
+				scope = *tx.ScopeName
+			}
+			entries = append(entries, relayEntry{ts: tx.FirstSeen, pt: pt, rt: rt, scope: scope, viaPrefix: viaPrefix})
 		}
 	}
-	collect(txList)
-	collect(prefixList)
+	collect(txList, false)
+	collect(prefixList, true)
 	return entries
 }
 
@@ -189,7 +200,12 @@ func computeRelayInfoFromEntries(entries []relayEntry, windowHours float64) Repe
 		// #1751: accumulate transported scopes BEFORE the timestamp gate —
 		// a non-advert path-hop tx proves scope transport even if its
 		// first_seen is unparseable. Mirrors the bulk path.
-		if e.scope != "" {
+		//
+		// #1902: but only when the tx named this node by its full pubkey.
+		// A 1-byte hop names one of every node sharing that byte, which is
+		// enough for an approximate count and not enough to claim the node
+		// serves a region.
+		if e.scope != "" && !e.viaPrefix {
 			if scopeSet == nil {
 				scopeSet = map[string]struct{}{}
 			}

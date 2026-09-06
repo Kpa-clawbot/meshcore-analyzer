@@ -1947,6 +1947,7 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
   font-size: 13px; background: var(--input-bg); color: var(--text); font-family: var(--font);
 }
 .nodes-counts { display: flex; gap: 8px; flex-shrink: 0; }
+.nodes-export-btn { flex-shrink: 0; white-space: nowrap; }
 .node-count-pill {
   display: inline-block; padding: 3px 10px; border-radius: 12px;
   font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap;
@@ -2126,6 +2127,8 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
 .obs-table td:first-child { white-space: nowrap; }
 .obs-table td:nth-child(6) { max-width: none; overflow: visible; }
 .col-observer { min-width: 70px; max-width: none; }
+/* Region names run to "#nl-nb-mie"; clip rather than push the wider columns. */
+.col-scope { min-width: 56px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
 .spark-bar { position: relative; min-width: 60px; max-width: 100px; flex: 1; height: 18px; background: var(--border); border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; }
 @media (max-width: 640px) { .spark-bar { max-width: 60px; } }
 .spark-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-hover, #60a5fa)); border-radius: 4px; transition: width 0.3s; }
@@ -2614,6 +2617,16 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
 }
 .leaflet-popup-tip { background: var(--card-bg) !important; }
 .leaflet-popup-content { color: var(--text) !important; font-size: 13px !important; }
+.mc-route-trust-message {
+  background: var(--input-bg);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  max-width: 320px;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.mc-route-trust-message-detail { color: var(--text-muted); }
 
 /* For Leaflet layer control */
 .leaflet-control-layers,
@@ -2982,7 +2995,7 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 
 /* Hide low-value columns on mobile */
 @media (max-width: 640px) {
-  .col-region, .col-rpt, .col-size, .col-hashsize, .col-pubkey { display: none; }
+  .col-region, .col-rpt, .col-size, .col-hashsize, .col-pubkey, .col-scope { display: none; }
 }
 
 /* Clickable hop links */
@@ -3058,7 +3071,15 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .hop-unreliable-btn { background: none; border: none; color: var(--status-yellow, #f59e0b); font-size: 13px;
   cursor: help; vertical-align: middle; margin-left: 2px; padding: 0 2px; line-height: 1; }
 .hop-global-fallback { border-bottom: 1px dashed var(--status-red); }
-.hop-current { font-weight: 700 !important; color: var(--link-color) !important; }
+.hop-current {
+  display: inline-block;
+  padding: 0 4px;
+  /* Outline preserves the shared renderer's dashed ambiguity border. */
+  outline: 1px solid var(--link-color);
+  border-radius: 4px;
+  font-weight: 700 !important;
+  color: var(--link-color) !important;
+}
 
 /* Self-loop subpath rows */
 .subpath-selfloop { opacity: 0.6; }
@@ -3174,6 +3195,7 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .hide-col-hash .col-hash,
 .hide-col-size .col-size,
 .hide-col-type .col-type,
+.hide-col-scope .col-scope,
 .hide-col-observer .col-observer,
 .hide-col-path .col-path,
 .hide-col-rpt .col-rpt,
@@ -4702,6 +4724,14 @@ body[data-cb-preset="achromat"] {
 .mc-mb-label.status-confirmed { border-left-color: var(--mc-mb-confirmed); }
 .mc-mb-label.status-suspected { border-left-color: var(--mc-mb-suspected); }
 .mc-mb-label.status-unknown   { border-left-color: var(--mc-mb-unknown);   }
+/* The width of the prefix itself is a guess when the node has no advert-derived
+   hash_size. Dotted underline marks the digits as unverified — a shape cue, not
+   a color one, so it survives forced-colors and color-vision differences. The
+   aria-label says "hash size unknown" for AT. */
+.mc-mb-label.hash-unconfirmed span[aria-hidden="true"] {
+  text-decoration: underline dotted currentColor;
+  text-underline-offset: 2px;
+}
 
 /* Forced-colors / Windows High Contrast — degrade gracefully (audit item 7). */
 @media (forced-colors: active) {

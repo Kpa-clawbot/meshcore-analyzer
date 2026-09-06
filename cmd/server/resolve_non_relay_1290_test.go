@@ -6,9 +6,9 @@ import (
 
 // Issue #1290 — exclude observers that advertised `repeat:off` (listener-only)
 // from the path-hop disambiguator candidate set. Three cases:
-//   1. repeat:off pubkey → NOT a candidate
-//   2. repeat:on pubkey  → IS a candidate (regression guard)
-//   3. legacy / no field → IS a candidate (back-compat preserve current behavior)
+//  1. repeat:off pubkey → NOT a candidate
+//  2. repeat:on pubkey  → IS a candidate (regression guard)
+//  3. legacy / no field → IS a candidate (back-compat preserve current behavior)
 func TestResolveWithContext_ExcludesNonRelayObservers_Issue1290(t *testing.T) {
 	nodes := []nodeInfo{
 		{Role: "repeater", PublicKey: "a1aaaaaa", Name: "RealRepeater"},

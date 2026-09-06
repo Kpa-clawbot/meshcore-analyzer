@@ -138,4 +138,3 @@ func TestReadIngestorIOSample_CacheInvalidatesOnMtimeChange(t *testing.T) {
 // StartStatsFileWriter and asserts byte-equal sampledAt strings on a
 // published stats file. Removed per Kent Beck Gate review
 // pullrequestreview-4254521304.
-

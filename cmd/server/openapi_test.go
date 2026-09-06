@@ -138,5 +138,3 @@ func TestExtractPathParams(t *testing.T) {
 		}
 	}
 }
-
-

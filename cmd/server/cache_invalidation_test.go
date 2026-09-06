@@ -45,7 +45,7 @@ func cachePopulated(s *PacketStore) map[string]bool {
 		"topo":      len(s.topoCache) > 0,
 		"hash":      len(s.hashCache) > 0,
 		"collision": len(s.collisionCache) > 0,
-		"chan":       len(s.chanCache) > 0,
+		"chan":      len(s.chanCache) > 0,
 		"dist":      len(s.distCache) > 0,
 		"subpath":   len(s.subpathCache) > 0,
 	}

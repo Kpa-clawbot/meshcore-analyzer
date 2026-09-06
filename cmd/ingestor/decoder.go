@@ -18,26 +18,26 @@ import (
 
 // Route type constants (header bits 1-0)
 const (
-	RouteTransportFlood   = 0
-	RouteFlood            = 1
-	RouteDirect           = 2
-	RouteTransportDirect  = 3
+	RouteTransportFlood  = 0
+	RouteFlood           = 1
+	RouteDirect          = 2
+	RouteTransportDirect = 3
 )
 
 // Payload type constants (header bits 5-2)
 const (
-	PayloadREQ       = 0x00
-	PayloadRESPONSE  = 0x01
-	PayloadTXT_MSG   = 0x02
-	PayloadACK       = 0x03
-	PayloadADVERT    = 0x04
-	PayloadGRP_TXT   = 0x05
-	PayloadGRP_DATA  = 0x06
-	PayloadANON_REQ  = 0x07
-	PayloadPATH      = 0x08
-	PayloadTRACE     = 0x09
-	PayloadMULTIPART = 0x0A
-	PayloadCONTROL   = 0x0B
+	PayloadREQ        = 0x00
+	PayloadRESPONSE   = 0x01
+	PayloadTXT_MSG    = 0x02
+	PayloadACK        = 0x03
+	PayloadADVERT     = 0x04
+	PayloadGRP_TXT    = 0x05
+	PayloadGRP_DATA   = 0x06
+	PayloadANON_REQ   = 0x07
+	PayloadPATH       = 0x08
+	PayloadTRACE      = 0x09
+	PayloadMULTIPART  = 0x0A
+	PayloadCONTROL    = 0x0B
 	PayloadRAW_CUSTOM = 0x0F
 )
 
@@ -66,11 +66,11 @@ var payloadTypeNames = map[int]string{
 
 // Header is the decoded packet header.
 type Header struct {
-	RouteType      int    `json:"routeType"`
-	RouteTypeName  string `json:"routeTypeName"`
-	PayloadType    int    `json:"payloadType"`
+	RouteType       int    `json:"routeType"`
+	RouteTypeName   string `json:"routeTypeName"`
+	PayloadType     int    `json:"payloadType"`
 	PayloadTypeName string `json:"payloadTypeName"`
-	PayloadVersion int    `json:"payloadVersion"`
+	PayloadVersion  int    `json:"payloadVersion"`
 }
 
 // TransportCodes are present on TRANSPORT_FLOOD and TRANSPORT_DIRECT routes.
@@ -103,72 +103,77 @@ type AdvertFlags struct {
 
 // Payload is a generic decoded payload. Fields are populated depending on type.
 type Payload struct {
-	Type          string       `json:"type"`
-	DestHash      string       `json:"destHash,omitempty"`
-	SrcHash       string       `json:"srcHash,omitempty"`
-	MAC           string       `json:"mac,omitempty"`
-	EncryptedData string       `json:"encryptedData,omitempty"`
-	ExtraHash     string       `json:"extraHash,omitempty"`
+	Type          string `json:"type"`
+	DestHash      string `json:"destHash,omitempty"`
+	SrcHash       string `json:"srcHash,omitempty"`
+	MAC           string `json:"mac,omitempty"`
+	EncryptedData string `json:"encryptedData,omitempty"`
+	ExtraHash     string `json:"extraHash,omitempty"`
 	// Extended ACK fields per firmware 1.16.0 (issue #1610) —
 	// firmware/src/helpers/BaseChatMesh.cpp:218-234. ACK payloads grew from
 	// always-4 bytes to 4/5/6 (4-byte truncated sha256 CRC, optional 1-byte
 	// attempt counter, optional 1-byte RNG byte added in commit a130a95a).
 	// AckLen is the wire payload length; AckAttempt/AckRand are surfaced
 	// only when the sender included them (legacy 4-byte ACKs leave them nil).
-	AckLen        *int   `json:"ackLen,omitempty"`
-	AckAttempt    *int   `json:"ackAttempt,omitempty"`
-	AckRand       *int   `json:"ackRand,omitempty"`
-	PubKey        string       `json:"pubKey,omitempty"`
-	Timestamp     uint32       `json:"timestamp,omitempty"`
-	TimestampISO  string       `json:"timestampISO,omitempty"`
-	Signature     string       `json:"signature,omitempty"`
-	SignatureValid *bool       `json:"signatureValid,omitempty"`
-	Flags         *AdvertFlags `json:"flags,omitempty"`
-	Lat           *float64     `json:"lat,omitempty"`
-	Lon           *float64     `json:"lon,omitempty"`
-	Name          string       `json:"name,omitempty"`
-	Feat1         *int         `json:"feat1,omitempty"`
-	Feat2         *int         `json:"feat2,omitempty"`
-	BatteryMv     *int         `json:"battery_mv,omitempty"`
-	TemperatureC  *float64     `json:"temperature_c,omitempty"`
-	ChannelHash   int          `json:"channelHash,omitempty"`
-	ChannelHashHex   string    `json:"channelHashHex,omitempty"`
-	DecryptionStatus string    `json:"decryptionStatus,omitempty"`
-	Channel          string    `json:"channel,omitempty"`
+	AckLen           *int         `json:"ackLen,omitempty"`
+	AckAttempt       *int         `json:"ackAttempt,omitempty"`
+	AckRand          *int         `json:"ackRand,omitempty"`
+	PubKey           string       `json:"pubKey,omitempty"`
+	Timestamp        uint32       `json:"timestamp,omitempty"`
+	TimestampISO     string       `json:"timestampISO,omitempty"`
+	Signature        string       `json:"signature,omitempty"`
+	SignatureValid   *bool        `json:"signatureValid,omitempty"`
+	Flags            *AdvertFlags `json:"flags,omitempty"`
+	Lat              *float64     `json:"lat,omitempty"`
+	Lon              *float64     `json:"lon,omitempty"`
+	Name             string       `json:"name,omitempty"`
+	Feat1            *int         `json:"feat1,omitempty"`
+	Feat2            *int         `json:"feat2,omitempty"`
+	BatteryMv        *int         `json:"battery_mv,omitempty"`
+	TemperatureC     *float64     `json:"temperature_c,omitempty"`
+	ChannelHash      int          `json:"channelHash,omitempty"`
+	ChannelHashHex   string       `json:"channelHashHex,omitempty"`
+	DecryptionStatus string       `json:"decryptionStatus,omitempty"`
+	Channel          string       `json:"channel,omitempty"`
 	// GRP_DATA (PAYLOAD_TYPE_GRP_DATA=0x06) inner fields, decoded after
 	// channel decrypt per firmware/src/helpers/BaseChatMesh.cpp:382-385.
-	DataType         *int      `json:"dataType,omitempty"`
-	DataLen          *int      `json:"dataLen,omitempty"`
-	DecryptedBlob    string    `json:"decryptedBlob,omitempty"`
-	Text             string    `json:"text,omitempty"`
-	Sender           string    `json:"sender,omitempty"`
-	SenderTimestamp  uint32    `json:"sender_timestamp,omitempty"`
-	EphemeralPubKey string     `json:"ephemeralPubKey,omitempty"`
-	PathData      string       `json:"pathData,omitempty"`
-	SNRValues     []float64    `json:"snrValues,omitempty"`
-	Tag           uint32       `json:"tag,omitempty"`
-	AuthCode      uint32       `json:"authCode,omitempty"`
-	TraceFlags    *int         `json:"traceFlags,omitempty"`
-	RawHex        string       `json:"raw,omitempty"`
-	Error         string       `json:"error,omitempty"`
+	DataType        *int   `json:"dataType,omitempty"`
+	DataLen         *int   `json:"dataLen,omitempty"`
+	DecryptedBlob   string `json:"decryptedBlob,omitempty"`
+	Text            string `json:"text,omitempty"`
+	Sender          string `json:"sender,omitempty"`
+	SenderTimestamp uint32 `json:"sender_timestamp,omitempty"`
+	// ANON_REQ carries the sender's FULL 32-byte public key (not a 1-byte
+	// srcHash like REQ) — MeshCore firmware/src/Mesh.cpp. Surfaced as
+	// srcPubKey so store.go's node indexer picks it up and it resolves to a
+	// node name; frontend also reads legacy ephemeralPubKey for pre-rename
+	// packets (#1864).
+	SrcPubKey  string    `json:"srcPubKey,omitempty"`
+	PathData   string    `json:"pathData,omitempty"`
+	SNRValues  []float64 `json:"snrValues,omitempty"`
+	Tag        uint32    `json:"tag,omitempty"`
+	AuthCode   uint32    `json:"authCode,omitempty"`
+	TraceFlags *int      `json:"traceFlags,omitempty"`
+	RawHex     string    `json:"raw,omitempty"`
+	Error      string    `json:"error,omitempty"`
 	// MULTIPART (PAYLOAD_TYPE_MULTIPART=0x0A) inner fields, decoded per
 	// firmware/src/Mesh.cpp:289 — byte0 = (remaining<<4) | inner_type.
-	Remaining     *int    `json:"remaining,omitempty"`
-	InnerType     *int    `json:"innerType,omitempty"`
-	InnerTypeName string  `json:"innerTypeName,omitempty"`
-	InnerAckCrc   string  `json:"innerAckCrc,omitempty"`
+	Remaining     *int   `json:"remaining,omitempty"`
+	InnerType     *int   `json:"innerType,omitempty"`
+	InnerTypeName string `json:"innerTypeName,omitempty"`
+	InnerAckCrc   string `json:"innerAckCrc,omitempty"`
 	// Extended ACK inner fields (issue #1610) — when the multipart inner
 	// blob is a v1.16+ extended ACK (5 or 6 bytes after the byte0 header),
 	// surface the same attempt/rand bytes as the top-level decoder.
-	InnerAckLen     *int  `json:"innerAckLen,omitempty"`
-	InnerAckAttempt *int  `json:"innerAckAttempt,omitempty"`
-	InnerAckRand    *int  `json:"innerAckRand,omitempty"`
-	InnerPayload  string  `json:"innerPayload,omitempty"`
+	InnerAckLen     *int   `json:"innerAckLen,omitempty"`
+	InnerAckAttempt *int   `json:"innerAckAttempt,omitempty"`
+	InnerAckRand    *int   `json:"innerAckRand,omitempty"`
+	InnerPayload    string `json:"innerPayload,omitempty"`
 	// CONTROL (PAYLOAD_TYPE_CONTROL=0x0B) byte0 flags, per
 	// firmware/src/Mesh.cpp:69 — byte0 high-bit marks zero-hop direct subset.
-	CtrlFlags     string  `json:"ctrlFlags,omitempty"`
-	CtrlZeroHop   *bool   `json:"ctrlZeroHop,omitempty"`
-	CtrlLength    *int    `json:"ctrlLength,omitempty"`
+	CtrlFlags   string `json:"ctrlFlags,omitempty"`
+	CtrlZeroHop *bool  `json:"ctrlZeroHop,omitempty"`
+	CtrlLength  *int   `json:"ctrlLength,omitempty"`
 	// CONTROL DISCOVER_REQ / DISCOVER_RESP body fields (#1802). Subtype is
 	// "DISCOVER_REQ" | "DISCOVER_RESP" | "UNKNOWN". For REQ: filter, tag, and
 	// optional since. For RESP: node_type (low nibble of byte0), snr, tag, and
@@ -733,9 +738,10 @@ func decodeMultipart(buf []byte) Payload {
 //
 // byte0 high nibble is the control subtype (per firmware/src/Mesh.cpp:69
 // and firmware/examples/simple_repeater/MyMesh.cpp:773-820):
-//   0x80 = CTL_TYPE_NODE_DISCOVER_REQ  — body: filter:u8 | tag:u32 LE | since:u32 LE (optional)
-//   0x90 = CTL_TYPE_NODE_DISCOVER_RESP — body: snr:i8 | tag:u32 LE | pubkey (32B full, or 8B prefix)
-//                                        low nibble of byte0 is node_type
+//
+//	0x80 = CTL_TYPE_NODE_DISCOVER_REQ  — body: filter:u8 | tag:u32 LE | since:u32 LE (optional)
+//	0x90 = CTL_TYPE_NODE_DISCOVER_RESP — body: snr:i8 | tag:u32 LE | pubkey (32B full, or 8B prefix)
+//	                                     low nibble of byte0 is node_type
 //
 // The legacy CtrlZeroHop bool (bit7 of byte0) is retained for backwards
 // compatibility — it is misleading (bit7 is also set for DISCOVER_RESP)
@@ -855,11 +861,11 @@ func decodeAnonReq(buf []byte) Payload {
 		return Payload{Type: "ANON_REQ", Error: "too short", RawHex: hex.EncodeToString(buf)}
 	}
 	return Payload{
-		Type:            "ANON_REQ",
-		DestHash:        hex.EncodeToString(buf[0:1]),
-		EphemeralPubKey: hex.EncodeToString(buf[1:33]),
-		MAC:             hex.EncodeToString(buf[33:35]),
-		EncryptedData:   hex.EncodeToString(buf[35:]),
+		Type:          "ANON_REQ",
+		DestHash:      hex.EncodeToString(buf[0:1]),
+		SrcPubKey:     hex.EncodeToString(buf[1:33]),
+		MAC:           hex.EncodeToString(buf[33:35]),
+		EncryptedData: hex.EncodeToString(buf[35:]),
 	}
 }
 
@@ -1199,7 +1205,9 @@ func sanitizeName(s string) string {
 
 // advertRole returns a stable role label for an advert. Follows firmware
 // ADV_TYPE_* constants in firmware/src/helpers/AdvertDataHelpers.h:7-12:
-//   0 NONE, 1 CHAT, 2 REPEATER, 3 ROOM, 4 SENSOR, 5-15 FUTURE.
+//
+//	0 NONE, 1 CHAT, 2 REPEATER, 3 ROOM, 4 SENSOR, 5-15 FUTURE.
+//
 // Previously this coerced both 0 (NONE) and 5-15 (FUTURE) to "companion",
 // silently relabelling unknown/reserved types — see issue #1279 P1 #3.
 func advertRole(f *AdvertFlags) string {

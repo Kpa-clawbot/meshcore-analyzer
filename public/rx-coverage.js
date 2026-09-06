@@ -26,7 +26,7 @@
 
   function pageHtml() {
     return '<div style="max-width:1100px;margin:0 auto;padding:12px 16px">' +
-      '<h2 style="margin:4px 0 2px;font-size:18px">🗺️ Mobile RX coverage</h2>' +
+      '<h2 style="margin:4px 0 2px;font-size:18px"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-map-trifold"/></svg> Mobile RX coverage</h2>' +
       '<div style="color:var(--text-muted);font-size:11px">Where roaming CoreScope-RX clients heard nodes. Colour = best signal per cell. <a href="https://github.com/efiten/corescope-rx" target="_blank" rel="noopener">Get the companion app →</a></div>' +
       '<div class="analytics-time-range" id="rxDays" style="margin:8px 0">' + dayBtn(1) + dayBtn(7) + dayBtn(14) + dayBtn(30) + '</div>' +
       '<div class="nq-cov-legend"><span><i style="background:var(--nq-cov-strong)"></i>strong</span><span><i style="background:var(--nq-cov-mid)"></i>medium</span><span><i style="background:var(--nq-cov-weak)"></i>weak</span><span><i style="background:var(--nq-cov-grey)"></i>no signal</span></div>' +

@@ -34,7 +34,6 @@ func TestStatsFileWriterBench_Sanity(t *testing.T) {
 	}
 }
 
-
 // BenchmarkParseProcSelfIOInto measures the ingestor-side /proc/self/io
 // parser on a representative payload (Carmack must-fix #3). Tracks
 // allocations to verify the shared perfio.ParseProcIO path doesn't

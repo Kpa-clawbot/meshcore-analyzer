@@ -11,27 +11,26 @@ var _ = time.Second // suppress unused import
 // Helper to create a minimal PacketStore with GRP_TXT packets for channel analytics testing.
 func newChannelTestStore(packets []*StoreTx) *PacketStore {
 	ps := &PacketStore{
-		packets:       packets,
-		byHash:        make(map[string]*StoreTx),
-		byTxID:        make(map[int]*StoreTx),
-		byObsID:       make(map[int]*StoreObs),
-		byObserver:    make(map[string][]*StoreObs),
-		byNode:        make(map[string][]*StoreTx),
-		byPathHop:     make(map[string][]*StoreTx),
-		nodeHashes:    make(map[string]map[string]bool),
-		byPayloadType: make(map[int][]*StoreTx),
-		rfCache:       make(map[string]*cachedResult),
-		topoCache:     make(map[string]*cachedResult),
-		hashCache:     make(map[string]*cachedResult),
+		packets:        packets,
+		byHash:         make(map[string]*StoreTx),
+		byTxID:         make(map[int]*StoreTx),
+		byObsID:        make(map[int]*StoreObs),
+		byObserver:     make(map[string][]*StoreObs),
+		byNode:         make(map[string][]*StoreTx),
+		byPathHop:      make(map[string][]*StoreTx),
+		nodeHashes:     make(map[string]map[string]bool),
+		byPayloadType:  make(map[int][]*StoreTx),
+		rfCache:        make(map[string]*cachedResult),
+		topoCache:      make(map[string]*cachedResult),
+		hashCache:      make(map[string]*cachedResult),
 		collisionCache: make(map[string]*cachedResult),
-		chanCache:     make(map[string]*cachedResult),
-		distCache:     make(map[string]*cachedResult),
-		subpathCache:  make(map[string]*cachedResult),
-		spIndex:       make(map[string]int),
-		spTxIndex:     make(map[string][]*StoreTx),
-		advertPubkeys: make(map[string]int),
-		lastSeenTouched: make(map[string]time.Time),
-		clockSkew:     NewClockSkewEngine(),
+		chanCache:      make(map[string]*cachedResult),
+		distCache:      make(map[string]*cachedResult),
+		subpathCache:   make(map[string]*cachedResult),
+		spIndex:        make(map[string]int),
+		spTxIndex:      make(map[string][]*StoreTx),
+		advertPubkeys:  make(map[string]int),
+		clockSkew:      NewClockSkewEngine(),
 	}
 	ps.byPayloadType[5] = packets
 	return ps
@@ -74,8 +73,8 @@ func TestComputeAnalyticsChannels_MergesEncryptedAndDecrypted(t *testing.T) {
 	packets := []*StoreTx{
 		makeGrpTx(129, "#wardriving", "hello", "alice"),
 		makeGrpTx(129, "#wardriving", "world", "bob"),
-		makeGrpTx(129, "", "", ""),       // encrypted — no channel name
-		makeGrpTx(129, "", "", ""),       // encrypted
+		makeGrpTx(129, "", "", ""), // encrypted — no channel name
+		makeGrpTx(129, "", "", ""), // encrypted
 	}
 
 	store := newChannelTestStore(packets)
@@ -104,7 +103,7 @@ func TestComputeAnalyticsChannels_RejectsRainbowTableMismatch(t *testing.T) {
 	// Hash 72 is NOT the correct hash for #wardriving (which is 129).
 	// This simulates a rainbow-table collision/mismatch.
 	packets := []*StoreTx{
-		makeGrpTx(72, "#wardriving", "ghost", "eve"), // mismatch: hash 72 != wardriving's real hash
+		makeGrpTx(72, "#wardriving", "ghost", "eve"),   // mismatch: hash 72 != wardriving's real hash
 		makeGrpTx(129, "#wardriving", "real", "alice"), // correct match
 	}
 

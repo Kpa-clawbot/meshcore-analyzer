@@ -15,13 +15,13 @@ func TestConfigIsBlacklisted(t *testing.T) {
 	}
 
 	tests := []struct {
-		pubkey    string
-		want      bool
+		pubkey string
+		want   bool
 	}{
 		{"AA", true},
-		{"aa", true},   // case-insensitive
+		{"aa", true}, // case-insensitive
 		{"BB", true},
-		{"CC", true},   // lowercase "cc" matches uppercase
+		{"CC", true}, // lowercase "cc" matches uppercase
 		{"DD", false},
 		{"", false},
 		{"AAB", false},

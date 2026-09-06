@@ -58,7 +58,7 @@ type procIOSample struct {
 
 // perfIOTracker keeps the previous sample so handlePerfIO can compute deltas.
 var (
-	perfIOMu       sync.Mutex
+	perfIOMu         sync.Mutex
 	perfIOLastSample procIOSample
 )
 
@@ -283,17 +283,17 @@ func (s *Server) handlePerfSqlite(w http.ResponseWriter, r *http.Request) {
 // IngestorStats is the on-disk JSON shape the ingestor writes periodically
 // for the server to expose via /api/perf/write-sources.
 type IngestorStats struct {
-	SampledAt           string           `json:"sampledAt"`
-	TxInserted          int64            `json:"tx_inserted"`
-	ObsInserted         int64            `json:"obs_inserted"`
-	DuplicateTx         int64            `json:"tx_dupes"`
-	NodeUpserts         int64            `json:"node_upserts"`
-	ObserverUpserts     int64            `json:"observer_upserts"`
-	WriteErrors         int64            `json:"write_errors"`
-	SignatureDrops      int64            `json:"sig_drops"`
-	WALCommits          int64            `json:"walCommits"`
-	GroupCommitFlushes  int64            `json:"groupCommitFlushes"`
-	BackfillUpdates     map[string]int64 `json:"backfillUpdates"`
+	SampledAt          string           `json:"sampledAt"`
+	TxInserted         int64            `json:"tx_inserted"`
+	ObsInserted        int64            `json:"obs_inserted"`
+	DuplicateTx        int64            `json:"tx_dupes"`
+	NodeUpserts        int64            `json:"node_upserts"`
+	ObserverUpserts    int64            `json:"observer_upserts"`
+	WriteErrors        int64            `json:"write_errors"`
+	SignatureDrops     int64            `json:"sig_drops"`
+	WALCommits         int64            `json:"walCommits"`
+	GroupCommitFlushes int64            `json:"groupCommitFlushes"`
+	BackfillUpdates    map[string]int64 `json:"backfillUpdates"`
 	// ProcIO is the ingestor's own /proc/self/io rates (since its previous
 	// sample). Optional — older ingestor builds don't publish this. See #1120.
 	ProcIO *PerfIOSample `json:"procIO,omitempty"`
@@ -467,14 +467,14 @@ func (s *Server) handlePerfWriteSources(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	sources := map[string]int64{
-		"tx_inserted":      st.TxInserted,
-		"tx_dupes":         st.DuplicateTx,
-		"obs_inserted":     st.ObsInserted,
-		"node_upserts":     st.NodeUpserts,
-		"observer_upserts": st.ObserverUpserts,
-		"write_errors":     st.WriteErrors,
-		"sig_drops":        st.SignatureDrops,
-		"walCommits":       st.WALCommits,
+		"tx_inserted":        st.TxInserted,
+		"tx_dupes":           st.DuplicateTx,
+		"obs_inserted":       st.ObsInserted,
+		"node_upserts":       st.NodeUpserts,
+		"observer_upserts":   st.ObserverUpserts,
+		"write_errors":       st.WriteErrors,
+		"sig_drops":          st.SignatureDrops,
+		"walCommits":         st.WALCommits,
 		"groupCommitFlushes": st.GroupCommitFlushes,
 	}
 	for name, v := range st.BackfillUpdates {

@@ -38,7 +38,7 @@ const maxKnownChannelsBytes = 4 * 1024 * 1024
 
 // KnownChannelEntry is one catalogue entry, region-stamped.
 type KnownChannelEntry struct {
-	Channel     string `json:"channel"`               // e.g. "#antwerpen" (# prefix preserved)
+	Channel     string `json:"channel"` // e.g. "#antwerpen" (# prefix preserved)
 	Description string `json:"description,omitempty"`
 	Key         string `json:"key,omitempty"` // optional PSK (base64) — present for some entries
 	Region      string `json:"region"`        // ISO 3166-1 alpha-2 lowercase

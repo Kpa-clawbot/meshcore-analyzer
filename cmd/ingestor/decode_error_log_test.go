@@ -9,9 +9,10 @@ import (
 
 // TestHandleMessageDecodeErrorLog_PII — issue #1211 round-0 fix shipped without
 // a test. Asserts the decode-error log line:
-//   (a) includes structured fields: topic, observer prefix, payload length
-//   (b) observer substring is at most 8 chars
-//   (c) full observer ID is NOT present in the output
+//
+//	(a) includes structured fields: topic, observer prefix, payload length
+//	(b) observer substring is at most 8 chars
+//	(c) full observer ID is NOT present in the output
 //
 // A bare `log.Printf("... observer=%s ...", obs)` would leak the full ID.
 func TestHandleMessageDecodeErrorLog_PII_Issue1211(t *testing.T) {

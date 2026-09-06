@@ -235,6 +235,32 @@ console.log('\n=== app.js: routeTypeName / payloadTypeName ===');
   test('getPathLenOffset: direct route (2) → 1', () => assert.strictEqual(ctx.getPathLenOffset(2), 1));
 }
 
+console.log('\n=== app.js: scopeCellHtml ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  loadInCtx(ctx, 'public/app.js');
+
+  // transmissions.scope_name has three states; the Scope column in the packets
+  // table must render each one distinguishably.
+  test('scope_name null (not transport-scoped) → em dash', () =>
+    assert.strictEqual(ctx.scopeCellHtml(null), '—'));
+  test('scope_name undefined (older API without the field) → em dash', () =>
+    assert.strictEqual(ctx.scopeCellHtml(undefined), '—'));
+  test('scope_name "" (transport-scoped, region unmatched) → muted unknown', () => {
+    const html = ctx.scopeCellHtml('');
+    assert.ok(html.includes('unknown'), 'should say unknown, got: ' + html);
+    assert.ok(html.includes('text-muted'), 'should be muted, got: ' + html);
+  });
+  test('scope_name "#be" → the region name', () =>
+    assert.strictEqual(ctx.scopeCellHtml('#be'), '#be'));
+  test('scope_name is escaped', () => {
+    const html = ctx.scopeCellHtml('<img src=x onerror=alert(1)>');
+    assert.ok(!html.includes('<img'), 'must not emit a raw tag, got: ' + html);
+    assert.ok(html.includes('&lt;img'), 'should escape the tag, got: ' + html);
+  });
+}
+
 console.log('\n=== app.js: truncate ===');
 {
   const ctx = makeSandbox();
@@ -840,6 +866,68 @@ console.log('\n=== pickByAffinity neighbor-graph scoring (#874) ===');
   });
 }
 
+// ===== ROLES.JS: getNodeStatus (#1598 relay-aware staleness) =====
+console.log('\n=== roles.js: getNodeStatus (#1598) ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  const getNodeStatus = ctx.getNodeStatus;
+  const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+  const H = 3600000;
+
+  // Legacy (role, lastSeenMs) signature — unchanged behavior
+  test('legacy: repeater seen 1h ago is active', () =>
+    assert.strictEqual(getNodeStatus('repeater', Date.now() - 1 * H), 'active'));
+  test('legacy: repeater seen 80h ago is stale (infraSilentMs=72h)', () =>
+    assert.strictEqual(getNodeStatus('repeater', Date.now() - 80 * H), 'stale'));
+  test('legacy: companion seen 25h ago is stale (nodeSilentMs=24h)', () =>
+    assert.strictEqual(getNodeStatus('companion', Date.now() - 25 * H), 'stale'));
+  test('legacy: non-number lastSeenMs is stale', () =>
+    assert.strictEqual(getNodeStatus('repeater', undefined), 'stale'));
+
+  // Node-object signature
+  test('node: backbone-repeater fixture — last_seen 25h, last_relayed 5min → active', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'repeater', last_seen: iso(25 * H), last_relayed: iso(5 * 60000)
+    }), 'active'));
+  test('node: repeater advert-silent 151h but relayed 2min ago → active', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'repeater', last_seen: iso(151 * H), last_relayed: iso(2 * 60000)
+    }), 'active'));
+  test('node: repeater with BOTH last_seen and last_relayed past 72h → stale', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'repeater', last_seen: iso(100 * H), last_relayed: iso(80 * H)
+    }), 'stale'));
+  test('node: room honors last_relayed like repeater', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'room', last_seen: iso(90 * H), last_relayed: iso(10 * 60000)
+    }), 'active'));
+  test('node: companion does NOT get relay-based freshness', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'companion', last_seen: iso(30 * H), last_relayed: iso(5 * 60000)
+    }), 'stale'));
+  test('node: repeater with no last_relayed falls back to advert freshness (stale at 80h)', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'repeater', last_seen: iso(80 * H)
+    }), 'stale'));
+  test('node: repeater with fresh advert and no last_relayed → active', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'repeater', last_seen: iso(1 * H)
+    }), 'active'));
+  test('node: _liveSeen (ms) takes precedence over stale last_seen', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'companion', _liveSeen: Date.now() - 5 * 60000, last_seen: iso(48 * H)
+    }), 'active'));
+  test('node: _lastHeard preferred over last_seen', () =>
+    assert.strictEqual(getNodeStatus({
+      role: 'companion', _lastHeard: iso(10 * 60000), last_seen: iso(48 * H)
+    }), 'active'));
+  test('node: missing role defaults to companion thresholds', () =>
+    assert.strictEqual(getNodeStatus({ last_seen: iso(25 * H) }), 'stale'));
+  test('node: no timestamps at all → stale', () =>
+    assert.strictEqual(getNodeStatus({ role: 'repeater' }), 'stale'));
+}
+
 // ===== ROLES.JS: copyToClipboard =====
 console.log('\n=== roles.js: copyToClipboard ===');
 {
@@ -1062,11 +1150,11 @@ console.log('\n=== live.js: pruneStaleNodes ===');
     const markers = ctx.window._liveNodeMarkers();
     const data = ctx.window._liveNodeData();
 
-    // A repeater seen 48h ago should NOT be pruned (infraSilentMs = 72h)
+    // A repeater seen 48h ago should NOT be pruned or dimmed (infraSilentMs = 72h)
     markers['rpt1'] = { _glowMarker: null };
     data['rpt1'] = { public_key: 'rpt1', role: 'repeater', _liveSeen: Date.now() - 48 * 3600000 };
 
-    // A repeater seen 96h ago SHOULD be pruned
+    // #1598: a repeater seen 96h ago is stale, but infra is DIMMED, never deleted
     markers['rpt2'] = { _glowMarker: null };
     data['rpt2'] = { public_key: 'rpt2', role: 'repeater', _liveSeen: Date.now() - 96 * 3600000 };
 
@@ -1074,8 +1162,30 @@ console.log('\n=== live.js: pruneStaleNodes ===');
 
     assert.ok(markers['rpt1'], 'repeater at 48h should remain (under 72h threshold)');
     assert.ok(data['rpt1'], 'repeater data at 48h should remain');
-    assert.ok(!markers['rpt2'], 'repeater at 96h should be pruned (over 72h threshold)');
-    assert.ok(!data['rpt2'], 'repeater data at 96h should be pruned');
+    assert.ok(!markers['rpt1']._staleDimmed, 'repeater at 48h should not be dimmed');
+    assert.ok(markers['rpt2'], 'repeater at 96h should remain (#1598: dim, not delete)');
+    assert.ok(data['rpt2'], 'repeater data at 96h should remain (#1598)');
+    assert.ok(markers['rpt2']._staleDimmed === true, 'repeater at 96h should be dimmed');
+  });
+
+  test('pruneStaleNodes: relay-aware — advert-silent repeater with fresh last_relayed stays active (#1598)', () => {
+    const { ctx } = makeLiveSandbox();
+    const prune = ctx.window._livePruneStaleNodes;
+    const markers = ctx.window._liveNodeMarkers();
+    const data = ctx.window._liveNodeData();
+
+    // Backbone fixture: advert 96h stale, relayed 5 minutes ago → active, undimmed
+    markers['bb1'] = { _glowMarker: null };
+    data['bb1'] = {
+      public_key: 'bb1', role: 'repeater',
+      _liveSeen: Date.now() - 96 * 3600000,
+      last_relayed: new Date(Date.now() - 5 * 60000).toISOString()
+    };
+
+    prune();
+
+    assert.ok(markers['bb1'], 'relaying repeater should remain');
+    assert.ok(!markers['bb1']._staleDimmed, 'relaying repeater should not be dimmed');
   });
 
   test('node count does not grow unbounded with repeated ADVERTs', () => {
@@ -3171,6 +3281,97 @@ console.log('\n=== packets.js: savedTimeWindowMin defaults ===');
   });
 }
 
+// ===== Packets page: observer filter in grouped mode (issue #1748) =====
+{
+  console.log('\n--- Observer filter — grouped vs. flat mode (#1748) ---');
+
+  // Load the REAL applyObserverFilter from packets.js via sandbox, rather
+  // than testing a hand-copied reimplementation of its logic. Per #1748 PR
+  // review (kent-beck): a test that only checks a copy doesn't fail if the
+  // actual production function regresses. Mirrors the same loadInCtx
+  // pattern used below for _calcVisibleRange.
+  const obsFilterCtx = makeSandbox();
+  obsFilterCtx.registerPage = (name, handlers) => {};
+  obsFilterCtx.onWS = () => {};
+  obsFilterCtx.offWS = () => {};
+  obsFilterCtx.api = () => Promise.resolve({});
+  obsFilterCtx.window.getParsedPath = () => [];
+  obsFilterCtx.window.getParsedDecoded = () => ({});
+  loadInCtx(obsFilterCtx, 'public/packets.js');
+  const applyObserverFilter = obsFilterCtx.window._packetsTestAPI.applyObserverFilter;
+
+  // A transmission the server correctly returned for observer "B" (it was
+  // one of several observers of this hash) but whose displayed
+  // "representative" observer is "A" (longest path) — exactly the shape
+  // QueryGroupedPackets returns. `_children` is undefined, matching the
+  // state on initial load (only fetched lazily on expand/obs-sort-change).
+  const groupedRowRepresentativeNotFiltered = {
+    hash: 'hash1', observer_id: 'A', observer_count: 3, _children: undefined,
+  };
+  // A single-observer transmission whose only observer is NOT in the filter —
+  // must still be excluded (it genuinely wasn't observed by the filtered
+  // observer; the server wouldn't have returned it in the first place, but
+  // the client function must not accidentally let everything through).
+  const groupedRowGenuinelyExcludedByServer = {
+    hash: 'hash2', observer_id: 'C', observer_count: 1, _children: undefined,
+  };
+  // A flat/expanded-mode row: single observation, own observer_id.
+  const flatRowMatching = { hash: 'hash3', observer_id: 'B' };
+  const flatRowNonMatching = { hash: 'hash4', observer_id: 'A' };
+  // A flat/expanded-mode row with already-loaded children, only one of
+  // which matches — the pre-existing children-aware fallback path.
+  const flatRowWithMatchingChild = {
+    hash: 'hash5', observer_id: 'A',
+    _children: [{ observer_id: 'A' }, { observer_id: 'B' }],
+  };
+
+  test('grouped mode: keeps a multi-observer row whose representative is not the filtered observer (#1748 core bug)', () => {
+    const result = applyObserverFilter([groupedRowRepresentativeNotFiltered], { observer: 'B' }, true, false);
+    assert.strictEqual(result.length, 1, 'server already guaranteed observer B saw this transmission');
+  });
+
+  test('grouped mode: does not need _children to keep a valid server-filtered row', () => {
+    // The defining regression: _children is undefined (not yet fetched),
+    // and observer_id (the representative) does not match — pre-fix this
+    // returned zero rows.
+    const result = applyObserverFilter([groupedRowRepresentativeNotFiltered], { observer: 'B' }, true, false);
+    assert.strictEqual(result.length, 1);
+  });
+
+  test('grouped mode: passes through rows unfiltered (server EXISTS filter is authoritative)', () => {
+    // The client no longer second-guesses the server in grouped mode at all —
+    // this row would never have been returned by the server if observer C
+    // weren't a match, so the client trusts it.
+    const result = applyObserverFilter([groupedRowGenuinelyExcludedByServer], { observer: 'B' }, true, false);
+    assert.strictEqual(result.length, 1, 'grouped mode does not re-filter; server already applied the correct filter');
+  });
+
+  test('flat mode: keeps a row whose own observer_id matches', () => {
+    const result = applyObserverFilter([flatRowMatching], { observer: 'B' }, false, false);
+    assert.strictEqual(result.length, 1);
+  });
+
+  test('flat mode: excludes a row whose own observer_id does not match and has no children', () => {
+    const result = applyObserverFilter([flatRowNonMatching], { observer: 'B' }, false, false);
+    assert.strictEqual(result.length, 0);
+  });
+
+  test('flat mode: falls back to matching children when representative does not match', () => {
+    const result = applyObserverFilter([flatRowWithMatchingChild], { observer: 'B' }, false, false);
+    assert.strictEqual(result.length, 1, 'observer B is among the already-loaded children');
+  });
+
+  test('hashOnly bypasses the observer filter entirely (pinned-hash view)', () => {
+    const result = applyObserverFilter([groupedRowGenuinelyExcludedByServer, flatRowNonMatching], { observer: 'B' }, true, true);
+    assert.strictEqual(result.length, 2, 'hashOnly must return every row unfiltered, matching renderTableRows()');
+  });
+
+  test('no observer filter set: all rows pass through unchanged', () => {
+    const result = applyObserverFilter([groupedRowGenuinelyExcludedByServer, flatRowNonMatching], {}, false, false);
+    assert.strictEqual(result.length, 2);
+  });
+}
+
 // ===== Packets page: virtual scroll infrastructure =====
 {
   console.log('\nPackets page — virtual scroll:');
@@ -4557,19 +4758,25 @@ console.log('\n=== app.js: favorites ===');
     assert.deepStrictEqual(ctx.getFavorites(), ['pk2']);
   });
 
+  // #1648 replaced the ★/☆ literals with Phosphor sprite refs; these assert the
+  // sprite ids rather than the old glyphs, which the repo-wide emoji scan
+  // (test-issue-1648-m6-final-sweep.js) now forbids from coming back.
   test('favStar returns filled star for favorite', () => {
     ctx.localStorage.setItem('meshcore-favorites', '["pk1"]');
     const html = ctx.favStar('pk1');
-    assert.ok(html.includes('★'));
-    assert.ok(html.includes('on'));
+    assert.ok(html.includes('#ph-star-fill'), 'expected the filled star sprite, got: ' + html);
+    assert.ok(html.includes('class="fav-star  on"'), 'expected the on class, got: ' + html);
+    assert.ok(html.includes('aria-pressed="true"'), 'expected aria-pressed=true, got: ' + html);
     assert.ok(html.includes('Remove from favorites'));
   });
 
   test('favStar returns empty star for non-favorite', () => {
     ctx.localStorage.setItem('meshcore-favorites', '[]');
     const html = ctx.favStar('pk1');
-    assert.ok(html.includes('☆'));
-    assert.ok(!html.includes(' on'));
+    assert.ok(html.includes('#ph-star"'), 'expected the outline star sprite, got: ' + html);
+    assert.ok(!html.includes('#ph-star-fill'), 'must not use the filled sprite, got: ' + html);
+    assert.ok(!/class="fav-star[^"]*\bon\b/.test(html), 'must not carry the on class, got: ' + html);
+    assert.ok(html.includes('aria-pressed="false"'), 'expected aria-pressed=false, got: ' + html);
     assert.ok(html.includes('Add to favorites'));
   });
 
@@ -6657,6 +6864,78 @@ console.log('\n=== live.js: node-filter URL update preserves lat/lon/zoom (#1709
   });
 }
 
+// ===== roles.js: hashPrefixInfo =====
+// hash_size is evidence, not a default. A node the analyzer has heard no
+// countable advert from has none — rendering that as "1" invents a 1-byte
+// config. Guards the map against regressing to `node.hash_size || 1`.
+console.log('\n=== roles.js: hashPrefixInfo ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  const hashPrefixInfo = ctx.hashPrefixInfo;
+  const PK = 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899';
+
+  test('missing hash_size is not known', () => {
+    const r = hashPrefixInfo({ public_key: PK });
+    assert.strictEqual(r.known, false);
+  });
+
+  test('null hash_size is not known', () => {
+    assert.strictEqual(hashPrefixInfo({ public_key: PK, hash_size: null }).known, false);
+  });
+
+  test('unknown width still renders a 1-byte prefix to draw', () => {
+    const r = hashPrefixInfo({ public_key: PK, hash_size: null });
+    assert.strictEqual(r.bytes, 1);
+    assert.strictEqual(r.prefix, 'AA');
+  });
+
+  test('1-byte evidence is known', () => {
+    const r = hashPrefixInfo({ public_key: PK, hash_size: 1 });
+    assert.strictEqual(r.known, true);
+    assert.strictEqual(r.prefix, 'AA');
+  });
+
+  test('2-byte evidence widens the prefix', () => {
+    const r = hashPrefixInfo({ public_key: PK, hash_size: 2 });
+    assert.strictEqual(r.known, true);
+    assert.strictEqual(r.bytes, 2);
+    assert.strictEqual(r.prefix, 'AABB');
+  });
+
+  test('3-byte evidence widens the prefix', () => {
+    const r = hashPrefixInfo({ public_key: PK, hash_size: 3 });
+    assert.strictEqual(r.prefix, 'AABBCC');
+  });
+
+  test('hash_size 0 counts as unknown, not zero-width', () => {
+    const r = hashPrefixInfo({ public_key: PK, hash_size: 0 });
+    assert.strictEqual(r.known, false);
+    assert.strictEqual(r.prefix, 'AA');
+  });
+
+  test('missing public_key degrades to placeholder', () => {
+    assert.strictEqual(hashPrefixInfo({ hash_size: 2 }).prefix, '??');
+  });
+
+  test('null node does not throw', () => {
+    const r = hashPrefixInfo(null);
+    assert.strictEqual(r.known, false);
+    assert.strictEqual(r.prefix, '??');
+  });
+}
+
+// ===== map.js: no bare `hash_size || 1` =====
+console.log('\n=== map.js: hash size fallback ===');
+{
+  const mapSrc = fs.readFileSync(__dirname + '/public/map.js', 'utf8');
+
+  test('map.js does not default an unknown hash_size to 1', () => {
+    assert.ok(!/hash_size\s*\|\|\s*1/.test(mapSrc),
+      'map.js must go through hashPrefixInfo() — a bare `hash_size || 1` renders "unknown" as a measured 1 byte');
+  });
+}
+
 // ===== SUMMARY =====
 Promise.allSettled(pendingTests).then(() => {
   console.log(`\n${'═'.repeat(40)}`);
@@ -6726,5 +7005,302 @@ console.log('\n=== observers.js: healthStatus (configurable thresholds) ===');
     const r = runHealthStatus(null, null);
     assert.strictEqual(r.cls, 'health-red');
     assert.strictEqual(r.label, 'Unknown');
+  });
+}
+
+// ===== node-reach.js: scopeLineHtml (#1865) =====
+// The reach report states which region a node serves. Two claims that must
+// never be conflated: "Scope" is INFERRED from observed advert transport
+// scopes, "Configured scope" is CONFIRMED by reading it back off the node via
+// an observer /neighbors report. Asserting the rendered markup, not the source.
+console.log('\n=== node-reach.js: scopeLineHtml (#1865) ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/node-reach.js');
+  const scopeLineHtml = ctx.__meshcoreReachInternals.scopeLineHtml;
+
+  test('no scope data at all renders nothing', () => {
+    assert.strictEqual(scopeLineHtml({}), '');
+  });
+
+  test('inferred-only says "Scope" and marks it observed', () => {
+    const h = scopeLineHtml({ default_scope: '#be' });
+    assert.ok(h.includes('>Scope <'), 'should label it Scope');
+    assert.ok(h.includes('#be'), 'should show the value');
+    assert.ok(h.includes('observed'), 'should mark provenance as observed');
+    assert.ok(!h.includes('nq-scope-ok'), 'inferred data must not get the confirmed tick');
+  });
+
+  test('confirmed wins over inferred and gets the tick', () => {
+    const h = scopeLineHtml({ default_scope: '#be', configured_scope: '#be,#eu' });
+    assert.ok(h.includes('Configured scope'), 'should label it Configured scope');
+    assert.ok(h.includes('nq-scope-ok'), 'confirmed data gets the tick');
+    assert.ok(h.includes('#be,#eu'), 'should show the confirmed value');
+    assert.ok(!h.includes('>Scope <'), 'must not also render the inferred line');
+  });
+
+  test('confirmed-but-empty is a statement, not missing data', () => {
+    const h = scopeLineHtml({ configured_scope: '' });
+    assert.ok(h.includes('none configured'), 'empty confirmed value must render explicitly');
+    assert.ok(h.includes('nq-scope-ok'), 'it is still a confirmation');
+  });
+
+  test('empty confirmed value does not fall back to the inferred one', () => {
+    // A node that answered "I have no scopes" must not be shown its old
+    // inferred guess instead: that would silently contradict the node.
+    const h = scopeLineHtml({ default_scope: '#be', configured_scope: '' });
+    assert.ok(h.includes('none configured'));
+    assert.ok(!h.includes('#be'), 'inferred value must not leak back in');
+  });
+
+  test('confirmation instant is carried in the title, not the visible line', () => {
+    const h = scopeLineHtml({ configured_scope: '#dk', configured_scope_at: '2026-07-26T09:43:48Z' });
+    assert.ok(h.includes('2026-07-26T09:43:48Z'), 'timestamp should be present');
+    assert.ok(h.includes('title='), 'and it should live in a title attribute');
+  });
+
+  test('scope values are HTML-escaped', () => {
+    const h = scopeLineHtml({ configured_scope: '<img src=x onerror=alert(1)>' });
+    assert.ok(!h.includes('<img'), 'must not emit raw markup from node-controlled data');
+    assert.ok(h.includes('&lt;img'), 'should be escaped instead');
+  });
+}
+
+// ===== roles.js: getEffectiveHeardMs (#1845) =====
+// Extracted from getNodeStatus so the "silent longer than N" filter measures
+// the SAME freshness the Active/Stale badge does. Two definitions is how a node
+// ends up listed as silent for 10 days while its own badge says active.
+console.log('\n=== roles.js: getEffectiveHeardMs (#1845) ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  const eff = ctx.getEffectiveHeardMs;
+  const status = ctx.getNodeStatus;
+  const iso = ms => new Date(ms).toISOString();
+  const NOW = Date.now();
+
+  test('nothing known yields NaN, not 0', () => {
+    // 0 would read as "heard at the epoch", which is a real timestamp and would
+    // silently sort/compare as very old rather than as unknown.
+    assert.ok(Number.isNaN(eff({ role: 'repeater' })));
+  });
+
+  test('non-object input yields NaN', () => {
+    assert.ok(Number.isNaN(eff(null)));
+    assert.ok(Number.isNaN(eff('repeater')));
+  });
+
+  test('precedence: _liveSeen beats every stored timestamp', () => {
+    const r = eff({ role: 'companion', _liveSeen: NOW, _lastHeard: iso(NOW - 9e6), last_seen: iso(NOW - 9e7) });
+    assert.strictEqual(r, NOW);
+  });
+
+  test('precedence: _lastHeard beats last_heard and last_seen', () => {
+    const r = eff({ role: 'companion', _lastHeard: iso(NOW - 1000), last_heard: iso(NOW - 9e6), last_seen: iso(NOW - 9e7) });
+    assert.strictEqual(r, new Date(iso(NOW - 1000)).getTime());
+  });
+
+  test('infra: a recent relay beats a stale advert', () => {
+    const r = eff({ role: 'repeater', last_seen: iso(NOW - 9e7), last_relayed: iso(NOW - 1000) });
+    assert.strictEqual(r, new Date(iso(NOW - 1000)).getTime());
+  });
+
+  test('infra: a stale relay does NOT drag a fresh advert backwards', () => {
+    const fresh = iso(NOW - 1000);
+    const r = eff({ role: 'repeater', last_seen: fresh, last_relayed: iso(NOW - 9e7) });
+    assert.strictEqual(r, new Date(fresh).getTime());
+  });
+
+  test('infra: relay alone is enough when nothing else is known', () => {
+    const r = eff({ role: 'repeater', last_relayed: iso(NOW - 1000) });
+    assert.strictEqual(r, new Date(iso(NOW - 1000)).getTime());
+  });
+
+  test('room counts as infra, companion does not', () => {
+    const relayed = iso(NOW - 1000), old = iso(NOW - 9e7);
+    assert.strictEqual(eff({ role: 'room', last_seen: old, last_relayed: relayed }), new Date(relayed).getTime());
+    // A companion is not a relay, so last_relayed on one is meaningless and
+    // must not silently rescue it.
+    assert.strictEqual(eff({ role: 'companion', last_seen: old, last_relayed: relayed }), new Date(old).getTime());
+  });
+
+  test('role matching is case-insensitive', () => {
+    const relayed = iso(NOW - 1000);
+    assert.strictEqual(eff({ role: 'Repeater', last_seen: iso(NOW - 9e7), last_relayed: relayed }), new Date(relayed).getTime());
+  });
+
+  // Regression: getNodeStatus was rewritten to call this helper. Its contract
+  // must be unchanged, including the legacy (role, ms) call shape.
+  test('getNodeStatus still honours the legacy two-argument form', () => {
+    assert.strictEqual(status('repeater', NOW), 'active');
+    assert.strictEqual(status('repeater', NOW - 4 * 86400000), 'stale');
+  });
+
+  test('getNodeStatus is still relay-aware for infra', () => {
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 9e7), last_relayed: iso(NOW - 1000) }), 'active');
+  });
+
+  test('getNodeStatus still marks a truly silent repeater stale', () => {
+    // Past infraSilentMs (72h). 9e7 ms is only 25h, which is correctly ACTIVE
+    // for infra and would make this assertion test nothing.
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 4 * 86400000) }), 'stale');
+  });
+
+  test('72h is the infra boundary: 71h active, 73h stale', () => {
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 71 * 3600000) }), 'active');
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 73 * 3600000) }), 'stale');
+  });
+
+  test('getNodeStatus treats an unknown node as stale, not active', () => {
+    assert.strictEqual(status({ role: 'repeater' }), 'stale');
+  });
+}
+
+// ===== scope-audit.js: mergedScopeChips =====
+// DECLARED and NOT OBSERVED were merged into one colour-coded Scopes column.
+// They were never independent: notObserved is a strict subset of
+// declaredRegions, so the page printed the same set twice and made the reader
+// diff it. These assert the rendered markup, not the source.
+console.log('\n=== scope-audit.js: mergedScopeChips ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const chips = ctx.__meshcoreScopeAuditInternals.mergedScopeChips;
+  const row = (declared, notObserved) => ({ declaredRegions: declared, notObserved: notObserved });
+
+  test('a declared region absent from notObserved renders as observed', () => {
+    const h = chips(row(['be'], []));
+    assert.ok(h.includes('sa-chip-observed'), 'should carry the observed class');
+    assert.ok(!h.includes('sa-chip-unobserved'), 'and not the unobserved one');
+  });
+
+  test('a declared region present in notObserved renders as unobserved, not as an alarm', () => {
+    const h = chips(row(['be'], ['be']));
+    assert.ok(h.includes('sa-chip-unobserved'));
+    assert.ok(!h.includes('sa-chip-observed'));
+  });
+
+  test('a mixed row renders both colours, one chip per declared region', () => {
+    // The case the merge exists for: on live data a typical mixed row declares
+    // 8 regions of which 6 are unobserved, so the observed ones are the needle.
+    const h = chips(row(['be', 'eu', 'nl'], ['eu', 'nl']));
+    assert.strictEqual((h.match(/sa-chip-observed/g) || []).length, 1);
+    assert.strictEqual((h.match(/sa-chip-unobserved/g) || []).length, 2);
+    assert.strictEqual((h.match(/<span/g) || []).length, 3, 'one chip per declared region, no more');
+  });
+
+  test('declared order is preserved, not regrouped by colour', () => {
+    // Regrouping would break the operator habit of scanning for a known
+    // region in the position it always sits.
+    const h = chips(row(['be', 'eu', 'nl'], ['eu']));
+    assert.ok(h.indexOf('>be<') < h.indexOf('>eu<'), 'be before eu');
+    assert.ok(h.indexOf('>eu<') < h.indexOf('>nl<'), 'eu before nl');
+  });
+
+  test('no declared regions renders an em dash, not an empty cell', () => {
+    // 68 of 197 rows on live data declare nothing at all; an empty cell reads
+    // as a rendering fault rather than as an answer.
+    assert.ok(chips(row([], [])).includes('—'));
+  });
+
+  test('every chip explains its own colour in a title', () => {
+    const h = chips(row(['be', 'eu'], ['eu']));
+    assert.ok(h.includes('observed forwarding in this window'));
+    assert.ok(h.includes('declared, but no forwarding observed in this window'));
+  });
+
+  test('region names are HTML-escaped', () => {
+    const h = chips(row(['<img src=x onerror=alert(1)>'], []));
+    assert.ok(!h.includes('<img'), 'must not emit raw markup from server-supplied names');
+    assert.ok(h.includes('&lt;img'));
+  });
+
+  test('a notObserved entry that is not declared cannot invent a chip', () => {
+    // Defensive: the server guarantees notObserved is a subset (197 of 197
+    // rows checked), but the column must not grow a phantom chip if that ever
+    // stops holding.
+    const h = chips(row(['be'], ['be', 'ghost']));
+    assert.strictEqual((h.match(/<span/g) || []).length, 1);
+    assert.ok(!h.includes('ghost'));
+  });
+}
+
+// The empty state is what a stock install sees: neither collector ships with
+// CoreScope, so most deployments open this page and find nothing. It therefore
+// has to explain where the data comes from, not just report its absence.
+console.log('\n=== scope-audit.js: emptyStateHtml ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const empty = ctx.__meshcoreScopeAuditInternals.emptyStateHtml();
+
+  test('names both collectors', () => {
+    assert.ok(/neighbour-report firmware/i.test(empty), 'should name the observer firmware');
+    assert.ok(/CoreDrive RX/i.test(empty), 'should name the companion app');
+  });
+
+  test('links to both so the reader can act on it', () => {
+    assert.ok(empty.includes('observer.gessaman.com'), 'observer firmware link');
+    // Upstream links the repo; a fork may link its own hosted instance.
+    assert.ok(/rx\.on8ar\.eu|coredrive-rx/.test(empty), 'companion app link');
+  });
+
+  test('says an empty table is normal, not a fault', () => {
+    assert.ok(/normal state/i.test(empty));
+  });
+
+  test('states the precedence rule, so two collectors are not confusing', () => {
+    assert.ok(/newest answer per repeater wins/i.test(empty));
+  });
+
+  test('says what nothing else in CoreScope can tell you', () => {
+    // The reason the page exists at all: observed traffic shows which scopes a
+    // node carried, never which it is configured for.
+    assert.ok(/configured/i.test(empty) && /traffic was seen under/i.test(empty));
+  });
+
+  test('does not use the old drive-around wording', () => {
+    // "fills in as devices drive" was CoreDrive-specific jargon that meant
+    // nothing to an operator running the observer firmware instead.
+    assert.ok(!/as devices drive/i.test(empty));
+  });
+}
+
+// The always-visible provenance line. It must carry the links itself: the
+// fuller explanation lives in the empty state, which never renders on an
+// instance that HAS data, so an operator with a full table would otherwise
+// never learn where the declared column came from. That was the actual bug.
+console.log('\n=== scope-audit.js: sourcesLineHtml ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const line = ctx.__meshcoreScopeAuditInternals.sourcesLineHtml();
+
+  test('carries a link for each collector, not just their names', () => {
+    assert.strictEqual((line.match(/<a /g) || []).length, 2, 'both collectors must be linked');
+    assert.ok(line.includes('observer.gessaman.com'), 'observer firmware link');
+    assert.ok(/rx\.on8ar\.eu|coredrive-rx/.test(line), 'companion app link');
+  });
+
+  test('external links are safe to open', () => {
+    assert.strictEqual((line.match(/rel="noopener"/g) || []).length, 2);
+  });
+
+  test('separates the two claims the page rests on', () => {
+    assert.ok(/declared/i.test(line) && /observed/i.test(line));
+    assert.ok(/read back off the node/i.test(line), 'declared is the node answering');
+    assert.ok(/already sees in its own traffic/i.test(line), 'observed is our own data');
+  });
+
+  test('states the precedence rule where a reader with data will see it', () => {
+    assert.ok(/newest answer per repeater wins/i.test(line));
   });
 }

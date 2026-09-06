@@ -338,6 +338,15 @@ window.HopResolver = (function() {
     return affinityMap[pubkeyA][pubkeyB] || 0;
   }
 
+  // #1864: O(1) node-name lookup by FULL pubkey (64-char hex). Returns the
+  // node name when a node with this exact public key is known, else null.
+  // Used to resolve ANON_REQ source pubkeys to a display name.
+  function nameForKey(pubkey) {
+    if (!pubkey) return null;
+    const n = pubkeyIdx[String(pubkey).toLowerCase()];
+    return n && n.name ? n.name : null;
+  }
+
   /**
    * Resolve hops using server-provided resolved_path (full pubkeys).
    * Returns the same format as resolve() — { [hop]: { name, pubkey, ... } }.
@@ -363,5 +372,5 @@ window.HopResolver = (function() {
     return result;
   }
 
-  return { init: init, resolve: resolve, resolveFromServer: resolveFromServer, ready: ready, haversineKm: haversineKm, setAffinity: setAffinity, getAffinity: getAffinity };
+  return { init: init, resolve: resolve, resolveFromServer: resolveFromServer, ready: ready, haversineKm: haversineKm, setAffinity: setAffinity, getAffinity: getAffinity, nameForKey: nameForKey };
 })();

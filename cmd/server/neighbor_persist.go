@@ -132,9 +132,14 @@ func resolvePathForObs(pathJSON, observerID string, tx *StoreTx, pm *prefixMap, 
 		contextPKs = append(contextPKs, strings.ToLower(fromNode))
 	}
 	resolved := make([]*string, len(hops))
+	// Reuse a single ctx buffer across hops instead of allocating per hop.
+	// Capacity +2 for the previous-hop resolved PK that may be appended.
+	ctx := make([]string, len(contextPKs), len(contextPKs)+2)
+	copy(ctx, contextPKs)
+	ctxLen := len(ctx)
 	for i, hop := range hops {
-		ctx := make([]string, len(contextPKs), len(contextPKs)+2)
-		copy(ctx, contextPKs)
+		// Reset to base context (trim any previously appended resolved PK)
+		ctx = ctx[:ctxLen]
 		if i > 0 && resolved[i-1] != nil {
 			ctx = append(ctx, *resolved[i-1])
 		}
@@ -226,76 +231,4 @@ func unmarshalResolvedPath(s string) []*string {
 		return nil
 	}
 	return result
-}
-
-// ─── Shared edge-extraction helper (used by ingestor + tests) ──────────────────
-
-// edgeCandidate represents an extracted edge. The ingestor uses the
-// same logic when computing edges from observations.
-type edgeCandidate struct {
-	A, B, Timestamp string
-}
-
-// extractEdgesFromObs extracts neighbor edge candidates from a single
-// observation. For ADVERTs: originator↔path[0] (if unambiguous). For
-// ALL types: observer↔path[last] (if unambiguous). Also handles
-// zero-hop ADVERTs (originator↔observer direct link).
-//
-// Kept in cmd/server because the in-memory graph builder
-// (neighbor_graph.go) also calls it; it is pure compute and does not
-// touch the DB.
-func extractEdgesFromObs(obs *StoreObs, tx *StoreTx, pm *prefixMap) []edgeCandidate {
-	isAdvert := tx.PayloadType != nil && *tx.PayloadType == PayloadADVERT
-	fromNode := extractFromNode(tx)
-	path := parsePathJSON(obs.PathJSON)
-	observerPK := strings.ToLower(obs.ObserverID)
-	ts := obs.Timestamp
-	var edges []edgeCandidate
-
-	if len(path) == 0 {
-		if isAdvert && fromNode != "" {
-			fromLower := strings.ToLower(fromNode)
-			if fromLower != observerPK {
-				a, b := fromLower, observerPK
-				if a > b {
-					a, b = b, a
-				}
-				edges = append(edges, edgeCandidate{a, b, ts})
-			}
-		}
-		return edges
-	}
-
-	if isAdvert && fromNode != "" && pm != nil {
-		firstHop := strings.ToLower(path[0])
-		fromLower := strings.ToLower(fromNode)
-		candidates := pm.m[firstHop]
-		if len(candidates) == 1 {
-			resolved := strings.ToLower(candidates[0].PublicKey)
-			if resolved != fromLower {
-				a, b := fromLower, resolved
-				if a > b {
-					a, b = b, a
-				}
-				edges = append(edges, edgeCandidate{a, b, ts})
-			}
-		}
-	}
-
-	if pm != nil {
-		lastHop := strings.ToLower(path[len(path)-1])
-		candidates := pm.m[lastHop]
-		if len(candidates) == 1 {
-			resolved := strings.ToLower(candidates[0].PublicKey)
-			if resolved != observerPK {
-				a, b := observerPK, resolved
-				if a > b {
-					a, b = b, a
-				}
-				edges = append(edges, edgeCandidate{a, b, ts})
-			}
-		}
-	}
-
-	return edges
 }

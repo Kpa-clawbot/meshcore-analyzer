@@ -14,8 +14,9 @@ import (
 // path-hop activity, and a non-trivial byPayloadType + byPathHop index.
 //
 // Regression guard for issue #1257:
-//   /api/nodes (no limit) → 32.9s, 30KB on staging (637 nodes)
-//   /api/nodes?limit=2000 → 4.9s,  360KB
+//
+//	/api/nodes (no limit) → 32.9s, 30KB on staging (637 nodes)
+//	/api/nodes?limit=2000 → 4.9s,  360KB
 //
 // Root cause class: per-repeater enrichment in handleNodes calls
 // store.GetRepeaterRelayInfo + GetRepeaterUsefulnessScore separately for

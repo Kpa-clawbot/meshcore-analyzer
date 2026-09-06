@@ -68,6 +68,51 @@ func TestClientRxCoverageGateOn(t *testing.T) {
 	}
 }
 
+// TestClientRxCoverageGateOffDoesNotFallThroughToObserverPath is the
+// CRITICAL-adjacent regression test: with the feature OFF, a
+// meshcore/client/<pubkey>/packets message must be dropped outright, never
+// fall through to the observer packet path below. Before the fix, the
+// enable-gate lived INSIDE the topic match
+// (cfg.ClientRxCoverageEnabled() && parts[1]=="client" && ...), so a disabled
+// gate made the whole condition false and the message fell through: the
+// observer path takes parts[1] ("client") as a region and parts[2] (the
+// companion pubkey) as an observer id, creating a bogus "client" region and
+// registering the phone as an observer — worse now that fullRfLog multiplies
+// client-topic volume. Asserts zero client_receptions rows (already covered
+// by TestClientRxCoverageGateOff) AND zero observer/region pollution.
+func TestClientRxCoverageGateOffDoesNotFallThroughToObserverPath(t *testing.T) {
+	store := newTestStore(t)
+	source := MQTTSource{Name: "test"}
+	cfg := &Config{} // ClientRxCoverage nil ⇒ disabled
+
+	handleMessage(store, "test", source, clientCoverageMsg(), nil, nil, cfg)
+
+	if n := clientReceptionCount(t, store); n != 0 {
+		t.Fatalf("feature OFF: expected 0 client_receptions rows, got %d", n)
+	}
+	var observerRows int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM observers WHERE id = ?`, testCompanionPK).Scan(&observerRows); err != nil {
+		t.Fatal(err)
+	}
+	if observerRows != 0 {
+		t.Fatalf("feature OFF: the companion pubkey must not be registered as an observer, got %d rows", observerRows)
+	}
+	var clientRegionRows int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM observers WHERE iata = 'client'`).Scan(&clientRegionRows); err != nil {
+		t.Fatal(err)
+	}
+	if clientRegionRows != 0 {
+		t.Fatalf("feature OFF: no observer should be registered under a bogus 'client' region, got %d rows", clientRegionRows)
+	}
+	var txRows int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM transmissions`).Scan(&txRows); err != nil {
+		t.Fatal(err)
+	}
+	if txRows != 0 {
+		t.Fatalf("feature OFF: the client-topic packet must not be ingested as an ordinary observer packet, got %d transmissions rows", txRows)
+	}
+}
+
 // TestClientRxCoverageBlacklistedDropped verifies the #1 fix: a blacklisted
 // operator cannot skirt the observer blacklist via the client topic. With the
 // feature ON but the companion pubkey blacklisted, no row is written. Without

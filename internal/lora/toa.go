@@ -60,6 +60,7 @@ func PreambleForSF(sf int) int {
 // coding_coeff = preset.CR directly (we encode the denominator 5..8
 // so coefficient = denominator; Semtech notation uses CR ∈ 1..4 with
 // coefficient = CR+4, which is the same arithmetic).
+//
 //	n_preamble  = preamble + 4.25
 //	ToA         = (n_preamble + n_payload) · T_sym
 //

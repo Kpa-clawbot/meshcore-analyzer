@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/meshcore-analyzer/packetpath"
 	"os"
 	"path/filepath"
 	"testing"
@@ -427,7 +428,7 @@ func TestResolvedSourcesSchemeMapping(t *testing.T) {
 }
 
 // TestLoadConfigWSSource verifies that a WebSocket MQTT source round-trips through
-// LoadConfig correctly — username/password preserved, scheme unchanged.
+// LoadConfig correctly â€” username/password preserved, scheme unchanged.
 func TestLoadConfigWSSource(t *testing.T) {
 	t.Setenv("DB_PATH", "")
 	t.Setenv("MQTT_BROKER", "")
@@ -494,5 +495,57 @@ func TestIngestBufferSizeOrDefault(t *testing.T) {
 	}
 	if got := (&Config{IngestBufferSize: -5}).IngestBufferSizeOrDefault(); got != 50000 {
 		t.Fatalf("invalid negative should fall back to default, got %d", got)
+	}
+}
+
+func TestClientRxObservationsGate(t *testing.T) {
+	var c Config
+	if c.ClientRxObservationsEnabled() {
+		t.Error("default should be disabled")
+	}
+	c.ClientRxObservations = &ClientRxObservationsConfig{Enabled: true}
+	if !c.ClientRxObservationsEnabled() {
+		t.Error("explicit enable not honoured")
+	}
+	c.ClientRxObservations = &ClientRxObservationsConfig{Enabled: false}
+	if c.ClientRxObservationsEnabled() {
+		t.Error("explicit disable not honoured")
+	}
+	if got := c.ClientRxObsDaysOrZero(); got != 0 {
+		t.Errorf("unset retention = %d, want 0", got)
+	}
+	c.Retention = &RetentionConfig{ClientRxObsDays: 14}
+	if got := c.ClientRxObsDaysOrZero(); got != 14 {
+		t.Errorf("retention = %d, want 14", got)
+	}
+	c.Retention = &RetentionConfig{ClientRxObsDays: 0}
+	if got := c.ClientRxObsDaysOrZero(); got != 0 {
+		t.Errorf("retention=0 = %d, want 0", got)
+	}
+}
+
+// --- #1784: GetPathTrust ---
+
+func TestGetPathTrustDefaults(t *testing.T) {
+	cfg := &Config{}
+	pt := cfg.GetPathTrust()
+	if pt.MinHashBytesForMapping != packetpath.DefaultMinHashBytesForMapping {
+		t.Errorf("expected default %d, got %d", packetpath.DefaultMinHashBytesForMapping, pt.MinHashBytesForMapping)
+	}
+}
+
+func TestGetPathTrustCustom(t *testing.T) {
+	cfg := &Config{PathTrust: &PathTrustConfig{MinHashBytesForMapping: 3}}
+	pt := cfg.GetPathTrust()
+	if pt.MinHashBytesForMapping != 3 {
+		t.Errorf("expected 3, got %d", pt.MinHashBytesForMapping)
+	}
+}
+
+func TestGetPathTrustNilConfig(t *testing.T) {
+	var cfg *Config
+	pt := cfg.GetPathTrust()
+	if pt.MinHashBytesForMapping != packetpath.DefaultMinHashBytesForMapping {
+		t.Errorf("expected default %d for nil *Config, got %d", packetpath.DefaultMinHashBytesForMapping, pt.MinHashBytesForMapping)
 	}
 }

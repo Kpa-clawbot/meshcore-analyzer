@@ -16,6 +16,8 @@ node test-issue-1065-gesture-hints-gates.js
 node test-frontend-helpers.js
 node test-fetch-all-nodes-pagination.js
 node test-my-repeaters-dashboard.js
+node test-repeater-metric-scatter.js
+node test-top-routes-overlay.js
 node test-url-state.js
 node test-perf-go-runtime.js
 node test-channel-psk-ux.js
@@ -35,8 +37,10 @@ node test-issue-1648-m2-emoji-scan.js
 node test-issue-1648-m3-emoji-scan.js
 node test-issue-1648-m6-final-sweep.js
 node test-issue-1648-m6-lint-self.js
+node test-issue-1890-og-url.js
 node test-traces.js
 node test-live-multibyte-filter.js
+node test-issue-1956-release-routing.js
 
 # #1418 — route-view v2 (Tufte) coverage
 node test-issue-1418-raw-hex-extraction.js
@@ -66,6 +70,8 @@ node test-issue-1473-reserved-prefixes.js
 node test-issue-1473-prefix-generator.js
 node test-issue-1770-mobile-row-clamp.js
 node test-issue-1849-trace-hashbytes.js
+node test-nodes-export.js
+node test-nodes-export-wiring.js
 
 echo ""
 echo "═══════════════════════════════════════"

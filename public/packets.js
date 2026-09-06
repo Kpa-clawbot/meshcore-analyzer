@@ -1631,7 +1631,7 @@
         <thead><tr>
           <th scope="col" class="col-expand" data-priority="1"></th><th scope="col" class="col-region" data-sort-key="region" data-priority="3">Region</th><th scope="col" class="col-time" data-sort-key="time" data-type="date" data-priority="1">Time</th><th scope="col" class="col-hash" data-sort-key="hash" data-priority="3">Hash</th><th scope="col" class="col-size" data-sort-key="size" data-type="numeric" data-priority="4">Size</th>
           <th scope="col" class="col-hashsize" data-sort-key="hb" data-type="numeric" data-priority="5">HB</th>
-          <th scope="col" class="col-type" data-sort-key="type" data-priority="1">Type</th><th scope="col" class="col-observer" data-sort-key="observer" data-priority="3">Observer</th><th scope="col" class="col-path" data-sort-key="path" data-priority="5">Path</th><th scope="col" class="col-rpt" data-sort-key="rpt" data-type="numeric" data-priority="3">Rpt</th><th scope="col" class="col-details" data-priority="1">Details</th>
+          <th scope="col" class="col-type" data-sort-key="type" data-priority="1">Type</th><th scope="col" class="col-scope" data-sort-key="scope" data-priority="4">Scope</th><th scope="col" class="col-observer" data-sort-key="observer" data-priority="3">Observer</th><th scope="col" class="col-path" data-sort-key="path" data-priority="5">Path</th><th scope="col" class="col-rpt" data-sort-key="rpt" data-type="numeric" data-priority="3">Rpt</th><th scope="col" class="col-details" data-priority="1">Details</th>
         </tr></thead>
         <tbody id="pktBody"></tbody>
       </table></div>
@@ -2032,6 +2032,7 @@
       { key: 'hash', label: 'Hash' },
       { key: 'size', label: 'Size' },
       { key: 'type', label: 'Type' },
+      { key: 'scope', label: 'Scope' },
       { key: 'observer', label: 'Observer' },
       { key: 'path', label: 'Path' },
       { key: 'rpt', label: 'Rpt' },
@@ -2041,12 +2042,27 @@
     // #1249: observer column must stay visible at narrow widths so the IATA
     // badge (#1188) renders on mobile. Without observer in scope the user
     // can't see who heard the packet at all.
-    const defaultHidden = isNarrow ? ['region', 'hash', 'path', 'rpt', 'size'] : ['region'];
+    const defaultHidden = isNarrow ? ['region', 'hash', 'path', 'rpt', 'size', 'scope'] : ['region'];
     let visibleCols;
+    let knownCols;
     try {
       visibleCols = JSON.parse(localStorage.getItem('packets-visible-cols'));
+      knownCols = JSON.parse(localStorage.getItem('packets-known-cols'));
     } catch {}
     if (!visibleCols) visibleCols = COL_DEFS.map(c => c.key).filter(k => !defaultHidden.includes(k));
+    else {
+      // A column added after the visitor last saved their preferences is absent
+      // from the stored array for the same reason a column they unchecked is:
+      // the array alone can't tell the two apart, so a new column would arrive
+      // silently hidden. `packets-known-cols` records which keys existed at save
+      // time; anything newer than that gets the default treatment instead.
+      if (!Array.isArray(knownCols)) knownCols = ['region', 'time', 'hash', 'size', 'type', 'observer', 'path', 'rpt', 'details'];
+      COL_DEFS.forEach(c => {
+        if (!knownCols.includes(c.key) && !visibleCols.includes(c.key) && !defaultHidden.includes(c.key)) {
+          visibleCols.push(c.key);
+        }
+      });
+    }
     const colMenu = document.getElementById('colToggleMenu');
     const pktTable = document.getElementById('pktTable');
     function applyColVisibility() {
@@ -2054,6 +2070,7 @@
         pktTable.classList.toggle('hide-col-' + c.key, !visibleCols.includes(c.key));
       });
       localStorage.setItem('packets-visible-cols', JSON.stringify(visibleCols));
+      localStorage.setItem('packets-known-cols', JSON.stringify(COL_DEFS.map(c => c.key)));
     }
     colMenu.innerHTML = COL_DEFS.map(c =>
       `<label><input type="checkbox" data-col="${c.key}" ${visibleCols.includes(c.key) ? 'checked' : ''}> ${c.label}</label>`
@@ -2286,6 +2303,7 @@
           <td class="col-size" data-filter-field="size" data-filter-value="${groupSize || ''}">${groupSize ? groupSize + 'B' : '—'}</td>
           <td class="col-hashsize mono"${_grpHashSizeTitle}>${groupHashBytes}</td>
           <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(groupTypeName || '')}">${p.payload_type != null ? `<span class="badge badge-${groupTypeClass}">${groupTypeName}</span>${transportBadge(p.route_type)}` : '—'}</td>
+          <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
           <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(headerObserverId) || '')}">${isSingle ? escapeHtml(truncate(obsNameOnly(headerObserverId), 16)) + obsIataBadge(p) : escapeHtml(truncate(obsNameOnly(headerObserverId), 10)) + groupedObserverIataBadgesHtml(p)}</td>
           <td class="col-path"><span class="path-hops">${groupPathStr}</span></td>
           <td class="col-rpt">${p.observation_count > 1 ? '<span class="badge badge-obs" title="Seen ' + p.observation_count + ' times"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-eye"/></svg> ' + p.observation_count + '</span>' : (isSingle ? '' : p.count)}</td>
@@ -2320,6 +2338,7 @@
               <td class="col-size" data-filter-field="size" data-filter-value="${size || ''}">${size}B</td>
               <td class="col-hashsize mono"${_cHashSizeTitle}>${childHashBytes}</td>
               <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(c.route_type)}</td>
+              <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(c.scope_name || '')}">${scopeCellHtml(c.scope_name)}</td>
               <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(c.observer_id) || '')}">${escapeHtml(truncate(obsNameOnly(c.observer_id), 16))}${obsIataBadge(c)}</td>
               <td class="col-path"><span class="path-hops">${childPathStr}</span></td>
               <td class="col-rpt"></td>
@@ -2356,6 +2375,7 @@
         <td class="col-size" data-filter-field="size" data-filter-value="${size || ''}">${size}B</td>
         <td class="col-hashsize mono"${_flatHashSizeTitle}>${hashBytes}</td>
         <td class="col-type" data-filter-field="type" data-filter-value="${escapeHtml(typeName || '')}"><span class="badge badge-${typeClass}">${typeName}</span>${transportBadge(p.route_type)}</td>
+        <td class="col-scope" data-filter-field="scope" data-filter-value="${escapeHtml(p.scope_name || '')}">${scopeCellHtml(p.scope_name)}</td>
         <td class="col-observer" data-filter-field="observer" data-filter-value="${escapeHtml(obsNameOnly(p.observer_id) || '')}">${escapeHtml(truncate(obsNameOnly(p.observer_id), 16))}${obsIataBadge(p)}</td>
         <td class="col-path"><span class="path-hops">${pathStr}</span></td>
         <td class="col-rpt"></td>
@@ -2722,6 +2742,7 @@
       case 'rpt': accessor = function(p) {
         try { var pj = typeof p.path_json === 'string' ? JSON.parse(p.path_json) : p.path_json; return Array.isArray(pj) ? pj.length : 0; } catch(e) { return 0; }
       }; break;
+      case 'scope': accessor = function(p) { return p.scope_name || ''; }; break;
       case 'region': accessor = function(p) { return (regionMap && regionMap[p.observer_id]) || ''; }; break;
       case 'path': accessor = function(p) {
         try { var pj = typeof p.path_json === 'string' ? JSON.parse(p.path_json) : p.path_json; return Array.isArray(pj) ? pj.join(',') : ''; } catch(e) { return ''; }
@@ -2734,6 +2755,13 @@
     var isDate = (col === 'time');
 
     packets.sort(function(a, b) {
+      // Most packets carry no scope (FLOOD and DIRECT cannot), so an ascending
+      // sort would bury every scoped row under a wall of dashes. Pin the empties
+      // last in BOTH directions, as the nodes table does for default_scope.
+      if (col === 'scope') {
+        var aHasScope = a.scope_name ? 1 : 0, bHasScope = b.scope_name ? 1 : 0;
+        if (aHasScope !== bHasScope) return bHasScope - aHasScope;
+      }
       var va = accessor(a), vb = accessor(b);
       var result;
       if (isDate) {
@@ -2751,6 +2779,47 @@
         ) * -1; // desc (newest first)
       }
       return dir * result;
+    });
+  }
+
+  // applyObserverFilter decides which already-loaded packets remain visible
+  // under the current observer filter. Extracted into its own function
+  // (rather than left inline in renderTableRows) specifically so tests can
+  // exercise the real production logic instead of a hand-copied
+  // reimplementation — see #1748 PR review (kent-beck): a test that only
+  // checks a copy of this logic doesn't fail if this function regresses.
+  //
+  // #1748: In grouped mode, the server already filters transmissions
+  // correctly (buildTransmissionWhere emits an EXISTS subquery over ALL
+  // observations of the transmission, not just the displayed one — see
+  // cmd/server/db.go). Each row's `observer_id` here is only the
+  // *representative* observer chosen for display (longest observed path),
+  // which may legitimately differ from the observer that satisfied the
+  // filter. Re-filtering client-side against that single representative —
+  // with `_children` still unpopulated at this point (only fetched lazily
+  // on row-expand or observer-sort-change) — hid every multi-observer
+  // transmission whose representative happened not to be one of the
+  // selected observers. In practice this meant a transmission only stayed
+  // visible when the filtered observer was also the one with the longest
+  // path (which is why the report described it as "works only for
+  // whichever observer logged it first" in dense meshes, where
+  // longest-path and earliest-seen correlate). The server-side EXISTS
+  // filter is authoritative for grouped rows, so no client-side
+  // re-filtering is needed or correct here.
+  //
+  // Flat/expanded mode (groupByHash === false) has no such
+  // representative-vs-actual mismatch — buildPacketWhere filters each
+  // observation row by its own exact observer_id — but we keep the
+  // defensive re-filter for that path since it costs nothing and guards
+  // against any future flat-mode server change.
+  function applyObserverFilter(displayPackets, filters, groupByHash, hashOnly) {
+    if (hashOnly || !filters.observer) return displayPackets;
+    if (groupByHash) return displayPackets;
+    const obsIds = new Set(filters.observer.split(','));
+    return displayPackets.filter(p => {
+      if (obsIds.has(p.observer_id)) return true;
+      if (p._children) return p._children.some(c => obsIds.has(String(c.observer_id)));
+      return false;
     });
   }
 
@@ -2796,14 +2865,7 @@
       const types = filters.type.split(',').map(Number);
       displayPackets = displayPackets.filter(p => types.includes(p.payload_type));
     }
-    if (!hashOnly && filters.observer) {
-      const obsIds = new Set(filters.observer.split(','));
-      displayPackets = displayPackets.filter(p => {
-        if (obsIds.has(p.observer_id)) return true;
-        if (p._children) return p._children.some(c => obsIds.has(String(c.observer_id)));
-        return false;
-      });
-    }
+    displayPackets = applyObserverFilter(displayPackets, filters, groupByHash, hashOnly);
 
     // Packet Filter Language
     const pfCount = document.getElementById('packetFilterCount');
@@ -2917,8 +2979,16 @@
     if (decoded.type === 'PATH') return `<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-shuffle"/></svg> ${decoded.srcHash?.slice(0,8) || '?'} → ${decoded.destHash?.slice(0,8) || '?'}`;
     // Requests/responses (encrypted)
     if (decoded.type === 'REQ' || decoded.type === 'RESPONSE') return `<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-lock"/></svg> ${decoded.srcHash?.slice(0,8) || '?'} → ${decoded.destHash?.slice(0,8) || '?'}`;
-    // Anonymous requests
-    if (decoded.type === 'ANON_REQ') return `<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-lock"/></svg> anon → ${decoded.destHash?.slice(0,8) || '?'}`;
+    // Anonymous requests (#1864). ANON_REQ carries the sender's FULL 32-byte
+    // pubkey (not a 1-byte srcHash) — resolve it to a node name if known,
+    // else show the first 8 hex chars. Legacy ephemeralPubKey fallback covers
+    // packets decoded before the backend field was renamed to srcPubKey.
+    if (decoded.type === 'ANON_REQ') {
+      const anonKey = decoded.srcPubKey || decoded.ephemeralPubKey || '';
+      const anonName = (anonKey && window.HopResolver && HopResolver.nameForKey) ? HopResolver.nameForKey(anonKey) : null;
+      const anonSrc = anonName ? escapeHtml(anonName) : (anonKey ? escapeHtml(anonKey.slice(0, 8)) : 'anon');
+      return `<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-lock"/></svg> ${anonSrc} → ${decoded.destHash?.slice(0,8) || '?'}`;
+    }
     // CONTROL packets (#1802) — DISCOVER_REQ / DISCOVER_RESP body fields,
     // decoded by cmd/ingestor/decoder.go decodeControl(). Wire format:
     //   firmware/src/Mesh.cpp:69
@@ -3274,7 +3344,10 @@
     // src→dst). Replaces the prior byte-count title that buried packet
     // identity behind a byte counter (#1458 P0-A).
     const semanticSummary = getDetailPreview(decoded);
-    const srcLabel = decoded.sender || decoded.name || (decoded.srcHash ? decoded.srcHash.slice(0,8) : null) || (decoded.pubKey ? decoded.pubKey.slice(0,8) + '…' : null);
+    // #1864: ANON_REQ has no srcHash — its sender is the full srcPubKey.
+    const _anonKey = decoded.srcPubKey || decoded.ephemeralPubKey || '';
+    const _anonName = (_anonKey && window.HopResolver && HopResolver.nameForKey) ? HopResolver.nameForKey(_anonKey) : null;
+    const srcLabel = decoded.sender || decoded.name || (decoded.srcHash ? decoded.srcHash.slice(0,8) : null) || _anonName || (_anonKey ? _anonKey.slice(0,8) + '…' : null) || (decoded.pubKey ? decoded.pubKey.slice(0,8) + '…' : null);
     const dstLabel = decoded.recipient || (decoded.destHash ? decoded.destHash.slice(0,8) : null);
     const srcDstHtml = (srcLabel || dstLabel)
       ? `<div class="detail-srcdst">${escapeHtml(srcLabel || '?')} <span class="arrow">→</span> ${escapeHtml(dstLabel || (decoded.channel ? '#' + decoded.channel : '?'))}</div>`
@@ -3398,7 +3471,11 @@
               id: o.id, hash: pkt.hash, raw: o.raw_hex || pkt.raw_hex,
               _ts: new Date(o.timestamp).getTime(),
               decoded: { header: { payloadTypeName: typeName }, payload: oDec, path: { hops: oPath } },
-              snr: o.snr, rssi: o.rssi, observer: obsName(o.observer_id)
+              snr: o.snr, rssi: o.rssi, observer: obsName(o.observer_id),
+              // #1900: carry the id itself, not just the resolved name. The Live
+              // region filter matches on observer_id, so without it the replay
+              // silently renders nothing whenever a region is selected.
+              observer_id: o.observer_id, observer_iata: o.observer_iata
             });
           }
         } else {
@@ -3406,7 +3483,8 @@
             id: pkt.id, hash: pkt.hash, raw: pkt.raw_hex,
             _ts: new Date(pkt.timestamp).getTime(),
             decoded: { header: { payloadTypeName: typeName }, payload: decoded, path: { hops: pathHops } },
-            snr: pkt.snr, rssi: pkt.rssi, observer: obsName(pkt.observer_id)
+            snr: pkt.snr, rssi: pkt.rssi, observer: obsName(pkt.observer_id),
+            observer_id: pkt.observer_id, observer_iata: pkt.observer_iata
           });
         }
         sessionStorage.setItem('replay-packet', JSON.stringify(replayPackets));
@@ -3592,6 +3670,19 @@
       if (decoded.pathData) {
         rows += fieldRow(off + 9, 'Route Hops', decoded.pathData.toUpperCase(), pathHops.length + ' hop(s)');
       }
+    } else if (decoded.type === 'ANON_REQ') {
+      // #1864: ANON_REQ layout differs from REQ — the source is a FULL 32-byte
+      // pubkey, not a 1-byte srcHash, so MAC/data sit at off+33/off+35 (not
+      // off+2/off+4). Decode explicitly and resolve the key to a node link.
+      const anonKey = decoded.srcPubKey || decoded.ephemeralPubKey || '';
+      const anonName = (anonKey && window.HopResolver && HopResolver.nameForKey) ? HopResolver.nameForKey(anonKey) : null;
+      rows += fieldRow(off, 'Dest Hash (1B)', decoded.destHash || '', '');
+      const anonKeyCell = anonKey
+        ? `<a href="#/nodes/${encodeURIComponent(anonKey)}" class="hop-link ${anonName ? 'hop-named' : ''}" data-hop-link="true">${anonName ? escapeHtml(anonName) : truncate(anonKey, 24)}</a>`
+        : '—';
+      rows += fieldRow(off + 1, 'Src Public Key (32B)', anonKeyCell, anonName ? '' : 'sender pubkey (unresolved)');
+      rows += fieldRow(off + 33, 'MAC (2B)', decoded.mac || '', '');
+      rows += fieldRow(off + 35, 'Encrypted Data', truncate(decoded.encryptedData || '', 30), '');
     } else if (decoded.destHash !== undefined) {
       rows += fieldRow(off, 'Dest Hash (1B)', decoded.destHash || '', '');
       rows += fieldRow(off + 1, 'Src Hash (1B)', decoded.srcHash || '', '');
@@ -3914,6 +4005,7 @@
       buildFlatRowHtml,
       _calcVisibleRange,
       buildPacketsParams,
+      applyObserverFilter,
       renderTableRows,
       _setPackets: function(p) { packets = p; },
       _setFilter: function(k, v) { filters[k] = v; },

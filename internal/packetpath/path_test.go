@@ -81,7 +81,7 @@ func buildTracePacket() (rawHex string, headerPathHops []string, payloadHops []s
 	buf = append(buf, payloadPathBytes...)
 
 	rawHex = strings.ToUpper(hex.EncodeToString(buf))
-	headerPathHops = []string{"1A", "0F"} // SNR values — NOT route hops
+	headerPathHops = []string{"1A", "0F"}    // SNR values — NOT route hops
 	payloadHops = []string{"AA", "BB", "CC"} // actual route hops from payload
 	return
 }

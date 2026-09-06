@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"time"
 )
@@ -52,25 +53,32 @@ func (s *PacketStore) GetRepeaterRelayInfoMap(windowHours float64) map[string]Re
 	return cached
 }
 
+// snapshotPathHopIndexLocked copies hop buckets for reads after releasing s.mu.
+// Eviction and raw-path updates compact their backing arrays in place, so a
+// header copy would allow those writers to change an in-flight snapshot.
+// The caller must hold s.mu for reading. Cost: O(total path-hop entries).
+func (s *PacketStore) snapshotPathHopIndexLocked() map[string][]*StoreTx {
+	snap := make(map[string][]*StoreTx, len(s.byPathHop))
+	for k, list := range s.byPathHop {
+		snap[k] = slices.Clone(list)
+	}
+	return snap
+}
+
 // computeRepeaterRelayInfoMap walks byPathHop once under a single RLock,
 // pre-parses every FirstSeen timestamp once (not once-per-pubkey-bucket),
 // and emits one RepeaterRelayInfo per hop key.
 //
 // Time-complexity invariant: O(unique-tx-in-byPathHop + total-key-bucket
-// entries). Memory: one map entry per byPathHop key. Both are bounded by
-// the same eviction policy that bounds byPathHop itself.
+// entries). Snapshot memory: one pointer per bucket entry, plus a map entry
+// per key; both are bounded by the same eviction policy as byPathHop itself.
 func (s *PacketStore) computeRepeaterRelayInfoMap(windowHours float64) map[string]RepeaterRelayInfo {
 	s.mu.RLock()
 
-	// Snapshot the slices (header copy) so we can release the lock before
-	// the expensive parse pass. Slice headers point at the live underlying
-	// arrays but those are append-only-by-id; the worst-case race here is
-	// that ingest grows a slice we already snapshotted (we miss the new
-	// tail), which is acceptable for a 15s-TTL status read.
-	snap := make(map[string][]*StoreTx, len(s.byPathHop))
-	for k, list := range s.byPathHop {
-		snap[k] = list
-	}
+	// Own the bucket arrays before releasing the lock for aggregation.
+	// The result represents this snapshot even if eviction removes its txs
+	// while aggregation runs; the next recomputer pass picks up that change.
+	snap := s.snapshotPathHopIndexLocked()
 
 	// Build a tx-id-keyed pre-parsed cache so the inner loop doesn't
 	// re-parse the same FirstSeen N times when the same tx is indexed
@@ -129,7 +137,10 @@ func (s *PacketStore) computeRepeaterRelayInfoMap(windowHours float64) map[strin
 				}
 			}
 		}
-		visit := func(txs []*StoreTx) {
+		// viaPrefix marks the 1-byte wire-prefix bucket, shared by every
+		// node with the same first pubkey byte. See collectRelayEntriesLocked
+		// for the counters-vs-scopes split (#662 / #1902).
+		visit := func(txs []*StoreTx, viaPrefix bool) {
 			for _, tx := range txs {
 				if tx == nil {
 					continue
@@ -152,11 +163,15 @@ func (s *PacketStore) computeRepeaterRelayInfoMap(windowHours float64) map[strin
 				// unparseable first_seen still proves the repeater
 				// transported that scope. RelayCount/LastRelayed below
 				// remain timestamp-gated.
-				if tx.ScopeName != "" {
+				//
+				// #1902: it IS gated on full-pubkey attribution — a 1-byte
+				// hop cannot prove which of the nodes sharing that byte
+				// carried the packet.
+				if tx.ScopeName != nil && *tx.ScopeName != "" && !viaPrefix {
 					if scopeSet == nil {
 						scopeSet = map[string]struct{}{}
 					}
-					scopeSet[tx.ScopeName] = struct{}{}
+					scopeSet[*tx.ScopeName] = struct{}{}
 				}
 				if !p.ok {
 					continue
@@ -180,11 +195,11 @@ func (s *PacketStore) computeRepeaterRelayInfoMap(windowHours float64) map[strin
 				}
 			}
 		}
-		visit(list)
+		visit(list, false)
 		if seen != nil {
 			prefix := key[:2]
 			if prefix != key {
-				visit(snap[prefix])
+				visit(snap[prefix], true)
 			}
 		}
 		info.TransportedScopes = sortedCappedScopes(scopeSet)

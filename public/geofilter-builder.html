@@ -85,13 +85,29 @@
 </div>
 
 <script src="geofilter-draft.js"></script>
+<script src="map-tile-providers.js"></script>
 <script>
 const map = L.map('map').setView([50.5, 4.4], 8);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+const DEFAULT_DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const tiles = L.tileLayer(DEFAULT_DARK_TILES, {
   attribution: '© OpenStreetMap © CartoDB',
   maxZoom: 19
 }).addTo(map);
+
+// This page is standalone (not the SPA), so it loads the server's map config
+// itself and re-resolves the tile URL through the shared registry. Without
+// this, CARTO serves every tile stamped 'API KEY REQUIRED' — with a 200.
+fetch('/api/config/client')
+  .then(function (r) { return r.json(); })
+  .then(function (cfg) {
+    window.MC_MAP_CFG = (cfg && cfg.map) || { tiles: { providers: {} } };
+    if (typeof window.MC_initTileRegistry === 'function') window.MC_initTileRegistry();
+    if (typeof window.MC_tileUrlById === 'function') {
+      tiles.setUrl(window.MC_tileUrlById('carto-dark', DEFAULT_DARK_TILES));
+    }
+  })
+  .catch(function () { /* keep the unkeyed default */ });
 
 let points = [];
 let markers = [];

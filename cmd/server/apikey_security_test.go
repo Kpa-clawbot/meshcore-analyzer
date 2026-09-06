@@ -52,7 +52,7 @@ func TestRequireAPIKey_RejectsWeakKey(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/api/packets", nil)
+	req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter", nil)
 	req.Header.Set("X-API-Key", "test")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -69,7 +69,7 @@ func TestRequireAPIKey_AcceptsStrongKey(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/api/packets", nil)
+	req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter", nil)
 	req.Header.Set("X-API-Key", strongKey)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -85,7 +85,7 @@ func TestRequireAPIKey_EmptyKeyDisablesEndpoints(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/api/packets", nil)
+	req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -100,7 +100,7 @@ func TestRequireAPIKey_WrongKeyUnauthorized(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/api/packets", nil)
+	req := httptest.NewRequest("POST", "/api/admin/prune-geo-filter", nil)
 	req.Header.Set("X-API-Key", "wrong-key-entirely-here")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)

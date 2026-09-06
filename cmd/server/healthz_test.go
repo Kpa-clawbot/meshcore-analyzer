@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 )
+
 func TestHealthzNotReady(t *testing.T) {
 	// Ensure readiness is 0 (not ready)
 	readiness.Store(0)
@@ -77,4 +78,3 @@ func TestHealthzAntiTautology(t *testing.T) {
 		t.Fatal("anti-tautology: handler returned 200 when readiness=0; gating is broken")
 	}
 }
-

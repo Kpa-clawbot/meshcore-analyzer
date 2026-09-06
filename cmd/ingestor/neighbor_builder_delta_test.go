@@ -92,7 +92,7 @@ func TestNeighborEdgesBuilderDeltaScan(t *testing.T) {
 	// goroutine harness). Full scan allowed because neighbor_edges
 	// starts empty.
 	for {
-		n, err := store.buildAndPersistNeighborEdges()
+		n, err := store.buildAndPersistNeighborEdges(trustAllPrefixes())
 		if err != nil {
 			t.Fatalf("warm-up build: %v", err)
 		}
@@ -119,7 +119,7 @@ func TestNeighborEdgesBuilderDeltaScan(t *testing.T) {
 
 	// Tick #2: NO new observations. Expect no-op + fast.
 	noopStart := time.Now()
-	n2, err := store.buildAndPersistNeighborEdges()
+	n2, err := store.buildAndPersistNeighborEdges(trustAllPrefixes())
 	if err != nil {
 		t.Fatalf("noop build: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestNeighborEdgesBuilderDeltaScan(t *testing.T) {
 	}
 
 	deltaStart := time.Now()
-	n3, err := store.buildAndPersistNeighborEdges()
+	n3, err := store.buildAndPersistNeighborEdges(trustAllPrefixes())
 	if err != nil {
 		t.Fatalf("delta build: %v", err)
 	}

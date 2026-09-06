@@ -76,6 +76,13 @@ func TestGetChannelMessagesPerfLargeChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Clear the results cache so the timed call below still measures the
+	// real SQL path rather than a cache hit — this test's whole point is
+	// catching a regression in that query.
+	db.msgCacheMu.Lock()
+	db.msgCache = nil
+	db.msgCacheMu.Unlock()
+
 	start := time.Now()
 	msgs, total, err := db.GetChannelMessages("#perf", 50, 0)
 	elapsed := time.Since(start)

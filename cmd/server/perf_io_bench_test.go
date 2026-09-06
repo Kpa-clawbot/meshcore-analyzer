@@ -31,7 +31,6 @@ func TestPerfIOBench_Sanity(t *testing.T) {
 	}
 }
 
-
 // BenchmarkParseProcIOInto measures the server-side /proc/self/io key:value
 // walker on a representative payload. Carmack must-fix #3.
 func BenchmarkParseProcIOInto(b *testing.B) {

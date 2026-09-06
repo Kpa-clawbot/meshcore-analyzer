@@ -174,15 +174,12 @@ assert(iT > 0 && iP > iT && iE > iP,
 // Within "encrypted" section, ch64 (300 msgs) appears (only one entry).
 assert(tbody.indexOf('0x40') > iEnc, 'encrypted section contains 0x40');
 
-console.log('\n=== Channels page links to Analytics ===');
-
-const channelsSrc = fs.readFileSync(
-  path.join(__dirname, 'public/channels.js'),
-  'utf8'
-);
-assert(/#\/analytics/.test(channelsSrc) &&
-       /Channel Analytics|channel analytics/i.test(channelsSrc),
-  'channels.js sidebar links to #/analytics with "Channel Analytics" text');
+// The "Channels page links to Analytics" assertion that used to live here was
+// removed: #1367 / PR #1376 ("channels page chat-app redesign — restore prod row
+// layout, drop analytics chip") deliberately deleted the `#/analytics` chip from
+// public/channels.js. The assertion could not pass again without reinstating a
+// feature that was removed on purpose. It survived because nothing runs
+// test-all.sh in CI (#1858).
 
 console.log('\n' + (failed ? '✗ ' + failed + ' failed, ' : '') + passed + ' passed');
 process.exit(failed ? 1 : 0);

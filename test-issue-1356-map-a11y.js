@@ -27,6 +27,79 @@ function assert(cond, msg) {
 const mapSrc   = fs.readFileSync(path.join(__dirname, 'public', 'map.js'),   'utf8');
 const cssSrc   = fs.readFileSync(path.join(__dirname, 'public', 'style.css'), 'utf8');
 
+// ── Load map.js in a DOM-less sandbox so the label assertions can call the
+// real makeRepeaterLabelIcon and look at what it renders.
+//
+// The V3 label checks used to be source greps. One of them bounded the distance
+// between two identifiers in map.js to 200 characters, which made it fail on any
+// statement inserted between them even when the rendering was unchanged -- and,
+// worse, let a comment that happened to mention both identifiers satisfy it, so
+// it could report green while the ordering was in fact wrong. A grep cannot tell
+// code from prose about code.
+//
+// Same sandbox shape as test-map-clustering.js; no browser, so this still runs
+// in the JS-unit-tests CI step.
+function makeLeafletShim() {
+  const chain = () => { const o = { addTo: () => o, on: () => o, setStyle: () => o, remove: () => o,
+                                    bindTooltip: () => o, setLatLng: () => o, extend: () => o }; return o; };
+  const control = () => chain();
+  control.layers = () => chain();
+  return {
+    divIcon: (opts) => opts,               // the icon under test: keep the options verbatim
+    point: (x, y) => ({ x: x, y: y }),
+    circleMarker: chain, polyline: chain, polygon: chain, marker: chain,
+    tileLayer: chain, layerGroup: chain, featureGroup: chain, control: control,
+    latLngBounds: chain, latLng: (a, b) => ({ lat: a, lng: b }),
+    map: () => Object.assign(chain(), { setView: () => chain(), getZoom: () => 11,
+      getCenter: () => ({ lat: 0, lng: 0 }), getBounds: () => ({ contains: () => true }),
+      fitBounds: () => chain(), invalidateSize: () => {}, hasLayer: () => false,
+      addLayer: () => chain(), removeLayer: () => {} }),
+    markerClusterGroup: chain, MarkerClusterGroup: function () {},
+    DomUtil: { create: () => ({}) }, Icon: { Default: { prototype: {} } },
+  };
+}
+
+function loadMapInternals() {
+  const vm = require('vm');
+  const ctx = {
+    window: {},
+    document: {
+      addEventListener() {}, getElementById() { return null; },
+      querySelector() { return null; }, querySelectorAll() { return []; },
+      createElement() { return { id: '', textContent: '', innerHTML: '', style: {}, dataset: {},
+        appendChild() {}, addEventListener() {}, setAttribute() {},
+        classList: { add() {}, remove() {}, toggle() {} } }; },
+      head: { appendChild() {} }, body: { appendChild() {} },
+      documentElement: { getAttribute: () => null, dataset: {} },
+    },
+    console, Date, Math, Array, Object, String, Number, JSON, RegExp, Error, TypeError,
+    parseInt, parseFloat, isFinite, isNaN, Map, Set, Promise, URLSearchParams,
+    setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0, clearInterval() {},
+    registerPage: () => {}, esc: (x) => x, onWS: () => {}, offWS: () => {},
+    localStorage: (() => { const st = {}; return { getItem: k => (k in st ? st[k] : null),
+      setItem: (k, v) => { st[k] = String(v); }, removeItem: k => { delete st[k]; } }; })(),
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    addEventListener() {}, dispatchEvent() {},
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    navigator: {}, location: { hash: '', protocol: 'https:', host: 'localhost' },
+    L: makeLeafletShim(),
+  };
+  ctx.window.L = ctx.L;
+  vm.createContext(ctx);
+  for (const f of ['public/roles.js', 'public/map.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), ctx, { filename: f });
+    for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+  }
+  return ctx.window.__meshcoreMapInternals;
+}
+
+// Deliberately NOT wrapped in try/catch that warns and continues: a sandbox that
+// fails to load must fail the suite, not quietly drop every assertion below it.
+const mapInternals = loadMapInternals();
+const NODE = { public_key: '3e7a1b9c'.repeat(8), hash_size: 2 };
+const THIN = '\u2009';
+
 console.log('\n=== #1356 V1: cluster bubble — neutral fill, border-style ramp, ARIA ===');
 
 // V1.a — CSS must define a neutral cluster fill constant (not the bucket color).
@@ -129,19 +202,34 @@ assert(/--mc-mb-unknown\s*:\s*#FF8888/i.test(cssSrc),
 assert(/border-left\s*:\s*3px solid/.test(cssSrc),
   '.mc-mb-label has 3px solid border-left (colored accent stripe)');
 
-// V3.e — makeRepeaterLabelIcon prepends MB_GLYPHS[status].
-assert(/MB_GLYPHS\[[^\]]+\][\s\S]{0,200}shortHash|shortHash[\s\S]{0,200}MB_GLYPHS\[/.test(mapSrc),
-  'makeRepeaterLabelIcon prepends MB_GLYPHS glyph to the hash text');
+// V3.e/f/g are asserted on what makeRepeaterLabelIcon RENDERS, not on where its
+// identifiers sit in the source. See loadMapInternals() above for why.
+assert(mapInternals && typeof mapInternals.makeRepeaterLabelIcon === 'function',
+  'map.js exposes makeRepeaterLabelIcon on window.__meshcoreMapInternals');
 
-// V3.f — aria-label "multi-byte <status>, hash <ID>".
-assert(/aria-label="'\s*\+\s*ariaStatus\s*\+\s*'"/.test(mapSrc) ||
-       /'multi-byte '\s*\+\s*status\s*\+\s*', hash '\s*\+\s*shortHash/.test(mapSrc) ||
-       /aria-label="multi-byte \$\{[^}]+\}, hash \$\{shortHash\}"/.test(mapSrc),
+const labelConfirmed = mapInternals.makeRepeaterLabelIcon(NODE, false, false, 'confirmed').html;
+const labelUnknown   = mapInternals.makeRepeaterLabelIcon(NODE, false, false, 'unknown').html;
+const labelNoStatus  = mapInternals.makeRepeaterLabelIcon(NODE, false, false, null).html;
+
+// V3.e — the glyph is PREPENDED to the hash: glyph, thin space, hash, in that
+// order and with nothing between them.
+assert(labelConfirmed.includes('>\u2713' + THIN + '3E7A<'),
+  'makeRepeaterLabelIcon prepends the confirmed glyph to the hash text');
+assert(labelUnknown.includes('>\u2717' + THIN + '3E7A<'),
+  'makeRepeaterLabelIcon prepends the unknown glyph to the hash text');
+assert(labelNoStatus.includes('>3E7A<') && !labelNoStatus.includes(THIN),
+  'with no multi-byte status the label is the bare hash, no glyph and no thin space');
+
+// V3.f — aria-label "multi-byte <status>, hash <ID>", and the plain form without.
+assert(labelConfirmed.includes('aria-label="multi-byte confirmed, hash 3E7A"'),
   'makeRepeaterLabelIcon emits aria-label "multi-byte <status>, hash <ID>"');
+assert(labelNoStatus.includes('aria-label="repeater hash 3E7A"'),
+  'without a status the aria-label is "repeater hash <ID>"');
 
-// V3.g — Glyph span must be aria-hidden so AT does not read "check mark 3 E".
-assert(/<span aria-hidden="true">[\s\S]{0,100}shortHash|<span aria-hidden="true">'\s*\+\s*(?:glyph|visible)/.test(mapSrc) ||
-       /aria-hidden="true">'\s*\+\s*visible/.test(mapSrc),
+// V3.g — the visible glyph+hash span is aria-hidden so AT reads the label only
+// (not "check mark 3 E"). Asserted on the emitted markup: the glyph must sit
+// inside a span carrying aria-hidden.
+assert(/<span aria-hidden="true">\u2713\u20093E7A<\/span>/.test(labelConfirmed),
   'visible glyph+hash span is aria-hidden="true" (AT reads aria-label only)');
 
 // V3.h — repeater label MUST use the neutral fill via var(--mc-mb-fill); MUST

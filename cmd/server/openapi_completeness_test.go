@@ -205,4 +205,3 @@ func TestOpenAPICompleteness(t *testing.T) {
 			len(stale), knownGapsFile, strings.Join(stale, "\n  - "))
 	}
 }
-

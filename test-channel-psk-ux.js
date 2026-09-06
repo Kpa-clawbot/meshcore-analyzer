@@ -89,9 +89,13 @@ async function run() {
   // E2E DOM: distinct badge class/marker for user-added channels
   assert(chSrc.includes('ch-user-added'),
     'renderChannelList emits ch-user-added marker for keyed channels');
-  // Distinct icon
-  assert(chSrc.includes('🔓'),
-    'user-added rows use a distinct unlocked icon (🔓) from server-encrypted (🔒)');
+  // Distinct icon. #1648 replaced the 🔓/🔒 glyphs with Phosphor sprite refs;
+  // the contract is unchanged — user-added rows must not share the icon that
+  // marks a server-encrypted channel.
+  assert(chSrc.includes('#ph-lock-open'),
+    'user-added rows use the unlocked sprite (#ph-lock-open)');
+  assert(chSrc.includes('#ph-lock"'),
+    'server-encrypted rows use the locked sprite (#ph-lock)');
 
   // addUserChannel accepts label
   assert(/addUserChannel\s*\(\s*val\s*,\s*\w*label/i.test(chSrc) ||

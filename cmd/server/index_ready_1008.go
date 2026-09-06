@@ -55,18 +55,18 @@
 //     the not-ready window these report zero counts / nil scores
 //     rather than 503-ing the whole list. Acceptable because:
 //
-//       * /api/nodes and /api/nodes/{pubkey} have many other fields
-//         (last-seen, position, advert metadata) that callers depend
-//         on at startup. 503-ing the SPA bootstrap to wait for an
-//         index that exclusively affects "relay activity" badges
-//         would be a worse UX than a 30–60s window of "—" badges.
+//   - /api/nodes and /api/nodes/{pubkey} have many other fields
+//     (last-seen, position, advert metadata) that callers depend
+//     on at startup. 503-ing the SPA bootstrap to wait for an
+//     index that exclusively affects "relay activity" badges
+//     would be a worse UX than a 30–60s window of "—" badges.
 //
-//       * GetRepeaterRelayInfoMap / GetRepeaterUsefulnessScoreMap /
-//         GetBridgeScore / repeater_liveness / repeater_usefulness
-//         all walk s.byPathHop. During the build window they return
-//         empty maps or zero scores; the steady-state recomputer
-//         (#1262) refreshes them every 5min once indexes flip ready
-//         (prewarm guarded by WaitIndexesReady — see review M1).
+//   - GetRepeaterRelayInfoMap / GetRepeaterUsefulnessScoreMap /
+//     GetBridgeScore / repeater_liveness / repeater_usefulness
+//     all walk s.byPathHop. During the build window they return
+//     empty maps or zero scores; the steady-state recomputer
+//     (#1262) refreshes them every 5min once indexes flip ready
+//     (prewarm guarded by WaitIndexesReady — see review M1).
 //
 //     This is documented rather than gated so operators do not see
 //     /api/nodes 503 during routine restarts on Cascadia-scale data.
@@ -215,4 +215,3 @@ func (s *PacketStore) WaitIndexesReady(timeout time.Duration) bool {
 		return s.SubpathIndexReady() && s.PathHopIndexReady()
 	}
 }
-

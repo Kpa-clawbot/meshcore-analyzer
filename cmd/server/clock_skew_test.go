@@ -15,17 +15,17 @@ func TestClassifySkew(t *testing.T) {
 		expected SkewSeverity
 	}{
 		{0, SkewOK},
-		{60, SkewOK},           // 1 min
-		{299, SkewOK},          // just under 5 min
-		{300, SkewWarning},     // exactly 5 min
-		{1800, SkewWarning},    // 30 min
-		{3599, SkewWarning},    // just under 1 hour
-		{3600, SkewCritical},   // exactly 1 hour
-		{86400, SkewCritical},  // 1 day
-		{2592000 - 1, SkewCritical}, // just under 30 days
-		{2592000, SkewAbsurd},  // exactly 30 days
-		{86400 * 365 - 1, SkewAbsurd}, // just under 365 days
-		{86400 * 365, SkewNoClock}, // exactly 365 days
+		{60, SkewOK},                    // 1 min
+		{299, SkewOK},                   // just under 5 min
+		{300, SkewWarning},              // exactly 5 min
+		{1800, SkewWarning},             // 30 min
+		{3599, SkewWarning},             // just under 1 hour
+		{3600, SkewCritical},            // exactly 1 hour
+		{86400, SkewCritical},           // 1 day
+		{2592000 - 1, SkewCritical},     // just under 30 days
+		{2592000, SkewAbsurd},           // exactly 30 days
+		{86400*365 - 1, SkewAbsurd},     // just under 365 days
+		{86400 * 365, SkewNoClock},      // exactly 365 days
 		{86400 * 365 * 10, SkewNoClock}, // 10 years (epoch-0 style)
 	}
 	for _, tc := range tests {
@@ -228,7 +228,7 @@ func TestComputeNodeSkew_ThreeObservers(t *testing.T) {
 	// raw from obs1 = 60, corrected = 60 + 0 = 60
 	// raw from obs2 = 60, corrected = 60 + 0 = 60
 	// raw from obs3 = 30, corrected = 30 + 30 = 60
-	// All three converge to 60. 
+	// All three converge to 60.
 	if cs.MedianSkewSec != 60 {
 		t.Errorf("median skew = %v, want 60 (node is 60s ahead)", cs.MedianSkewSec)
 	}
@@ -318,7 +318,7 @@ func TestGetNodeClockSkew_Integration(t *testing.T) {
 	tx1 := &StoreTx{
 		Hash:        "hash1",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":1700002320}}`, // obs=1700002200, node ahead by 120s
+		DecodedJSON: `{"payload":{"timestamp":1700002320},"pubKey":"AABB"}`, // obs=1700002200, node ahead by 120s
 		Observations: []*StoreObs{
 			{ObserverID: "obs1", Timestamp: "2023-11-14T22:50:00Z"}, // 1700002200
 			{ObserverID: "obs2", Timestamp: "2023-11-14T22:50:00Z"}, // 1700002200
@@ -327,7 +327,7 @@ func TestGetNodeClockSkew_Integration(t *testing.T) {
 	tx2 := &StoreTx{
 		Hash:        "hash2",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":1700005920}}`, // obs=1700005800, node ahead by 120s
+		DecodedJSON: `{"payload":{"timestamp":1700005920},"pubKey":"AABB"}`, // obs=1700005800, node ahead by 120s
 		Observations: []*StoreObs{
 			{ObserverID: "obs1", Timestamp: "2023-11-14T23:50:00Z"}, // 1700005800
 			{ObserverID: "obs2", Timestamp: "2023-11-14T23:50:00Z"}, // 1700005800
@@ -387,7 +387,7 @@ func TestGetNodeClockSkew_NoClock_EpochZero(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        "epoch-h" + string(rune('0'+i)),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":1577836800}}`, // Jan 1 2020 — valid but way off
+			DecodedJSON: `{"payload":{"timestamp":1577836800},"pubKey":"EPOCH"}`, // Jan 1 2020 — valid but way off
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -428,7 +428,7 @@ func TestGetNodeClockSkew_TooFewSamplesForDrift(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        "few-h" + string(rune('0'+i)),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"FEWSAMP"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -469,7 +469,7 @@ func TestGetNodeClockSkew_AbsurdDriftCapped(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        "wild-h" + string(rune('0'+i)),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"WILD"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -508,7 +508,7 @@ func TestGetNodeClockSkew_NormalNodeWithDrift(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        "norm-h" + string(rune('0'+i)),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"NORMAL"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -567,7 +567,7 @@ func TestSeverityUsesRecentNotMedian(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        fmt.Sprintf("recent-h%03d", i),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"RECENT"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -660,7 +660,7 @@ func TestReporterScenario_789(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        fmt.Sprintf("rep-%04d", i),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"REPNODE"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -717,7 +717,7 @@ func TestBimodalClock_845(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        fmt.Sprintf("bimodal-%04d", i),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"BIMODAL"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -763,7 +763,7 @@ func TestAllBad_NoClock_845(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        fmt.Sprintf("allbad-%04d", i),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"ALLBAD"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -807,7 +807,7 @@ func TestMostlyGood_OK_845(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        fmt.Sprintf("mostly-%04d", i),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"MOSTLY"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -844,7 +844,7 @@ func TestSingleSample_845(t *testing.T) {
 	tx := &StoreTx{
 		Hash:        "single-0001",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+		DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"SINGLE"}`,
 		Observations: []*StoreObs{
 			{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 		},
@@ -887,7 +887,7 @@ func TestFiftyFifty_Bimodal_845(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        fmt.Sprintf("fifty-%04d", i),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS+skew) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS+skew) + `},"pubKey":"FIFTY"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -925,7 +925,7 @@ func TestAllGood_OK_845(t *testing.T) {
 		tx := &StoreTx{
 			Hash:        fmt.Sprintf("allgood-%04d", i),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS-3) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(obsTS-3) + `},"pubKey":"ALLGOOD"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -975,7 +975,7 @@ func TestNodeClockSkew_EvidencePayload(t *testing.T) {
 	tx1 := &StoreTx{
 		Hash:        "evidence_hash_1",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":1700000060}}`,
+		DecodedJSON: `{"payload":{"timestamp":1700000060},"pubKey":"NODETEST"}`,
 		Observations: []*StoreObs{
 			{ObserverID: "obs1", ObserverName: "Observer Alpha", Timestamp: "2023-11-14T22:13:22Z"},
 			{ObserverID: "obs2", ObserverName: "Observer Beta", Timestamp: "2023-11-14T22:13:20Z"},
@@ -986,7 +986,7 @@ func TestNodeClockSkew_EvidencePayload(t *testing.T) {
 	tx2 := &StoreTx{
 		Hash:        "evidence_hash_2",
 		PayloadType: &pt,
-		DecodedJSON: `{"payload":{"timestamp":1700003660}}`,
+		DecodedJSON: `{"payload":{"timestamp":1700003660},"pubKey":"NODETEST"}`,
 		Observations: []*StoreObs{
 			{ObserverID: "obs1", ObserverName: "Observer Alpha", Timestamp: "2023-11-14T23:13:22Z"},
 			{ObserverID: "obs2", ObserverName: "Observer Beta", Timestamp: "2023-11-14T23:13:20Z"},

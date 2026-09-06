@@ -81,6 +81,52 @@ func (s *Store) PruneOldClientReceptions(days int) (int64, error) {
 	return n, nil
 }
 
+// PruneOldClientRxObservations deletes diagnostic client_rx_observations rows
+// older than `days` (by rx_at). Unlike client_receptions this table is
+// diagnostic, not archival, so it gets its own (typically shorter) window.
+// 0 disables. Owned by the ingestor writer (#1283). rx_at on this table is
+// stored at millisecond precision via rxTimeMillisLayout, not RFC3339 — the
+// cutoff must be formatted the same way so lexicographic comparison against
+// stored values stays correct.
+func (s *Store) PruneOldClientRxObservations(days int) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(rxTimeMillisLayout)
+	res, err := s.db.Exec(`DELETE FROM client_rx_observations WHERE rx_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune client_rx_observations: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		log.Printf("[prune] deleted %d client_rx_observations older than %d days", n, days)
+	}
+	return n, nil
+}
+
+// PruneOldClientRfSamples deletes RF environment sample rows older than
+// `days` (by sampled_at). Diagnostic, not archival, so it gets its own
+// window, independent of clientRxDays/clientRxObsDays. 0 disables. Owned by
+// the ingestor writer (#1283). sampled_at on this table is stored at
+// millisecond precision via rxTimeMillisLayout, not RFC3339 — the cutoff
+// must be formatted the same way so lexicographic comparison against
+// stored values stays correct.
+func (s *Store) PruneOldClientRfSamples(days int) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(rxTimeMillisLayout)
+	res, err := s.db.Exec(`DELETE FROM client_rf_samples WHERE sampled_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune client_rf_samples: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		log.Printf("[prune] deleted %d client_rf_samples older than %d days", n, days)
+	}
+	return n, nil
+}
+
 // SoftDeleteBlacklistedObservers marks observers in the blacklist as
 // inactive=1 so they are hidden from API responses. Owned by ingestor
 // per #1287. Runs once at startup.
@@ -248,6 +294,25 @@ func extractPubkeyFromAdvertJSON(s string) string {
 		return ""
 	}
 	if v, ok := m["pubKey"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// extractPubkeyFromAnonReqJSON parses an ANON_REQ decoded_json blob and
+// returns the ephemeralPubKey field, or "" if absent/invalid (#1777).
+// ANON_REQ carries the sender's full Ed25519 ephemeral pubkey — the same
+// trust level as ADVERT's pubKey — unlike REQ/RESP/PATH/TXT, which only
+// carry a 1-byte truncated hash of the originator.
+func extractPubkeyFromAnonReqJSON(s string) string {
+	if s == "" {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return ""
+	}
+	if v, ok := m["ephemeralPubKey"].(string); ok {
 		return v
 	}
 	return ""

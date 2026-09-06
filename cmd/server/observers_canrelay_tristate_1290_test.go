@@ -12,9 +12,9 @@ import (
 // Issue #1290 (MAJOR-2, adversarial review of PR #1624) — tri-state badge.
 //
 // The badge surface needs to distinguish three states:
-//   1. legacy observer (never sent `repeat` field) → unknown → no badge
-//   2. firmware confirmed `repeat:on`              → "Repeater"
-//   3. firmware confirmed `repeat:off`             → "Listener"
+//  1. legacy observer (never sent `repeat` field) → unknown → no badge
+//  2. firmware confirmed `repeat:on`              → "Repeater"
+//  3. firmware confirmed `repeat:off`             → "Listener"
 //
 // Previously `CanRelay bool` defaulted to false in Go even when the row
 // was the legacy DEFAULT 1, conflating "confirmed repeater" with

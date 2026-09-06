@@ -27,7 +27,6 @@
 - [GET /api/packets](#get-apipackets)
 - [GET /api/packets/timestamps](#get-apipacketstimestamps)
 - [GET /api/packets/:id](#get-apipacketsid)
-- [POST /api/packets](#post-apipackets)
 - [POST /api/decode](#post-apidecode)
 - [GET /api/observers](#get-apiobservers)
 - [GET /api/observers/:id](#get-apiobserversid)
@@ -903,48 +902,6 @@ Single packet detail with byte breakdown and observations.
 
 ```json
 { "error": "Not found" }
-```
-
----
-
-## POST /api/packets
-
-Ingest a raw packet. Requires API key.
-
-### Headers
-
-- `X-API-Key: <key>` (required if `config.apiKey` is set)
-
-### Request Body
-
-```jsonc
-{
-  "hex":      string,        // required — raw hex-encoded packet
-  "observer": string | null, // observer ID
-  "snr":      number | null,
-  "rssi":     number | null,
-  "region":   string | null, // IATA code
-  "hash":     string | null  // pre-computed content hash
-}
-```
-
-### Response `200`
-
-```jsonc
-{
-  "id":      number,         // packet/observation ID
-  "decoded": {               // full decode result
-    "header":  DecodedHeader,
-    "path":    DecodedPath,
-    "payload": object
-  }
-}
-```
-
-### Response `400`
-
-```json
-{ "error": "hex is required" }
 ```
 
 ---

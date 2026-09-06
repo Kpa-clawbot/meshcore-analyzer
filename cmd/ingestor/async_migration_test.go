@@ -29,10 +29,10 @@ func waitForStatus(t *testing.T, s *Store, name, want string, timeout time.Durat
 
 // TestRunAsyncMigration_PendingThenDone pins the contract for RunAsyncMigration:
 //
-//   1. After calling, the migration name MUST be queryable in the migrations
-//      table with status `pending_async` IMMEDIATELY (no waiting for fn).
-//   2. After fn returns, the status MUST transition to `done`.
-//   3. RunAsyncMigration MUST return without blocking on fn.
+//  1. After calling, the migration name MUST be queryable in the migrations
+//     table with status `pending_async` IMMEDIATELY (no waiting for fn).
+//  2. After fn returns, the status MUST transition to `done`.
+//  3. RunAsyncMigration MUST return without blocking on fn.
 //
 // This is the regression test for the recurring "sync migration on large
 // table blocks ingestor startup" class (#791, #1483, ...). If this test

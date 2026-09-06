@@ -204,6 +204,34 @@ function buildFixture() {
   if (reFiltered.canvasDisplay === 'none') fail('second filter-down: expected #ngCanvas visible again');
   console.log('  ✓ second filter-down: render restored across repeated cycles');
 
+  // --- #1925: a theme-refresh must not discard the applied filter.
+  // Every page load fires one 'theme-refresh' about 300ms after
+  // /api/config/theme resolves. It used to call renderTab(), which replaced
+  // el.innerHTML (resetting the role checkboxes to their defaults) and
+  // rebuilt _ngState from the full graph, putting #ngSkipMsg back. On an
+  // idle machine the test finished ~90ms before that landed; under CI load
+  // it landed mid-test, which is both failure modes of #1925.
+  // Dispatching the event directly makes that deterministic, so this asserts
+  // the cause rather than waiting for the race to show up.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('theme-refresh')));
+  await page.waitForTimeout(500);
+  const afterTheme = await page.evaluate(() => {
+    const canvas = document.getElementById('ngCanvas');
+    const cb = document.querySelector('#ngRoleChecks input[data-role="companion"]');
+    return {
+      hasSkip: !!document.getElementById('ngSkipMsg'),
+      canvasDisplay: canvas ? getComputedStyle(canvas).display : '(no canvas)',
+      companionChecked: cb ? cb.checked : '(no checkbox)',
+    };
+  });
+  if (afterTheme.companionChecked !== false) {
+    fail('theme-refresh reset the role filter (companion re-checked): '
+      + JSON.stringify(afterTheme));
+  }
+  if (afterTheme.hasSkip) fail('theme-refresh brought #ngSkipMsg back: ' + JSON.stringify(afterTheme));
+  if (afterTheme.canvasDisplay === 'none') fail('theme-refresh hid #ngCanvas again');
+  console.log('  ✓ theme-refresh preserves the applied filter (#1925)');
+
   await browser.close();
 
   console.log('\nPASS: #1758 neighbor-graph filter re-render lifecycle holds');

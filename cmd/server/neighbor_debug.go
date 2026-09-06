@@ -38,19 +38,19 @@ type DebugEdge struct {
 }
 
 type DebugResolution struct {
-	Prefix           string             `json:"prefix"`
-	Chosen           string             `json:"chosen,omitempty"`
-	ChosenName       string             `json:"chosenName,omitempty"`
-	ChosenScore      int                `json:"chosenScore"`
-	ChosenJaccard    float64            `json:"chosenJaccard"`
-	Confidence       string             `json:"confidence"`
-	Candidates       []DebugCandidate   `json:"candidates"`
-	Ratio            float64            `json:"ratio"`
-	ThresholdApplied float64            `json:"thresholdApplied"`
-	Method           string             `json:"method"`
-	Tier             string             `json:"tier"`
-	KnownNode        string             `json:"knownNode"`
-	KnownNodeName    string             `json:"knownNodeName,omitempty"`
+	Prefix           string           `json:"prefix"`
+	Chosen           string           `json:"chosen,omitempty"`
+	ChosenName       string           `json:"chosenName,omitempty"`
+	ChosenScore      int              `json:"chosenScore"`
+	ChosenJaccard    float64          `json:"chosenJaccard"`
+	Confidence       string           `json:"confidence"`
+	Candidates       []DebugCandidate `json:"candidates"`
+	Ratio            float64          `json:"ratio"`
+	ThresholdApplied float64          `json:"thresholdApplied"`
+	Method           string           `json:"method"`
+	Tier             string           `json:"tier"`
+	KnownNode        string           `json:"knownNode"`
+	KnownNodeName    string           `json:"knownNodeName,omitempty"`
 }
 
 type DebugCandidate struct {
@@ -61,15 +61,15 @@ type DebugCandidate struct {
 }
 
 type DebugStats struct {
-	TotalEdges       int     `json:"totalEdges"`
-	TotalNodes       int     `json:"totalNodes"`
-	ResolvedCount    int     `json:"resolvedCount"`
-	AmbiguousCount   int     `json:"ambiguousCount"`
-	UnresolvedCount  int     `json:"unresolvedCount"`
-	AvgConfidence    float64 `json:"avgConfidence"`
+	TotalEdges        int     `json:"totalEdges"`
+	TotalNodes        int     `json:"totalNodes"`
+	ResolvedCount     int     `json:"resolvedCount"`
+	AmbiguousCount    int     `json:"ambiguousCount"`
+	UnresolvedCount   int     `json:"unresolvedCount"`
+	AvgConfidence     float64 `json:"avgConfidence"`
 	ColdStartCoverage float64 `json:"coldStartCoverage"`
-	CacheAge         string  `json:"cacheAge"`
-	LastRebuild      string  `json:"lastRebuild"`
+	CacheAge          string  `json:"cacheAge"`
+	LastRebuild       string  `json:"lastRebuild"`
 }
 
 // ─── Debug API Handler ─────────────────────────────────────────────────────────

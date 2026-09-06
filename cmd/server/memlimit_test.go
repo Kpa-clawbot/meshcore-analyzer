@@ -61,11 +61,11 @@ func TestMemlimitUnderprovisioned(t *testing.T) {
 		effective, cgroup int64
 		want              bool
 	}{
-		{512, 1536, true},   // 512*2=1024 < 1536 → underprovisioned
-		{768, 1536, false},  // 768*2=1536 == 1536 → not under (boundary)
+		{512, 1536, true},  // 512*2=1024 < 1536 → underprovisioned
+		{768, 1536, false}, // 768*2=1536 == 1536 → not under (boundary)
 		{1024, 1536, false},
-		{0, 1536, false},    // no effective limit → skip
-		{512, 0, false},     // no cgroup info → skip
+		{0, 1536, false}, // no effective limit → skip
+		{512, 0, false},  // no cgroup info → skip
 	}
 	for _, c := range cases {
 		got := memlimitUnderprovisioned(c.effective, c.cgroup)

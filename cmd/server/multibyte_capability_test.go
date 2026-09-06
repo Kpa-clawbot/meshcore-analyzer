@@ -60,7 +60,7 @@ func addTestPacket(store *PacketStore, tx *StoreTx) {
 // buildPathByte returns a 2-char hex string for the path byte with given
 // hashSize (1-3) and hopCount.
 func buildPathByte(hashSize, hopCount int) string {
-	b := byte(((hashSize - 1) & 0x3) << 6) | byte(hopCount&0x3F)
+	b := byte(((hashSize-1)&0x3)<<6) | byte(hopCount&0x3F)
 	return fmt.Sprintf("%02x", b)
 }
 

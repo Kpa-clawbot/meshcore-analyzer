@@ -36,7 +36,7 @@ func seedIssue1094Repro(t *testing.T) (*PacketStore, []string, []int64) {
 		txs = append(txs, &StoreTx{
 			Hash:        "healthy-1094-" + formatInt64(int64(i)),
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"BADTS1094"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},
@@ -52,7 +52,7 @@ func seedIssue1094Repro(t *testing.T) (*PacketStore, []string, []int64) {
 		txs = append(txs, &StoreTx{
 			Hash:        hash,
 			PayloadType: &pt,
-			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `}}`,
+			DecodedJSON: `{"payload":{"timestamp":` + formatInt64(advTS) + `},"pubKey":"BADTS1094"}`,
 			Observations: []*StoreObs{
 				{ObserverID: "obs1", Timestamp: time.Unix(obsTS, 0).UTC().Format(time.RFC3339)},
 			},

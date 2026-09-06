@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/meshcore-analyzer/packetpath"
 )
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -41,7 +43,7 @@ func ngTestStore(nodes []nodeInfo, packets []*StoreTx) *PacketStore {
 	return ps
 }
 
-func ngIntPtr(v int) *int         { return &v }
+func ngIntPtr(v int) *int           { return &v }
 func ngFloatPtr(v float64) *float64 { return &v }
 
 func ngMakeTx(id int, payloadType int, decodedJSON string, obs []*StoreObs) *StoreTx {
@@ -622,6 +624,83 @@ func TestBuildNeighborGraph_ADVERTOnlyConstraint(t *testing.T) {
 	}
 }
 
+// ngEphemeralPubKeyJSON creates decoded JSON using the real ANON_REQ format
+// ("ephemeralPubKey" field) — #1777.
+func ngEphemeralPubKeyJSON(pubkey string) string {
+	b, _ := json.Marshal(map[string]string{"ephemeralPubKey": pubkey})
+	return string(b)
+}
+
+// TestBuildNeighborGraph_AnonReqSingleHopPath verifies #1777: ANON_REQ
+// (payload type 7) carries the sender's full ephemeral pubkey and should
+// produce an originator↔path[0] edge exactly like ADVERT, in addition to
+// the always-present observer↔path[last] edge.
+func TestBuildNeighborGraph_AnonReqSingleHopPath(t *testing.T) {
+	nodes := []nodeInfo{
+		{Role: "repeater", PublicKey: "aaaa1111", Name: "NodeX"},
+		{Role: "repeater", PublicKey: "r1aabbcc", Name: "R1"},
+		{Role: "repeater", PublicKey: "obs00001", Name: "Observer"},
+	}
+	tx := ngMakeTx(1, 7, ngEphemeralPubKeyJSON("aaaa1111"), []*StoreObs{
+		ngMakeObs("obs00001", `["r1aa"]`, nowStr, ngFloatPtr(-10)),
+	})
+	store := ngTestStore(nodes, []*StoreTx{tx})
+	g := BuildFromStore(store)
+
+	edges := g.AllEdges()
+	if len(edges) != 2 {
+		t.Fatalf("expected 2 edges (originator↔path[0] + observer↔path[last]), got %d", len(edges))
+	}
+
+	found := false
+	for _, e := range edges {
+		if (e.NodeA == "aaaa1111" && e.NodeB == "r1aabbcc") ||
+			(e.NodeA == "r1aabbcc" && e.NodeB == "aaaa1111") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ANON_REQ should produce originator↔path[0] edge (#1777)")
+	}
+
+	found = false
+	for _, e := range edges {
+		if (e.NodeA == "obs00001" && e.NodeB == "r1aabbcc") ||
+			(e.NodeA == "r1aabbcc" && e.NodeB == "obs00001") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("missing observer↔path[last] edge (Observer↔R1)")
+	}
+}
+
+// TestBuildNeighborGraph_ReqRespStillExcluded verifies #1777's scope
+// boundary: only ADVERT and ANON_REQ get an originator↔path[0] edge.
+// REQ (payload type 2, reusing the existing ADVERTOnlyConstraint fixture
+// shape) must still be excluded — its "from"/"src" is a 1-byte truncated
+// hash, not a full pubkey, and manufacturing an edge from it would carry
+// ~1/256 collision odds (rejected in the #1777 discussion).
+func TestBuildNeighborGraph_ReqRespStillExcluded(t *testing.T) {
+	nodes := []nodeInfo{
+		{Role: "repeater", PublicKey: "aaaa1111", Name: "NodeX"},
+		{Role: "repeater", PublicKey: "r1aabbcc", Name: "R1"},
+		{Role: "repeater", PublicKey: "obs00001", Name: "Observer"},
+	}
+	tx := ngMakeTx(1, 2, ngFromNodeJSON("aaaa1111"), []*StoreObs{
+		ngMakeObs("obs00001", `["r1aa"]`, nowStr, ngFloatPtr(-10)),
+	})
+	store := ngTestStore(nodes, []*StoreTx{tx})
+	g := BuildFromStore(store)
+
+	for _, e := range g.AllEdges() {
+		a, b := e.NodeA, e.NodeB
+		if (a == "aaaa1111" && b == "r1aabbcc") || (a == "r1aabbcc" && b == "aaaa1111") {
+			t.Error("REQ (non-ADVERT, non-ANON_REQ) should NOT produce originator↔path[0] edge")
+		}
+	}
+}
+
 // ngPubKeyJSON creates decoded JSON using the real ADVERT format ("pubKey" field).
 func ngPubKeyJSON(pubkey string) string {
 	b, _ := json.Marshal(map[string]string{"pubKey": pubkey})
@@ -639,7 +718,10 @@ func TestBuildNeighborGraph_AdvertPubKeyField(t *testing.T) {
 		ngMakeObs("obs0000100112233445566778899001122334455667788990011223344556677", `["r1"]`, nowStr, ngFloatPtr(-8.5)),
 	})
 	store := ngTestStore(nodes, []*StoreTx{tx})
-	g := BuildFromStore(store)
+	g := BuildFromStoreWithOptions(store, BuildOptions{
+		PathTrust: &packetpath.TrustConfig{MinHashBytesForMapping: 1},
+		MaxEdgeKm: DefaultMaxEdgeKm,
+	})
 
 	edges := g.AllEdges()
 	if len(edges) < 1 {
@@ -676,7 +758,10 @@ func TestBuildNeighborGraph_OneByteHashPrefixes(t *testing.T) {
 		ngMakeObs("obs1234500000000000000000000000000000000000000000000000000000004", `["c0"]`, nowStr, ngFloatPtr(-12)),
 	})
 	store := ngTestStore(nodes, []*StoreTx{tx})
-	g := BuildFromStore(store)
+	g := BuildFromStoreWithOptions(store, BuildOptions{
+		PathTrust: &packetpath.TrustConfig{MinHashBytesForMapping: 1},
+		MaxEdgeKm: DefaultMaxEdgeKm,
+	})
 
 	edges := g.AllEdges()
 	if len(edges) == 0 {
@@ -835,8 +920,46 @@ func BenchmarkBuildFromStore(b *testing.B) {
 	}
 }
 
-// TestBuildNeighborGraph_CountsByMode (issue #1638): verify per-hash-mode
-// edge counts are tracked separately from the flat Count, so the frontend
+// TestBuildNeighborGraph_PathTrustExcludes1ByteHops verifies that
+// BuildFromStoreWithOptions respects the PathTrust threshold. When
+// MinHashBytesForMapping=2, 1-byte prefix observations are excluded
+// from neighbor-edge building. At threshold=1 (trust-all) they are
+// included — backward-compatible. Kent Beck review: consumer wiring must
+// be tested, not just the pure helper.
+func TestBuildNeighborGraph_PathTrustExcludes1ByteHops(t *testing.T) {
+	nodes := []nodeInfo{
+		{Role: "repeater", PublicKey: "ccc0000100000000000000000000000000000000000000000000000000000001", Name: "NodeC-1"},
+		{Role: "repeater", PublicKey: "ccc0000200000000000000000000000000000000000000000000000000000002", Name: "NodeC-2"},
+		{Role: "repeater", PublicKey: "aaa0000100000000000000000000000000000000000000000000000000000003", Name: "Originator"},
+		{Role: "repeater", PublicKey: "obs00001000000000000000000000000000000000000000000000000000000004", Name: "Observer"},
+	}
+	// ADVERT with 1-byte path hop "cc" (hex length 2 = 1 byte).
+	tx := ngMakeTx(1, 4, ngPubKeyJSON("aaa0000100000000000000000000000000000000000000000000000000000003"), []*StoreObs{
+		ngMakeObs("obs00001000000000000000000000000000000000000000000000000000000004", `["cc"]`, nowStr, ngFloatPtr(-12)),
+	})
+	store := ngTestStore(nodes, []*StoreTx{tx})
+
+	// Threshold=2: 1-byte "cc" prefix excluded → no edges.
+	g := BuildFromStoreWithOptions(store, BuildOptions{
+		PathTrust: &packetpath.TrustConfig{MinHashBytesForMapping: 2},
+		MaxEdgeKm: DefaultMaxEdgeKm,
+	})
+	if edges := g.AllEdges(); len(edges) > 0 {
+		for _, e := range edges {
+			t.Errorf("expected no edges with pathTrust=2 + 1-byte prefix, got prefix=%q", e.Prefix)
+		}
+	}
+
+	// Threshold=1: 1-byte prefix included (trust-all, backward-compatible).
+	g1 := BuildFromStoreWithOptions(store, BuildOptions{
+		PathTrust: &packetpath.TrustConfig{MinHashBytesForMapping: 1},
+		MaxEdgeKm: DefaultMaxEdgeKm,
+	})
+	if edges1 := g1.AllEdges(); len(edges1) == 0 {
+		t.Fatal("expected edges with pathTrust=1 (trust-all), got 0")
+	}
+}
+
 // confidence indicator can weight 3-byte (effectively unambiguous) sightings
 // higher than 1-byte (high-collision) sightings. Modes track firmware-valid
 // hash sizes 1/2/3 per Packet.cpp:13-18.
@@ -860,7 +983,10 @@ func TestBuildNeighborGraph_CountsByMode(t *testing.T) {
 		}),
 	}
 	store := ngTestStore(nodes, txs)
-	g := BuildFromStore(store)
+	g := BuildFromStoreWithOptions(store, BuildOptions{
+		PathTrust: &packetpath.TrustConfig{MinHashBytesForMapping: 1},
+		MaxEdgeKm: DefaultMaxEdgeKm,
+	})
 
 	edges := g.Neighbors("aaaa1111")
 	var xr1 *NeighborEdge

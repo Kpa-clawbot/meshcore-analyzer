@@ -188,6 +188,44 @@ See `config.example.json` in the repository for all available options including:
 
 Map tile providers are enabled and configured via the `config.json` file. You can provide your custom API credentials (e.g. `osm_url`, `stamen_api_key`, `mapbox_api_key`) to activate external tile services. Once configured on the server, users can select their preferred tile provider from the Customizer UI on the client, and their choice will be persisted automatically.
 
+#### CARTO now requires an API key
+
+CARTO's raster basemaps (`carto-dark`, `carto-light`, `carto-voyager`,
+`carto-voyager-dark`, `positron-dark`) require an API key. Without one, tiles
+are still returned with a **200 status** but every one of them is stamped
+`API KEY REQUIRED` — so nothing errors, no healthcheck fires, and the map just
+quietly looks broken.
+
+Get a free key at <https://carto.com/basemaps/apikey> — no CARTO account, no
+credit card, emailed back immediately, 5 million tile requests per calendar
+month across raster and vector. Then set it as `key`:
+
+```json
+"map": {
+  "tiles": {
+    "providers": {
+      "carto": { "enabled": true, "key": "YOUR_CARTO_KEY" }
+    }
+  }
+}
+```
+
+Notes:
+
+- The query parameter is `key`. **`api_key` is silently ignored** and still
+  serves the watermarked tile.
+- The key is sent to the browser, so treat it as public. CARTO asks for a domain
+  when the key is issued, but whether that restriction is enforced on every
+  request has not been verified here. Assume anyone can read the key from
+  devtools and spend your quota. The 5M/month fair-use ceiling makes that
+  low-impact for most deployments, but it is worth knowing.
+- A wrong or expired key fails the same silent way as no key at all. Verify by
+  **looking at a tile**, not by checking for a 200.
+- CARTO has said it is considering freezing data updates to the raster
+  basemaps. If you would rather not depend on them, set
+  `"carto": { "enabled": false }` and use another provider — `esri` needs no
+  key at all, and `osm`/`stamen` accept their own tokens.
+
 ---
 
 ## MQTT Setup

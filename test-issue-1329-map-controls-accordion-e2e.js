@@ -143,7 +143,16 @@ async function run() {
       const cs = getComputedStyle(panel);
       const rect = panel.getBoundingClientRect();
       // Check that section content (e.g., labels) is visible on desktop.
-      const allInputs = panel.querySelectorAll('input[type=checkbox], select, button');
+      // Exclude controls inside a collapsed progressive-disclosure container
+      // (inline style="display:none" — the geo-filter and affinity-debug
+      // toggles, and #1771's "Important Links" rank-by select, which a
+      // checkbox reveals on demand). Those are hidden by an explicit toggle,
+      // NOT by the mobile accordion this desktop check guards against: the
+      // accordion collapses via the `.mc-collapsed > *:not(legend){display:none}`
+      // CSS rule (mobile media query, class-based, no inline style), so a
+      // desktop accordion regression is still counted here and caught.
+      const allInputs = Array.from(panel.querySelectorAll('input[type=checkbox], select, button'))
+        .filter(el => !el.closest('[style*="display:none"], [style*="display: none"]'));
       let visible = 0;
       allInputs.forEach(el => {
         const r = el.getBoundingClientRect();

@@ -4,11 +4,11 @@
 // files as text and asserting structural invariants. They follow the same
 // "config gate" pattern as openapi_completeness_test.go.
 //
-//   1. .github/workflows/release-fast-path.yml MUST exist and own the
-//      push.tags trigger for v-tags, with the two execution branches
-//      (re-tag-via-crane on SHA match, fallback to deploy.yml otherwise).
-//   2. .github/workflows/deploy.yml MUST NOT trigger on push.tags any
-//      more — the fast-path workflow owns tag pushes to avoid double-fire.
+//  1. .github/workflows/release-fast-path.yml MUST exist and own the
+//     push.tags trigger for v-tags, with the two execution branches
+//     (re-tag-via-crane on SHA match, fallback to deploy.yml otherwise).
+//  2. .github/workflows/deploy.yml MUST NOT trigger on push.tags any
+//     more — the fast-path workflow owns tag pushes to avoid double-fire.
 package main
 
 import (
@@ -51,12 +51,12 @@ func TestReleaseFastPathWorkflowExists(t *testing.T) {
 	//   - re-tag path: install crane, read :edge revision label, apply new tags
 	//   - fallback path: dispatch the existing deploy.yml pipeline
 	required := []string{
-		"imjasonh/setup-crane",                  // crane install action
-		"org.opencontainers.image.revision",     // label inspected on :edge
-		"ghcr.io/kpa-clawbot/corescope",         // image ref
-		":edge",                                 // source tag we copy from
-		"crane tag",                             // metadata-only retag
-		"workflow run deploy.yml",               // fallback dispatch
+		"imjasonh/setup-crane",              // crane install action
+		"org.opencontainers.image.revision", // label inspected on :edge
+		"ghcr.io/kpa-clawbot/corescope",     // image ref
+		":edge",                             // source tag we copy from
+		"crane tag",                         // metadata-only retag
+		"workflow run deploy.yml",           // fallback dispatch
 	}
 	for _, need := range required {
 		if !strings.Contains(src, need) {

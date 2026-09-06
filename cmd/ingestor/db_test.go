@@ -1939,12 +1939,12 @@ func TestExtractObserverMetaNewFields(t *testing.T) {
 	msg := map[string]interface{}{
 		"model": "L1",
 		"stats": map[string]interface{}{
-			"noise_floor":  -112.5,
-			"battery_mv":   3720.0,
-			"uptime_secs":  86400.0,
-			"tx_air_secs":  100.0,
-			"rx_air_secs":  500.0,
-			"recv_errors":  3.0,
+			"noise_floor": -112.5,
+			"battery_mv":  3720.0,
+			"uptime_secs": 86400.0,
+			"tx_air_secs": 100.0,
+			"rx_air_secs": 500.0,
+			"recv_errors": 3.0,
 		},
 	}
 	meta := extractObserverMeta(msg)
@@ -1967,6 +1967,13 @@ func TestExtractObserverMetaNewFields(t *testing.T) {
 // rather than silently discarded. The unique dedup index is
 // (transmission_id, observer_idx, COALESCE(path_json, '')); observer_idx must
 // be non-NULL for the conflict to fire (SQLite treats NULL != NULL).
+//
+// (Blank line above is deliberate: gofmt's Go-1.19+ doc-comment formatter
+// rewrites a doubled straight-quote pair like '' into a single curly “ once
+// this comment is attached as a doc comment to the func below — detaching it
+// keeps the literal '' matching the real index expression in the
+// idx_observations_dedup CREATE UNIQUE INDEX statements elsewhere in this file.)
+
 func TestInsertObservationSNRFillIn(t *testing.T) {
 	s, err := OpenStore(tempDBPath(t))
 	if err != nil {
@@ -2068,9 +2075,9 @@ func TestPerObservationRawHex(t *testing.T) {
 
 	// First observation from observer A
 	pdA := &PacketData{
-		RawHex:    rawA,
-		Hash:      hash,
-		Timestamp: "2026-04-21T10:00:00Z",
+		RawHex:     rawA,
+		Hash:       hash,
+		Timestamp:  "2026-04-21T10:00:00Z",
 		ObserverID: "obs-A",
 		Direction:  &dir,
 		PathJSON:   "[]",
@@ -2085,9 +2092,9 @@ func TestPerObservationRawHex(t *testing.T) {
 
 	// Second observation from observer B (same hash, different raw bytes)
 	pdB := &PacketData{
-		RawHex:    rawB,
-		Hash:      hash,
-		Timestamp: "2026-04-21T10:00:01Z",
+		RawHex:     rawB,
+		Hash:       hash,
+		Timestamp:  "2026-04-21T10:00:01Z",
 		ObserverID: "obs-B",
 		Direction:  &dir,
 		PathJSON:   `["aabb"]`,
@@ -2255,6 +2262,262 @@ func TestScopeNameMigration(t *testing.T) {
 	}
 	if nullScope != nil {
 		t.Errorf("scope_name for unscoped = %v, want nil", nullScope)
+	}
+}
+
+func TestTransportCodesStored(t *testing.T) {
+	s, err := OpenStore(tempDBPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Byte order matters: Code1 is the RAW wire hex of the two bytes,
+	// uppercased, with NO little-endian swap (decoder.go:954). Bytes AA BB
+	// therefore read back as "AABB". Layout, per firmware packet_format.md:
+	// header + transport_codes(4) + path_len + path + payload.
+	// header 0x14 = route_type 0 (TRANSPORT_FLOOD), payload_type 5 (GRP_TXT).
+	// payload_type 5 keeps the advert validation path out of this test.
+	rawScoped := "14" + "AABB" + "CCDD" + "00" + strings.Repeat("11", 32)
+	// header 0x15 = route_type 1 (FLOOD), payload_type 5 — no transport codes.
+	rawUnscoped := "15" + "00" + strings.Repeat("22", 32)
+	// header 0x14 = route_type 0 (TRANSPORT_FLOOD) with all-zero transport
+	// codes. "0000" is stored literally (NOT NULL) — it is the meaningful
+	// "explicitly unscoped transport packet" case and must not collapse
+	// into the same NULL a non-transport packet gets.
+	rawZeroCodes := "14" + "0000" + "0000" + "00" + strings.Repeat("33", 32)
+
+	for _, raw := range []string{rawScoped, rawUnscoped, rawZeroCodes} {
+		pd := &PacketData{
+			RawHex: raw, Hash: ComputeContentHash(raw), Timestamp: "2026-08-17T10:00:00Z",
+			ObserverID: "obs1", RouteType: 0, PayloadType: 5,
+		}
+		if raw == rawUnscoped {
+			pd.RouteType = 1
+		}
+		if raw == rawScoped {
+			pd.Code1, pd.Code2 = "AABB", "CCDD"
+		}
+		if raw == rawZeroCodes {
+			pd.Code1, pd.Code2 = "0000", "0000"
+		}
+		if _, err := s.InsertTransmission(pd); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	var c1, c2 *string
+	if err := s.db.QueryRow(`SELECT code1, code2 FROM transmissions WHERE hash = ?`,
+		ComputeContentHash(rawScoped)).Scan(&c1, &c2); err != nil {
+		t.Fatalf("read scoped: %v", err)
+	}
+	if c1 == nil || *c1 != "AABB" || c2 == nil || *c2 != "CCDD" {
+		t.Errorf("scoped codes = %v/%v, want AABB/CCDD", c1, c2)
+	}
+
+	if err := s.db.QueryRow(`SELECT code1, code2 FROM transmissions WHERE hash = ?`,
+		ComputeContentHash(rawUnscoped)).Scan(&c1, &c2); err != nil {
+		t.Fatalf("read unscoped: %v", err)
+	}
+	if c1 != nil || c2 != nil {
+		t.Errorf("unscoped codes = %v/%v, want NULL/NULL", c1, c2)
+	}
+
+	if err := s.db.QueryRow(`SELECT code1, code2 FROM transmissions WHERE hash = ?`,
+		ComputeContentHash(rawZeroCodes)).Scan(&c1, &c2); err != nil {
+		t.Fatalf("read zero-codes: %v", err)
+	}
+	if c1 == nil || *c1 != "0000" || c2 == nil || *c2 != "0000" {
+		t.Errorf("zero-codes codes = %v/%v, want literal \"0000\"/\"0000\" (not NULL)", c1, c2)
+	}
+}
+
+func TestBackfillTransportCodes(t *testing.T) {
+	s := newTestStore(t)
+
+	// Same layout and byte-order rules as TestTransportCodesStored: raw wire
+	// hex, no swap, so bytes AA BB read back as "AABB".
+	rawScoped := "14" + "AABB" + "CCDD" + "00" + strings.Repeat("11", 32)
+	rawFlood := "15" + "00" + strings.Repeat("22", 32)
+
+	// Simulate pre-migration rows: inserted directly, code1/code2 left NULL.
+	// route_type must match the raw header, or the backfill's route filter
+	// selects the wrong rows: 0 for the transport packet, 1 for the flood.
+	for _, tc := range []struct {
+		raw       string
+		routeType int
+	}{{rawScoped, 0}, {rawFlood, 1}} {
+		if _, err := s.db.Exec(
+			`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type)
+			 VALUES (?,?,?,?,?)`,
+			tc.raw, ComputeContentHash(tc.raw), "2026-08-01T00:00:00Z", tc.routeType, 5); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	s.BackfillTransportCodesAsync()
+	s.backfillWg.Wait()
+
+	var c1 *string
+	if err := s.db.QueryRow(`SELECT code1 FROM transmissions WHERE hash = ?`,
+		ComputeContentHash(rawScoped)).Scan(&c1); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if c1 == nil || *c1 != "AABB" {
+		t.Errorf("backfilled code1 = %v, want AABB", c1)
+	}
+
+	if err := s.db.QueryRow(`SELECT code1 FROM transmissions WHERE hash = ?`,
+		ComputeContentHash(rawFlood)).Scan(&c1); err != nil {
+		t.Fatalf("read flood: %v", err)
+	}
+	if c1 != nil {
+		t.Errorf("flood code1 = %v, want NULL", c1)
+	}
+
+	// Idempotent: a second run is a no-op guarded by _migrations.
+	var done int
+	if err := s.db.QueryRow(
+		`SELECT 1 FROM _migrations WHERE name = 'backfill_transport_codes_v1'`).Scan(&done); err != nil {
+		t.Errorf("migration not recorded: %v", err)
+	}
+}
+
+// TestBackfillTransportCodes_MultiBatchWithUndecodableRow is a regression test for
+// a defect in the original loop: it terminated on "items returned < batchSize"
+// rather than "rows scanned < batchSize", so a full page containing even one
+// undecodable row broke the loop early and the exported wrapper then recorded
+// the completion migration — silently truncating the backfill and, because the
+// guard blocks all future runs, leaving every later row permanently NULL.
+// Seeds more rows than one batch holds, with an undecodable row in the first
+// page, and asserts every decodable row across every page got backfilled.
+func TestBackfillTransportCodes_MultiBatchWithUndecodableRow(t *testing.T) {
+	s := newTestStore(t)
+
+	const batchSize = 3
+
+	// route_type 0 (TRANSPORT_FLOOD) header, but only 1 byte follows — too
+	// short for the 4-byte transport codes field, so DecodePacket errors and
+	// this row is skipped. It must not stop rows after it in later pages from
+	// being backfilled.
+	badRaw := "14" + "AA"
+
+	// Payload byte varies per row so ComputeContentHash (which hashes only the
+	// payload, skipping path and transport-code bytes) gives each row a
+	// distinct hash despite the shared header/path/code shape.
+	var goodRaws []string
+	for i := 1; i <= 6; i++ {
+		goodRaws = append(goodRaws, fmt.Sprintf("14%04X%04X00%s", i, i+100, strings.Repeat(fmt.Sprintf("%02X", i), 32)))
+	}
+
+	// Insertion order fixes id order: bad row first, then the 6 good rows,
+	// giving 7 matching rows across 3 pages of 3 — batch 1 = {bad, good1,
+	// good2}, batch 2 = {good3, good4, good5}, batch 3 = {good6}.
+	if _, err := s.db.Exec(
+		`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type)
+		 VALUES (?,?,?,?,?)`,
+		badRaw, ComputeContentHash(badRaw), "2026-08-01T00:00:00Z", 0, 5); err != nil {
+		t.Fatalf("seed bad row: %v", err)
+	}
+	for _, raw := range goodRaws {
+		if _, err := s.db.Exec(
+			`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type)
+			 VALUES (?,?,?,?,?)`,
+			raw, ComputeContentHash(raw), "2026-08-01T00:00:00Z", 0, 5); err != nil {
+			t.Fatalf("seed good row: %v", err)
+		}
+	}
+
+	total, err := s.backfillTransportCodes(batchSize)
+	if err != nil {
+		t.Fatalf("backfillTransportCodes: %v", err)
+	}
+	if total != len(goodRaws) {
+		t.Errorf("backfillTransportCodes returned %d, want %d (one per good row)", total, len(goodRaws))
+	}
+
+	for i, raw := range goodRaws {
+		wantCode1 := fmt.Sprintf("%04X", i+1)
+		var c1 *string
+		if err := s.db.QueryRow(`SELECT code1 FROM transmissions WHERE hash = ?`,
+			ComputeContentHash(raw)).Scan(&c1); err != nil {
+			t.Fatalf("read good row %d: %v", i, err)
+		}
+		if c1 == nil || *c1 != wantCode1 {
+			t.Errorf("good row %d code1 = %v, want %s (row after the undecodable one in an earlier or later page must still be backfilled)", i, c1, wantCode1)
+		}
+	}
+
+	var badC1 *string
+	if err := s.db.QueryRow(`SELECT code1 FROM transmissions WHERE hash = ?`,
+		ComputeContentHash(badRaw)).Scan(&badC1); err != nil {
+		t.Fatalf("read bad row: %v", err)
+	}
+	if badC1 != nil {
+		t.Errorf("undecodable row code1 = %v, want NULL", badC1)
+	}
+}
+
+// TestBackfillTransportCodes_ErrorWithholdsGuardRow is a regression test for the
+// invariant that backfill_transport_codes_v1 is recorded iff and only if the
+// backfill actually ran to exhaustion of all matching rows. Forces the select
+// branch of backfillTransportCodes to fail mid-run by closing the store's DB
+// connection out from under it (simulating a transient DB error), then verifies
+// (a) the guard row is absent afterward and (b) reopening a fresh Store on the
+// same file and running the backfill again still processes the row the failed
+// run never reached.
+func TestBackfillTransportCodes_ErrorWithholdsGuardRow(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	store1, err := OpenStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+
+	raw := "14" + "AABB" + "CCDD" + "00" + strings.Repeat("11", 32)
+	if _, err := store1.db.Exec(
+		`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type)
+		 VALUES (?,?,?,?,?)`,
+		raw, ComputeContentHash(raw), "2026-08-01T00:00:00Z", 0, 5); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := store1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := store1.backfillTransportCodes(5000); err == nil {
+		t.Fatal("backfillTransportCodes on a closed store returned nil error, want non-nil")
+	}
+
+	store2, err := OpenStore(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store2.Close()
+
+	var done int
+	if err := store2.db.QueryRow(
+		`SELECT 1 FROM _migrations WHERE name = 'backfill_transport_codes_v1'`).Scan(&done); err != sql.ErrNoRows {
+		t.Fatalf("guard row query = (done=%d, err=%v), want sql.ErrNoRows — guard must be withheld after a failed run", done, err)
+	}
+
+	// Unobstructed, a subsequent run must still backfill the row the failed
+	// run never reached.
+	store2.BackfillTransportCodesAsync()
+	store2.backfillWg.Wait()
+
+	var c1 *string
+	if err := store2.db.QueryRow(`SELECT code1 FROM transmissions WHERE hash = ?`,
+		ComputeContentHash(raw)).Scan(&c1); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if c1 == nil || *c1 != "AABB" {
+		t.Errorf("code1 = %v, want AABB — subsequent run must backfill what the failed run skipped", c1)
+	}
+	if err := store2.db.QueryRow(
+		`SELECT 1 FROM _migrations WHERE name = 'backfill_transport_codes_v1'`).Scan(&done); err != nil {
+		t.Errorf("guard row not recorded after a successful run: %v", err)
 	}
 }
 
@@ -2532,7 +2795,6 @@ func TestBuildPacketDataRegionFallsBackToTopic(t *testing.T) {
 		t.Fatalf("expected region SJC from topic, got %q", pkt.Region)
 	}
 }
-
 
 // TestBackfillPathJSONAsync verifies that the path_json backfill does NOT block
 // OpenStore from returning. MQTT connect happens immediately after OpenStore;
@@ -2958,5 +3220,280 @@ func TestUpdateNodeDefaultScope_EmptyScopeIsNoop(t *testing.T) {
 	}
 	if gotInactive != "#belgium" {
 		t.Errorf("inactive_nodes.default_scope after empty-scope call = %q, want #belgium (DB-layer guard missing — #1534)", gotInactive)
+	}
+}
+
+func TestInsertClientRxObservation(t *testing.T) {
+	s := newTestStore(t)
+	code1, fwd := "AABB", "1a2b"
+	snr, rssi, posAccM := -7.5, -92, 8.5
+	o := &ClientRxObservation{
+		RxPubkey: "aa11", RxAt: "2026-08-17T10:00:00.123Z", IngestedAt: "2026-08-17T10:00:01Z",
+		PktHash: "0123456789abcdef", RouteType: 0, PayloadType: 4,
+		HashSize: 2, HopCount: 1, Code1: &code1, Forwarder: &fwd,
+		Lat: 51.2, Lon: 4.4, SNR: &snr, RSSI: &rssi, PosAccM: &posAccM,
+	}
+	ins, err := s.InsertClientRxObservation(o)
+	if err != nil || !ins {
+		t.Fatalf("insert: ins=%v err=%v", ins, err)
+	}
+	// Geometry/signal round-trip: lat/lon/snr/rssi/pos_acc_m are never read back
+	// anywhere else in the suite, so a field swap inside the 18-argument Exec
+	// (e.g. lat<->lon) would pass green. lat and lon are deliberately unequal so
+	// a swap is detectable.
+	var gotLat, gotLon, gotSNR, gotPosAccM float64
+	var gotRSSI int
+	if err := s.db.QueryRow(`SELECT lat, lon, snr, rssi, pos_acc_m FROM client_rx_observations WHERE pkt_hash = ?`, o.PktHash).
+		Scan(&gotLat, &gotLon, &gotSNR, &gotRSSI, &gotPosAccM); err != nil {
+		t.Fatalf("read back geometry: %v", err)
+	}
+	if gotLat != 51.2 || gotLon != 4.4 {
+		t.Errorf("lat/lon = %v/%v, want 51.2/4.4 (a lat<->lon swap would pass with symmetric values)", gotLat, gotLon)
+	}
+	if gotSNR != -7.5 {
+		t.Errorf("snr = %v, want -7.5", gotSNR)
+	}
+	if gotRSSI != -92 {
+		t.Errorf("rssi = %v, want -92", gotRSSI)
+	}
+	if gotPosAccM != 8.5 {
+		t.Errorf("pos_acc_m = %v, want 8.5", gotPosAccM)
+	}
+	// Same (rx_pubkey, pkt_hash, rx_at) → idempotent, no second row.
+	ins, err = s.InsertClientRxObservation(o)
+	if err != nil || ins {
+		t.Fatalf("re-insert: ins=%v err=%v (want false, nil)", ins, err)
+	}
+	// A second copy of the same flood from another forwarder, 40 ms later,
+	// MUST create its own row — that multiplicity is the amplification signal.
+	fwd2 := "3c4d"
+	o2 := *o
+	o2.RxAt, o2.Forwarder = "2026-08-17T10:00:00.163Z", &fwd2
+	if ins, err = s.InsertClientRxObservation(&o2); err != nil || !ins {
+		t.Fatalf("second copy: ins=%v err=%v", ins, err)
+	}
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM client_rx_observations WHERE pkt_hash = ?`, o.PktHash).Scan(&n)
+	if n != 2 {
+		t.Errorf("rows for pkt_hash = %d, want 2", n)
+	}
+}
+
+// NOTE: a TestTransportCodesV1MigrationFailsClosed regression test (forcing a
+// genuine ALTER failure to prove the migration doesn't record its guard row
+// on error) was attempted and removed — see final-fix-report.md for why the
+// failure mode isn't reachable from a black-box test of applySchema without
+// contorting production code. The fix itself (db.go, transport_codes_v1
+// block) still stands, matching the observers_clock_naive_v1 pattern.
+
+func TestInsertClientRfSample(t *testing.T) {
+	s := newTestStore(t)
+	posAcc := 12.5
+	snr := -6.75
+	errs := 7
+	nf := -119
+	rssi := -92
+	battery := 4021
+	queueLen := 3
+	txAir := int64(341)
+	rxAir := int64(20877)
+	recv := int64(18422)
+	sent := int64(290)
+	floodRx := int64(17110)
+	directRx := int64(1312)
+	floodTx := int64(212)
+	directTx := int64(78)
+	o := &ClientRfSample{
+		RxPubkey: "aa11", SampledAt: "2026-08-17T10:00:00.000Z", IngestedAt: "2026-08-17T10:00:01Z",
+		Lat: 51.2, Lon: 4.4, PosAccM: &posAcc, Stationary: true, UptimeSecs: 84213,
+		BatteryMV: &battery, QueueLen: &queueLen, Errors: &errs, NoiseFloor: &nf, LastRSSI: &rssi,
+		LastSNR: &snr, TxAirSecs: &txAir, RxAirSecs: &rxAir, Recv: &recv, Sent: &sent,
+		FloodRx: &floodRx, DirectRx: &directRx, FloodTx: &floodTx, DirectTx: &directTx,
+	}
+	ins, err := s.InsertClientRfSample(o)
+	if err != nil || !ins {
+		t.Fatalf("insert: ins=%v err=%v", ins, err)
+	}
+	ins, err = s.InsertClientRfSample(o)
+	if err != nil || ins {
+		t.Fatalf("duplicate must be idempotent: ins=%v err=%v", ins, err)
+	}
+
+	// Every column gets a distinct, non-symmetric value and is read back, so a
+	// positional transposition between any two same-typed neighbours in the
+	// 23-column INSERT (e.g. flood_rx/direct_rx, or recv/sent) is detectable —
+	// row-counting alone would pass either way.
+	var gotLat, gotLon, gotPosAccM, gotLastSNR float64
+	var gotStationary, gotErrors, gotNoiseFloor, gotLastRSSI, gotBatteryMV, gotQueueLen int
+	var gotUptimeSecs, gotTxAirSecs, gotRxAirSecs, gotRecv, gotSent, gotFloodRx, gotDirectRx, gotFloodTx, gotDirectTx int64
+	var gotRecvErrors *int64
+	if err := s.db.QueryRow(`
+		SELECT lat, lon, pos_acc_m, stationary, uptime_secs, battery_mv, queue_len,
+		       errors, noise_floor, last_rssi, last_snr, tx_air_secs, rx_air_secs,
+		       recv, sent, flood_rx, direct_rx, flood_tx, direct_tx, recv_errors
+		FROM client_rf_samples WHERE sampled_at = ?`, o.SampledAt).Scan(
+		&gotLat, &gotLon, &gotPosAccM, &gotStationary, &gotUptimeSecs, &gotBatteryMV, &gotQueueLen,
+		&gotErrors, &gotNoiseFloor, &gotLastRSSI, &gotLastSNR, &gotTxAirSecs, &gotRxAirSecs,
+		&gotRecv, &gotSent, &gotFloodRx, &gotDirectRx, &gotFloodTx, &gotDirectTx, &gotRecvErrors); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if gotLat != 51.2 || gotLon != 4.4 {
+		t.Errorf("lat/lon = %v/%v, want 51.2/4.4 (a lat<->lon swap would pass with symmetric values)", gotLat, gotLon)
+	}
+	if gotPosAccM != 12.5 {
+		t.Errorf("pos_acc_m = %v, want 12.5", gotPosAccM)
+	}
+	if gotStationary != 1 {
+		t.Errorf("stationary = %d, want 1", gotStationary)
+	}
+	if gotUptimeSecs != 84213 {
+		t.Errorf("uptime_secs = %d, want 84213", gotUptimeSecs)
+	}
+	if gotBatteryMV != 4021 {
+		t.Errorf("battery_mv = %d, want 4021", gotBatteryMV)
+	}
+	if gotQueueLen != 3 {
+		t.Errorf("queue_len = %d, want 3", gotQueueLen)
+	}
+	if gotErrors != 7 {
+		t.Errorf("errors = %d, want 7", gotErrors)
+	}
+	if gotNoiseFloor != -119 {
+		t.Errorf("noise_floor = %d, want -119", gotNoiseFloor)
+	}
+	if gotLastRSSI != -92 {
+		t.Errorf("last_rssi = %d, want -92", gotLastRSSI)
+	}
+	if gotLastSNR != -6.75 {
+		t.Errorf("last_snr = %v, want -6.75", gotLastSNR)
+	}
+	if gotTxAirSecs != 341 {
+		t.Errorf("tx_air_secs = %d, want 341", gotTxAirSecs)
+	}
+	if gotRxAirSecs != 20877 {
+		t.Errorf("rx_air_secs = %d, want 20877", gotRxAirSecs)
+	}
+	if gotRecv != 18422 {
+		t.Errorf("recv = %d, want 18422", gotRecv)
+	}
+	if gotSent != 290 {
+		t.Errorf("sent = %d, want 290", gotSent)
+	}
+	if gotFloodRx != 17110 {
+		t.Errorf("flood_rx = %d, want 17110", gotFloodRx)
+	}
+	if gotDirectRx != 1312 {
+		t.Errorf("direct_rx = %d, want 1312", gotDirectRx)
+	}
+	if gotFloodTx != 212 {
+		t.Errorf("flood_tx = %d, want 212", gotFloodTx)
+	}
+	if gotDirectTx != 78 {
+		t.Errorf("direct_tx = %d, want 78", gotDirectTx)
+	}
+	if gotRecvErrors != nil {
+		t.Errorf("recv_errors = %v, want NULL on firmware that cannot count them", gotRecvErrors)
+	}
+
+	// A second sample, at a different sampled_at, proves recv_errors round-trips
+	// non-NULL too — the first sample only covers the NULL direction.
+	re := int64(55)
+	o2 := &ClientRfSample{
+		RxPubkey: "aa11", SampledAt: "2026-08-17T10:00:15.000Z", IngestedAt: "2026-08-17T10:00:16Z",
+		Lat: 51.2, Lon: 4.4, Stationary: true, UptimeSecs: 84228, RecvErrors: &re,
+	}
+	if ins, err = s.InsertClientRfSample(o2); err != nil || !ins {
+		t.Fatalf("insert second sample: ins=%v err=%v", ins, err)
+	}
+	var gotRecvErrors2 *int64
+	if err := s.db.QueryRow(`SELECT recv_errors FROM client_rf_samples WHERE sampled_at = ?`, o2.SampledAt).
+		Scan(&gotRecvErrors2); err != nil {
+		t.Fatalf("read second sample: %v", err)
+	}
+	if gotRecvErrors2 == nil || *gotRecvErrors2 != 55 {
+		t.Errorf("recv_errors = %v, want 55", gotRecvErrors2)
+	}
+}
+
+// TestPruneClientRfSamplesUsesIndex verifies the RF-sample reaper's
+// DELETE ... WHERE sampled_at < ? seeks idx_crf_prune rather than
+// full-scanning under the writer lock, mirroring
+// TestPruneClientRxObservationsUsesIndex for the sibling table. May pass
+// immediately since idx_crf_prune already exists (Task 4) — in that case
+// this is a regression guard.
+func TestPruneClientRfSamplesUsesIndex(t *testing.T) {
+	s := newTestStore(t)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN DELETE FROM client_rf_samples WHERE sampled_at < ?`, "2026-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	plan := ""
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan += detail + "\n"
+	}
+	if !strings.Contains(plan, "idx_crf_prune") {
+		t.Fatalf("retention DELETE should use idx_crf_prune, plan was:\n%s", plan)
+	}
+}
+
+// TestPruneOldClientRfSamples verifies the RF-sample reaper deletes rows
+// older than the window and keeps recent ones, and that days=0 disables it —
+// mirroring TestPruneOldClientRxObservations for the sibling table. It also
+// covers the case an RFC3339 (no-millisecond) cutoff gets wrong: sampled_at
+// is stored via rxTimeMillisLayout, and a row sampled 500ms after the cutoff
+// instant — chronologically newer, so it must survive — has a string form
+// like "...T10:00:00.500Z" that sorts lexicographically BEFORE a bare
+// "...T10:00:00Z" cutoff (since '.' is 0x2E and 'Z' is 0x5A). An
+// RFC3339-formatted cutoff would therefore wrongly delete it; a
+// millisecond-formatted cutoff correctly keeps it.
+func TestPruneOldClientRfSamples(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now().UTC()
+	recent := now.AddDate(0, 0, -1).Format(rxTimeMillisLayout)
+	old := now.AddDate(0, 0, -40).Format(rxTimeMillisLayout)
+	cutoffInstant := now.AddDate(0, 0, -7)
+	boundary := cutoffInstant.Add(500 * time.Millisecond).Format(rxTimeMillisLayout)
+
+	mk := func(sampledAt string) *ClientRfSample {
+		return &ClientRfSample{
+			RxPubkey: "aa11", SampledAt: sampledAt, IngestedAt: sampledAt,
+			Lat: 51.2, Lon: 4.4, UptimeSecs: 100,
+		}
+	}
+	if _, err := s.InsertClientRfSample(mk(recent)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertClientRfSample(mk(old)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertClientRfSample(mk(boundary)); err != nil {
+		t.Fatal(err)
+	}
+
+	if n, _ := s.PruneOldClientRfSamples(0); n != 0 {
+		t.Fatalf("days=0 must be a no-op, got %d", n)
+	}
+	n, err := s.PruneOldClientRfSamples(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 old sample pruned, got %d", n)
+	}
+	var remaining int
+	s.db.QueryRow(`SELECT COUNT(*) FROM client_rf_samples`).Scan(&remaining)
+	if remaining != 2 {
+		t.Fatalf("expected 2 samples remaining (recent + boundary), got %d", remaining)
+	}
+	var boundarySurvived int
+	s.db.QueryRow(`SELECT COUNT(*) FROM client_rf_samples WHERE sampled_at = ?`, boundary).Scan(&boundarySurvived)
+	if boundarySurvived != 1 {
+		t.Fatalf("boundary row (500ms after cutoff instant) must survive; an RFC3339 (no-ms) cutoff would wrongly delete it because '.' < 'Z' lexicographically — got %d", boundarySurvived)
 	}
 }

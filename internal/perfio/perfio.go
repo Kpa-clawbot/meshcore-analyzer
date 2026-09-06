@@ -33,11 +33,11 @@ type Sample struct {
 // these fields plus a sampled-at timestamp; the parser populates Counters
 // directly so there's exactly ONE implementation of the key:value walker.
 type Counters struct {
-	ReadBytes            int64
-	WriteBytes           int64
-	CancelledWriteBytes  int64
-	SyscR                int64
-	SyscW                int64
+	ReadBytes           int64
+	WriteBytes          int64
+	CancelledWriteBytes int64
+	SyscR               int64
+	SyscW               int64
 }
 
 // ParseProcIO reads /proc/self/io-shaped key:value lines from sc and

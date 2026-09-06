@@ -14,7 +14,13 @@ function test(name, fn) {
 
 function makeSandbox() {
   const ctx = {
-    window: { addEventListener: () => {}, dispatchEvent: () => {}, devicePixelRatio: 1 },
+    window: {
+      addEventListener: () => {}, dispatchEvent: () => {}, devicePixelRatio: 1,
+      // live.js:14 captures these at load time from packet-helpers.js, which
+      // this sandbox does not load. They must exist before live.js is evaluated.
+      getParsedDecoded: (p) => { try { return p && p.decoded_json ? JSON.parse(p.decoded_json) : {}; } catch (e) { return {}; } },
+      getParsedPath: (p) => { try { return p && p.path_json ? JSON.parse(p.path_json) : []; } catch (e) { return []; } },
+    },
     document: {
       readyState: 'complete',
       createElement: () => ({ style:{}, classList:{add(){},remove(){},contains(){return false;}}, setAttribute(){}, addEventListener(){}, getContext: () => ({clearRect(){},fillRect(){},beginPath(){},arc(){},fill(){},scale(){},fillText(){}}) }),
@@ -135,7 +141,42 @@ test('observer iata map can be updated and used by filter', () => {
   assert.strictEqual(fn([{observer_id:'newobs'}], { 'newobs': 'LAX' }, ['LAX']), true);
 });
 
+// --- #1898 / #1900: replayed packets must carry observer_id ---
+// dbPacketToLive() used to return only observer (the resolved name), so every
+// VCR-replayed packet had observer_id undefined. packetMatchesRegion skips a
+// packet whose observer_id is null and returns false when none match, so with a
+// region selected the replay rendered nothing at all, and the Replay button on
+// packet detail silently no-opped. Both issues are the same omission.
+const toLive = ctx.window._liveDbPacketToLive;
+assert.ok(toLive, '_liveDbPacketToLive must be exposed');
+
+test('#1898: dbPacketToLive carries observer_id through', () => {
+  const live = toLive({ id: 1, hash: 'h', timestamp: '2026-01-01T00:00:00Z',
+    observer_id: 'obs1', observer_name: 'Obs One' });
+  assert.strictEqual(live.observer_id, 'obs1',
+    'observer_id must survive; the region filter matches on it');
+});
+
+test('#1898: a replayed packet survives an active region filter', () => {
+  const live = toLive({ id: 1, hash: 'h', timestamp: '2026-01-01T00:00:00Z',
+    observer_id: 'obs1', observer_name: 'Obs One' });
+  assert.strictEqual(fn([live], { obs1: 'BRU' }, ['BRU']), true,
+    'with observer_id carried the group matches and is rendered');
+});
+
+test('#1898: dropping observer_id is what broke it (guards the regression)', () => {
+  assert.strictEqual(fn([{ observer: 'Obs One' }], { obs1: 'BRU' }, ['BRU']), false,
+    'a packet with no observer_id is skipped, so the group is dropped');
+});
+
+test('#1898: observer_iata is carried so the badge needs no roster lookup', () => {
+  const live = toLive({ id: 1, hash: 'h', timestamp: '2026-01-01T00:00:00Z',
+    observer_id: 'obs1', observer_iata: 'BRU' });
+  assert.strictEqual(live.observer_iata, 'BRU');
+});
+
 console.log(`\n${'═'.repeat(40)}`);
 console.log(`  live region filter tests: ${passed} passed, ${failed} failed`);
+
 console.log(`${'═'.repeat(40)}\n`);
 if (failed > 0) process.exit(1);

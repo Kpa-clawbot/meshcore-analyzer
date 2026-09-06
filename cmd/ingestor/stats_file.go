@@ -81,6 +81,18 @@ type IngestorStatsSnapshot struct {
 	// a panic in emit / log sink). Monotonic; 0 means no recovered
 	// panics yet. Additive — omitempty so older server builds ignore.
 	WatchdogPanicCount int64 `json:"watchdogPanicCount,omitempty"`
+	// WatchdogLogDropCount (#1749 root-cause fix) is the running total
+	// of watchdog log lines dropped by the async emit queue because
+	// the background writer goroutine could not keep up — almost
+	// always because its underlying write() is itself stuck (Docker
+	// JSON-file log driver backpressure, full stderr pipe, etc.).
+	// Surfaced alongside WatchdogLastTickUnix / WatchdogPanicCount so
+	// external monitoring can distinguish "watchdog dead" (stale tick)
+	// from "watchdog alive, but its log sink is stuck" (ticking
+	// normally, drop count climbing). Monotonic; 0 means the writer
+	// has never fallen behind. Additive — omitempty so older server
+	// builds ignore it.
+	WatchdogLogDropCount int64 `json:"watchdogLogDropCount,omitempty"`
 }
 
 // SourceLivenessSnapshot is the per-source two-clock view exposed for
@@ -273,6 +285,7 @@ func StartStatsFileWriter(s *Store, interval time.Duration) {
 				SourceStatuses:       SnapshotSourceStatuses(tickAt),
 				WatchdogLastTickUnix: WatchdogLastTickUnix(),
 				WatchdogPanicCount:   WatchdogPanicCount(),
+				WatchdogLogDropCount: WatchdogLogDropCount(),
 			}
 			buf.Reset()
 			if err := enc.Encode(&snap); err != nil {

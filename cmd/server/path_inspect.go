@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/meshcore-analyzer/packetpath"
 )
 
 // ─── Path Inspector ────────────────────────────────────────────────────────────
@@ -16,9 +18,9 @@ import (
 
 // pathInspectRequest is the JSON body for the inspect endpoint.
 type pathInspectRequest struct {
-	Prefixes []string             `json:"prefixes"`
-	Context  *pathInspectContext  `json:"context,omitempty"`
-	Limit    int                  `json:"limit,omitempty"`
+	Prefixes []string            `json:"prefixes"`
+	Context  *pathInspectContext `json:"context,omitempty"`
+	Limit    int                 `json:"limit,omitempty"`
 }
 
 type pathInspectContext struct {
@@ -29,11 +31,14 @@ type pathInspectContext struct {
 
 // pathCandidate is one scored candidate path in the response.
 type pathCandidate struct {
-	Path        []string        `json:"path"`
-	Names       []string        `json:"names"`
-	Score       float64         `json:"score"`
-	Speculative bool            `json:"speculative"`
-	Evidence    pathEvidence    `json:"evidence"`
+	Path  []string `json:"path"`
+	Names []string `json:"names"`
+	Score float64  `json:"score"`
+	// Speculative is true when the score is below speculativeThreshold or any
+	// hop is below the configured path-trust threshold. Consumers needing the
+	// reason should inspect evidence.perHop[].trusted.
+	Speculative bool         `json:"speculative"`
+	Evidence    pathEvidence `json:"evidence"`
 }
 
 type pathEvidence struct {
@@ -45,14 +50,15 @@ type hopEvidence struct {
 	CandidatesConsidered int              `json:"candidatesConsidered"`
 	Chosen               string           `json:"chosen"`
 	EdgeWeight           float64          `json:"edgeWeight"`
+	Trusted              bool             `json:"trusted"`
 	Alternatives         []hopAlternative `json:"alternatives,omitempty"`
 }
 
 // hopAlternative shows a candidate that was considered but not chosen for this hop.
 type hopAlternative struct {
 	PublicKey string  `json:"publicKey"`
-	Name     string  `json:"name"`
-	Score    float64 `json:"score"`
+	Name      string  `json:"name"`
+	Score     float64 `json:"score"`
 }
 
 type pathInspectResponse struct {
@@ -73,15 +79,15 @@ type beamEntry struct {
 }
 
 const (
-	beamWidth       = 20
-	maxInputHops    = 64
-	maxPrefixBytes  = 3
-	maxRequestItems = 64
-	geoMaxKm        = 50.0
-	hopScoreFloor   = 0.05
+	beamWidth            = 20
+	maxInputHops         = 64
+	maxPrefixBytes       = 3
+	maxRequestItems      = 64
+	geoMaxKm             = 50.0
+	hopScoreFloor        = 0.05
 	speculativeThreshold = 0.7
-	inspectCacheTTL = 30 * time.Second
-	inspectBodyLimit = 4096
+	inspectCacheTTL      = 30 * time.Second
+	inspectBodyLimit     = 4096
 )
 
 // Weights per spec §2.3.
@@ -197,6 +203,7 @@ func (s *Server) handlePathInspect(w http.ResponseWriter, r *http.Request) {
 
 	// Beam search.
 	beam := s.store.beamSearch(req.Prefixes, pm, graph, nodeByPK, now)
+	pt := s.cfg.GetPathTrust()
 
 	// Sort by score descending, take top limit.
 	sortBeam(beam)
@@ -216,26 +223,31 @@ func (s *Server) handlePathInspect(w http.ResponseWriter, r *http.Request) {
 		// Populate per-hop alternatives: other candidates at each hop that weren't chosen.
 		evidence := make([]hopEvidence, len(entry.evidence))
 		copy(evidence, entry.evidence)
+		allHopsTrusted := true
 		for hi, ev := range evidence {
 			if hi >= len(req.Prefixes) {
 				break
 			}
 			prefix := req.Prefixes[hi]
+			trusted := packetpath.MeetsPathTrust(len(prefix)/2, &pt)
+			if !trusted {
+				allHopsTrusted = false
+			}
 			allCands := pm.m[prefix]
 			var alts []hopAlternative
 			for _, c := range allCands {
 				if !canAppearInPath(c.Role) || c.PublicKey == ev.Chosen {
 					continue
 				}
-				// Score this alternative in context of the partial path up to this hop.
 				var partialEntry beamEntry
 				if hi > 0 {
 					partialEntry = beamEntry{pubkeys: entry.pubkeys[:hi], names: entry.names[:hi], score: 1.0}
 				}
+				// Score this alternative in the context of the partial path.
 				altScore := s.store.scoreHop(partialEntry, c, ev.CandidatesConsidered, graph, nodeByPK, now, hi)
 				alts = append(alts, hopAlternative{PublicKey: c.PublicKey, Name: c.Name, Score: math.Round(altScore*1000) / 1000})
 			}
-			// Sort alts by score desc, cap at 5.
+			// Sort alternatives by score descending, cap at 5.
 			sort.Slice(alts, func(i, j int) bool { return alts[i].Score > alts[j].Score })
 			if len(alts) > 5 {
 				alts = alts[:5]
@@ -245,6 +257,7 @@ func (s *Server) handlePathInspect(w http.ResponseWriter, r *http.Request) {
 				CandidatesConsidered: ev.CandidatesConsidered,
 				Chosen:               ev.Chosen,
 				EdgeWeight:           ev.EdgeWeight,
+				Trusted:              trusted,
 				Alternatives:         alts,
 			}
 		}
@@ -253,7 +266,7 @@ func (s *Server) handlePathInspect(w http.ResponseWriter, r *http.Request) {
 			Path:        entry.pubkeys,
 			Names:       entry.names,
 			Score:       math.Round(score*1000) / 1000,
-			Speculative: score < speculativeThreshold,
+			Speculative: score < speculativeThreshold || !allHopsTrusted,
 			Evidence:    pathEvidence{PerHop: evidence},
 		})
 	}
@@ -267,9 +280,10 @@ func (s *Server) handlePathInspect(w http.ResponseWriter, r *http.Request) {
 			"hops":     len(req.Prefixes),
 		},
 		Stats: map[string]interface{}{
-			"beamWidth":     beamWidth,
-			"expansionsRun": len(req.Prefixes) * beamWidth,
-			"elapsedMs":     elapsed,
+			"beamWidth":              beamWidth,
+			"expansionsRun":          len(req.Prefixes) * beamWidth,
+			"elapsedMs":              elapsed,
+			"minHashBytesForMapping": pt.MinHashBytesOrDefault(),
 		},
 	}
 
@@ -341,8 +355,8 @@ func (s *PacketStore) beamSearch(prefixes []string, pm *prefixMap, graph *Neighb
 				}
 
 				newEntry := beamEntry{
-					pubkeys:  append(append([]string{}, entry.pubkeys...), cand.PublicKey),
-					names:    append(append([]string{}, entry.names...), cand.Name),
+					pubkeys: append(append([]string{}, entry.pubkeys...), cand.PublicKey),
+					names:   append(append([]string{}, entry.names...), cand.Name),
 					evidence: append(append([]hopEvidence{}, entry.evidence...), hopEvidence{
 						Prefix:               prefix,
 						CandidatesConsidered: candidateCount,
@@ -419,7 +433,6 @@ func (s *PacketStore) scoreHop(entry beamEntry, cand nodeInfo, candidateCount in
 
 	return wEdge*edgeScore + wGeo*geoScore + wRecency*recencyScore + wSelectivity*selectivityScore
 }
-
 
 func sortBeam(beam []beamEntry) {
 	sort.Slice(beam, func(i, j int) bool {

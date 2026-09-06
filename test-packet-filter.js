@@ -193,6 +193,37 @@ test('unclosed quote → error', () => {
   assert(c.error !== null, 'should have error');
 });
 
+// --- Transport region scope filter field ---
+// scope_name is null for non-transport routes, "" when transport-scoped but the
+// region did not match a configured key, and "#be" on a match.
+const bePkt = { ...pkt, scope_name: '#be' };
+const unknownScopePkt = { ...pkt, scope_name: '' };
+const noScopePkt = { ...pkt, scope_name: null };
+
+test('scope == "#be" matches a packet scoped to #be', () => {
+  assert(PF.compile('scope == "#be"').filter(bePkt));
+});
+test('scope == "#be" is case-insensitive', () => {
+  assert(PF.compile('scope == "#BE"').filter(bePkt));
+});
+test('scope == "#nl" does not match a #be packet', () => {
+  assert(!PF.compile('scope == "#nl"').filter(bePkt));
+});
+test('scope == "" matches transport-scoped with an unmatched region', () => {
+  assert(PF.compile('scope == ""').filter(unknownScopePkt));
+  assert(!PF.compile('scope == ""').filter(bePkt));
+});
+test('scope == "" also matches a non-transport packet (both render as no scope)', () => {
+  assert(PF.compile('scope == ""').filter(noScopePkt));
+});
+test('scope contains "be" matches #be', () => {
+  assert(PF.compile('scope contains "be"').filter(bePkt));
+});
+test('scope listed in FIELDS suggestions', () => {
+  const names = PF.FIELDS.map(f => f.name);
+  assert(names.indexOf('scope') !== -1, 'scope in FIELDS');
+});
+
 // --- Observer IATA filter field (#1188) ---
 const iataPkt = { ...pkt, observer_iata: 'SJC' };
 const sfoPkt  = { ...pkt, observer_iata: 'SFO' };

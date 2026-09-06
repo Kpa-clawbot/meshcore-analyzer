@@ -1,11 +1,28 @@
 name: CI/CD Pipeline
 
+# Documentation-only changes still trigger this workflow, on purpose. Skipping
+# it at the trigger level leaves every required check in a pending state that
+# can never arrive, and the pull request can then never merge. GitHub documents
+# exactly this: a workflow skipped by path filtering keeps its checks pending
+# and blocks the merge, while a JOB skipped by an if: conditional reports
+# Success and does not. So the filtering lives on the jobs below, not here.
+#
+# The scope check only applies to pull requests. A push to master always runs
+# the full pipeline, which keeps :edge built for every master commit. That
+# matters: release-fast-path.yml re-tags :edge to :vX.Y.Z only when the :edge
+# revision label matches the tagged commit, so a master commit without an image
+# breaks tagging.
 on:
   push:
     branches: [master]
   pull_request:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      images_published:
+        description: 'Release fast path already published the tag images'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,11 +44,56 @@ env:
 
 jobs:
   # ───────────────────────────────────────────────────────────────
+  # 0. Change scope — decides whether the expensive jobs below run.
+  # ───────────────────────────────────────────────────────────────
+  changes:
+    name: "🔎 Change scope"
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether anything but documentation changed
+        id: scope
+        run: |
+          set -euo pipefail
+          # Only pull requests are scoped. Pushes and dispatches always count as
+          # code, so master keeps producing an :edge image and tag builds are
+          # never skipped.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "event=${{ github.event_name }} -> full pipeline"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only             "${{ github.event.pull_request.base.sha }}"             "${{ github.event.pull_request.head.sha }}")
+          # Empty diff means something is off; run everything rather than guess.
+          if [ -z "$CHANGED" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "empty diff -> full pipeline"
+            exit 0
+          fi
+          echo "Changed files:"
+          echo "$CHANGED" | sed 's/^/  /'
+          if echo "$CHANGED" | grep -qvE '(^docs/|[.]md$|^LICENSE$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "-> non-documentation files changed, full pipeline"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "-> documentation only, heavy jobs skip (and report Success)"
+          fi
+
+  # ───────────────────────────────────────────────────────────────
   # 1. Go Build & Test
   # ───────────────────────────────────────────────────────────────
   go-test:
     name: "✅ Go Build & Test"
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -48,6 +110,24 @@ jobs:
           cache-dependency-path: |
             cmd/server/go.sum
             cmd/ingestor/go.sum
+
+      - name: Enforce gofmt + go vet (issue #1859)
+        run: |
+          set -e
+          # gofmt: every tracked *.go file except the misnamed Dockerfile.go,
+          # which is a Dockerfile (FROM ...) that gofmt cannot parse.
+          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -vi 'Dockerfile.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt required on these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: clean"
+          # go vet: multi-module repo, so vet each module in turn.
+          for mod in $(git ls-files '*go.mod' | sed 's#/go.mod##'); do
+            echo "== go vet $mod =="
+            ( cd "$mod" && go vet ./... )
+          done
 
       - name: Build and test Go server (with coverage)
         run: |
@@ -160,6 +240,7 @@ jobs:
           node test-issue-1705-subpath-contrast.js
           node test-issue-1770-mobile-row-clamp.js
           node test-a11y-axe-routes-coverage.js
+          node test-issue-1956-release-routing.js
 
       - name: 🛡️ Preflight XSS gate — actual --diff check (PR only)
         # The fixture self-test above (test-preflight-xss-gate.js) only
@@ -242,11 +323,12 @@ jobs:
   # ───────────────────────────────────────────────────────────────
   e2e-test:
     name: "🎭 Playwright E2E Tests"
-    needs: [go-test]
+    needs: [go-test, changes]
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
+    if: needs.changes.outputs.code == 'true' && !(startsWith(github.ref, 'refs/tags/v') && inputs.images_published)
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -573,10 +655,23 @@ jobs:
   # ───────────────────────────────────────────────────────────────
   # 3. Build & Publish Docker Image
   # ───────────────────────────────────────────────────────────────
+  # The five GHCR steps below publish on a push to master (the :edge image) and
+  # on a tag ref. The tag half is not decoration: release-fast-path.yml re-tags
+  # :edge to :vX.Y.Z when the :edge revision label matches the tagged commit,
+  # and dispatches THIS workflow when it does not. That fallback previously
+  # produced no image at all, because a workflow_dispatch is not a push and
+  # every publishing step was gated on github.event_name == 'push'. It built
+  # locally, reported success, and pushed nothing.
+  #
+  # That went unnoticed until v3.10.0, where the tagged commit was
+  # documentation-only. Documentation-only commits skip this workflow (see the
+  # paths-ignore above), so no :edge image was ever built for it, the label
+  # comparison failed, and the fallback ran for the first time.
   build-and-publish:
     name: "🏗️ Build & Publish Docker Image"
-    needs: [e2e-test]
+    needs: [e2e-test, changes]
     runs-on: ubuntu-latest
+    if: needs.changes.outputs.code == 'true' && !(startsWith(github.ref, 'refs/tags/v') && inputs.images_published)
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -605,15 +700,15 @@ jobs:
           echo "Built Go staging image ✅"
 
       - name: Set up Docker Buildx
-        if: github.event_name == 'push'
+        if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
         uses: docker/setup-buildx-action@v3
 
       - name: Set up QEMU (arm64 runtime stage)
-        if: github.event_name == 'push'
+        if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
         uses: docker/setup-qemu-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name == 'push'
+        if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -621,7 +716,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
-        if: github.event_name == 'push'
+        if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
         id: docker-meta
         uses: docker/metadata-action@v5
         with:
@@ -634,7 +729,7 @@ jobs:
             type=edge,branch=master
 
       - name: Build and push to GHCR
-        if: github.event_name == 'push'
+        if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -654,11 +749,11 @@ jobs:
   # ───────────────────────────────────────────────────────────────
   release-artifacts:
     name: "📦 Release Artifacts"
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [go-test]
+    needs: [go-test, changes]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    if: startsWith(github.ref, 'refs/tags/v') && needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -679,8 +774,11 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o ../../corescope-decrypt-linux-arm64 .
 
       - name: Upload release assets
+        # Standard releases upload both assets to a draft before publishing.
+        # Keep one writer: published releases are immutable in this repository.
         uses: softprops/action-gh-release@v2
         with:
+          fail_on_unmatched_files: true
           files: |
             corescope-decrypt-linux-amd64
             corescope-decrypt-linux-arm64
@@ -690,11 +788,30 @@ jobs:
   # ───────────────────────────────────────────────────────────────
   deploy:
     name: "🚀 Deploy Staging"
+    # DISABLED. Re-enable by setting the repository variable
+    # ENABLE_STAGING_DEPLOY to 'true' (Settings > Secrets and variables >
+    # Actions > Variables). No code change needed.
+    #
+    # Why: this job runs on [self-hosted, meshcore-runner-2] and that runner
+    # has not picked up a job since at least 2026-08-31. It has no
+    # timeout-minutes, so it sat queued for 22+ hours, held its run open, and
+    # through the concurrency group ci-refs/heads/master caused GitHub to
+    # cancel every subsequent master push. The result was that master produced
+    # no completed pipeline result at all: 30+ runs cancelled or stuck while
+    # go-test, e2e-test and build-and-publish were passing inside them.
+    #
+    # timeout-minutes alone would unblock the queue but leave master
+    # permanently red on a job that cannot succeed while the runner is absent,
+    # so the deploy is gated instead. It is added here as well, so that if the
+    # variable is set while the runner is still missing the job fails in ten
+    # minutes rather than blocking the branch again.
     if: |
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      vars.ENABLE_STAGING_DEPLOY == 'true'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/master'
     needs: [build-and-publish]
     runs-on: [self-hosted, meshcore-runner-2]
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -781,7 +898,12 @@ jobs:
   publish:
     name: "📝 Publish Badges & Summary"
     if: github.event_name == 'push'
-    needs: [deploy]
+    # Was needs: [deploy]. The badges are built from the go-test and e2e-test
+    # artifacts and never needed the deploy step; depending on it meant the
+    # coverage badges stopped updating whenever the self-hosted runner was
+    # unavailable. build-and-publish already transitively requires both test
+    # jobs, so ordering is unchanged.
+    needs: [build-and-publish]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

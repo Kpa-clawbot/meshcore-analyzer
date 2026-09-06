@@ -13,7 +13,10 @@
   <meta property="og:image" content="https://raw.githubusercontent.com/Kpa-clawbot/corescope/master/public/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:url" content="https://analyzer.00id.net">
+  <!-- No og:url: it is the canonical destination OG consumers navigate to, so a
+       hardcoded value sends every self-hosted instance's shared links to that one
+       host (#1890). Omitted, consumers use the URL they crawled — correct for
+       every deployment, no configuration needed. -->
   <meta property="og:type" content="website">
   <meta name="theme-color" content="#0a0a0a">
 
@@ -40,6 +43,7 @@
   <link rel="stylesheet" href="home.css?v=__BUST__">
   <link rel="stylesheet" href="live.css?v=__BUST__">
   <link rel="stylesheet" href="node-reach.css?v=__BUST__">
+  <link rel="stylesheet" href="scope-audit.css?v=__BUST__">
   <link rel="stylesheet" href="node-reach-coverage.css?v=__BUST__">
   <link rel="stylesheet" href="bottom-nav.css?v=__BUST__">
   <link rel="stylesheet" href="nav-drawer.css?v=__BUST__">
@@ -127,6 +131,7 @@
         <a href="#/tools" class="nav-link" data-route="tools">Tools</a>
         <a href="#/observers" class="nav-link" data-route="observers">Observers</a>
         <a href="#/analytics" class="nav-link" data-route="analytics">Analytics</a>
+        <a href="#/scope-audit" class="nav-link" data-route="scope-audit">Scope Audit</a>
         <a href="#/perf" class="nav-link" data-route="perf"><svg class="ph-icon" aria-hidden="true" focusable="false"><use href="/icons/phosphor-sprite.svg#ph-lightning"></use></svg> Perf</a>
         <a href="#/audio-lab" class="nav-link" data-route="audio-lab"><svg class="ph-icon" aria-hidden="true" focusable="false"><use href="/icons/phosphor-sprite.svg#ph-music-note"></use></svg> Lab</a>
       </div>
@@ -205,6 +210,7 @@
   <script src="route-view.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="channels.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="table-sort.js?v=__BUST__"></script>
+  <script src="nodes-export.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="nodes.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="traces.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="path-inspector.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
@@ -222,6 +228,7 @@
   <script src="node-reach-map.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="node-reach-coverage.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="node-reach.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
+  <script src="scope-audit.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="rx-coverage.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="perf.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>
   <script src="mobile-page-actions.js?v=__BUST__" onerror="console.error('Failed to load:', this.src)"></script>

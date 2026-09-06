@@ -50,9 +50,9 @@ type sourceStatusState struct {
 	// 5-minute sliding window: per-second buckets keyed by unix second.
 	// Stored as parallel arrays so we can both zero-out a stale slot AND
 	// know whether a slot's contents are still inside the window.
-	ringMu     sync.Mutex
-	ringSec    [300]int64 // unix second this slot represents (0 = unused)
-	ringCount  [300]int64 // packets received in that second
+	ringMu    sync.Mutex
+	ringSec   [300]int64 // unix second this slot represents (0 = unused)
+	ringCount [300]int64 // packets received in that second
 
 	// lastError is rare-write/rare-read so a plain mutex is fine.
 	errMu     sync.RWMutex

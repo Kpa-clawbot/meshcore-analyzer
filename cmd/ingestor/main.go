@@ -103,6 +103,7 @@ func main() {
 
 	regionKeys := loadRegionKeys(cfg)
 	store.BackfillDefaultScopeAsync(regionKeys)
+	store.BackfillTransportCodesAsync()
 
 	// Subscribe-early + buffer (#1608): the MQTT subscription is brought up
 	// before startup maintenance so no packets are missed while the single
@@ -193,14 +194,10 @@ func main() {
 		// half-open TCP socket and re-dial when paho.IsConnected==true
 		// but no messages have flowed past the stall threshold. Throttled
 		// per source by the watchdog itself (forceReconnectThrottle).
-		// Disconnect(250) gives in-flight publishes 250ms to drain;
-		// Connect() returns immediately and paho's reconnect machinery
-		// takes over from there. Captured-by-value `client` is the same
-		// pointer used everywhere else for this source.
-		liveness.ForceReconnectFn = func() {
-			client.Disconnect(250)
-			client.Connect()
-		}
+		// Captured-by-value `client` is the same pointer used everywhere
+		// else for this source. See buildForceReconnectFn for why this is
+		// NOT simply "Disconnect(250) then Connect()".
+		liveness.ForceReconnectFn = buildForceReconnectFn(client, tag)
 		// PR #1216 r2 item 3: tag collisions used to log.Fatalf, which
 		// killed the entire ingestor over one config typo and recreated
 		// the #1212 total-ingest-stop class this PR exists to prevent.
@@ -256,6 +253,14 @@ func main() {
 	observerDays := cfg.ObserverDaysOrDefault()
 	store.RemoveStaleObservers(observerDays)
 
+	// Observer purge: second stage, hard-deletes long-inactive observers whose
+	// packets have already aged out. Always runs after the soft-delete so a row
+	// crossing both thresholds is finalised in a single pass. 0 = disabled.
+	observerPurgeDays := cfg.ObserverPurgeDaysOrZero()
+	if _, err := store.PurgeStaleObservers(observerPurgeDays); err != nil {
+		log.Printf("[prune] error: %v", err)
+	}
+
 	// Metrics retention: prune old metrics on startup
 	metricsDays := cfg.MetricsRetentionDays()
 	store.PruneOldMetrics(metricsDays)
@@ -282,6 +287,29 @@ func main() {
 			log.Printf("[prune] error: %v", err)
 		} else if n > 0 {
 			log.Printf("[prune] startup pruned %d client_receptions older than %d days", n, clientRxDays)
+		}
+	}
+
+	// Diagnostic client_rx_observations retention: separate, typically
+	// shorter window than clientRxDays — this table is diagnostic, not
+	// archival. 0 = disabled.
+	clientRxObsDays := cfg.ClientRxObsDaysOrZero()
+	if clientRxObsDays > 0 {
+		if n, err := store.PruneOldClientRxObservations(clientRxObsDays); err != nil {
+			log.Printf("[prune] client_rx_observations: %v", err)
+		} else if n > 0 {
+			log.Printf("[prune] startup pruned %d client_rx_observations older than %d days", n, clientRxObsDays)
+		}
+	}
+
+	// Diagnostic client_rf_samples retention: separate window, independent
+	// of clientRxDays/clientRxObsDays. 0 = disabled.
+	clientRfDays := cfg.ClientRfDaysOrZero()
+	if clientRfDays > 0 {
+		if n, err := store.PruneOldClientRfSamples(clientRfDays); err != nil {
+			log.Printf("[prune] client_rf_samples: %v", err)
+		} else if n > 0 {
+			log.Printf("[prune] startup pruned %d client_rf_samples older than %d days", n, clientRfDays)
 		}
 	}
 
@@ -314,9 +342,11 @@ func main() {
 	go func() {
 		time.Sleep(90 * time.Second) // stagger after metrics prune
 		store.RemoveStaleObservers(observerDays)
+		store.PurgeStaleObservers(observerPurgeDays)
 		store.RunIncrementalVacuum(vacuumPages)
 		for range observerRetentionTicker.C {
 			store.RemoveStaleObservers(observerDays)
+			store.PurgeStaleObservers(observerPurgeDays)
 			store.RunIncrementalVacuum(vacuumPages)
 		}
 	}()
@@ -347,19 +377,47 @@ func main() {
 		log.Printf("[prune] auto-prune enabled: packets older than %d days will be removed daily", packetDays)
 	}
 
-	// Daily ticker for client-RX coverage retention (#1727).
-	if clientRxDays > 0 {
+	// Daily ticker for client-RX coverage retention (#1727), reused for the
+	// diagnostic client_rx_observations and client_rf_samples retention
+	// (Task 6) rather than starting a second ticker — the three flags are
+	// independent (0 disables each separately), so the ticker itself must
+	// run when any is set.
+	if clientRxDays > 0 || clientRxObsDays > 0 || clientRfDays > 0 {
 		clientRxRetentionTicker := time.NewTicker(24 * time.Hour)
 		go func() {
 			for range clientRxRetentionTicker.C {
-				if n, err := store.PruneOldClientReceptions(clientRxDays); err != nil {
-					log.Printf("[prune] error: %v", err)
-				} else if n > 0 {
-					store.RunIncrementalVacuum(vacuumPages)
+				if clientRxDays > 0 {
+					if n, err := store.PruneOldClientReceptions(clientRxDays); err != nil {
+						log.Printf("[prune] error: %v", err)
+					} else if n > 0 {
+						store.RunIncrementalVacuum(vacuumPages)
+					}
+				}
+				if clientRxObsDays > 0 {
+					if n, err := store.PruneOldClientRxObservations(clientRxObsDays); err != nil {
+						log.Printf("[prune] client_rx_observations: %v", err)
+					} else if n > 0 {
+						store.RunIncrementalVacuum(vacuumPages)
+					}
+				}
+				if clientRfDays > 0 {
+					if n, err := store.PruneOldClientRfSamples(clientRfDays); err != nil {
+						log.Printf("[prune] client_rf_samples: %v", err)
+					} else if n > 0 {
+						store.RunIncrementalVacuum(vacuumPages)
+					}
 				}
 			}
 		}()
-		log.Printf("[prune] auto-prune enabled: client_receptions older than %d days will be removed daily", clientRxDays)
+		if clientRxDays > 0 {
+			log.Printf("[prune] auto-prune enabled: client_receptions older than %d days will be removed daily", clientRxDays)
+		}
+		if clientRxObsDays > 0 {
+			log.Printf("[prune] auto-prune enabled: client_rx_observations older than %d days will be removed daily", clientRxObsDays)
+		}
+		if clientRfDays > 0 {
+			log.Printf("[prune] auto-prune enabled: client_rf_samples older than %d days will be removed daily", clientRfDays)
+		}
 	}
 
 	// Hourly WAL checkpoint to prevent unbounded WAL growth.
@@ -449,7 +507,11 @@ func main() {
 	// Neighbor-edges builder (#1287 — Option 4): ingestor owns
 	// neighbor_edges writes. Runs every 60s. Server reads the snapshot
 	// via cmd/server/neighbor_recomputer.go on the same cadence.
-	stopNeighborBuilder := store.StartNeighborEdgesBuilder(NeighborEdgesBuilderInterval)
+	// #1784: the neighbor builder is the first real consumer of the
+	// path-trust threshold. Resolved once here so every tick shares the
+	// same operator-configured value.
+	neighborTrust := cfg.GetPathTrust()
+	stopNeighborBuilder := store.StartNeighborEdgesBuilder(NeighborEdgesBuilderInterval, &neighborTrust)
 	defer stopNeighborBuilder()
 	log.Printf("[neighbor-build] enabled (interval=%s)", NeighborEdgesBuilderInterval)
 
@@ -544,6 +606,54 @@ func buildMQTTOpts(source MQTTSource) *mqtt.ClientOptions {
 	return opts
 }
 
+// buildForceReconnectFn builds the watchdog's forced-reconnect action for a
+// source (#1335, hardened against a race found while investigating a 100+
+// minute reconnect failure).
+//
+// paho's own client.IsConnected() — used as liveness.IsConnectedFn — reports
+// true not only when genuinely connected but for the ENTIRE time paho's
+// background AutoReconnect/ConnectRetry loop is retrying (status
+// reconnecting/connecting). So the watchdog's LivenessStalled classification
+// (IsConnected==true, no messages) fires just as often for "paho is actively,
+// correctly retrying a still-down broker" as it does for the true #1335
+// half-open-TCP case. Naively doing Disconnect(250) then Connect() in the
+// first case is actively harmful: paho's Disconnecting() must block until the
+// CURRENT in-flight connection attempt plus its backoff sleep unwind (up to
+// ConnectTimeout+MaxReconnectInterval, tens of seconds) before status
+// actually reaches `disconnected`. Disconnect(250) returns to the caller
+// after the 250ms quiesce regardless, so the following Connect() usually runs
+// while status is still the transitional `disconnecting` state — paho then
+// returns an error token (silently discarded by the old code) AND, because
+// Disconnect() was called at all, tears down paho's own retry loop for good
+// ("user requested no auto reconnection"). The client is left with nothing
+// retrying until the watchdog's next trigger fires, which can repeat the same
+// race — compounding into very long outages.
+//
+// client.IsConnectionOpen() (unlike IsConnected()) is strictly status ==
+// connected — never true while paho is reconnecting/connecting — so it
+// reliably distinguishes "genuinely connected, maybe half-open" (safe to
+// Disconnect then Connect; Disconnecting() does not need to wait on any
+// in-flight retry loop from status connected, so it completes well within
+// the 250ms quiesce) from "paho is already retrying on its own" (must NOT
+// call Disconnect; Connect() alone is a safe no-op per paho when a retry is
+// already under way, and properly starts a fresh attempt on the rare
+// occasion status has actually settled to disconnected).
+func buildForceReconnectFn(client mqtt.Client, tag string) func() {
+	return func() {
+		if client.IsConnectionOpen() {
+			client.Disconnect(250)
+		}
+		// Connect() resolves synchronously (Error() readable immediately,
+		// no Wait() needed) for both error returns and the "already
+		// retrying, treated as a safe no-op" success case — only a genuine
+		// fresh connection attempt leaves the token pending in the
+		// background, and we must not block this call on that.
+		if token := client.Connect(); token.Error() != nil {
+			log.Printf("MQTT [%s] WATCHDOG force-reconnect Connect() failed: %v", tag, token.Error())
+		}
+	}
+}
+
 func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, regionKeys map[string][]byte, cfg *Config) {
 	// Liveness watchdog (#1212): record receipt before any processing so a
 	// slow handler still counts as "source is alive". Cheap atomic store.
@@ -562,18 +672,39 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		return
 	}
 
-	// Mobile client RX coverage: dedicated topic meshcore/client/{PUBLIC_KEY}/packets.
-	// A roaming companion reports where it directly heard a node; handled in isolation
-	// from the observer/observations path. EMQX ACL binds parts[2] to the client's own key.
-	if cfg.ClientRxCoverageEnabled() && len(parts) >= 4 && parts[1] == "client" && parts[3] == "packets" {
-		// The observer blacklist (checked below) only runs on the observer path,
-		// so a blacklisted operator could otherwise skirt it via the client topic
-		// (#1). Enforce it here before any coverage write.
+	// Mobile client topics: meshcore/client/{PUBLIC_KEY}/packets (RX coverage)
+	// and meshcore/client/{PUBLIC_KEY}/rf (RF environment samples). A roaming
+	// companion reports where it directly heard a node, or its own radio's
+	// counters; both are handled in isolation from the observer/observations
+	// path. EMQX ACL binds parts[2] to the client's own key.
+	//
+	// The topic match and the enable-gate MUST be separate: matching on
+	// parts[1]=="client" always returns from this branch, whatever the config
+	// says. The gate only decides drop-vs-handle per sub-topic. Previously the
+	// gate sat inside the topic match, so a disabled gate made the whole
+	// condition false and fell through to the observer path below, where
+	// parts[1] ("client") would be taken as a region and the companion pubkey
+	// as an observer id — silently poisoning the region list, and worse now
+	// that fullRfLog multiplies client-topic volume.
+	if len(parts) >= 4 && parts[1] == "client" {
+		// The observer blacklist (checked below on the observer path) only runs
+		// there, so a blacklisted operator could otherwise skirt it via the
+		// client topic (#1). Enforce it here before any client-topic write, for
+		// every sub-topic.
 		if cfg.IsObserverBlacklisted(parts[2]) {
 			log.Printf("MQTT [%s] client %.8s blacklisted, dropping", tag, parts[2])
 			return
 		}
-		handleClientPacket(store, tag, parts[2], msg, channelKeys)
+		switch parts[3] {
+		case "packets":
+			if cfg.ClientRxCoverageEnabled() {
+				handleClientPacket(store, cfg, tag, parts[2], msg, channelKeys, regionKeys)
+			}
+		case "rf":
+			if cfg.ClientRfSamplesEnabled() {
+				handleClientRfSample(store, tag, parts[2], msg)
+			}
+		}
 		return
 	}
 
@@ -595,6 +726,17 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		return
 	}
 
+	// Neighbors report topic: meshcore/<region>/<observer_id>/neighbors (#1865).
+	// The ESP32 observer firmware emits a periodic neighbor report carrying its
+	// own configured region scopes (`self`) plus, for each zero-hop neighbor,
+	// the scopes fetched via an OTA scope query. Like /status this is observer
+	// metadata (region-independent), so the per-source packet IATA filter below
+	// does not apply.
+	if len(parts) >= 4 && parts[3] == "neighbors" {
+		handleNeighborsReport(store, tag, parts[2], msg)
+		return
+	}
+
 	// Status topic: meshcore/<region>/<observer_id>/status
 	// Per-source IATA filter does NOT apply here — observer metadata (noise_floor, battery, etc.)
 	// is region-independent and should be accepted from all observers regardless of
@@ -604,6 +746,22 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		name, _ := msg["origin"].(string)
 		iata := parts[1]
 		meta := extractObserverMeta(msg)
+		// A replayed status message is the broker handing us the observer's
+		// last published snapshot — it is not evidence the observer is alive
+		// now. Stamping last_seen from it resurrects dead observers, so the
+		// replay path only refreshes metadata.
+		//
+		// Two ways to recognise one: the retain flag (our own subscribe), and
+		// the payload itself (a replay that reached us through the mosquitto
+		// bridge, where the flag does not survive the hop — see
+		// statusIsLiveness).
+		if m.Retained() || !statusIsLiveness(msg, time.Now().UTC()) {
+			if err := store.UpsertObserverRetained(observerID, name, iata, meta); err != nil {
+				log.Printf("MQTT [%s] retained observer status error: %v", tag, err)
+			}
+			log.Print(formatStatusLog(tag, firstNonEmpty(name, observerID), iata))
+			return
+		}
 		// observer.last_seen is "when did the analyzer last hear from this
 		// observer" — fundamentally an ingest-time question. Passing "" makes
 		// UpsertObserverAt use time.Now(), independent of the envelope timestamp
@@ -1249,21 +1407,46 @@ func firstNonEmpty(vals ...string) string {
 // ahead). Caller records this via Store.RecordNaiveSkew so the UI can flag
 // the observer (#1478).
 func resolveRxTime(msg map[string]interface{}, tag string) (string, int64) {
+	t, skew := resolveRxTimeCore(msg, tag)
+	return t.Format(time.RFC3339), skew
+}
+
+// rxTimeMillisLayout is the fixed three-decimal millisecond layout for
+// client_rx_observations.rx_at. UNIQUE(rx_pubkey, pkt_hash, rx_at) on that
+// table relies on sub-second resolution to keep distinct forwarder copies of
+// the same flood as separate rows — RFC3339's second resolution would
+// collapse them and ON CONFLICT DO NOTHING would silently drop all but the
+// first. Deliberately not time.RFC3339Nano, which strips trailing zeros, so
+// this stays a stable uniqueness/sort key. The single definition here is
+// shared by its only production caller (handleClientPacket, which formats a
+// resolveRxTimeCore result with it directly) and by tests that need to
+// derive an rx_at they can query back by.
+const rxTimeMillisLayout = "2006-01-02T15:04:05.000Z07:00"
+
+// resolveRxTimeCore holds the validation/clamping logic shared by
+// resolveRxTime and any caller that needs the resolved time in a different
+// format (handleClientPacket formats it with rxTimeMillisLayout for
+// client_rx_observations). Returns UTC time so callers format it themselves —
+// a caller that needs two different formatted strings for the SAME packet
+// calls this once and formats twice, instead of parsing/validating/logging
+// twice and risking two independent time.Now() reads straddling a second
+// boundary.
+func resolveRxTimeCore(msg map[string]interface{}, tag string) (time.Time, int64) {
 	now := time.Now().UTC()
 	raw, _ := msg["timestamp"].(string)
 	if raw == "" {
-		return now.Format(time.RFC3339), 0
+		return now, 0
 	}
 	t, naive, err := parseEnvelopeTime(raw)
 	if err != nil {
 		log.Printf("MQTT [%s] unparseable timestamp %q, using ingest time", tag, raw)
-		return now.Format(time.RFC3339), 0
+		return now, 0
 	}
 	// Hard reject: > 14h ahead is a genuine clock error (UTC+14 is the maximum
 	// standard offset, so nothing valid should be further ahead than that).
 	if t.After(now.Add(14 * time.Hour)) {
 		log.Printf("MQTT [%s] future timestamp %q, using ingest time", tag, raw)
-		return now.Format(time.RFC3339), 0
+		return now, 0
 	}
 	// Hard reject: > 30 days in the past is an RTC-reset node reporting a
 	// factory date (e.g. 2020-01-01). Such a value would permanently drag
@@ -1271,7 +1454,7 @@ func resolveRxTime(msg map[string]interface{}, tag string) (string, int64) {
 	// InsertTransmission. No legitimate buffered upload is that stale.
 	if t.Before(now.Add(-30 * 24 * time.Hour)) {
 		log.Printf("MQTT [%s] stale timestamp %q (>30d old), using ingest time", tag, raw)
-		return now.Format(time.RFC3339), 0
+		return now, 0
 	}
 	// Symmetric naive-timestamp clamp (issue #1463). Naive (zone-less) ISO
 	// values from observers in non-UTC zones are parsed as-if UTC, leaving a
@@ -1295,16 +1478,16 @@ func resolveRxTime(msg map[string]interface{}, tag string) (string, int64) {
 			// Per-message log was silenced in #1479 — chip + banner in the UI
 			// replace it.
 			deltaSec := int64(signed / time.Second)
-			return now.Format(time.RFC3339), deltaSec
+			return now, deltaSec
 		}
 	}
 	// Legacy soft clamp for zone-aware near-future values: any value ahead of
 	// now is from a slightly skewed observer clock — collapse to now so we
 	// don't render ⚠️ in the UI for live packets from those nodes.
 	if t.After(now) {
-		return now.Format(time.RFC3339), 0
+		return now, 0
 	}
-	return t.UTC().Format(time.RFC3339), 0
+	return t.UTC(), 0
 }
 
 // parseEnvelopeTime parses the MQTT envelope timestamp. Two on-wire forms
@@ -1484,6 +1667,57 @@ func init() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Println("corescope-ingestor", version)
 		os.Exit(0)
+	}
+}
+
+// handleNeighborsReport ingests an observer /neighbors report (#1865) and
+// records CONFIRMED region scopes into nodes.configured_scope:
+//   - the observer's own scopes from `self`, keyed by origin_id (the observer
+//     node pubkey), which need no OTA query and are always trusted; and
+//   - each neighbor whose OTA scope query returned status=="responded".
+//
+// Per the report contract: neighbors with any other status (e.g. "timeout")
+// are skipped — a failed query is NOT evidence the scopes were cleared — and a
+// missing neighbor is never a signal (the report is 10 KB-capped and truncates
+// by ordering, so absent != gone). Report pubkeys are uppercase; nodes.public_key
+// is lowercase hex, so keys are lowercased before the UPDATE. Unknown neighbors
+// are a no-op (the UPDATE matches no row) until a later advert creates the node.
+func handleNeighborsReport(store *Store, tag string, observerID string, msg map[string]interface{}) {
+	reportedAt, _ := msg["timestamp"].(string)
+
+	// self: the observer's own configured scopes.
+	originID, _ := msg["origin_id"].(string)
+	if originID == "" {
+		originID = observerID
+	}
+	originID = strings.ToLower(originID)
+	if self, ok := msg["self"].(map[string]interface{}); ok && originID != "" {
+		if sc, ok := self["scopes"].(string); ok {
+			if err := store.UpdateNodeConfiguredScope(originID, sc, reportedAt); err != nil {
+				log.Printf("MQTT [%s] neighbors self scope error: %v", tag, err)
+			}
+		}
+	}
+
+	// neighbors[]: only status=="responded" carries usable scope evidence.
+	neighbors, _ := msg["neighbors"].([]interface{})
+	for _, raw := range neighbors {
+		n, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if status, _ := n["status"].(string); status != "responded" {
+			continue
+		}
+		pubkey, _ := n["pubkey"].(string)
+		pubkey = strings.ToLower(pubkey)
+		if pubkey == "" {
+			continue
+		}
+		scopes, _ := n["scopes"].(string)
+		if err := store.UpdateNodeConfiguredScope(pubkey, scopes, reportedAt); err != nil {
+			log.Printf("MQTT [%s] neighbors scope error for %.8s: %v", tag, pubkey, err)
+		}
 	}
 }
 

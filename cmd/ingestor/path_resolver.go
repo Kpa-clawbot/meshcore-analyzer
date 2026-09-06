@@ -134,12 +134,13 @@ func loadNeighborGraph(db *sql.DB) (*NeighborGraph, error) {
 // does not revisit a node).
 //
 // Behavior matrix:
-//   len(candidates) | anchor       | graph | result
-//   0               | —            | —     | nil
-//   1               | —            | —     | candidates[0]
-//   >1              | "" or no graph|—     | nil
-//   >1              | non-empty    | set   | unique adjacent candidate
-//                                            (or nil if 0 or >1 survive)
+//
+//	len(candidates) | anchor       | graph | result
+//	0               | —            | —     | nil
+//	1               | —            | —     | candidates[0]
+//	>1              | "" or no graph|—     | nil
+//	>1              | non-empty    | set   | unique adjacent candidate
+//	                                         (or nil if 0 or >1 survive)
 func resolveHopWithContext(hop string, anchor string, graph *NeighborGraph, idx prefixIndex, exclude map[string]struct{}) *string {
 	if idx == nil {
 		return nil

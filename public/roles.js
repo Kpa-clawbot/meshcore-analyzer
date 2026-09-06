@@ -444,11 +444,54 @@
     };
   };
 
-  // Simplified two-state helper: returns 'active' or 'stale'
-  window.getNodeStatus = function (role, lastSeenMs) {
-    var isInfra = role === 'repeater' || role === 'room';
+  // Simplified two-state helper: returns 'active' or 'stale'.
+  // Accepts either a full node object (preferred) or legacy (role, lastSeenMs).
+  //
+  // #1598: for infra roles (repeater/room), freshness is the max of the
+  // ADVERT-based timestamp and last_relayed (resolved path participation).
+  // Operators increasingly run long or disabled advert intervals (firmware
+  // default trajectory is 47h flood adverts), so an actively-relaying
+  // backbone repeater must not be marked stale just because its last
+  // ADVERT is old.
+  // #1845: the single definition of "how recently did we hear from this node",
+  // extracted from getNodeStatus so a caller that needs the AGE gets the same
+  // answer as the caller that needs the STATUS. Before this, nodes.js carried
+  // two notions: getNodeStatus (relay-aware) and a local statusAge computed
+  // from the advert timestamp alone. They disagreed for exactly the nodes
+  // #1598 exists to protect. Returns NaN when nothing is known.
+  window.getEffectiveHeardMs = function (n) {
+    if (!n || typeof n !== 'object') return NaN;
+    var role = String(n.role || 'companion').toLowerCase();
+    // Freshness precedence mirrors the existing call sites:
+    // _liveSeen (live view, ms) > _lastHeard (health API) >
+    // last_heard (in-memory packets) > last_seen (DB, ADVERT).
+    var seenTime = n._lastHeard || n.last_heard || n.last_seen;
+    var effectiveMs = (typeof n._liveSeen === 'number' && n._liveSeen) ||
+                      (seenTime ? new Date(seenTime).getTime() : NaN);
+    // #1598: an infra node that forwards traffic is alive even when its last
+    // ADVERT is old, which operators increasingly cause on purpose (the
+    // firmware default flood advert interval moved to 47h).
+    if ((role === 'repeater' || role === 'room') && n.last_relayed) {
+      var relayedMs = new Date(n.last_relayed).getTime();
+      if (!(effectiveMs >= relayedMs)) effectiveMs = relayedMs;
+    }
+    return effectiveMs;
+  };
+
+  window.getNodeStatus = function (roleOrNode, lastSeenMs) {
+    var role, effectiveMs;
+    if (roleOrNode && typeof roleOrNode === 'object') {
+      role = roleOrNode.role || 'companion';
+      effectiveMs = window.getEffectiveHeardMs(roleOrNode);
+      if (isNaN(effectiveMs)) effectiveMs = undefined;
+    } else {
+      role = roleOrNode;
+      effectiveMs = lastSeenMs;
+    }
+    var isInfra = String(role || '').toLowerCase() === 'repeater' ||
+                  String(role || '').toLowerCase() === 'room';
     var staleMs = isInfra ? HEALTH_THRESHOLDS.infraSilentMs : HEALTH_THRESHOLDS.nodeSilentMs;
-    var age = typeof lastSeenMs === 'number' ? (Date.now() - lastSeenMs) : Infinity;
+    var age = typeof effectiveMs === 'number' ? (Date.now() - effectiveMs) : Infinity;
     return age < staleMs ? 'active' : 'stale';
   };
 
@@ -587,6 +630,15 @@
       if (cfg.map.tiles.lightUrl) window.TILE_LIGHT = cfg.map.tiles.lightUrl;
     }
     if (typeof window.MC_initTileRegistry === 'function') window.MC_initTileRegistry(true);
+    // CARTO raster needs an API key now, so the bare TILE_DARK/TILE_LIGHT
+    // fallbacks have to pick it up as well — getTileUrl() returns TILE_LIGHT
+    // directly in light mode and never consults the registry. Explicit
+    // darkUrl/lightUrl overrides above still win.
+    if (typeof window.MC_tileUrlById === 'function') {
+      var _tOv = (cfg.tiles || (cfg.map && cfg.map.tiles) || {});
+      if (!_tOv.dark && !_tOv.darkUrl)   window.TILE_DARK  = window.MC_tileUrlById('carto-dark',  window.TILE_DARK);
+      if (!_tOv.light && !_tOv.lightUrl) window.TILE_LIGHT = window.MC_tileUrlById('carto-light', window.TILE_LIGHT);
+    }
     if (cfg.snrThresholds) Object.assign(SNR_THRESHOLDS, cfg.snrThresholds);
     if (cfg.distThresholds) Object.assign(DIST_THRESHOLDS, cfg.distThresholds);
     if (cfg.maxHopDist != null) window.MAX_HOP_DIST = cfg.maxHopDist;
@@ -604,6 +656,11 @@
       : { disabledTabs: [] };
     // #1574 — operator-configurable cap on /live map node count.
     if (cfg.liveMapMaxNodes != null) window.LIVE_MAP_MAX_NODES = cfg.liveMapMaxNodes;
+    // #1784 — path trust threshold: minimum hash bytes for mapping evidence.
+    // Default 2 means 1-byte observations are excluded from topology/mapping.
+    window.PATH_TRUST = cfg.pathTrust && cfg.pathTrust.minHashBytesForMapping
+      ? cfg.pathTrust.minHashBytesForMapping
+      : 2;
     // Sync ROLE_STYLE colors with ROLE_COLORS
     // #1407 — both are now live getters; no manual sync needed. Kept as no-op for clarity.
   }).catch(function () { /* use defaults */ });
@@ -896,6 +953,32 @@
   window.observerSkewSeverity = function(offsetSec) {
     var abs = Math.abs(offsetSec);
     return abs >= 3600 ? 'critical' : abs >= 300 ? 'warning' : 'ok';
+  };
+
+  /**
+   * Hash prefix for display. `hash_size` is EVIDENCE, not a default: it is set
+   * only from adverts the analyzer could actually read a size out of, so a node
+   * that has not advertised in the retention window has no value at all. Reading
+   * that absence as "1" claims a 1-byte configuration nobody observed — and the
+   * 1-byte bucket is exactly where a node is most likely to be miscounted.
+   *
+   * nodes.js (detail: "Unknown") and analytics.js ("?B") already treat it that
+   * way; this helper is the shared version so the map can too.
+   *
+   * @returns {{known: boolean, bytes: number, prefix: string}} `bytes` is the
+   * rendering width — the real evidence when known, a 1-byte fallback when not,
+   * in which case `known` is false and callers must not print it as a size.
+   */
+  window.hashPrefixInfo = function (node) {
+    var raw = node ? node.hash_size : null;
+    var known = raw != null && Number(raw) > 0;
+    var bytes = known ? Number(raw) : 1;
+    var pk = (node && node.public_key) || '';
+    return {
+      known: known,
+      bytes: bytes,
+      prefix: pk ? pk.slice(0, bytes * 2).toUpperCase() : '??',
+    };
   };
 
   /** Render a skew sparkline SVG (inline, word-sized) */

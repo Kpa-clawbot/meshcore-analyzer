@@ -281,6 +281,9 @@
     if (field === 'hops') {
       try { return JSON.parse(packet.path_json || '[]').length; } catch(e) { return 0; }
     }
+    // Transport region scope. null (not transport-scoped) and "" (transport-scoped,
+    // region unmatched) both collapse to "" — neither has a scope to match on.
+    if (field === 'scope') return packet.scope_name || '';
     if (field === 'observer') return packet.observer_name || '';
     if (field === 'observer_id') return packet.observer_id || '';
     if (field === 'observer_iata' || field === 'iata') return packet.observer_iata || '';
@@ -483,6 +486,7 @@
     { name: 'snr',           desc: 'Signal-to-noise ratio (dB)' },
     { name: 'rssi',          desc: 'Received signal strength (dBm)' },
     { name: 'hops',          desc: 'Number of hops in the path' },
+    { name: 'scope',         desc: 'Transport region scope (e.g. #be). Empty for non-transport routes and unmatched regions.' },
     { name: 'observer',      desc: 'Observer station name' },
     { name: 'observer_id',   desc: 'Observer pubkey/id' },
     { name: 'observer_iata', desc: 'Observer IATA region code (e.g. SJC, SFO)' },

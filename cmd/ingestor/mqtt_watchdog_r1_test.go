@@ -231,7 +231,7 @@ func TestMQTTStallWatchdog_RecoveryEmitOnce(t *testing.T) {
 	waitFor(t, &mu, &emits, 1, 2*time.Second)
 	// Source recovers: a recent message arrives.
 	atomic.StoreInt64(&s.LastMessageUnix, now.Add(30*time.Second).Unix())
-	tick <- now.Add(60 * time.Second)  // → recovery INFO
+	tick <- now.Add(60 * time.Second) // → recovery INFO
 	waitFor(t, &mu, &emits, 2, 2*time.Second)
 	tick <- now.Add(120 * time.Second) // → silent
 	tick <- now.Add(180 * time.Second) // → silent

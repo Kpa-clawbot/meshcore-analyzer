@@ -13,20 +13,20 @@ import (
 //
 // Field invariants (typical, not guaranteed under exotic conditions):
 //
-//	processRSSMB  >=  goSysMB  >=  goHeapInuseMB  >=  storeDataMB
+//		processRSSMB  >=  goSysMB  >=  goHeapInuseMB  >=  storeDataMB
 //
-//   - processRSSMB is what the kernel charges the process (resident set).
-//     Read from /proc/self/status `VmRSS:` on Linux; falls back to goSysMB
-//     on other platforms or when /proc is unavailable.
-//   - goSysMB is the total memory obtained from the OS by the Go runtime
-//     (heap, stacks, GC metadata, mspans, mcache, etc.). Includes
-//     fragmentation and unused-but-mapped span overhead.
-//   - goHeapInuseMB is the live, in-use Go heap (HeapInuse). Excludes
-//     idle spans and runtime overhead.
-//   - storeDataMB is the in-store packet byte estimate (transmissions +
-//     observations). Subset of HeapInuse. Does not include index maps,
-//     analytics caches, broadcast queues, or runtime overhead. Used as
-//     the input to the eviction watermark.
+//	  - processRSSMB is what the kernel charges the process (resident set).
+//	    Read from /proc/self/status `VmRSS:` on Linux; falls back to goSysMB
+//	    on other platforms or when /proc is unavailable.
+//	  - goSysMB is the total memory obtained from the OS by the Go runtime
+//	    (heap, stacks, GC metadata, mspans, mcache, etc.). Includes
+//	    fragmentation and unused-but-mapped span overhead.
+//	  - goHeapInuseMB is the live, in-use Go heap (HeapInuse). Excludes
+//	    idle spans and runtime overhead.
+//	  - storeDataMB is the in-store packet byte estimate (transmissions +
+//	    observations). Subset of HeapInuse. Does not include index maps,
+//	    analytics caches, broadcast queues, or runtime overhead. Used as
+//	    the input to the eviction watermark.
 //
 // processRSSMB and storeDataMB are monotonic only relative to ingest +
 // eviction; both can shrink when packets age out. goHeapInuseMB and goSysMB

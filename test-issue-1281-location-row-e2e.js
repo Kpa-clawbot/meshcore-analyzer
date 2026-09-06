@@ -14,6 +14,8 @@
  *   3. The 📍map link uses class="loc-map-link" with a themed link color
  *      (was --accent pre-M5; now --link-color after #1668/PR #1696 AA-contrast
  *      fix). The hard guarantee is: NOT the default UA blue rgb(0,0,238).
+ *   4. #1149: node side/full stats omit aggregate SNR, retaining Heard By
+ *      readings on desktop and mobile. Node API fixtures keep SNR non-null.
  *
  * Usage: BASE_URL=http://localhost:13581 node test-issue-1281-location-row-e2e.js
  */
@@ -156,6 +158,83 @@ async function findPacketDetailByType(page, predicate, maxRows = 40) {
     assert(link !== 'rgb(0, 0, 238)',
       'Link color is UA-default blue — class is missing or CSS rule does not match');
   });
+
+  const pubkey = 'ab'.repeat(32);
+  const now = new Date().toISOString();
+  const node = {
+    public_key: pubkey, name: 'SNR fixture node', role: 'repeater',
+    first_seen: now, last_seen: now, advert_count: 1005,
+  };
+  const health = {
+    stats: { totalPackets: 1005, packetsToday: 7, avgSnr: 6.3, avgHops: 2, lastHeard: now },
+    observers: [
+      { observer_id: 'observer-a', observer_name: 'Observer A', packetCount: 1000, avgSnr: 12.5, avgRssi: -45 },
+      { observer_id: 'observer-b', observer_name: 'Observer B', packetCount: 5, avgSnr: -8.5, avgRssi: -110 },
+    ],
+    recentPackets: [],
+  };
+
+  for (const view of [
+    { name: 'desktop side panel', width: 1280, full: false },
+    { name: 'desktop full detail', width: 1280, full: true },
+    { name: 'mobile full detail', width: 390, full: true },
+  ]) {
+    await step('#1149 ' + view.name + ' retains observer SNR without an aggregate headline', async () => {
+      const nodePage = await browser.newPage({ viewport: { width: view.width, height: 900 } });
+      try {
+        await nodePage.route('**/api/nodes**', async (route) => {
+          const pathname = new URL(route.request().url()).pathname;
+          const fixtures = {
+            '/api/nodes': { nodes: [node], total: 1, counts: { repeaters: 1 } },
+            '/api/nodes/clock-skew': [],
+            ['/api/nodes/' + pubkey]: { node, recentAdverts: [] },
+            ['/api/nodes/' + pubkey + '/health']: health,
+            ['/api/nodes/' + pubkey + '/neighbors']: { neighbors: [] },
+            ['/api/nodes/' + pubkey + '/paths']: { paths: [] },
+            ['/api/nodes/' + pubkey + '/clock-skew']: {},
+          };
+          if (Object.prototype.hasOwnProperty.call(fixtures, pathname)) {
+            await route.fulfill({ json: fixtures[pathname] });
+          } else {
+            await route.continue();
+          }
+        });
+        await nodePage.goto(BASE + '/#/nodes', { waitUntil: 'domcontentloaded' });
+        await nodePage.locator('#nodesBody tr[data-key="' + pubkey + '"]').click();
+        if (view.full && view.width > 640) {
+          await nodePage.locator('#nodesRight .node-detail-btn').click();
+        }
+
+        const stats = nodePage.locator(view.full ? '#node-stats' : '#nodesRight .detail-meta');
+        const readings = nodePage.locator(view.full ? '#node-observers tbody tr' : '#nodesRight .observer-row');
+        await readings.first().waitFor({ state: 'visible' });
+        assert(await readings.count() === 2, 'Heard By must retain both observers');
+        for (const observer of health.observers) {
+          const row = readings.filter({ hasText: observer.observer_name });
+          const text = (await row.innerText()).replace(/\s+/g, ' ');
+          const snr = observer.avgSnr.toFixed(1) + (view.full ? ' dB' : 'dB');
+          assert(text.includes(snr), observer.observer_name + ' must retain SNR ' + snr + ', got: ' + text);
+        }
+        for (const [label, value] of [['Total Packets', '1005'], ['Packets Today', '7'], ['Avg Hops', '2']]) {
+          const metric = stats.getByText(label, { exact: true });
+          const actual = await metric.evaluate(el => el.nextElementSibling.textContent.trim());
+          assert(actual === value, label + ' must remain ' + value + ', got: ' + actual);
+        }
+        const headlineCount = await stats.getByText('Avg SNR', { exact: true }).count();
+        assert(headlineCount === 0,
+          'Expected no aggregate Avg SNR headline with stats.avgSnr=6.3, got ' + headlineCount);
+        if (process.env.SCREENSHOT_DIR) {
+          await stats.scrollIntoViewIfNeeded();
+          await nodePage.screenshot({
+            path: require('path').join(process.env.SCREENSHOT_DIR, 'issue-1149-' + view.name.replace(/ /g, '-') + '.png'),
+            fullPage: true,
+          });
+        }
+      } finally {
+        await nodePage.close();
+      }
+    });
+  }
 
   await browser.close();
 

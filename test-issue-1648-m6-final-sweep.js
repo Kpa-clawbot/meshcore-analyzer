@@ -120,7 +120,12 @@ function walkFiles(root, exts, ignore) {
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
     entries.forEach(function (ent) {
       var full = path.join(dir, ent.name);
-      var rel = path.relative(ROOT, full);
+      // Normalise to forward slashes: path.relative yields "public\file.js" on
+      // Windows, while both the ignore list here and every path in
+      // tests/emoji-allowlist.txt are written with '/'. Without this the
+      // allowlist matches nothing off Linux and the sweep reports every
+      // annotated line as a violation.
+      var rel = path.relative(ROOT, full).split(path.sep).join('/');
       if (ignore.some(function (s) { return rel.indexOf(s) === 0 || rel.indexOf('/' + s) >= 0 || rel.indexOf(s + '/') >= 0; })) return;
       if (ent.isDirectory()) { recurse(full); return; }
       if (!exts.some(function (e) { return ent.name.endsWith(e); })) return;

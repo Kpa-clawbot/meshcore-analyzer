@@ -111,3 +111,23 @@ func (s *Store) RefreshPrefixIndex() error {
 	s.prefixIdx.store(idx)
 	return nil
 }
+
+// resolvedPubkeys flattens a resolved path to the non-nil pubkeys it
+// contains, deduplicating repeats within the same path. Used by the
+// relay-aware last_seen touch (#1598); nil entries are unresolved or
+// ambiguous hops and are deliberately dropped.
+func resolvedPubkeys(rp []*string) []string {
+	if len(rp) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rp))
+	seen := make(map[string]bool, len(rp))
+	for _, p := range rp {
+		if p == nil || *p == "" || seen[*p] {
+			continue
+		}
+		seen[*p] = true
+		out = append(out, *p)
+	}
+	return out
+}

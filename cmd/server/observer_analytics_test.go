@@ -78,7 +78,7 @@ func TestBuildPacketTypesDirectRead(t *testing.T) {
 		buildObsForTest(3, now, nil, "[]"),
 		buildObsForTest(4, now, nil, "[]"),
 	}
-	got := buildPacketTypes(store, filtered)
+	got := buildPacketTypes(filtered, store.byTxID)
 	if got["3"] != 2 {
 		t.Errorf("packetTypes[3] = %d, want 2", got["3"])
 	}
@@ -146,7 +146,7 @@ func TestBuildRecentPacketsLimit(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		filtered = append(filtered, buildObsForTest(1, base.Add(-time.Duration(i)*time.Minute), nil, "[]"))
 	}
-	got := buildRecentPackets(store, filtered, 20)
+	got := buildRecentPackets(store, filtered, 20, store.byTxID)
 	if len(got) != 20 {
 		t.Errorf("recentPackets len = %d, want 20", len(got))
 	}
@@ -177,7 +177,7 @@ func TestBuildRecentPacketsSkipsUnparseableTimestamp(t *testing.T) {
 		filtered = append(filtered, buildObsForTest(1, base.Add(-time.Duration(i)*time.Minute), nil, "[]"))
 	}
 
-	got := buildRecentPackets(store, filtered, 20)
+	got := buildRecentPackets(store, filtered, 20, store.byTxID)
 
 	// Legacy loop: index 0-2 skipped (bad ts), index 3-19 appended under the
 	// i<20 gate (17 entries), index 20-22 dropped (i>=20). Result len = 17.
@@ -205,10 +205,10 @@ func TestBuildNodesTimelineDistinct(t *testing.T) {
 	}
 	base := time.Date(2026, 3, 4, 12, 0, 0, 0, time.UTC)
 	filtered := []*StoreObs{
-		buildObsForTest(1, base, nil, `["bb","cc"]`),           // bucket A: nodes {aaaa, bb, cc}
+		buildObsForTest(1, base, nil, `["bb","cc"]`),                // bucket A: nodes {aaaa, bb, cc}
 		buildObsForTest(1, base.Add(10*time.Minute), nil, `["bb"]`), // same bucket: dedup
 	}
-	got := buildNodesTimeline(store, filtered, 1)
+	got := buildNodesTimeline(filtered, 1, store.byTxID)
 	if len(got) != 1 {
 		t.Fatalf("nodes timeline entries = %d, want 1 (got %+v)", len(got), got)
 	}

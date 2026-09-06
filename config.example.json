@@ -10,9 +10,12 @@
   "retention": {
     "nodeDays": 7,
     "observerDays": 14,
+    "observerPurgeDays": 0,
     "packetDays": 30,
     "clientRxDays": 30,
-    "_comment": "nodeDays: nodes not seen in N days moved to inactive_nodes (default 7). observerDays: observers not sending data in N days are removed (-1 = keep forever, default 14). packetDays: transmissions older than N days are deleted (0 = disabled). clientRxDays: mobile client-RX coverage rows (client_receptions/client_observers) older than N days are deleted (0 = disabled) — bounds the opt-in coverage tables (#1727). NOTE (#1283): all retention fields are consumed by the INGESTOR process. The server is read-only and never prunes."
+    "clientRxObsDays": 30,
+    "clientRfDays": 30,
+    "_comment": "nodeDays: nodes not seen in N days moved to inactive_nodes (default 7). observerDays: observers not sending data in N days are removed (-1 = keep forever, default 14). observerPurgeDays: observers already marked inactive AND not seen in N days are hard-deleted, but only when no observation, observer_metrics or dropped_packets row still references them (0 = disabled, the default). Set it above both observerDays and packetDays — below those the reference guards keep every row anyway. packetDays: transmissions older than N days are deleted (0 = disabled). clientRxDays: mobile client-RX coverage rows (client_receptions/client_observers) older than N days are deleted (0 = disabled) — bounds the opt-in coverage tables (#1727). clientRxObsDays: diagnostic client_rx_observations rows (by rx_at) older than N days are deleted (0 = disabled) — bounds the opt-in clientRxObservations table. clientRfDays: RF environment sample rows (client_rf_samples, by sampled_at) older than N days are deleted (0 = disabled) — bounds the opt-in clientRfSamples table; unset means unbounded growth at roughly 240 rows/hour per driver. NOTE (#1283): all retention fields are consumed by the INGESTOR process. The server is read-only and never prunes."
   },
   "db": {
     "vacuumOnStartup": false,
@@ -35,6 +38,16 @@
   "_comment_ingestorStats": "Ingestor publishes a 1-Hz stats snapshot consumed by the server's /api/perf/io and /api/perf/write-sources endpoints (#1120). Path is configured via the CORESCOPE_INGESTOR_STATS environment variable on the INGESTOR process. Default: /tmp/corescope-ingestor-stats.json. The writer uses O_NOFOLLOW + 0o600, so a pre-planted symlink in /tmp cannot be used to clobber an arbitrary file. SECURITY: in shared-tmp environments (multi-tenant hosts), point CORESCOPE_INGESTOR_STATS at a private directory like /var/lib/corescope/ingestor-stats.json that only the corescope user can write to.",
   "corsAllowedOrigins": [],
   "_comment_corsAllowedOrigins": "Cross-origin allowlist for embed scenarios (#1369) AND for /ws WebSocket upgrades (#1793 — CSWSH defense per OWASP WebSocket Security Cheat Sheet). Exact-match origins, e.g. [\"https://blog.example.com\", \"https://embed.example.com\"]. Same-origin requests (Origin host == request Host) and non-browser clients (no Origin header) are always allowed for /ws. When empty (default), no Access-Control-* headers are sent and browsers enforce same-origin; cross-origin /ws upgrades are rejected. When non-empty, only the listed origins receive CORS headers, and Access-Control-Allow-Methods is limited to GET, HEAD, OPTIONS (the cross-domain surface is read-only — same-origin admin writes are unaffected). Use [\"*\"] to allow any origin for CORS XHR (NOT recommended for write-capable deployments); note that \"*\" is deliberately NOT honored for /ws upgrades — list explicit origins to permit cross-origin WebSocket clients (OWASP guidance: avoid wildcards in CSWSH defense). Operators can override per-deployment with the CORS_ALLOWED_ORIGINS environment variable (comma-separated). No credentialed CORS is enabled. To embed the map or channels pages cross-domain, add the embedding origin here and use the URL pattern '/#/map?embed=1' or '/#/channels?embed=1' — embed mode hides the top-nav, bottom-nav, and side drawer for full-bleed iframe rendering.",
+  "webSocket": {
+    "maxConnsPerIP": 0,
+    "_comment_maxConnsPerIP": "#1794 - concurrent /ws connections allowed from one client address. 0 = off, and that is the shipped default ON PURPOSE: carrier-grade NAT puts thousands of unrelated mobile subscribers behind one public IPv4, so a low cap refuses real visitors while a scraper simply rents more addresses. Set it only if you know your audience is not behind shared NAT.",
+    "upgradesPerMinPerIP": 30,
+    "_comment_upgradesPerMinPerIP": "#1794 - handshakes per minute from one client address. On by default. Safe under CGNAT: a real client upgrades a handful of times per minute even while reconnecting, so 30 leaves ordinary traffic alone while flattening a scraper reconnect loop. Set 0 to disable.",
+    "trustedProxies": [],
+    "_comment_trustedProxies": "#1794 - addresses or CIDRs of YOUR reverse proxy. REQUIRED for the per-IP limits to do anything behind nginx/Caddy/Traefik/ingress: without it every visitor shares the proxy's address, so the limits are skipped and one warning is logged at startup. X-Forwarded-For is believed only from these addresses, because anyone else can forge it. Never list an address you do not control.",
+    "deny": [],
+    "_comment_deny": "#1794 - addresses or CIDRs refused at the /ws upgrade, before the handshake. Accepts both \"1.2.3.4\" and \"1.2.3.0/24\". Applies even behind an unconfigured proxy, since it is your explicit instruction. Rejections are counted in /api/stats under websocket.rejectedDeny."
+  },
   "https": {
     "cert": "/path/to/cert.pem",
     "key": "/path/to/key.pem",
@@ -78,9 +91,10 @@
       "darkDefault": "carto-dark",
       "lightDefault": "carto-light",
       "providers": {
-        "_comment_carto": "Carto is the default free-tier provider. Optional: specify 'domain' for Carto enterprise (e.g. 'mycompany' for 'https://{s}.mycompany.cartocdn.com').",
+        "_comment_carto": "Carto is the default provider. Since 2026-08 CARTO requires an API key on its raster basemaps: without one every tile is served stamped 'API KEY REQUIRED' with a 200 status, so nothing errors and no healthcheck fires - verify by looking at a tile, not at a status code. Get a free key (no account, no card, 5M tile requests/month) at https://carto.com/basemaps/apikey and put it in 'key'. The query parameter is 'key'; 'api_key' is silently ignored and still serves the watermarked tile. WARNING: the key is sent to the browser; restrict it by domain in the CARTO dashboard. Optional: specify 'domain' for Carto enterprise (e.g. 'mycompany' for 'https://{s}.mycompany.cartocdn.com').",
         "carto": {
           "enabled": true,
+          "key": "",
           "domain": ""
         },
         "_comment_osm": "OSM providers: 'mapbox', 'thunderforest', 'maptiler'. WARNING: Tokens are sent to the browser. Apply origin/referrer restrictions in your provider dashboard.",
@@ -89,10 +103,18 @@
           "provider": "",
           "token": ""
         },
+        "_comment_opentopomap": "OpenTopoMap topographical tile provider. Limited to zoom level 17.",
+        "opentopomap": {
+          "enabled": false
+        },
         "_comment_stamen": "Stamen (hosted by Stadia). WARNING: Tokens are sent to the browser. Apply origin/referrer restrictions.",
         "stamen": {
           "enabled": false,
           "token": ""
+        },
+        "_comment_usgs": "USGS topographical tile provider. Limited to zoom level 16.",
+        "usgs": {
+          "enabled": false
         }
       }
     }
@@ -221,6 +243,10 @@
     "observerStaleMinutes": 1440,
     "_comment": "How long (hours) before nodes show as degraded/silent. 'infra' = repeaters & rooms, 'node' = companions & others. relayActiveHours: a repeater is shown as 'actively relaying' if its pubkey appeared as a path hop in a non-advert packet within this window (issue #662).",
     "_comment_observerThresholds": "Observer health classification. Online: last_seen < observerOnlineMinutes ago. Stale: between Online and observerStaleMinutes. Offline: beyond observerStaleMinutes. Defaults 60 / 1440 (1h / 24h) match the node thresholds for consistency and eliminate flap on low-traffic / CDN-fronted instances (#1552). Operators who want the old aggressive 10-min Online threshold can set observerOnlineMinutes: 10."
+  },
+  "pathTrust": {
+    "minHashBytesForMapping": 1,
+    "_comment_pathTrust": "Minimum path-hash prefix length, in bytes, trusted as mapping/topology evidence (issue #1784). MeshCore path hops are hashed pubkey prefixes of 1, 2 or 3 bytes (firmware hash_size = (pathByte>>6)+1); valid range is 1-3. Default 1 keeps the pre-#1784 behaviour, where every prefix length counts. Set 2 to exclude 1-byte prefixes (256-value collision space, so a currently-unique match can still be a false positive on a dense mesh), or 3 to require the strongest evidence. NOTE: there is no UI control for this - it is config-only and needs a restart, and raising it can remove a large share of your neighbour-graph edges and resolved paths with nothing in the UI explaining why. This does not affect raw storage: packets and paths are always stored as received."
   },
   "defaultRegion": "SJC",
   "mapDefaults": {
@@ -360,6 +386,10 @@
   "_comment_compression": "Opt-in HTTP gzip middleware + WebSocket permessage-deflate. Both default to false — enable ONLY when your upstream reverse proxy is NOT already compressing. gzip: enables the gzipMiddleware wrapper around the HTTP handler. websocket: sets gorilla websocket Upgrader.EnableCompression. level: gzip compression level 1..9 (1=BestSpeed, 9=BestCompression, default 6). minSizeBytes: advisory minimum response size below which compression would not pay off. contentTypes: MIME allow-list — only responses with these Content-Type values are compressed. Already-compressed types (image/*, video/*, audio/*, application/zip, application/x-gzip, application/pdf, application/octet-stream) are always skipped, as are responses whose handler already set Content-Encoding. Omit contentTypes to use the built-in default allow-list.",
   "clientRxCoverage": { "enabled": false },
   "_comment_clientRxCoverage": "Opt-in mobile client-RX coverage (corescope-rx companions publishing GPS-tagged receptions to meshcore/client/<pubkey>/packets). Default OFF: when disabled the ingestor writes no client_receptions, the /api/rx-coverage|rx-leaderboard|nodes/{pubkey}/rx-coverage endpoints 404, and the UI hides the Coverage dashboard + Reach overlay. Set enabled=true to turn it on. SINGLE FLAG, BOTH PROCESSES: the ingestor and server each parse this same config.json, so this one clientRxCoverage.enabled entry gates both the ingest write path and the read endpoints — set it once, not per-process. TRUST: the feature requires an ACL-capable broker binding meshcore/client/{pubkey}/packets to that publisher; without ACLs the companion GPS is spoofable (see docs/client-rx-coverage.md). Retention: see retention.clientRxDays. Companion app + setup: https://github.com/efiten/corescope-rx.",
+  "clientRxObservations": { "enabled": false },
+  "_comment_clientRxObservations": "Opt-in diagnostic RF observations: every decodable packet a companion heard, whether or not it is attributable to a directly-heard node (client_rx_observations — never a coverage source; see clientRxCoverage for that). Default OFF. TOP-LEVEL FLAG: this is its own top-level Config field, NOT nested inside clientRxCoverage — config loading is plain json.Unmarshal with no DisallowUnknownFields, so nesting it under clientRxCoverage is silently ignored. Gated behind clientRxCoverage being reachable in the ingest control flow, but the JSON key sits alongside it. Requires the companion app's fullRfLog flag to actually upload unattributable packets, or this table stays empty even when enabled — see corescope-rx README. Retention: see retention.clientRxObsDays.",
+  "clientRfSamples": { "enabled": false },
+  "_comment_clientRfSamples": "Opt-in RF environment samples: a mobile client's attached companion radio's own counters (noise floor, RX/TX airtime, CRC errors, packet totals) along its GPS track, published on meshcore/client/<pubkey>/rf and stored in client_rf_samples — feeds a noise-floor map, a channel-utilisation map, and a CRC-error-rate map. Default OFF, independent of clientRxCoverage and clientRxObservations: a deployment can run any combination. TOP-LEVEL FLAG, same as clientRxObservations. Requires an ACL-capable broker binding meshcore/client/{pubkey}/rf to that publisher — see docs/client-rf-samples.md. Retention: see retention.clientRfDays; leaving it unset means unbounded growth.",
   "_comment_channelKeys": "Hex keys for decrypting channel messages. Key name = channel display name. public channel key is well-known.",
   "_comment_hashChannels": "Channel names whose keys are derived via SHA256. Key = SHA256(name)[:16]. Listed here so the ingestor can auto-derive keys.",
   "hashRegions": [

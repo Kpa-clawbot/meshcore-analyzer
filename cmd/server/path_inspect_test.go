@@ -239,6 +239,39 @@ func TestHandlePathInspect_ValidRequest(t *testing.T) {
 	}
 }
 
+func TestHandlePathInspect_PathTrustMarksShortPrefixSpeculative(t *testing.T) {
+	srv := newTestServerForInspect(t)
+	srv.cfg = &Config{PathTrust: &PathTrustConfig{MinHashBytesForMapping: 2}}
+	srv.store.nodeCache = []nodeInfo{{PublicKey: "aabb1234", Name: "NodeA", Role: "repeater"}}
+	srv.store.nodePM = buildPrefixMap(srv.store.nodeCache)
+	srv.store.nodeCacheTime = time.Now()
+	g := NewNeighborGraph()
+	g.builtAt = time.Now()
+	srv.store.graph.Store(g)
+
+	rr := doInspectRequest(srv, `{"prefixes":["aa"]}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp pathInspectResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
+	if len(resp.Candidates) != 1 {
+		t.Fatalf("expected one candidate, got %d", len(resp.Candidates))
+	}
+	if resp.Candidates[0].Score < speculativeThreshold {
+		t.Fatalf("test requires a high-confidence candidate, got score %f", resp.Candidates[0].Score)
+	}
+	if !resp.Candidates[0].Speculative {
+		t.Error("expected an untrusted 1-byte prefix to mark the candidate speculative")
+	}
+	if resp.Candidates[0].Evidence.PerHop[0].Trusted {
+		t.Error("expected 1-byte evidence to be untrusted at threshold 2")
+	}
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 func newTestServerForInspect(t *testing.T) *Server {

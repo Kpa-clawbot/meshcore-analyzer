@@ -38,8 +38,24 @@ step.skip = function (name, reason, fn) {
 };
 function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
 
+// The packets page defaults to a 15-minute time window (DEFAULT_TIME_WINDOW in
+// public/packets.js). CI freshens the fixture once at the start of the e2e job,
+// and this file runs twice: inside the main suite, and again as the #1616
+// flake-gate AFTER every other E2E — roughly 20 minutes later. By then every
+// fixture packet is older than 15 minutes, the packets table renders zero data
+// rows, and `packets@800: page renders + first row exists` times out after 30s.
+// The two tests that need a row to click then fail with it, so one expired
+// window reports as three failures. Whether it fires depends on how long the
+// preceding suite took, which is why it looked like flake and hit unrelated PRs.
+//
+// Pin an explicit window so this file tests the slide-over rather than the
+// clock. The value must be > 0: packets.js only reads the param under
+// `_urlTimeWindow > 0`, so `timeWindow=0` does NOT disable the filter, it
+// silently leaves the 15-minute default in place.
+const PACKETS_QUERY = '?timeWindow=1440';
+
 const PAGES = [
-  { hash: '#/packets',   tableSel: '#pktTable',    rowSel: '#pktTable tbody tr[data-hash]',                     name: 'packets'   },
+  { hash: '#/packets' + PACKETS_QUERY, tableSel: '#pktTable', rowSel: '#pktTable tbody tr[data-hash]',           name: 'packets'   },
   { hash: '#/nodes',     tableSel: '#nodesTable',  rowSel: '#nodesTable tbody tr[data-value]',                  name: 'nodes'     },
   { hash: '#/observers', tableSel: '#obsTable',    rowSel: '#obsTable tbody tr[data-action="navigate"]',        name: 'observers' },
 ];
@@ -701,7 +717,7 @@ const PAGES = [
     page.setDefaultTimeout(8000);
 
     await step('wide@1440 packets: row click does NOT open slide-over', async () => {
-      await page.goto(BASE + '/#/packets', { waitUntil: 'domcontentloaded' });
+      await page.goto(BASE + '/#/packets' + PACKETS_QUERY, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('#pktTable', { timeout: 8000 });
       await page.waitForFunction(() => document.querySelectorAll('#pktTable tbody tr').length > 0, null, { timeout: 8000 });
       await page.evaluate(() => {

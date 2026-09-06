@@ -12,9 +12,12 @@ import (
 // coverage, and redundancy axes are deferred to follow-up work).
 //
 // Numerator:   count of non-advert StoreTx entries indexed under
-//              pubkey in byPathHop.
+//
+//	pubkey in byPathHop.
+//
 // Denominator: total non-advert StoreTx entries in the store
-//              (sum of byPayloadType for all keys != payloadTypeAdvert).
+//
+//	(sum of byPayloadType for all keys != payloadTypeAdvert).
 //
 // Returns 0 when there is no non-advert traffic, the pubkey is empty,
 // or the repeater never appears as a relay hop. Scores are clamped to

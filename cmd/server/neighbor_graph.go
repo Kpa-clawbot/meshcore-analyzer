@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/meshcore-analyzer/packetpath"
 )
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -50,18 +52,18 @@ func makeEdgeKey(a, b string) edgeKey {
 
 // NeighborEdge represents a weighted, undirected first-hop neighbor relationship.
 type NeighborEdge struct {
-	NodeA      string            // full pubkey
-	NodeB      string            // full pubkey, or "" if unresolved/ambiguous
-	Prefix     string            // raw hop prefix that established this edge
-	Count      int               // total observations
-	FirstSeen  time.Time         //
-	LastSeen   time.Time         //
-	SNRSum     float64           // running sum for average
-	SNRCount   int               // how many SNR samples
-	Observers  map[string]bool   // observer pubkeys that witnessed
-	Ambiguous  bool              // multiple candidates or zero candidates
-	Candidates []string          // candidate pubkeys when ambiguous
-	Resolved   bool              // true if auto-resolved via Jaccard
+	NodeA      string          // full pubkey
+	NodeB      string          // full pubkey, or "" if unresolved/ambiguous
+	Prefix     string          // raw hop prefix that established this edge
+	Count      int             // total observations
+	FirstSeen  time.Time       //
+	LastSeen   time.Time       //
+	SNRSum     float64         // running sum for average
+	SNRCount   int             // how many SNR samples
+	Observers  map[string]bool // observer pubkeys that witnessed
+	Ambiguous  bool            // multiple candidates or zero candidates
+	Candidates []string        // candidate pubkeys when ambiguous
+	Resolved   bool            // true if auto-resolved via Jaccard
 	// CountsByMode tallies sightings broken down by hash-prefix mode in bytes
 	// (1, 2, or 3). Firmware path-byte encoding (Packet.cpp:13-18) sets
 	// hash_size = (pathByte>>6)+1 with values 1/2/3 valid and 4 reserved.
@@ -234,6 +236,12 @@ func BuildFromStore(store *PacketStore) *NeighborGraph {
 type BuildOptions struct {
 	EnableLog bool    // structured disambiguation logging
 	MaxEdgeKm float64 // geo-sanity threshold; 0 disables the filter
+	// PathTrust is the trust threshold config for path-hash observations
+	// (issue #1784). When nil, the default threshold (1 byte) is used:
+	// all prefix lengths count as evidence (backward-compatible). Set
+	// MinHashBytesForMapping: 2 to exclude 1-byte observations from
+	// neighbor-edge building, or 3 for the strictest mode.
+	PathTrust *packetpath.TrustConfig
 }
 
 // DefaultMaxEdgeKm is the conservative built-in cap for the
@@ -294,6 +302,14 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 	// Phase 1: Extract edges from every transmission + observation.
 	for _, tx := range packets {
 		isAdvert := tx.PayloadType != nil && *tx.PayloadType == PayloadADVERT
+		isAnonReq := tx.PayloadType != nil && *tx.PayloadType == PayloadANON_REQ
+		// #1777: ANON_REQ's ephemeralPubKey is a full Ed25519 pubkey — the
+		// same trust level as ADVERT's pubKey — so it can seed an
+		// originator↔path[0] edge exactly like ADVERT. Other non-ADVERT
+		// types (REQ/RESP/PATH/TXT) only carry a 1-byte truncated hash of
+		// the originator in src/dst, which is deliberately excluded here
+		// (would manufacture false edges at ~1/256 collision odds).
+		hasFullOriginator := isAdvert || isAnonReq
 		fromNode := extractFromNode(tx)
 		// Pre-compute lowered originator once per tx (not per observation).
 		fromLower := ""
@@ -307,7 +323,7 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 
 			if len(path) == 0 {
 				// Zero-hop
-				if isAdvert && fromLower != "" {
+				if hasFullOriginator && fromLower != "" {
 					if fromLower != observerPK { // self-edge guard
 						g.upsertEdge(fromLower, observerPK, "", observerPK, obs.SNR, parseTimestamp(obs.Timestamp))
 					}
@@ -315,20 +331,24 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 				continue
 			}
 
-			// Edge 1: originator ↔ path[0] — ADVERTs only
-			if isAdvert && fromLower != "" {
+			// Edge 1: originator ↔ path[0] — ADVERT and ANON_REQ only (#1777)
+			if hasFullOriginator && fromLower != "" {
 				firstHop := cachedToLower(lowerCache, path[0])
 				if fromLower != firstHop { // self-edge guard (shouldn't happen but spec says check)
-					candidates := pm.m[firstHop]
-					g.upsertEdgeWithCandidates(fromLower, firstHop, candidates, observerPK, obs.SNR, parseTimestamp(obs.Timestamp), lowerCache)
+					if packetpath.MeetsPathTrust(len(path[0])/2, opts.PathTrust) {
+						candidates := pm.m[firstHop]
+						g.upsertEdgeWithCandidates(fromLower, firstHop, candidates, observerPK, obs.SNR, parseTimestamp(obs.Timestamp), lowerCache)
+					}
 				}
 			}
 
 			// Edge 2: observer ↔ path[last] — ALL packet types
 			lastHop := cachedToLower(lowerCache, path[len(path)-1])
 			if observerPK != lastHop { // self-edge guard
-				candidates := pm.m[lastHop]
-				g.upsertEdgeWithCandidates(observerPK, lastHop, candidates, observerPK, obs.SNR, parseTimestamp(obs.Timestamp), lowerCache)
+				if packetpath.MeetsPathTrust(len(path[len(path)-1])/2, opts.PathTrust) {
+					candidates := pm.m[lastHop]
+					g.upsertEdgeWithCandidates(observerPK, lastHop, candidates, observerPK, obs.SNR, parseTimestamp(obs.Timestamp), lowerCache)
+				}
 			}
 		}
 	}
@@ -347,15 +367,29 @@ func BuildFromStoreWithOptions(store *PacketStore, opts BuildOptions) *NeighborG
 }
 
 // extractFromNode pulls the originator pubkey from a StoreTx's DecodedJSON.
-// ADVERTs use "pubKey", other packets may use "from_node" or "from".
+// ADVERTs use "pubKey"; other packets may use "from_node" or "from".
 // Uses the cached ParsedDecoded() accessor to avoid repeated json.Unmarshal.
 func extractFromNode(tx *StoreTx) string {
 	decoded := tx.ParsedDecoded()
 	if decoded == nil {
 		return ""
 	}
-	// ADVERTs store the originator pubkey as "pubKey"; other packets may use
-	// "from_node" or "from".  Check all three so we never miss the originator.
+	// ANON_REQ carries the originator's full Ed25519 pubkey as
+	// "ephemeralPubKey" (#1777) — the same trust level as ADVERT's "pubKey",
+	// unlike the 1-byte truncated src/dst hashes on REQ/RESP/PATH/TXT.
+	// Gated on the actual payload type (rather than just checking whether
+	// the JSON key happens to be present) so this stays correct even if a
+	// future decoder change reuses the "ephemeralPubKey" name for a
+	// different, non-originator field on some other payload type — the
+	// field name alone would no longer be a safe signal, but the payload
+	// type check still is.
+	if tx.PayloadType != nil && *tx.PayloadType == PayloadANON_REQ {
+		if v, ok := decoded["ephemeralPubKey"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
 	for _, field := range []string{"pubKey", "from_node", "from"} {
 		if v, ok := decoded[field]; ok {
 			if s, ok := v.(string); ok && s != "" {
@@ -745,7 +779,6 @@ func parseTimestamp(s string) time.Time {
 	}
 	return time.Time{}
 }
-
 
 // minLen returns the smaller of n and len(s).
 func minLen(s string, n int) int {

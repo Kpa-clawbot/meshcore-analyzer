@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/meshcore-analyzer/packetpath"
 	"github.com/meshcore-analyzer/prunequeue"
+	"golang.org/x/sync/singleflight"
 )
 
 // memBreakdownNote is the static accounting caveat attached to the opt-in
@@ -48,6 +48,11 @@ type Server struct {
 	statsMu       sync.Mutex
 	statsCache    *StatsResponse
 	statsCachedAt time.Time
+	// #1910: collapses concurrent rebuilds. The cache check below releases
+	// statsMu before building the response, so every request arriving while the
+	// 10s window was expired used to rebuild it in full, each running its own DB
+	// queries against a 4-connection pool.
+	statsSF singleflight.Group
 
 	// Guards s.cfg.GeoFilter — read by ingest/handler goroutines, written by PUT handler
 	cfgMu sync.RWMutex
@@ -64,6 +69,17 @@ type Server struct {
 	scopeStatsMu       sync.Mutex
 	scopeStatsCache    map[string]*ScopeStatsResponse
 	scopeStatsCachedAt map[string]time.Time
+
+	// #1975: cached /api/scope-audit response, per window, recomputed at most
+	// once every 30s. Mirrors the scopeStats cache directly above it.
+	scopeAuditMu       sync.Mutex
+	scopeAuditCache    map[string]*ScopeAuditResponse
+	scopeAuditCachedAt map[string]time.Time
+
+	// #1975: /api/scope-audit window cache and its single-flight guard, so a
+	// burst of viewers on a cold cache recomputes the network-wide scan once
+	// rather than once per request. Lives in scope_audit.go.
+	scopes scopesState
 
 	// Router reference for OpenAPI spec generation
 	router *mux.Router
@@ -230,6 +246,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/scope-stats", s.handleScopeStats).Methods("GET")
+	r.HandleFunc("/api/scope-audit", s.handleScopeAudit).Methods("GET") // #1975
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.HandleFunc("/api/perf/io", s.handlePerfIO).Methods("GET")
 	r.HandleFunc("/api/perf/sqlite", s.handlePerfSqlite).Methods("GET")
@@ -254,7 +271,6 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/packets/timestamps", s.handlePacketTimestamps).Methods("GET")
 	r.HandleFunc("/api/packets/{id}", s.handlePacketDetail).Methods("GET")
 	r.HandleFunc("/api/packets", s.handlePackets).Methods("GET")
-	r.Handle("/api/packets", s.requireAPIKey(http.HandlerFunc(s.handlePostPacket))).Methods("POST")
 
 	// Decode endpoint
 	r.HandleFunc("/api/decode", s.handleDecode).Methods("POST")
@@ -437,6 +453,7 @@ func (s *Server) handleConfigClient(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Customizer != nil && s.cfg.Customizer.DisabledTabs != nil {
 		disabledTabs = s.cfg.Customizer.DisabledTabs
 	}
+	pathTrust := s.cfg.GetPathTrust()
 	writeJSON(w, ClientConfigResponse{
 		Roles:               s.cfg.Roles,
 		HealthThresholds:    s.cfg.GetHealthThresholds().ToClientMs(),
@@ -457,6 +474,7 @@ func (s *Server) handleConfigClient(w http.ResponseWriter, r *http.Request) {
 		Tiles:               s.cfg.Tiles,
 		Customizer:          CustomizerClientConfig{DisabledTabs: disabledTabs},
 		ClientRxCoverage:    s.cfg.ClientRxCoverageEnabled(),
+		PathTrust:           &pathTrust,
 	})
 }
 
@@ -679,8 +697,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(s.startedAt).Seconds()
 
 	wsClients := 0
+	var wsDeny, wsRate, wsConnCap int64
 	if s.hub != nil {
 		wsClients = s.hub.ClientCount()
+		wsDeny, wsRate, wsConnCap = s.hub.limits.counts() // #1794; nil-safe
 	}
 
 	// Real packet store stats
@@ -752,8 +772,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			P95Ms:        round(percentile(sortedPauses, 0.95), 1),
 			P99Ms:        round(percentile(sortedPauses, 0.99), 1),
 		},
-		Cache:     cs,
-		WebSocket: WebSocketStatsResp{Clients: wsClients},
+		Cache: cs,
+		WebSocket: WebSocketStatsResp{Clients: wsClients,
+			RejectedDeny: wsDeny, RejectedRate: wsRate, RejectedConnCap: wsConnCap},
 		PacketStore: HealthPacketStoreStats{
 			Packets:     pktCount,
 			EstimatedMB: pktEstMB,
@@ -780,66 +801,86 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	s.statsMu.Unlock()
 
-	var stats *Stats
-	var err error
-	if s.store != nil {
-		stats, err = s.store.GetStoreStats()
-	} else {
-		stats, err = s.db.GetStats()
-	}
-	if err != nil {
-		writeError(w, 500, err.Error())
+	// #1910: one rebuild per expiry, not one per request. Everything below runs
+	// inside singleflight, so concurrent callers that miss the cache wait for the
+	// first one's response instead of each running the same DB queries against a
+	// 4-connection pool.
+	built, sfErr, _ := s.statsSF.Do("stats", func() (interface{}, error) {
+		// Re-check under the group: the winner may have just filled the cache.
+		s.statsMu.Lock()
+		if s.statsCache != nil && time.Since(s.statsCachedAt) < statsTTL {
+			cached := s.statsCache
+			s.statsMu.Unlock()
+			return cached, nil
+		}
+		s.statsMu.Unlock()
+
+		var stats *Stats
+		var err error
+		if s.store != nil {
+			stats, err = s.store.GetStoreStats()
+		} else {
+			stats, err = s.db.GetStats()
+		}
+		if err != nil {
+			return nil, err
+		}
+		counts := s.db.GetRoleCounts()
+
+		// Memory accounting (#832). storeDataMB is the in-store packet byte
+		// estimate (the old "trackedMB"); processRSSMB / goHeapInuseMB / goSysMB
+		// give ops the breakdown needed to reason about real RSS. All values
+		// share a single 1s-cached snapshot to amortize ReadMemStats cost.
+		var storeDataMB float64
+		if s.store != nil {
+			storeDataMB = s.store.trackedMemoryMB()
+		}
+		mem := s.getMemorySnapshot(storeDataMB)
+
+		resp := &StatsResponse{
+			TotalPackets:       stats.TotalPackets,
+			TotalTransmissions: &stats.TotalTransmissions,
+			TotalObservations:  stats.TotalObservations,
+			TotalNodes:         stats.TotalNodes,
+			TotalNodesAllTime:  stats.TotalNodesAllTime,
+			TotalObservers:     stats.TotalObservers,
+			PacketsLastHour:    stats.PacketsLastHour,
+			PacketsLast24h:     stats.PacketsLast24h,
+			Engine:             "go",
+			Version:            s.version,
+			Commit:             s.commit,
+			BuildTime:          s.buildTime,
+			Counts: RoleCounts{
+				Repeaters:  counts["repeaters"],
+				Rooms:      counts["rooms"],
+				Companions: counts["companions"],
+				Sensors:    counts["sensors"],
+			},
+			SignatureDrops:        s.db.GetSignatureDropCount(),
+			HashMigrationComplete: s.store != nil && s.store.hashMigrationComplete.Load(),
+
+			TrackedMB:     mem.StoreDataMB, // deprecated alias
+			StoreDataMB:   mem.StoreDataMB,
+			ProcessRSSMB:  mem.ProcessRSSMB,
+			GoHeapInuseMB: mem.GoHeapInuseMB,
+			GoSysMB:       mem.GoSysMB,
+
+			NeighborGraphCacheRebuildFailures: atomic.LoadUint64(&s.neighborGraphCacheRebuildFailures),
+		}
+
+		s.statsMu.Lock()
+		s.statsCache = resp
+		s.statsCachedAt = time.Now()
+		s.statsMu.Unlock()
+
+		return resp, nil
+	})
+	if sfErr != nil {
+		writeError(w, 500, sfErr.Error())
 		return
 	}
-	counts := s.db.GetRoleCounts()
 
-	// Memory accounting (#832). storeDataMB is the in-store packet byte
-	// estimate (the old "trackedMB"); processRSSMB / goHeapInuseMB / goSysMB
-	// give ops the breakdown needed to reason about real RSS. All values
-	// share a single 1s-cached snapshot to amortize ReadMemStats cost.
-	var storeDataMB float64
-	if s.store != nil {
-		storeDataMB = s.store.trackedMemoryMB()
-	}
-	mem := s.getMemorySnapshot(storeDataMB)
-
-	resp := &StatsResponse{
-		TotalPackets:       stats.TotalPackets,
-		TotalTransmissions: &stats.TotalTransmissions,
-		TotalObservations:  stats.TotalObservations,
-		TotalNodes:         stats.TotalNodes,
-		TotalNodesAllTime:  stats.TotalNodesAllTime,
-		TotalObservers:     stats.TotalObservers,
-		PacketsLastHour:    stats.PacketsLastHour,
-		PacketsLast24h:     stats.PacketsLast24h,
-		Engine:             "go",
-		Version:            s.version,
-		Commit:             s.commit,
-		BuildTime:          s.buildTime,
-		Counts: RoleCounts{
-			Repeaters:  counts["repeaters"],
-			Rooms:      counts["rooms"],
-			Companions: counts["companions"],
-			Sensors:    counts["sensors"],
-		},
-		SignatureDrops:        s.db.GetSignatureDropCount(),
-		HashMigrationComplete: s.store != nil && s.store.hashMigrationComplete.Load(),
-
-		TrackedMB:     mem.StoreDataMB, // deprecated alias
-		StoreDataMB:   mem.StoreDataMB,
-		ProcessRSSMB:  mem.ProcessRSSMB,
-		GoHeapInuseMB: mem.GoHeapInuseMB,
-		GoSysMB:       mem.GoSysMB,
-
-		NeighborGraphCacheRebuildFailures: atomic.LoadUint64(&s.neighborGraphCacheRebuildFailures),
-	}
-
-	s.statsMu.Lock()
-	s.statsCache = resp
-	s.statsCachedAt = time.Now()
-	s.statsMu.Unlock()
-
-	writeJSON(w, resp)
+	writeJSON(w, built.(*StatsResponse))
 }
 
 func (s *Server) handlePerf(w http.ResponseWriter, r *http.Request) {
@@ -1222,110 +1263,6 @@ func (s *Server) handleDecode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, DecodeResponse{
-		Decoded: map[string]interface{}{
-			"header":  decoded.Header,
-			"path":    decoded.Path,
-			"payload": decoded.Payload,
-		},
-	})
-}
-
-func (s *Server) handlePostPacket(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Hex      string   `json:"hex"`
-		Observer *string  `json:"observer"`
-		Snr      *float64 `json:"snr"`
-		Rssi     *float64 `json:"rssi"`
-		Region   *string  `json:"region"`
-		Hash     *string  `json:"hash"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, 400, "invalid JSON body")
-		return
-	}
-	hexStr := strings.TrimSpace(body.Hex)
-	if hexStr == "" {
-		writeError(w, 400, "hex is required")
-		return
-	}
-	decoded, err := DecodePacket(hexStr, false)
-	if err != nil {
-		writeError(w, 400, err.Error())
-		return
-	}
-
-	contentHash := ComputeContentHash(hexStr)
-	pathJSON := "[]"
-	// For TRACE packets, path_json must be the payload-decoded route hops
-	// (decoded.Path.Hops), NOT the raw_hex header bytes which are SNR values.
-	// For all other packet types, derive path from raw_hex (#886).
-	if !packetpath.PathBytesAreHops(byte(decoded.Header.PayloadType)) {
-		if len(decoded.Path.Hops) > 0 {
-			if pj, e := json.Marshal(decoded.Path.Hops); e == nil {
-				pathJSON = string(pj)
-			}
-		}
-	} else if hops, err := packetpath.DecodePathFromRawHex(hexStr); err == nil && len(hops) > 0 {
-		if pj, e := json.Marshal(hops); e == nil {
-			pathJSON = string(pj)
-		}
-	}
-	decodedJSON := PayloadJSON(&decoded.Payload)
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	nowEpoch := time.Now().Unix()
-
-	var snr, rssi interface{}
-	if body.Snr != nil {
-		snr = *body.Snr
-	}
-	if body.Rssi != nil {
-		rssi = *body.Rssi
-	}
-
-	// v3 schema (cmd/ingestor/db.go:251-303): transmissions no longer carries
-	// path_json (it lives on observations now), observations uses observer_idx
-	// INTEGER (FK observers.rowid) and timestamp INTEGER (unix epoch).
-	// Fix for #1196 — pre-fix code wrote v2 column names and silently
-	// swallowed the observations insert error.
-	res, dbErr := s.db.conn.Exec(`INSERT INTO transmissions (hash, raw_hex, route_type, payload_type, payload_version, decoded_json, first_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		contentHash, strings.ToUpper(hexStr), decoded.Header.RouteType, decoded.Header.PayloadType,
-		decoded.Header.PayloadVersion, decodedJSON, now)
-	if dbErr != nil {
-		writeError(w, 500, "transmission insert: "+dbErr.Error())
-		return
-	}
-	insertedID, _ := res.LastInsertId()
-
-	// Resolve observer string → observers.rowid. INSERT OR IGNORE then SELECT
-	// mirrors the ingestor's resolver (cmd/ingestor/db.go:778,799,906).
-	var observerIdx interface{}
-	if body.Observer != nil && *body.Observer != "" {
-		obsID := *body.Observer
-		if _, err := s.db.conn.Exec(
-			`INSERT OR IGNORE INTO observers (id, name, last_seen, first_seen) VALUES (?, ?, ?, ?)`,
-			obsID, obsID, now, now); err != nil {
-			writeError(w, 500, "observer upsert: "+err.Error())
-			return
-		}
-		var rowid int64
-		if err := s.db.conn.QueryRow(`SELECT rowid FROM observers WHERE id = ?`, obsID).Scan(&rowid); err != nil {
-			writeError(w, 500, "observer lookup: "+err.Error())
-			return
-		}
-		observerIdx = rowid
-	}
-
-	if _, obsErr := s.db.conn.Exec(
-		`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-		insertedID, observerIdx, snr, rssi, pathJSON, nowEpoch); obsErr != nil {
-		writeError(w, 500, "observation insert: "+obsErr.Error())
-		return
-	}
-
-	writeJSON(w, PacketIngestResponse{
-		ID: insertedID,
 		Decoded: map[string]interface{}{
 			"header":  decoded.Header,
 			"path":    decoded.Path,
@@ -2848,6 +2785,18 @@ func (s *Server) handleObserverAnalytics(w http.ResponseWriter, r *http.Request)
 	obsList := s.store.byObserver[id]
 	obsSnapshot := make([]*StoreObs, len(obsList))
 	copy(obsSnapshot, obsList)
+	// #1830: also resolve each referenced transmission's *StoreTx under
+	// this same RLock. s.store.byTxID is guarded by s.store.mu (writes
+	// from ingest/eviction); reading it after RUnlock — as the loop below
+	// used to via s.store.byTxID[...] and enrichObs() — races with those
+	// writers. Keyed by TransmissionID (not by observation index) since
+	// multiple observations can share one transmission.
+	txByID := make(map[int]*StoreTx, len(obsSnapshot))
+	for _, obs := range obsSnapshot {
+		if _, ok := txByID[obs.TransmissionID]; !ok {
+			txByID[obs.TransmissionID] = s.store.byTxID[obs.TransmissionID]
+		}
+	}
 	s.store.mu.RUnlock()
 	filtered := make([]*StoreObs, 0, len(obsSnapshot))
 	for _, obs := range obsSnapshot {
@@ -2863,10 +2812,10 @@ func (s *Server) handleObserverAnalytics(w http.ResponseWriter, r *http.Request)
 
 	writeJSON(w, ObserverAnalyticsResponse{
 		Timeline:        buildTimeline(filtered, days),
-		PacketTypes:     buildPacketTypes(s.store, filtered),
-		NodesTimeline:   buildNodesTimeline(s.store, filtered, days),
+		PacketTypes:     buildPacketTypes(filtered, txByID),
+		NodesTimeline:   buildNodesTimeline(filtered, days, txByID),
 		SnrDistribution: buildSnrDistribution(filtered),
-		RecentPackets:   buildRecentPackets(s.store, filtered, 20),
+		RecentPackets:   buildRecentPackets(s.store, filtered, 20, txByID),
 	})
 }
 
@@ -2954,8 +2903,7 @@ func (s *Server) handleAudioLabBuckets(w http.ResponseWriter, r *http.Request) {
 			}
 			typeName := "UNKNOWN"
 			if tx.DecodedJSON != "" {
-				var d map[string]interface{}
-				if err := json.Unmarshal([]byte(tx.DecodedJSON), &d); err == nil {
+				if d := tx.ParsedDecoded(); d != nil {
 					if t, ok := d["type"].(string); ok && t != "" {
 						typeName = t
 					}

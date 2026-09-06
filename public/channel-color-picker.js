@@ -28,6 +28,9 @@
   // overwriting body.style.overflow directly. Without this, two cooperating
   // surfaces (this picker + SlideOver) corrupt overflow last-writer-wins.
   var scrollLockToken = null;
+  // #1943: handle for the deferred focus of the first swatch, so it can be
+  // cancelled. It used to be fire-and-forget.
+  var focusTimer = null;
 
   function createPopover() {
     if (popoverEl) return popoverEl;
@@ -143,7 +146,20 @@
 
     // Focus first swatch for keyboard accessibility
     var firstSwatch = el.querySelector('.cc-swatch');
-    if (firstSwatch) setTimeout(function() { firstSwatch.focus(); }, 0);
+    // #1943: this used to be an uncancellable setTimeout(0). It could land
+    // AFTER the user had already moved focus with an arrow key, snapping the
+    // selection back to the first swatch, and Enter then assigned the wrong
+    // colour. Cancel any pending one, and do not steal focus that already sits
+    // inside the popover or that belongs to a popover since hidden.
+    if (focusTimer) { clearTimeout(focusTimer); focusTimer = null; }
+    if (firstSwatch) {
+      focusTimer = setTimeout(function () {
+        focusTimer = null;
+        if (el.style.display === 'none') return;
+        if (el.contains(document.activeElement)) return;
+        firstSwatch.focus();
+      }, 0);
+    }
 
     // Listen for outside click / Escape
     setTimeout(function() {
@@ -153,6 +169,9 @@
   }
 
   function hidePopover() {
+    // #1943: a pending focus timer from this show() must not fire into the
+    // next one.
+    if (focusTimer) { clearTimeout(focusTimer); focusTimer = null; }
     if (popoverEl) popoverEl.style.display = 'none';
     currentChannel = null;
     if (window.__scrollLock && scrollLockToken != null) {

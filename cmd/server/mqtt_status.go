@@ -123,6 +123,15 @@ type MqttStatusResponse struct {
 	// per-source processing is broken. 0 / omitted: no recovered
 	// panics OR older ingestor build.
 	WatchdogPanicCount int64 `json:"watchdogPanicCount,omitempty"`
+	// WatchdogLogDropCount (#1749 root-cause fix) is the running total
+	// of watchdog log lines dropped because the async emit queue's
+	// background writer could not keep up — almost always because its
+	// underlying write() is itself stuck (Docker JSON-file log driver
+	// backpressure, full stderr pipe, etc.). Distinguishes "watchdog
+	// dead" (WatchdogLastTickUnix stale) from "watchdog alive, but its
+	// log sink is stuck" (ticking normally, this climbing). 0 /
+	// omitted: writer never fell behind OR older ingestor build.
+	WatchdogLogDropCount int64 `json:"watchdogLogDropCount,omitempty"`
 }
 
 // ingestorMqttStatusEnvelope is the partial shape the server decodes from
@@ -132,6 +141,7 @@ type ingestorMqttStatusEnvelope struct {
 	SourceStatuses       []MqttSourceStatus `json:"source_statuses"`
 	WatchdogLastTickUnix int64              `json:"watchdogLastTickUnix"`
 	WatchdogPanicCount   int64              `json:"watchdogPanicCount"`
+	WatchdogLogDropCount int64              `json:"watchdogLogDropCount"`
 }
 
 // handleMqttStatus serves GET /api/mqtt/status. Reads the ingestor stats
@@ -153,6 +163,7 @@ func (s *Server) handleMqttStatus(w http.ResponseWriter, r *http.Request) {
 	resp.SampleAt = env.SampledAt
 	resp.WatchdogLastTickUnix = env.WatchdogLastTickUnix
 	resp.WatchdogPanicCount = env.WatchdogPanicCount
+	resp.WatchdogLogDropCount = env.WatchdogLogDropCount
 	for _, src := range env.SourceStatuses {
 		src.Broker = maskBrokerURL(src.Broker)
 		// Broker libraries occasionally quote the failing URL in the

@@ -97,7 +97,6 @@ func TestDecodePacket_FloodHasNoCodes(t *testing.T) {
 	}
 }
 
-
 func TestZeroHopDirectHashSize(t *testing.T) {
 	// DIRECT (RouteType=2) + REQ (PayloadType=0) → header byte = 0x02
 	// pathByte=0x00 → hash_count=0, hash_size bits=0 → should get HashSize=0

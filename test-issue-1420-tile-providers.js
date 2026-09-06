@@ -457,6 +457,11 @@ test('MC_createLayerControl handles Auto mode and explicit layers correctly', ()
       createdLayers.push(layer);
       return layer;
     },
+    layerGroup: (layers) => {
+      const group = { _isGroup: true, _layers: layers, _events: {} };
+      group.on = (ev, cb) => { group._events[ev] = cb; };
+      return group;
+    },
     control: {
       layers: (maps) => { ctx._capturedBaseMaps = maps; return mockControl; }
     }
@@ -517,6 +522,157 @@ test('MC_createLayerControl handles Auto mode and explicit layers correctly', ()
   const ev = ctx.events[ctx.events.length - 1];
   assert.strictEqual(ev.type, 'mc-tile-provider-changed', 'event type correct');
   assert.strictEqual(ev.detail.auto, true, 'event detail.auto should be true');
+});
+
+test('Carto URLs carry no ?key= when no key is configured', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true } } } });
+  const reg = ctx.window.MC_TILE_PROVIDERS;
+  for (const id of ALL_CARTO_IDS) {
+    const u = reg[id].url();
+    assert.ok(u.indexOf('?key=') === -1, id + ' should have no key param: ' + u);
+    assert.ok(u.indexOf('basemaps.cartocdn.com') !== -1, id + ' unexpected host: ' + u);
+  }
+});
+
+test('Every Carto style appends ?key= when carto.key is set', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true, key: 'abc123' } } } });
+  const reg = ctx.window.MC_TILE_PROVIDERS;
+  for (const id of ALL_CARTO_IDS) {
+    assert.ok(/\.png\?key=abc123$/.test(reg[id].url()), id + ' bad URL: ' + reg[id].url());
+  }
+});
+
+test('Carto key is URL-encoded', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true, key: 'a b&c=d' } } } });
+  const u = ctx.window.MC_TILE_PROVIDERS['carto-dark'].url();
+  assert.ok(u.endsWith('?key=a%20b%26c%3Dd'), 'bad encoding: ' + u);
+});
+
+test('Carto key does not leak into non-Carto providers', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true, key: 'abc123' }, osm: { enabled: true } } } });
+  const reg = ctx.window.MC_TILE_PROVIDERS;
+  for (const id of ['osm-standard', 'osm-dark', 'esri-darkgray-labels']) {
+    if (!reg[id]) continue;
+    assert.ok(reg[id].url().indexOf('abc123') === -1, id + ' leaked the key: ' + reg[id].url());
+  }
+});
+
+test('Carto key coexists with the enterprise domain option', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true, domain: 'mycompany', key: 'abc123' } } } });
+  const u = ctx.window.MC_TILE_PROVIDERS['carto-dark'].url();
+  assert.ok(u.indexOf('mycompany.cartocdn.com') !== -1, 'domain lost: ' + u);
+  assert.ok(u.endsWith('?key=abc123'), 'key lost: ' + u);
+});
+
+test('Carto uses ?key= and never ?api_key= (CARTO ignores api_key and still watermarks)', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true, key: 'abc123' } } } });
+  const url = ctx.window.MC_TILE_PROVIDERS['carto-dark'].url();
+  assert.ok(url.endsWith('?key=abc123'), 'should end with ?key=abc123: ' + url);
+  assert.ok(url.indexOf('api_key') < 0, 'must not use the api_key param: ' + url);
+});
+
+test('Carto key resolves lazily - set after load, picked up on re-init', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true } } } });
+  assert.ok(ctx.window.MC_TILE_PROVIDERS['carto-dark'].url().indexOf('key=') < 0, 'no key before config');
+  ctx.window.MC_MAP_CFG = { tiles: { providers: { carto: { enabled: true, key: 'late' } } } };
+  ctx.window.MC_initTileRegistry(true);
+  assert.ok(ctx.window.MC_TILE_PROVIDERS['carto-dark'].url().endsWith('?key=late'), 'key picked up after async config');
+});
+
+// --- MC_tileUrlById -------------------------------------------------------
+
+test('MC_tileUrlById resolves a function-typed url to a string', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true, key: 'k' } } } });
+  const url = ctx.window.MC_tileUrlById('carto-light', 'FALLBACK');
+  assert.strictEqual(typeof url, 'string', 'must return a string, not a function');
+  assert.ok(url.endsWith('?key=k'), 'carries the key: ' + url);
+});
+
+test('MC_tileUrlById returns the fallback for a disabled or unknown provider', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: false } } } });
+  assert.strictEqual(ctx.window.MC_tileUrlById('carto-dark', 'FALLBACK'), 'FALLBACK', 'disabled provider falls back');
+  assert.strictEqual(ctx.window.MC_tileUrlById('nope', 'FALLBACK'), 'FALLBACK', 'unknown id falls back');
+});
+
+
+// ─── Esri two-layer provider (base + labels reference) ──────────────────────
+
+test('Esri Dark Gray Canvas declares a labels reference layer', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, {});
+  const p = ctx.window.MC_TILE_PROVIDERS['esri-darkgray-labels'];
+  assert.ok(p, 'esri provider should be registered');
+  assert.ok(p.refUrl, 'must declare refUrl — the id promises labels');
+  assert.ok(p.refUrl.indexOf('World_Dark_Gray_Reference') >= 0, 'refUrl points at the Reference tileset: ' + p.refUrl);
+});
+
+test('Esri refUrl is a string, matching how map.js/live.js/nodes.js consume it', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, {});
+  const p = ctx.window.MC_TILE_PROVIDERS['esri-darkgray-labels'];
+  assert.strictEqual(typeof p.refUrl, 'string', 'consumers pass refUrl straight to L.tileLayer');
+  assert.ok(/\{z\}\/\{y\}\/\{x\}/.test(p.refUrl), 'Esri uses {z}/{y}/{x} order: ' + p.refUrl);
+});
+
+test('Single-layer providers declare no refUrl', () => {
+  const ctx = makeSandbox();
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true } } } });
+  for (const id of ALL_CARTO_IDS) {
+    assert.ok(!ctx.window.MC_TILE_PROVIDERS[id].refUrl, id + ' should not declare refUrl');
+  }
+});
+
+test('Layer control stacks base + labels for a two-layer provider', () => {
+  const ctx = makeSandbox();
+  const created = [];
+  const groups  = [];
+  ctx.L = ctx.window.L = {
+    tileLayer: (url, opts) => { const l = { url, _events: {} }; l.on = (e, c) => { l._events[e] = c; }; created.push(l); return l; },
+    layerGroup: (layers) => { const g = { _isGroup: true, _layers: layers, _events: {} }; g.on = (e, c) => { g._events[e] = c; }; groups.push(g); return g; },
+    control: { layers: (maps) => { ctx._capturedBaseMaps = maps; return { addTo: function () { return this; } }; } }
+  };
+  const mockMap = {
+    hasLayer: () => false, addLayer: () => {}, removeLayer: () => {},
+    on: () => {}, off: () => {}, getPane: () => ctx.tilePane
+  };
+  loadProviders(ctx, {});
+  ctx.window.MC_initTileRegistry(false);
+  ctx.window.MC_createLayerControl(mockMap, { _isAutoGroup: true });
+
+  const entry = ctx._capturedBaseMaps['esri-darkgray-labels'];
+  assert.ok(entry, 'esri should appear in the control');
+  assert.ok(entry._isGroup, 'esri entry must be a layer group, not a bare tile layer');
+  assert.strictEqual(entry._layers.length, 2, 'group holds base + reference');
+  assert.ok(entry._layers[1].url.indexOf('World_Dark_Gray_Reference') >= 0, 'second layer is the labels overlay');
+});
+
+test('Layer control still builds a bare tile layer for single-layer providers', () => {
+  const ctx = makeSandbox();
+  ctx.L = ctx.window.L = {
+    tileLayer: (url) => { const l = { url, _events: {} }; l.on = (e, c) => { l._events[e] = c; }; return l; },
+    layerGroup: (layers) => ({ _isGroup: true, _layers: layers, on: () => {} }),
+    control: { layers: (maps) => { ctx._capturedBaseMaps = maps; return { addTo: function () { return this; } }; } }
+  };
+  const mockMap = {
+    hasLayer: () => false, addLayer: () => {}, removeLayer: () => {},
+    on: () => {}, off: () => {}, getPane: () => ctx.tilePane
+  };
+  loadProviders(ctx, { tiles: { providers: { carto: { enabled: true } } } });
+  ctx.window.MC_initTileRegistry(false);
+  ctx.window.MC_createLayerControl(mockMap, { _isAutoGroup: true });
+
+  const entry = ctx._capturedBaseMaps['carto-dark'];
+  assert.ok(entry, 'carto-dark should appear in the control');
+  assert.ok(!entry._isGroup, 'single-layer provider must stay a bare tile layer');
 });
 
 process.on('beforeExit', () => {

@@ -62,9 +62,9 @@ const (
 )
 
 type t1201Node struct {
-	pk        string
-	lat, lon  float64
-	obsCount  int
+	pk       string
+	lat, lon float64
+	obsCount int
 }
 
 func t1201InsertNode(t *testing.T, db *DB, n t1201Node) {
