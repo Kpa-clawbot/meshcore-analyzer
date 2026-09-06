@@ -17,7 +17,8 @@ type Hub struct {
 	mu             sync.RWMutex
 	clients        map[*Client]bool
 	upgrader       websocket.Upgrader
-	allowedOrigins []string // exact-match allowlist for /ws CheckOrigin (see SetAllowedOrigins)
+	allowedOrigins []string   // exact-match allowlist for /ws CheckOrigin (see SetAllowedOrigins)
+	limits         *wsLimiter // #1794: per-IP caps and deny list; nil allows everything
 }
 
 // SetAllowedOrigins configures the exact-match origin allowlist consulted by
@@ -78,6 +79,32 @@ type Client struct {
 	conn      *websocket.Conn
 	send      chan []byte
 	closeOnce sync.Once
+	// release returns this connection's slot to the per-IP concurrent cap
+	// (#1794). Always non-nil so Unregister needs no nil check; it is a no-op
+	// when limits are disabled.
+	release func()
+}
+
+// ConfigureLimits installs the #1794 transport limits. Called once at
+// startup, before the listener binds, so no upgrade can race a half-built
+// limiter. Passing zero values for both caps leaves only the deny list
+// active, which is a legitimate configuration.
+func (h *Hub) ConfigureLimits(maxConnsPerIP, upgradesPerMin int, trustedProxies, deny []string) {
+	l := newWSLimiter()
+	l.maxConnsPerIP = maxConnsPerIP
+	l.upgradesPerMin = upgradesPerMin
+	l.trustedProxies = parseCIDRList(trustedProxies, "webSocket.trustedProxies")
+	l.denyNets = parseCIDRList(deny, "webSocket.deny")
+	h.mu.Lock()
+	h.limits = l
+	h.mu.Unlock()
+	if len(l.denyNets) > 0 {
+		log.Printf("[ws] deny list active: %d network(s)", len(l.denyNets))
+	}
+	if len(l.trustedProxies) == 0 && (maxConnsPerIP > 0 || upgradesPerMin > 0) {
+		log.Printf("[ws] per-IP limits configured with no trustedProxies: they apply only to " +
+			"directly-connected clients. Behind a reverse proxy, set webSocket.trustedProxies.")
+	}
 }
 
 func NewHub() *Hub {
@@ -112,6 +139,12 @@ func (h *Hub) Unregister(c *Client) {
 		c.closeOnce.Do(func() { close(c.send) })
 	}
 	h.mu.Unlock()
+	// #1794: outside the lock — release takes the limiter's own mutex, and
+	// holding two locks in one order here and the other order elsewhere is how
+	// deadlocks are made. Idempotent, so a double Unregister cannot over-credit.
+	if c.release != nil {
+		c.release()
+	}
 	log.Printf("[ws] client disconnected (%d total)", h.ClientCount())
 }
 
@@ -151,15 +184,33 @@ func (h *Hub) Broadcast(msg interface{}) {
 
 // ServeWS handles the WebSocket upgrade and runs the client.
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	// #1794: decide BEFORE the upgrade. Rejecting afterwards would already
+	// have allocated the connection and completed the handshake, which is the
+	// resource this is meant to protect.
+	ok, reason, key, release := h.limits.allow(r)
+	if !ok {
+		status := http.StatusForbidden
+		if reason == wsRejectRate {
+			// 429 tells a well-behaved client to back off; 403 would read as
+			// "never come back" for what is a temporary refusal.
+			status = http.StatusTooManyRequests
+		}
+		log.Printf("[ws] reject ip=%s reason=%s", key, reason)
+		http.Error(w, "websocket upgrade refused", status)
+		return
+	}
+
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[ws] upgrade error: %v", err)
+		release() // the slot was charged above and this connection never happened
 		return
 	}
 
 	client := &Client{
-		conn: conn,
-		send: make(chan []byte, 256),
+		conn:    conn,
+		send:    make(chan []byte, 256),
+		release: release,
 	}
 	h.Register(client)
 
