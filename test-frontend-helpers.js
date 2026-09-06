@@ -7157,3 +7157,150 @@ console.log('\n=== roles.js: getEffectiveHeardMs (#1845) ===');
     assert.strictEqual(status({ role: 'repeater' }), 'stale');
   });
 }
+
+// ===== scope-audit.js: mergedScopeChips =====
+// DECLARED and NOT OBSERVED were merged into one colour-coded Scopes column.
+// They were never independent: notObserved is a strict subset of
+// declaredRegions, so the page printed the same set twice and made the reader
+// diff it. These assert the rendered markup, not the source.
+console.log('\n=== scope-audit.js: mergedScopeChips ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const chips = ctx.__meshcoreScopeAuditInternals.mergedScopeChips;
+  const row = (declared, notObserved) => ({ declaredRegions: declared, notObserved: notObserved });
+
+  test('a declared region absent from notObserved renders as observed', () => {
+    const h = chips(row(['be'], []));
+    assert.ok(h.includes('sa-chip-observed'), 'should carry the observed class');
+    assert.ok(!h.includes('sa-chip-unobserved'), 'and not the unobserved one');
+  });
+
+  test('a declared region present in notObserved renders as unobserved, not as an alarm', () => {
+    const h = chips(row(['be'], ['be']));
+    assert.ok(h.includes('sa-chip-unobserved'));
+    assert.ok(!h.includes('sa-chip-observed'));
+  });
+
+  test('a mixed row renders both colours, one chip per declared region', () => {
+    // The case the merge exists for: on live data a typical mixed row declares
+    // 8 regions of which 6 are unobserved, so the observed ones are the needle.
+    const h = chips(row(['be', 'eu', 'nl'], ['eu', 'nl']));
+    assert.strictEqual((h.match(/sa-chip-observed/g) || []).length, 1);
+    assert.strictEqual((h.match(/sa-chip-unobserved/g) || []).length, 2);
+    assert.strictEqual((h.match(/<span/g) || []).length, 3, 'one chip per declared region, no more');
+  });
+
+  test('declared order is preserved, not regrouped by colour', () => {
+    // Regrouping would break the operator habit of scanning for a known
+    // region in the position it always sits.
+    const h = chips(row(['be', 'eu', 'nl'], ['eu']));
+    assert.ok(h.indexOf('>be<') < h.indexOf('>eu<'), 'be before eu');
+    assert.ok(h.indexOf('>eu<') < h.indexOf('>nl<'), 'eu before nl');
+  });
+
+  test('no declared regions renders an em dash, not an empty cell', () => {
+    // 68 of 197 rows on live data declare nothing at all; an empty cell reads
+    // as a rendering fault rather than as an answer.
+    assert.ok(chips(row([], [])).includes('—'));
+  });
+
+  test('every chip explains its own colour in a title', () => {
+    const h = chips(row(['be', 'eu'], ['eu']));
+    assert.ok(h.includes('observed forwarding in this window'));
+    assert.ok(h.includes('declared, but no forwarding observed in this window'));
+  });
+
+  test('region names are HTML-escaped', () => {
+    const h = chips(row(['<img src=x onerror=alert(1)>'], []));
+    assert.ok(!h.includes('<img'), 'must not emit raw markup from server-supplied names');
+    assert.ok(h.includes('&lt;img'));
+  });
+
+  test('a notObserved entry that is not declared cannot invent a chip', () => {
+    // Defensive: the server guarantees notObserved is a subset (197 of 197
+    // rows checked), but the column must not grow a phantom chip if that ever
+    // stops holding.
+    const h = chips(row(['be'], ['be', 'ghost']));
+    assert.strictEqual((h.match(/<span/g) || []).length, 1);
+    assert.ok(!h.includes('ghost'));
+  });
+}
+
+// The empty state is what a stock install sees: neither collector ships with
+// CoreScope, so most deployments open this page and find nothing. It therefore
+// has to explain where the data comes from, not just report its absence.
+console.log('\n=== scope-audit.js: emptyStateHtml ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const empty = ctx.__meshcoreScopeAuditInternals.emptyStateHtml();
+
+  test('names both collectors', () => {
+    assert.ok(/neighbour-report firmware/i.test(empty), 'should name the observer firmware');
+    assert.ok(/CoreDrive RX/i.test(empty), 'should name the companion app');
+  });
+
+  test('links to both so the reader can act on it', () => {
+    assert.ok(empty.includes('observer.gessaman.com'), 'observer firmware link');
+    // Upstream links the repo; a fork may link its own hosted instance.
+    assert.ok(/rx\.on8ar\.eu|coredrive-rx/.test(empty), 'companion app link');
+  });
+
+  test('says an empty table is normal, not a fault', () => {
+    assert.ok(/normal state/i.test(empty));
+  });
+
+  test('states the precedence rule, so two collectors are not confusing', () => {
+    assert.ok(/newest answer per repeater wins/i.test(empty));
+  });
+
+  test('says what nothing else in CoreScope can tell you', () => {
+    // The reason the page exists at all: observed traffic shows which scopes a
+    // node carried, never which it is configured for.
+    assert.ok(/configured/i.test(empty) && /traffic was seen under/i.test(empty));
+  });
+
+  test('does not use the old drive-around wording', () => {
+    // "fills in as devices drive" was CoreDrive-specific jargon that meant
+    // nothing to an operator running the observer firmware instead.
+    assert.ok(!/as devices drive/i.test(empty));
+  });
+}
+
+// The always-visible provenance line. It must carry the links itself: the
+// fuller explanation lives in the empty state, which never renders on an
+// instance that HAS data, so an operator with a full table would otherwise
+// never learn where the declared column came from. That was the actual bug.
+console.log('\n=== scope-audit.js: sourcesLineHtml ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const line = ctx.__meshcoreScopeAuditInternals.sourcesLineHtml();
+
+  test('carries a link for each collector, not just their names', () => {
+    assert.strictEqual((line.match(/<a /g) || []).length, 2, 'both collectors must be linked');
+    assert.ok(line.includes('observer.gessaman.com'), 'observer firmware link');
+    assert.ok(/rx\.on8ar\.eu|coredrive-rx/.test(line), 'companion app link');
+  });
+
+  test('external links are safe to open', () => {
+    assert.strictEqual((line.match(/rel="noopener"/g) || []).length, 2);
+  });
+
+  test('separates the two claims the page rests on', () => {
+    assert.ok(/declared/i.test(line) && /observed/i.test(line));
+    assert.ok(/read back off the node/i.test(line), 'declared is the node answering');
+    assert.ok(/already sees in its own traffic/i.test(line), 'observed is our own data');
+  });
+
+  test('states the precedence rule where a reader with data will see it', () => {
+    assert.ok(/newest answer per repeater wins/i.test(line));
+  });
+}

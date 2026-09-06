@@ -35,16 +35,17 @@ const routeTypeNonTransportSQL = "route_type IN (1, 2)"
 
 // DB wraps a read-only connection to the MeshCore SQLite database.
 type DB struct {
-	conn                *sql.DB
-	path                string // filesystem path to the database file
-	isV3                bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
-	hasResolvedPath     bool   // observations table has resolved_path column
-	hasObsRawHex        bool   // observations table has raw_hex column (#881)
-	hasScopeName        bool   // transmissions.scope_name column exists (#899)
-	hasDefaultScope     bool   // nodes.default_scope column exists (#899)
-	hasConfiguredScope  bool   // nodes.configured_scope column exists (#1865)
-	hasMultibyteSupCols bool   // nodes/inactive_nodes have multibyte_sup/multibyte_evidence (#903)
-	hasLastSeen         bool   // transmissions.last_seen column exists (#1690)
+	conn                    *sql.DB
+	path                    string // filesystem path to the database file
+	isV3                    bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
+	hasResolvedPath         bool   // observations table has resolved_path column
+	hasObsRawHex            bool   // observations table has raw_hex column (#881)
+	hasScopeName            bool   // transmissions.scope_name column exists (#899)
+	hasDefaultScope         bool   // nodes.default_scope column exists (#899)
+	hasConfiguredScope      bool   // nodes.configured_scope column exists (#1865)
+	hasDeclaredRegionsTable bool   // node_declared_regions table exists (#1975, optional second scope source)
+	hasMultibyteSupCols     bool   // nodes/inactive_nodes have multibyte_sup/multibyte_evidence (#903)
+	hasLastSeen             bool   // transmissions.last_seen column exists (#1690)
 
 	// Channel list caches, keyed by region param — avoids repeated GROUP BY
 	// scans (#762). Keyed per-region (not a single slot) so mixed-region
@@ -236,6 +237,13 @@ func (db *DB) detectSchema(ctx context.Context, q rowQuerier) error {
 	db.hasDefaultScope = nodes["default_scope"]
 	db.hasMultibyteSupCols = nodes["multibyte_sup"]
 	db.hasConfiguredScope = nodes["configured_scope"]
+
+	// #1975: an optional second confirmed-scope source. Absent on a stock
+	// install, so schemaColumns returns nothing and the flag stays false;
+	// present on deployments that collect the same fact by another route.
+	// A missing table is not an error here.
+	ndr, ndrErr := schemaColumns(ctx, q, "node_declared_regions")
+	db.hasDeclaredRegionsTable = ndrErr == nil && len(ndr) > 0
 
 	if db.isV3 {
 		log.Printf("[db] schema mode: v3 (observer_idx)")
