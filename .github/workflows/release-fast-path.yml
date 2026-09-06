@@ -1,10 +1,10 @@
 name: Release Fast-Path
 
 # Issue #1677: re-tag :edge as :vX.Y.Z when the tag SHA matches :edge's
-# org.opencontainers.image.revision label. Skips ~30 min of Go test +
-# Playwright + Docker rebuild because the bytes are identical — only the
-# manifest name changes. Falls back to deploy.yml when SHAs differ so
-# tags on older commits still go through full validation.
+# org.opencontainers.image.revision label. Skips Playwright + Docker rebuild
+# because the application bytes are identical. Both paths dispatch deploy.yml
+# for Go validation and release binaries; mismatched SHAs also run the full
+# image pipeline so tags on older commits still go through full validation.
 #
 # This workflow is the SOLE consumer of push.tags. deploy.yml's tag
 # trigger has been removed to prevent double-fire.
@@ -16,7 +16,7 @@ on:
 permissions:
   contents: read
   packages: write
-  actions: write   # issue #1702: required so the fallback `gh workflow run deploy.yml` dispatch is allowed
+  actions: write   # issue #1702: required for the `gh workflow run deploy.yml` dispatch
 
 concurrency:
   group: release-fast-path-${{ github.ref }}
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   retag-or-fallback:
-    name: "🏷️ Re-tag :edge → :vX.Y.Z (fast) or dispatch deploy.yml (fallback)"
+    name: "🏷️ Re-tag :edge and dispatch release artifacts or full fallback"
     runs-on: ubuntu-latest
     steps:
       - name: Log in to GHCR
@@ -115,17 +115,22 @@ jobs:
           done
           echo "Fast-path complete — release tags point at :edge plus a one-file version layer."
 
-      # ─────────── FALLBACK: SHAs differ, run the full pipeline ───────────
-      - name: Dispatch full deploy.yml pipeline (fallback)
-        if: steps.edge.outputs.no_edge == 'true' || steps.edge.outputs.edge_revision != github.sha
+      # Both image routes need the single release-artifacts writer in deploy.yml.
+      - name: Dispatch release artifacts or full deploy.yml pipeline
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "SHA mismatch (or no :edge) — falling back to full pipeline"
-          echo "  :edge revision = '${{ steps.edge.outputs.edge_revision }}'"
-          echo "  tag SHA        = '${{ github.sha }}'"
+          DISPATCH_ARGS=()
+          if [[ "${{ steps.edge.outputs.no_edge == 'false' && steps.edge.outputs.edge_revision == github.sha }}" == 'true' ]]; then
+            echo "Images published — dispatching Go validation and release artifacts"
+            DISPATCH_ARGS+=(--field images_published=true)
+          else
+            # No new inputs: an older tag may have an older deploy.yml schema.
+            echo "SHA mismatch (or no :edge) — falling back to full pipeline"
+          fi
           gh workflow run deploy.yml \
             --repo "${{ github.repository }}" \
-            --ref "${{ github.ref }}"
+            --ref "${{ github.ref }}" \
+            "${DISPATCH_ARGS[@]}"
           echo "Dispatched deploy.yml against ${{ github.ref }}"
