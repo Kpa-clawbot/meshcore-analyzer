@@ -7157,7 +7157,8 @@ console.log('\n=== scope-audit.js: emptyStateHtml ===');
 
   test('links to both so the reader can act on it', () => {
     assert.ok(empty.includes('observer.gessaman.com'), 'observer firmware link');
-    assert.ok(empty.includes('coredrive-rx'), 'companion app link');
+    // Upstream links the repo; a fork may link its own hosted instance.
+    assert.ok(/rx\.on8ar\.eu|coredrive-rx/.test(empty), 'companion app link');
   });
 
   test('says an empty table is normal, not a fault', () => {
@@ -7178,5 +7179,38 @@ console.log('\n=== scope-audit.js: emptyStateHtml ===');
     // "fills in as devices drive" was CoreDrive-specific jargon that meant
     // nothing to an operator running the observer firmware instead.
     assert.ok(!/as devices drive/i.test(empty));
+  });
+}
+
+// The always-visible provenance line. It must carry the links itself: the
+// fuller explanation lives in the empty state, which never renders on an
+// instance that HAS data, so an operator with a full table would otherwise
+// never learn where the declared column came from. That was the actual bug.
+console.log('\n=== scope-audit.js: sourcesLineHtml ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const line = ctx.__meshcoreScopeAuditInternals.sourcesLineHtml();
+
+  test('carries a link for each collector, not just their names', () => {
+    assert.strictEqual((line.match(/<a /g) || []).length, 2, 'both collectors must be linked');
+    assert.ok(line.includes('observer.gessaman.com'), 'observer firmware link');
+    assert.ok(/rx\.on8ar\.eu|coredrive-rx/.test(line), 'companion app link');
+  });
+
+  test('external links are safe to open', () => {
+    assert.strictEqual((line.match(/rel="noopener"/g) || []).length, 2);
+  });
+
+  test('separates the two claims the page rests on', () => {
+    assert.ok(/declared/i.test(line) && /observed/i.test(line));
+    assert.ok(/read back off the node/i.test(line), 'declared is the node answering');
+    assert.ok(/already sees in its own traffic/i.test(line), 'observed is our own data');
+  });
+
+  test('states the precedence rule where a reader with data will see it', () => {
+    assert.ok(/newest answer per repeater wins/i.test(line));
   });
 }

@@ -47,7 +47,7 @@
       WINDOWS.map(function (w) { return windowBtn(w.key, win, w.label); }).join('') +
       '</div></div>' +
       '<div class="sa-intro">Network-wide comparison of declared vs. observed region-scope forwarding, across every repeater that has declared a region list over RF. <a href="#/nodes">Per-node detail lives on each node\'s page</a>.</div>' +
-      '<div class="sa-sources">The <strong>declared</strong> side is the repeater&rsquo;s own answer, read back off the node by an observer running the neighbour-report firmware or by the CoreDrive RX app. The <strong>observed</strong> side is forwarding CoreScope already sees in its own traffic.</div>' +
+      sourcesLineHtml() +
       '<div class="sa-search-bar"><input type="text" class="nodes-search sa-search" id="saSearch" placeholder="Search by repeater, pubkey, or region…" aria-label="Search scope audit rows"></div>' +
       '<div id="saBody"><div class="text-muted" style="padding:8px"><span class="spinner"></span> Loading scope audit…</div></div>' +
       '</div>';
@@ -56,6 +56,17 @@
   function ageHtml(row) {
     var age = timeAgo(row.declaredAt);
     return '<span title="Declared regions answer captured ' + escapeHtml(row.declaredAt) + '">' + escapeHtml(age) + '</span>';
+  }
+
+  // sourcesLineHtml is the always-visible half of the provenance note. It has
+  // to carry the links itself: the fuller explanation lives in emptyStateHtml,
+  // which by definition never renders on an instance that HAS data, so an
+  // operator with a full table would otherwise never see where it came from.
+  function sourcesLineHtml() {
+    return '<div class="sa-sources">The <strong>declared</strong> side is the repeater&rsquo;s own answer, read back off the node by an ' +
+      '<a href="https://observer.gessaman.com/" target="_blank" rel="noopener">ESP32 observer on the neighbour-report firmware</a> or by ' +
+      '<a href="https://github.com/efiten/coredrive-rx" target="_blank" rel="noopener">CoreDrive RX</a>. The newest answer per repeater wins, whichever collected it. ' +
+      'The <strong>observed</strong> side is forwarding CoreScope already sees in its own traffic.</div>';
   }
 
   // mergedScopeChips renders ONE chip per declared region, coloured by whether
@@ -349,7 +360,7 @@
     // Exposed so the helper tests can assert what the Scopes column RENDERS
     // rather than grepping this file, the same reason map.js exposes its label
     // builder (#1356/#1933).
-    window.__meshcoreScopeAuditInternals = { mergedScopeChips: mergedScopeChips, emptyStateHtml: emptyStateHtml };
+    window.__meshcoreScopeAuditInternals = { mergedScopeChips: mergedScopeChips, emptyStateHtml: emptyStateHtml, sourcesLineHtml: sourcesLineHtml };
   }
 
   registerPage('scope-audit', { init: init, destroy: destroy });
