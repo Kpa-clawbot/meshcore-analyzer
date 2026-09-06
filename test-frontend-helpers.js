@@ -7067,3 +7067,93 @@ console.log('\n=== node-reach.js: scopeLineHtml (#1865) ===');
     assert.ok(h.includes('&lt;img'), 'should be escaped instead');
   });
 }
+
+// ===== roles.js: getEffectiveHeardMs (#1845) =====
+// Extracted from getNodeStatus so the "silent longer than N" filter measures
+// the SAME freshness the Active/Stale badge does. Two definitions is how a node
+// ends up listed as silent for 10 days while its own badge says active.
+console.log('\n=== roles.js: getEffectiveHeardMs (#1845) ===');
+{
+  const ctx = makeSandbox();
+  loadInCtx(ctx, 'public/roles.js');
+  const eff = ctx.getEffectiveHeardMs;
+  const status = ctx.getNodeStatus;
+  const iso = ms => new Date(ms).toISOString();
+  const NOW = Date.now();
+
+  test('nothing known yields NaN, not 0', () => {
+    // 0 would read as "heard at the epoch", which is a real timestamp and would
+    // silently sort/compare as very old rather than as unknown.
+    assert.ok(Number.isNaN(eff({ role: 'repeater' })));
+  });
+
+  test('non-object input yields NaN', () => {
+    assert.ok(Number.isNaN(eff(null)));
+    assert.ok(Number.isNaN(eff('repeater')));
+  });
+
+  test('precedence: _liveSeen beats every stored timestamp', () => {
+    const r = eff({ role: 'companion', _liveSeen: NOW, _lastHeard: iso(NOW - 9e6), last_seen: iso(NOW - 9e7) });
+    assert.strictEqual(r, NOW);
+  });
+
+  test('precedence: _lastHeard beats last_heard and last_seen', () => {
+    const r = eff({ role: 'companion', _lastHeard: iso(NOW - 1000), last_heard: iso(NOW - 9e6), last_seen: iso(NOW - 9e7) });
+    assert.strictEqual(r, new Date(iso(NOW - 1000)).getTime());
+  });
+
+  test('infra: a recent relay beats a stale advert', () => {
+    const r = eff({ role: 'repeater', last_seen: iso(NOW - 9e7), last_relayed: iso(NOW - 1000) });
+    assert.strictEqual(r, new Date(iso(NOW - 1000)).getTime());
+  });
+
+  test('infra: a stale relay does NOT drag a fresh advert backwards', () => {
+    const fresh = iso(NOW - 1000);
+    const r = eff({ role: 'repeater', last_seen: fresh, last_relayed: iso(NOW - 9e7) });
+    assert.strictEqual(r, new Date(fresh).getTime());
+  });
+
+  test('infra: relay alone is enough when nothing else is known', () => {
+    const r = eff({ role: 'repeater', last_relayed: iso(NOW - 1000) });
+    assert.strictEqual(r, new Date(iso(NOW - 1000)).getTime());
+  });
+
+  test('room counts as infra, companion does not', () => {
+    const relayed = iso(NOW - 1000), old = iso(NOW - 9e7);
+    assert.strictEqual(eff({ role: 'room', last_seen: old, last_relayed: relayed }), new Date(relayed).getTime());
+    // A companion is not a relay, so last_relayed on one is meaningless and
+    // must not silently rescue it.
+    assert.strictEqual(eff({ role: 'companion', last_seen: old, last_relayed: relayed }), new Date(old).getTime());
+  });
+
+  test('role matching is case-insensitive', () => {
+    const relayed = iso(NOW - 1000);
+    assert.strictEqual(eff({ role: 'Repeater', last_seen: iso(NOW - 9e7), last_relayed: relayed }), new Date(relayed).getTime());
+  });
+
+  // Regression: getNodeStatus was rewritten to call this helper. Its contract
+  // must be unchanged, including the legacy (role, ms) call shape.
+  test('getNodeStatus still honours the legacy two-argument form', () => {
+    assert.strictEqual(status('repeater', NOW), 'active');
+    assert.strictEqual(status('repeater', NOW - 4 * 86400000), 'stale');
+  });
+
+  test('getNodeStatus is still relay-aware for infra', () => {
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 9e7), last_relayed: iso(NOW - 1000) }), 'active');
+  });
+
+  test('getNodeStatus still marks a truly silent repeater stale', () => {
+    // Past infraSilentMs (72h). 9e7 ms is only 25h, which is correctly ACTIVE
+    // for infra and would make this assertion test nothing.
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 4 * 86400000) }), 'stale');
+  });
+
+  test('72h is the infra boundary: 71h active, 73h stale', () => {
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 71 * 3600000) }), 'active');
+    assert.strictEqual(status({ role: 'repeater', last_seen: iso(NOW - 73 * 3600000) }), 'stale');
+  });
+
+  test('getNodeStatus treats an unknown node as stale, not active', () => {
+    assert.strictEqual(status({ role: 'repeater' }), 'stale');
+  });
+}
