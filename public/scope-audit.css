@@ -60,5 +60,22 @@
 
 /* Declared but not observed in this window. Deliberately NOT red: absence over
    a short window is weak evidence, which the page header says in words, so it
-   should not shout in colour. Same muted treatment as any other neutral chip. */
+   should not shout in colour. */
 .sa-chip-unobserved { background: var(--section-bg, var(--card-bg)); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* Provenance note under the intro. Same muted treatment as .sa-intro; it is
+   context, not a finding, and must not compete with the table. */
+.sa-sources { color: var(--text-muted); font-size: 12px; margin: 0 0 10px; line-height: 1.5; }
+.sa-sources a { color: var(--link-color); }
+.sa-sources code { font-family: var(--mono); font-size: 11px; }
+
+/* Provenance note under the intro, and the empty state that has to carry the
+   same explanation on its own: on a stock install the table IS empty, so that
+   is where an operator actually reads it. Muted like .sa-intro; this is
+   context, not a finding, and must not compete with the table. */
+.sa-sources { color: var(--text-muted); font-size: 12px; margin: 0 0 10px; line-height: 1.5; }
+.sa-sources a, .sa-empty a { color: var(--link-color); }
+.sa-sources code, .sa-empty code { font-family: var(--mono); font-size: 11px; }
+.sa-empty { line-height: 1.6; max-width: 70ch; }
+.sa-empty ul { margin: 8px 0; padding-left: 20px; }
+.sa-empty li { margin: 4px 0; }

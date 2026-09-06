@@ -7138,3 +7138,45 @@ console.log('\n=== scope-audit.js: mergedScopeChips ===');
     assert.ok(!h.includes('ghost'));
   });
 }
+
+// The empty state is what a stock install sees: neither collector ships with
+// CoreScope, so most deployments open this page and find nothing. It therefore
+// has to explain where the data comes from, not just report its absence.
+console.log('\n=== scope-audit.js: emptyStateHtml ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const empty = ctx.__meshcoreScopeAuditInternals.emptyStateHtml();
+
+  test('names both collectors', () => {
+    assert.ok(/neighbour-report firmware/i.test(empty), 'should name the observer firmware');
+    assert.ok(/CoreDrive RX/i.test(empty), 'should name the companion app');
+  });
+
+  test('links to both so the reader can act on it', () => {
+    assert.ok(empty.includes('observer.gessaman.com'), 'observer firmware link');
+    assert.ok(empty.includes('coredrive-rx'), 'companion app link');
+  });
+
+  test('says an empty table is normal, not a fault', () => {
+    assert.ok(/normal state/i.test(empty));
+  });
+
+  test('states the precedence rule, so two collectors are not confusing', () => {
+    assert.ok(/newest answer per repeater wins/i.test(empty));
+  });
+
+  test('says what nothing else in CoreScope can tell you', () => {
+    // The reason the page exists at all: observed traffic shows which scopes a
+    // node carried, never which it is configured for.
+    assert.ok(/configured/i.test(empty) && /traffic was seen under/i.test(empty));
+  });
+
+  test('does not use the old drive-around wording', () => {
+    // "fills in as devices drive" was CoreDrive-specific jargon that meant
+    // nothing to an operator running the observer firmware instead.
+    assert.ok(!/as devices drive/i.test(empty));
+  });
+}

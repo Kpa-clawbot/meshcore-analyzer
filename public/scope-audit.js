@@ -47,6 +47,7 @@
       WINDOWS.map(function (w) { return windowBtn(w.key, win, w.label); }).join('') +
       '</div></div>' +
       '<div class="sa-intro">Network-wide comparison of declared vs. observed region-scope forwarding, across every repeater that has declared a region list over RF. <a href="#/nodes">Per-node detail lives on each node\'s page</a>.</div>' +
+      '<div class="sa-sources">The <strong>declared</strong> side is the repeater&rsquo;s own answer, read back off the node by an observer running the neighbour-report firmware or by the CoreDrive RX app. The <strong>observed</strong> side is forwarding CoreScope already sees in its own traffic.</div>' +
       '<div class="sa-search-bar"><input type="text" class="nodes-search sa-search" id="saSearch" placeholder="Search by repeater, pubkey, or region…" aria-label="Search scope audit rows"></div>' +
       '<div id="saBody"><div class="text-muted" style="padding:8px"><span class="spinner"></span> Loading scope audit…</div></div>' +
       '</div>';
@@ -71,6 +72,13 @@
   // No new claim is made about the data: a region present in declaredRegions
   // and absent from notObserved is exactly what the server already means by
   // "observed forwarding in this window".
+  // emptyStateHtml is what a stock install sees, so it carries the whole
+  // explanation rather than deferring to the intro: on a fresh deployment this
+  // IS the page. Named and returned rather than inlined so it can be asserted.
+  function emptyStateHtml() {
+    return '<div class="ns-empty sa-empty"><strong>No repeater has answered with its configured region list yet</strong>, so there is nothing to audit here.<br><br>That answer has to be collected from the repeater itself; nothing else in CoreScope knows which regions a node is <em>configured</em> for, only which ones its traffic was seen under. Two things can collect it, and neither ships with CoreScope, so an empty table is the normal state until you run one:<ul><li>an <a href="https://observer.gessaman.com/" target="_blank" rel="noopener">ESP32 observer on the neighbour-report firmware</a> (<code>set mqtt.neighbors on</code>), which reports its neighbours&rsquo; scopes every 24h</li><li>the <a href="https://github.com/efiten/coredrive-rx" target="_blank" rel="noopener">CoreDrive RX</a> companion app, which asks a repeater directly while you are in range of it</li></ul>The newest answer per repeater wins, whichever collected it.</div>';
+  }
+
   function mergedScopeChips(row) {
     var missing = Object.create(null);
     row.notObserved.forEach(function (n) { missing[n] = true; });
@@ -249,7 +257,7 @@
     sortCtl = null;
     if (!d.repeaters.length) {
       searchIndex = {};
-      el.innerHTML = '<div class="ns-empty">No repeater has declared a region list yet — this fills in as devices drive and answer over RF.</div>';
+      el.innerHTML = emptyStateHtml();
       return;
     }
     searchIndex = buildSearchIndex(d.repeaters);
@@ -341,7 +349,7 @@
     // Exposed so the helper tests can assert what the Scopes column RENDERS
     // rather than grepping this file, the same reason map.js exposes its label
     // builder (#1356/#1933).
-    window.__meshcoreScopeAuditInternals = { mergedScopeChips: mergedScopeChips };
+    window.__meshcoreScopeAuditInternals = { mergedScopeChips: mergedScopeChips, emptyStateHtml: emptyStateHtml };
   }
 
   registerPage('scope-audit', { init: init, destroy: destroy });
