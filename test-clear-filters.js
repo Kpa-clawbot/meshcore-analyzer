@@ -269,11 +269,11 @@ test('updatePacketsUrl shows clear button when time window != default', () => {
   const DEFAULT_TIME_WINDOW = 15;
   const fn = new Function(
     'filters', 'savedTimeWindowMin', 'DEFAULT_TIME_WINDOW',
-    'document', 'history', 'RegionFilter', 'buildPacketsQuery',
+    'document', 'history', 'RegionFilter', 'buildPacketsQuery', 'location',
     updateUrlBody
   );
   fn(filters, savedTimeWindowMin, DEFAULT_TIME_WINDOW,
-    ctx.document, ctx.history, ctx.RegionFilter, () => '');
+    ctx.document, ctx.history, ctx.RegionFilter, () => '', { hash: '#/packets' });
   assert.strictEqual(elements['clearFiltersBtn'].style.display, '', 'clear button should be visible when time window != default');
 });
 
@@ -283,10 +283,10 @@ test('updatePacketsUrl hides clear button when all filters default', () => {
   const filters = {};
   const fn = new Function(
     'filters', 'savedTimeWindowMin', 'DEFAULT_TIME_WINDOW',
-    'document', 'history', 'RegionFilter', 'buildPacketsQuery',
+    'document', 'history', 'RegionFilter', 'buildPacketsQuery', 'location',
     updateUrlBody
   );
-  fn(filters, 15, 15, ctx.document, ctx.history, ctx.RegionFilter, () => '');
+  fn(filters, 15, 15, ctx.document, ctx.history, ctx.RegionFilter, () => '', { hash: '#/packets' });
   assert.strictEqual(elements['clearFiltersBtn'].style.display, 'none', 'clear button should be hidden');
 });
 

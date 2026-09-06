@@ -186,10 +186,13 @@ console.log('\n=== #1446 Scenario 5: clear preset → reverts to server config /
   vm.runInContext(presetsSrc, env.sandbox);
   vm.runInContext(cv2Src, env.sandbox);
   env.sandbox.window._customizerV2.init({ nodeColors: { repeater: '#aaaaaa' } });
-  // Confirm deut is active first.
+  // The customizer removes inline role colors when a preset is active;
+  // its body selector in the real stylesheet supplies the selected color.
   const repWithPreset = env.root.style.getPropertyValue('--mc-role-repeater').toLowerCase();
-  assert(repWithPreset === '#fe6100',
-    'precondition: deut active → --mc-role-repeater = #FE6100 (got: ' + JSON.stringify(repWithPreset) + ')');
+  const presetRule = styleSrc.match(/body\[data-cb-preset="deut"\]\s*\{([^}]*)\}/);
+  assert(repWithPreset === '' && env.body.getAttribute('data-cb-preset') === 'deut' &&
+    presetRule && /--mc-role-repeater:\s*#fe6100\s*;/i.test(presetRule[1]),
+    'precondition: deut selects the CSS repeater color #FE6100 without a root override');
   // Now clear the preset.
   const hasClear = typeof env.sandbox.window.MeshCorePresets.clearPreset === 'function';
   assert(hasClear, 'MeshCorePresets.clearPreset() exists');

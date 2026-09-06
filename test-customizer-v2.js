@@ -162,11 +162,14 @@ test('accepts valid opacity', () => {
 
 // ── computeEffective ──
 console.log('\ncomputeEffective:');
-test('returns server defaults when overrides is {}', () => {
+test('preserves all server sections when overrides is {} and supplies missing home defaults', () => {
   const { api } = loadCustomizer();
   const defaults = { theme: { accent: '#aaa', text: '#bbb' }, nodeColors: { repeater: '#ccc' } };
   const result = api.computeEffective(defaults, {});
-  assert.deepStrictEqual(result, defaults);
+  const { home, ...serverSections } = result;
+  assert.deepStrictEqual(serverSections, defaults);
+  assert.ok(home && typeof home === 'object', 'missing home config gets built-in defaults');
+  assert.strictEqual(defaults.home, undefined, 'server input is not mutated');
 });
 
 test('overrides a single key in a section', () => {

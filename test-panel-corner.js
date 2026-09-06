@@ -147,6 +147,7 @@ function loadLiveModule(ctx) {
   ctx.globalThis = ctx;
 
   vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'public', 'payload-labels.js'), 'utf8'), ctx);
   vm.runInContext(src, ctx, { timeout: 3000 });
   return ctx.window._panelCorner;
 }

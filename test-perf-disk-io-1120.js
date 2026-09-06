@@ -156,7 +156,7 @@ await test('WAL >100 MB fires ⚠️ flag', async () => {
   const html = sb.getHtml();
   // The warning appears in the WAL Size card; assert proximity by extracting
   // the WAL Size card's text content.
-  const walSection = html.match(/150\.0MB[^<]*⚠️/);
+  const walSection = html.match(/150\.0MB\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/);
   assert.ok(walSection, 'expected ⚠️ next to 150MB WAL value, html=' + html.slice(html.indexOf('WAL Size') - 200, html.indexOf('WAL Size') + 200));
 });
 
@@ -169,7 +169,7 @@ await test('WAL <100 MB does NOT fire ⚠️ flag', async () => {
   const html = sb.getHtml();
   const walIdx = html.indexOf('WAL Size');
   const slice = html.slice(Math.max(0, walIdx - 200), walIdx);
-  assert.ok(!/12\.3MB[^<]*⚠️/.test(slice), 'expected NO ⚠️ next to 12.3MB WAL value');
+  assert.ok(!/12\.3MB\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/.test(slice), 'expected NO warning icon next to 12.3MB WAL value');
 });
 
 await test('Cache hit <90% fires ⚠️ flag', async () => {
@@ -179,7 +179,7 @@ await test('Cache hit <90% fires ⚠️ flag', async () => {
   await sb.pages.perf.init({ set innerHTML(v) {} });
   await new Promise(r => setTimeout(r, 100));
   const html = sb.getHtml();
-  assert.ok(/85\.0%[^<]*⚠️/.test(html), 'expected ⚠️ next to 85.0% cache hit value');
+  assert.ok(/85\.0%\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/.test(html), 'expected warning icon next to 85.0% cache hit value');
 });
 
 await test('Cache hit ≥90% does NOT fire ⚠️ flag', async () => {
@@ -189,7 +189,7 @@ await test('Cache hit ≥90% does NOT fire ⚠️ flag', async () => {
   await sb.pages.perf.init({ set innerHTML(v) {} });
   await new Promise(r => setTimeout(r, 100));
   const html = sb.getHtml();
-  assert.ok(!/98\.7%[^<]*⚠️/.test(html), 'expected NO ⚠️ next to 98.7% cache hit value');
+  assert.ok(!/98\.7%\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/.test(html), 'expected NO warning icon next to 98.7% cache hit value');
 });
 
 // === #1167 must-fix #7: threshold boundary cases ===
@@ -203,7 +203,7 @@ await test('WAL exactly 100 MB does NOT fire ⚠️ (boundary, strict >)', async
   const html = sb.getHtml();
   const walIdx = html.indexOf('WAL Size');
   const slice = html.slice(Math.max(0, walIdx - 200), walIdx);
-  assert.ok(!/100\.0MB[^<]*⚠️/.test(slice), 'expected NO ⚠️ at exactly 100 MB WAL (boundary), slice=' + slice);
+  assert.ok(!/100\.0MB\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/.test(slice), 'expected NO warning icon at exactly 100 MB WAL (boundary), slice=' + slice);
 });
 
 await test('WAL infinitesimally over 100 MB DOES fire ⚠️', async () => {
@@ -213,7 +213,7 @@ await test('WAL infinitesimally over 100 MB DOES fire ⚠️', async () => {
   await sb.pages.perf.init({ set innerHTML(v) {} });
   await new Promise(r => setTimeout(r, 100));
   const html = sb.getHtml();
-  assert.ok(/100\.0MB[^<]*⚠️/.test(html), 'expected ⚠️ next to 100.0MB WAL value (just over threshold)');
+  assert.ok(/100\.0MB\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/.test(html), 'expected warning icon next to 100.0MB WAL value (just over threshold)');
 });
 
 await test('Cache hit exactly 90% does NOT fire ⚠️ (boundary, strict <)', async () => {
@@ -223,7 +223,7 @@ await test('Cache hit exactly 90% does NOT fire ⚠️ (boundary, strict <)', as
   await sb.pages.perf.init({ set innerHTML(v) {} });
   await new Promise(r => setTimeout(r, 100));
   const html = sb.getHtml();
-  assert.ok(!/90\.0%[^<]*⚠️/.test(html), 'expected NO ⚠️ at exactly 90.0% cache hit (boundary)');
+  assert.ok(!/90\.0%\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/.test(html), 'expected NO warning icon at exactly 90.0% cache hit (boundary)');
 });
 
 await test('Cache hit infinitesimally below 90% DOES fire ⚠️', async () => {
@@ -233,40 +233,35 @@ await test('Cache hit infinitesimally below 90% DOES fire ⚠️', async () => {
   await sb.pages.perf.init({ set innerHTML(v) {} });
   await new Promise(r => setTimeout(r, 100));
   const html = sb.getHtml();
-  assert.ok(/90\.0%[^<]*⚠️/.test(html), 'expected ⚠️ next to 90.0% cache hit value (just under threshold)');
+  assert.ok(/90\.0%\s*<svg\b[^>]*><use\b[^>]*#ph-warning"/.test(html), 'expected warning icon next to 90.0% cache hit value (just under threshold)');
 });
 
-await test('Backfill anomaly: rate >10× tx-rate WITH baseline tx≥100 fires ⚠️', async () => {
-  // Two-phase: prime the previous-snapshot cache, then tick again with
-  // a backfill rate >10× the tx rate AND tx_inserted past the baseline gate.
+await test('Backfill anomaly: rate >10× its stable rolling baseline shows a warning', async () => {
+  // The current detector compares a source with its own rolling baseline.
+  // Prime a 60-second baseline at 1/s, then jump to 1000/s for the next tick.
   const sb = loadPerf();
-  // Reset any previous cached snapshot
-  sb.ctx.window._perfWriteSourcesPrev = null;
-  const t0 = '2026-01-01T00:00:00Z';
-  const t1 = '2026-01-01T00:00:01Z'; // 1s later
-  const phase1 = { sources: { tx_inserted: 100, backfill_path_json: 0 }, sampleAt: t0 };
-  const phase2 = { sources: { tx_inserted: 105, backfill_path_json: 1000 }, sampleAt: t1 };
-  // First render: no prev → no flags possible
-  stubFetch(sb, { ...basePerf, goRuntime }, goHealth, ioData, sqliteData, phase1);
-  await sb.pages.perf.init({ set innerHTML(v) {} });
-  await new Promise(r => setTimeout(r, 50));
-  // Second render: simulate tick with delta. Reuse the same fetch wiring.
-  stubFetch(sb, { ...basePerf, goRuntime }, goHealth, ioData, sqliteData, phase2);
-  await sb.pages.perf.init({ set innerHTML(v) {} });
-  await new Promise(r => setTimeout(r, 50));
+  const samples = [
+    { sources: { tx_inserted: 100, backfill_path_json: 0 }, sampleAt: '2026-01-01T00:00:00Z' },
+    { sources: { tx_inserted: 400, backfill_path_json: 60 }, sampleAt: '2026-01-01T00:01:00Z' },
+    { sources: { tx_inserted: 405, backfill_path_json: 1060 }, sampleAt: '2026-01-01T00:01:01Z' },
+  ];
+  for (const sample of samples) {
+    stubFetch(sb, { ...basePerf, goRuntime }, goHealth, ioData, sqliteData, sample);
+    await sb.pages.perf.init({ set innerHTML(v) {} });
+    await new Promise(r => setTimeout(r, 50));
+  }
   const html = sb.getHtml();
-  // After phase2: tx_rate = 5/s, backfill_rate = 1000/s → ratio = 200x → ⚠️
   const idx = html.indexOf('backfill_path_json');
   assert.ok(idx >= 0, 'backfill_path_json row missing');
-  const row = html.slice(idx, idx + 400);
-  assert.ok(row.includes('⚠️'), 'expected ⚠️ on backfill row when rate ratio >10×, row=' + row);
+  const row = html.slice(idx, html.indexOf('</tr>', idx));
+  assert.ok(row.includes('1000.00') && row.includes('1.00'), 'renders current and baseline rates');
+  assert.ok(row.includes('#ph-warning"'), 'expected warning on backfill row when rate ratio >10×, row=' + row);
 });
 
-await test('Backfill anomaly: tx_inserted <100 baseline guard SUPPRESSES ⚠️', async () => {
-  // Same shape but tx_inserted stays well below the 100 floor; even a huge
-  // backfill rate ratio must NOT fire while we lack a meaningful baseline.
+await test('Backfill anomaly: insufficient history suppresses the warning', async () => {
+  // Two snapshots cannot provide the required stable historical baseline,
+  // even if the current backfill rate is much larger than the tx rate.
   const sb = loadPerf();
-  sb.ctx.window._perfWriteSourcesPrev = null;
   const t0 = '2026-01-01T00:00:00Z';
   const t1 = '2026-01-01T00:00:01Z';
   const phase1 = { sources: { tx_inserted: 5, backfill_path_json: 0 }, sampleAt: t0 };
@@ -279,8 +274,9 @@ await test('Backfill anomaly: tx_inserted <100 baseline guard SUPPRESSES ⚠️'
   await new Promise(r => setTimeout(r, 50));
   const html = sb.getHtml();
   const idx = html.indexOf('backfill_path_json');
-  const row = html.slice(idx, idx + 400);
-  assert.ok(!row.includes('⚠️'), 'expected NO ⚠️ on backfill row when tx_inserted<100, row=' + row);
+  assert.ok(idx >= 0, 'backfill_path_json row missing');
+  const row = html.slice(idx, html.indexOf('</tr>', idx));
+  assert.ok(!row.includes('#ph-warning"'), 'expected NO warning without a stable baseline, row=' + row);
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

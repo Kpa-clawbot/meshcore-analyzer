@@ -31,7 +31,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CSS = fs.readFileSync(path.join(__dirname, 'public/style.css'), 'utf8');
+const CSS = fs.readFileSync(path.join(__dirname, 'public/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 const COMPARE_JS = fs.readFileSync(path.join(__dirname, 'public/compare.js'), 'utf8');
 
 // Token-rank used by font-size comparisons. Comments-only mirror of the

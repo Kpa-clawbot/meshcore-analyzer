@@ -40,6 +40,7 @@ function assert(cond, msg) {
 const cv2Src     = fs.readFileSync(path.join(__dirname, 'public', 'customize-v2.js'), 'utf8');
 const rolesSrc   = fs.readFileSync(path.join(__dirname, 'public', 'roles.js'), 'utf8');
 const presetsSrc = fs.readFileSync(path.join(__dirname, 'public', 'cb-presets.js'), 'utf8');
+const styleSrc   = fs.readFileSync(path.join(__dirname, 'public', 'style.css'), 'utf8');
 
 // ─── Extract the nodeColors-processing block from customize-v2.js. ───
 function extractBlock(src, anchor) {
@@ -163,12 +164,15 @@ console.log('\n=== #1438 FINAL C: server-only key does NOT clobber --mc-role-* (
     blockA + '\n';
   vm.runInContext(setup, env.sandbox);
 
-  // --mc-role-companion must remain the preset's value (no clobber from server).
+  // applyCSS clears inline preset values for server-only keys. The active
+  // body selector supplies the color; a vm does not load that stylesheet.
   const got = env.root.style.getPropertyValue('--mc-role-companion').toLowerCase();
-  assert(got !== '#2563eb',
-    '--mc-role-companion is NOT the server-config legacy #2563eb (got ' + got + ')');
-  assert(got === '#648fff',
-    '--mc-role-companion still reflects the active preset #648FFF (got ' + got + ')');
+  assert(got === '' && env.body.style.getPropertyValue('--mc-role-companion') === '',
+    'server-only companion leaves no inline role color overriding the preset');
+  const presetRule = styleSrc.match(/body\[data-cb-preset="deut"\]\s*\{([^}]*)\}/);
+  assert(env.body.getAttribute('data-cb-preset') === 'deut' && presetRule &&
+    /--mc-role-companion:\s*#648fff\s*;/i.test(presetRule[1]),
+    'the selected body preset supplies companion #648FFF from style.css');
 
   // --node-companion CAN take the server value (legacy compat is fine here).
   assert(env.root.style.getPropertyValue('--node-companion').toLowerCase() === '#2563eb',

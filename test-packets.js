@@ -211,7 +211,7 @@ console.log('\n=== packets.js: getDetailPreview ===');
 
   test('getDetailPreview handles CHAN type', () => {
     const result = api.getDetailPreview({ type: 'CHAN', text: 'hello world', channel: 'general' });
-    assert(result.includes('💬'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-chat-circle"'));
     assert(result.includes('hello world'));
     assert(result.includes('chan-tag'));
     assert(result.includes('general'));
@@ -229,7 +229,7 @@ console.log('\n=== packets.js: getDetailPreview ===');
       type: 'ADVERT', name: 'TestNode', pubKey: 'abc123',
       flags: { repeater: true }
     });
-    assert(result.includes('📡'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-broadcast"'));
     assert(result.includes('TestNode'));
     assert(result.includes('hop-link'));
   });
@@ -239,7 +239,7 @@ console.log('\n=== packets.js: getDetailPreview ===');
       type: 'ADVERT', name: 'RoomNode', pubKey: 'abc',
       flags: { room: true }
     });
-    assert(result.includes('🏠'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-house-line"'));
   });
 
   test('getDetailPreview handles ADVERT sensor', () => {
@@ -247,7 +247,7 @@ console.log('\n=== packets.js: getDetailPreview ===');
       type: 'ADVERT', name: 'Sensor1', pubKey: 'abc',
       flags: { sensor: true }
     });
-    assert(result.includes('🌡'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-thermometer"'));
   });
 
   test('getDetailPreview handles ADVERT companion (default)', () => {
@@ -255,14 +255,14 @@ console.log('\n=== packets.js: getDetailPreview ===');
       type: 'ADVERT', name: 'Comp', pubKey: 'abc',
       flags: {}
     });
-    assert(result.includes('📻'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-radio"'));
   });
 
   test('getDetailPreview handles GRP_TXT with channelHash (no_key)', () => {
     const result = api.getDetailPreview({
       type: 'GRP_TXT', channelHash: 0xAB, decryptionStatus: 'no_key'
     });
-    assert(result.includes('🔒'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-lock"'));
     assert(result.includes('0xAB'));
     assert(result.includes('no key'));
   });
@@ -446,7 +446,7 @@ console.log('\n=== packets.js: getDetailPreview ===');
     const result = api.getDetailPreview({
       type: 'TXT_MSG', srcHash: 'abcdef01', destHash: '12345678'
     });
-    assert(result.includes('✉️'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-envelope"'));
     assert(result.includes('abcdef01'));
     assert(result.includes('12345678'));
   });
@@ -455,14 +455,14 @@ console.log('\n=== packets.js: getDetailPreview ===');
     const result = api.getDetailPreview({
       type: 'PATH', srcHash: 'aabb', destHash: 'ccdd'
     });
-    assert(result.includes('🔀'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-shuffle"'));
   });
 
   test('getDetailPreview handles REQ', () => {
     const result = api.getDetailPreview({
       type: 'REQ', srcHash: 'aa', destHash: 'bb'
     });
-    assert(result.includes('🔒'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-lock"'));
     assert(result.includes('aa'));
   });
 
@@ -470,7 +470,7 @@ console.log('\n=== packets.js: getDetailPreview ===');
     const result = api.getDetailPreview({
       type: 'RESPONSE', srcHash: 'aa', destHash: 'bb'
     });
-    assert(result.includes('🔒'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-lock"'));
   });
 
   test('getDetailPreview handles ANON_REQ', () => {
@@ -493,7 +493,7 @@ console.log('\n=== packets.js: getDetailPreview ===');
 
   test('getDetailPreview handles public_key fallback', () => {
     const result = api.getDetailPreview({ public_key: 'abcdef1234567890abcdef' });
-    assert(result.includes('📡'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-broadcast"'));
     assert(result.includes('abcdef1234567890'));
   });
 
@@ -957,7 +957,7 @@ console.log('\n=== packets.js: buildGroupRowHtml ===');
     };
     const result = api.buildGroupRowHtml(p);
     assert(result.includes('group-header'));
-    assert(result.includes('▶'));  // collapsed arrow
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-caret-up"'));  // collapsed arrow
   });
 
   test('buildGroupRowHtml shows observation count badge', () => {
@@ -969,7 +969,7 @@ console.log('\n=== packets.js: buildGroupRowHtml ===');
     };
     const result = api.buildGroupRowHtml(p);
     assert(result.includes('badge-obs'));
-    assert(result.includes('👁'));
+    assert(result.includes('href="/icons/phosphor-sprite.svg#ph-eye"'));
     assert(result.includes('5'));
   });
 

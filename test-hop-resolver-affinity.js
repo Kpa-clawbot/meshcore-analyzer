@@ -24,7 +24,9 @@ function assert(condition, msg) {
 // Two nodes share the same 1-byte prefix "ab"
 const nodeA = { public_key: 'ab1111', name: 'NodeA', role: 'repeater', lat: 37.0, lon: -122.0 };
 const nodeB = { public_key: 'ab2222', name: 'NodeB', role: 'repeater', lat: 38.0, lon: -123.0 };
-const nodeC = { public_key: 'cd3333', name: 'NodeC', role: 'repeater', lat: 37.5, lon: -122.5 };
+// Keep the anchor distinctly closer to A. Equal degree offsets are not equal
+// great-circle distances: longitude converges toward the poles.
+const nodeC = { public_key: 'cd3333', name: 'NodeC', role: 'repeater', lat: 37.25, lon: -122.25 };
 
 console.log('\n=== HopResolver Affinity Tests ===\n');
 
@@ -50,7 +52,7 @@ HopResolver.setAffinity({}); // No edges
 
 // With anchor at NodeC's position, NodeA is closer to NodeC than NodeB
 const result2 = HopResolver.resolve(['cd33', 'ab'], nodeC.lat, nodeC.lon, null, null, null);
-// NodeA (37, -122) is closer to NodeC (37.5, -122.5) than NodeB (38, -123)
+// NodeA is 0.25 degrees away on each axis; NodeB is 0.75 degrees away.
 assert(result2['ab'].name === 'NodeA', 'Should pick NodeA (geo-closest) — got: ' + result2['ab'].name);
 
 // Test 3: setAffinity with null/undefined doesn't crash

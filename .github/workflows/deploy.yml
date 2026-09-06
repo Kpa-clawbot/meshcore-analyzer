@@ -167,74 +167,8 @@ jobs:
           node scripts/check-css-vars.js
           node scripts/test-check-css-vars.js
 
-      - name: Run JS unit tests (packet-filter)
-        run: |
-          set -e
-          node test-packet-filter.js
-          node test-packet-filter-time.js
-          node test-confidence-indicator.js
-          node test-1659-analytics-warmup.js
-          node test-channels-merge-1498-unit.js
-          node test-issue-1518-home-url.js
-          node test-channel-decrypt-insecure-context.js
-          node test-live-region-filter.js
-          node test-issue-1136-observer-iata-map.js
-          node test-channel-qr.js
-          node test-channel-qr-wiring.js
-          node test-channel-modal-ux.js
-          node test-channel-issue-1087.js
-          node test-issue-1409-no-encrypted-flood.js
-          node test-channel-issue-1101.js
-          node test-observer-iata-1188.js
-          node test-pull-to-reconnect-1091.js
-          node test-channel-fluid-layout.js
-          node test-issue-1279-p2-code-filter.js
-          node test-area-filter.js
-          node test-issue-1293-marker-shapes.js
-          node test-issue-1356-map-a11y.js
-          node test-issue-1360-pill-letter-count.js
-          node test-issue-1364-pill-no-clamp.js
-          node test-issue-1375-scope-stats-fetch.js
-          node test-issue-1361-cb-presets.js
-          node test-issue-1380-cb-sim-overlay.js
-          node test-issue-1380-cb-reset-button.js
-          node test-issue-1407-cb-preset-propagation.js
-          node test-issue-1412-customizer-no-override.js
-          node test-issue-1418-raw-hex-extraction.js
-          node test-issue-1418-edge-weights.js
-          node test-issue-1418-cb-preset-ramp.js
-          node test-issue-1418-spider-fan.js
-          node test-issue-1418-deeplink-hops-channels.js
-          node test-issue-1418-polish-review.js
-          node test-issue-1420-tile-providers.js
-          node test-issue-1614-tile-url-function.js
-          node test-issue-1438-marker-css-vars.js
-          node test-issue-1846-observers-width.js
-          node test-issue-1562-observers-summary.js
-          node test-issue-1509-nav-active-bg.js
-          node test-issue-1509-detect-preset.js
-          node test-live.js
-          node test-coverage-gate.js
-          node test-node-reach-coverage.js
-          node test-issue-1107-live-layout.js
-          node test-issue-1532-live-fullscreen.js
-          node test-issue-1619-feed-detail-card-draggable.js
-          node test-xss-escape-sinks.js
-          node test-preflight-xss-gate.js
-          node test-traces.js
-          node test-issue-1648-m4-emoji-scan.js
-          node test-issue-1753-copy-url-slash.js
-          node test-issue-1668-m3-typography.js
-          node test-mqtt-status-panel.js
-          node test-issue-1697-mqtt-mobile-e2e.js
-          node test-warmup-banner.js
-          node test-issue-1633-hide-1byte-hops.js
-          node test-issue-1668-m4-per-route.js
-          node test-a11y-axe-1668-selftest.js
-          node test-a11y-1716-rf-range-btn-active.js
-          node test-issue-1705-subpath-contrast.js
-          node test-issue-1770-mobile-row-clamp.js
-          node test-a11y-axe-routes-coverage.js
+      - name: Run JS unit tests
+        run: sh test-all.sh
 
       - name: 🛡️ Preflight XSS gate — actual --diff check (PR only)
         # The fixture self-test above (test-preflight-xss-gate.js) only

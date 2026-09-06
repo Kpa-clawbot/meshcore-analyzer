@@ -72,7 +72,9 @@ for (const c of cases) {
     failed++;
     continue;
   }
-  const tests = (c.tests || []).map(t => path.join(FIXTURE_DIR, t));
+  // The shell protocol uses ':' separators. Relative paths avoid Windows
+  // drive-letter colons being mistaken for separators by its Python reader.
+  const tests = (c.tests || []).map(t => path.relative(__dirname, path.join(FIXTURE_DIR, t)));
   const env = Object.assign({}, process.env);
   if (tests.length > 0) {
     env.PREFLIGHT_TEST_FILES = tests.join(':');
@@ -80,6 +82,7 @@ for (const c of cases) {
     delete env.PREFLIGHT_TEST_FILES;
   }
   const res = spawnSync('bash', [SCRIPT, '--file', target], {
+    cwd: __dirname,
     env,
     encoding: 'utf8',
   });

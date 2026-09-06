@@ -17,12 +17,12 @@ const src = fs.readFileSync(path.join(__dirname, 'public', 'rx-coverage.js'), 'u
 
 // Slice from `var nm = o.name ...` through the end of the returned row string.
 const startMarker = 'var nm = o.name ? escapeHtml(o.name)';
-const endMarker = "o.nodes + '</span></div>';";
+const endMarker = "}).join('');";
 const startIdx = src.indexOf(startMarker);
 assert.ok(startIdx >= 0, 'could not locate row-builder start in rx-coverage.js');
 const endIdx = src.indexOf(endMarker, startIdx);
 assert.ok(endIdx >= 0, 'could not locate row-builder end in rx-coverage.js');
-const block = src.slice(startIdx, endIdx + endMarker.length);
+const block = src.slice(startIdx, endIdx);
 
 // Canonical escapeHtml (public/app.js).
 function escapeHtml(s) {

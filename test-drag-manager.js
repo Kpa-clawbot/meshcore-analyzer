@@ -41,7 +41,11 @@ function makePanel(id) {
     },
     getAttribute(k) { return attrs[k] || null; },
     setAttribute(k, v) { attrs[k] = v; },
-    removeAttribute(k) { delete attrs[k]; },
+    removeAttribute(k) {
+      delete attrs[k];
+      // DOMStringMap reflects removal of data-* attributes in real browsers.
+      if (k.startsWith('data-')) delete dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
+    },
     getBoundingClientRect() {
       return {
         left: parseFloat(style.left) || 0,

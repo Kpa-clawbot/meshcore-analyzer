@@ -9,6 +9,7 @@ const path = require('path');
 const assert = require('assert');
 
 const css = fs.readFileSync(path.join(__dirname, 'public/style.css'), 'utf8');
+const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -18,18 +19,19 @@ function test(name, fn) {
 
 // --- Helpers ---------------------------------------------------------------
 
-// Extract the :root { ... } block (first occurrence — the light/default one).
+// Base tokens can be split across multiple :root blocks. Theme overrides use
+// different selectors; combine the base declarations in stylesheet order.
 function rootBlock() {
-  const m = css.match(/:root\s*\{([\s\S]*?)\}/);
-  if (!m) throw new Error(':root block not found in style.css');
-  return m[1];
+  const blocks = Array.from(rules.matchAll(/^:root\s*\{([^}]*)\}/gm), m => m[1]);
+  if (!blocks.length) throw new Error(':root block not found in style.css');
+  return blocks.join('\n');
 }
 
 // Find the value of a custom property declared in :root.
 function rootVar(name) {
-  const re = new RegExp(`${name}\\s*:\\s*([^;]+);`);
-  const m = rootBlock().match(re);
-  return m ? m[1].trim() : null;
+  const re = new RegExp(`${name}\\s*:\\s*([^;]+);`, 'g');
+  const values = Array.from(rootBlock().matchAll(re), m => m[1].trim());
+  return values.length ? values[values.length - 1] : null;
 }
 
 function assertClamp(name) {

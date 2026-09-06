@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "npx c8 --reporter=text --reporter=text-summary sh test-all.sh",
-    "test:unit": "node test-packet-filter.js && node test-aging.js && node test-frontend-helpers.js",
+    "test:unit": "sh test-all.sh",
     "test:coverage": "npx c8 --reporter=text --reporter=html sh test-all.sh",
     "test:full-coverage": "sh scripts/combined-coverage.sh",
     "lint": "eslint public/*.js"

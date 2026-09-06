@@ -115,10 +115,10 @@ console.log('\n=== map.js: clustering ===');
     assert.ok(icon && icon._isDivIcon, 'expected an L.divIcon');
     const html = icon.html || '';
     assert.ok(/>6</.test(html) || html.indexOf('>6<') >= 0, `total count 6 not in html: ${html}`);
-    // Role pill counts should appear
-    assert.ok(html.indexOf('>3<') >= 0, `repeater pill (3) not in html: ${html}`);
-    assert.ok(html.indexOf('>2<') >= 0, `companion pill (2) not in html: ${html}`);
-    assert.ok(html.indexOf('>1<') >= 0, `room pill (1) not in html: ${html}`);
+    // Role letters disambiguate counts without relying on color alone.
+    assert.ok(/class="mc-pill role-repeater"[^>]*>R3</.test(html), `repeater pill (R3) not in html: ${html}`);
+    assert.ok(/class="mc-pill role-companion"[^>]*>C2</.test(html), `companion pill (C2) not in html: ${html}`);
+    assert.ok(/class="mc-pill role-room"[^>]*>M1</.test(html), `room pill (M1) not in html: ${html}`);
     // CoreScope-themed wrapper class
     assert.ok((icon.className || '').indexOf('mc-cluster') >= 0, `expected mc-cluster class, got: ${icon.className}`);
   });

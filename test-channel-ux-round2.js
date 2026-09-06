@@ -64,12 +64,12 @@ assert(/channelDisplayName\(ch\)/.test(chSrc),
 console.log('\n=== Fix 2: share button has recognizable label ===');
 assert(!/'⤴'/.test(chSrc) && !/"⤴"/.test(chSrc),
   'bare ⤴ glyph no longer used as the share button content');
-// Tighten: assert the literal '📤 Share' string is the glyph argument
-// passed into the iconBtn(...) call for ch-share-btn — this catches the
+// Assert the Phosphor icon and visible Share text are passed together
+// into the iconBtn(...) call for ch-share-btn — this catches the
 // case where someone removes the icon from the button content but leaves
 // "Share" in an aria-label or title.
-assert(/iconBtn\(\s*'ch-share-btn'[^)]*'📤 Share'/.test(chSrc),
-  "iconBtn('ch-share-btn', ...) is called with '📤 Share' as the glyph");
+assert(/iconBtn\(\s*'ch-share-btn'[^)]*#ph-share-network[^)]*<\/svg> Share'/.test(chSrc),
+  "share button content includes the Phosphor share icon and visible Share label");
 
 console.log('\n=== Fix 3: ✕ delete button is a visibly red destructive button ===');
 const removeRule = (cssSrc.match(/\.ch-remove-btn\s*\{[^}]*\}/) || [''])[0];

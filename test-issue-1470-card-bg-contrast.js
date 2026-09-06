@@ -47,10 +47,10 @@ test('@media dark block sets --card-bg to var(--surface-2)', () => {
 
 test('[data-theme="dark"] block sets --card-bg to var(--surface-2)', () => {
   const css = read('public/style.css');
-  const themeIdx = css.indexOf('[data-theme="dark"]');
-  assert.ok(themeIdx !== -1, '[data-theme="dark"] block not found');
-  const themeBlock = css.slice(themeIdx, themeIdx + 2000);
-  const m = themeBlock.match(/--card-bg\s*:\s*([^;]+);/);
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const blocks = Array.from(rules.matchAll(/\[data-theme="dark"\]\s*\{([^}]*)\}/g), m => m[1]);
+  assert.ok(blocks.length, '[data-theme="dark"] block not found');
+  const m = blocks.join('\n').match(/--card-bg\s*:\s*([^;]+);/);
   assert.ok(m, '--card-bg not found in [data-theme="dark"] block');
   assert.strictEqual(m[1].trim(), 'var(--surface-2)',
     `Expected var(--surface-2), got "${m[1].trim()}"`);

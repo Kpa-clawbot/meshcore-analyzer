@@ -2,6 +2,7 @@
 'use strict';
 const fs = require('fs');
 const assert = require('assert');
+const vm = require('vm');
 
 const src = fs.readFileSync('public/live.js', 'utf8');
 
@@ -117,16 +118,22 @@ test2('drawAnimatedLine renderFades() has null guard', () => {
   assert.ok(fadeBody.includes('!pathsLayer'), 'renderFades() missing pathsLayer null guard');
 });
 
-test2('pulseNode animatePulse() has null guard', () => {
-  const pulseStart = src2.indexOf('function animatePulse(now)');
-  const pulseBody = src2.substring(pulseStart, pulseStart + 200);
-  assert.ok(pulseBody.includes('!animLayer'), 'animatePulse() missing animLayer null guard');
+function functionSource(name) {
+  const start = src2.indexOf('  function ' + name + '(');
+  assert.ok(start >= 0, name + ' exists');
+  const next = src2.indexOf('\n  function ', start + 1);
+  assert.ok(next > start, name + ' source boundary exists');
+  return src2.slice(start, next);
+}
+
+test2('pulseNode returns safely after either layer is destroyed', () => {
+  for (const layers of [{ animLayer: null, nodesLayer: {} }, { animLayer: {}, nodesLayer: null }]) {
+    assert.doesNotThrow(() => vm.runInNewContext(functionSource('pulseNode') + '\npulseNode("test", [0, 0], "ADVERT");', layers));
+  }
 });
 
-test2('ghostPulse has null guard', () => {
-  const ghostStart = src2.indexOf('function ghostPulse(now)');
-  const ghostBody = src2.substring(ghostStart, ghostStart + 200);
-  assert.ok(ghostBody.includes('!animLayer'), 'ghostPulse() missing animLayer null guard');
+test2('shared pulse/ghost canvas callback returns safely after the context is destroyed', () => {
+  assert.doesNotThrow(() => vm.runInNewContext(functionSource('renderAnimations') + '\nrenderAnimations(0);', { animCtx: null }));
 });
 
 console.log(`\n${p2} passed, ${f2} failed\n`);

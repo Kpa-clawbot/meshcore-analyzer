@@ -43,8 +43,8 @@ assert(!/\$\{ch\.messageCount\s*\|\|\s*0\}\s*packets/.test(chSrc),
 console.log('\n=== Fix 3: privacy footer wording ===');
 assert(!/Clear browser data to remove stored keys/.test(chSrc),
   'old "Clear browser data to remove stored keys" copy is gone');
-assert(/Use\s+✕\s+to remove individual channels/.test(chSrc),
-  'new copy points at the ✕ button for individual key removal');
+assert(/Use the close button to remove individual channels/.test(chSrc),
+  'copy names the close button for individual key removal');
 
 console.log('\n=== Fix 4: Share/reshare affordance on user-added rows ===');
 // Source-level: data attribute and helper exist. Behavior-level checks
