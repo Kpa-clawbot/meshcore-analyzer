@@ -35,7 +35,6 @@
   font-size: 11px; font-family: var(--mono); white-space: nowrap;
 }
 .sa-chip-declared { background: var(--section-bg, var(--card-bg)); color: var(--text); border: 1px solid var(--border); }
-.sa-chip-missing { background: color-mix(in srgb, var(--status-red) 16%, transparent); color: var(--danger); }
 .sa-chip-undeclared { background: color-mix(in srgb, var(--status-yellow) 18%, transparent); color: var(--status-amber-text); }
 .sa-chip-wildcard { background: var(--section-bg, var(--card-bg)); color: var(--text-muted); font-weight: 700; }
 .sa-chip-ambiguous { background: var(--section-bg, var(--card-bg)); color: var(--text-muted); border: 1px dashed var(--border); font-family: inherit; font-style: italic; }
@@ -54,6 +53,12 @@
 }
 
 /* Observed forwarding, the green half of the merged Scopes column. Pairs with
-   .sa-chip-missing above, which keeps the red. Same colour-mix construction so
-   the two read as one scale rather than two unrelated styles. */
+   .sa-chip-unobserved below, which stays neutral. Only the observed side is
+   coloured: red on every unobserved region would read as an alarm on rows that
+   are often just a quiet region over a short window. */
 .sa-chip-observed { background: color-mix(in srgb, var(--status-green) 16%, transparent); color: var(--status-green-text); }
+
+/* Declared but not observed in this window. Deliberately NOT red: absence over
+   a short window is weak evidence, which the page header says in words, so it
+   should not shout in colour. Same muted treatment as any other neutral chip. */
+.sa-chip-unobserved { background: var(--section-bg, var(--card-bg)); color: var(--text-muted); border: 1px solid var(--border); }

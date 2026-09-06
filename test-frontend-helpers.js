@@ -7085,12 +7085,12 @@ console.log('\n=== scope-audit.js: mergedScopeChips ===');
   test('a declared region absent from notObserved renders as observed', () => {
     const h = chips(row(['be'], []));
     assert.ok(h.includes('sa-chip-observed'), 'should carry the observed class');
-    assert.ok(!h.includes('sa-chip-missing'), 'and not the missing one');
+    assert.ok(!h.includes('sa-chip-unobserved'), 'and not the unobserved one');
   });
 
-  test('a declared region present in notObserved renders as missing', () => {
+  test('a declared region present in notObserved renders as unobserved, not as an alarm', () => {
     const h = chips(row(['be'], ['be']));
-    assert.ok(h.includes('sa-chip-missing'));
+    assert.ok(h.includes('sa-chip-unobserved'));
     assert.ok(!h.includes('sa-chip-observed'));
   });
 
@@ -7099,7 +7099,7 @@ console.log('\n=== scope-audit.js: mergedScopeChips ===');
     // 8 regions of which 6 are unobserved, so the observed ones are the needle.
     const h = chips(row(['be', 'eu', 'nl'], ['eu', 'nl']));
     assert.strictEqual((h.match(/sa-chip-observed/g) || []).length, 1);
-    assert.strictEqual((h.match(/sa-chip-missing/g) || []).length, 2);
+    assert.strictEqual((h.match(/sa-chip-unobserved/g) || []).length, 2);
     assert.strictEqual((h.match(/<span/g) || []).length, 3, 'one chip per declared region, no more');
   });
 

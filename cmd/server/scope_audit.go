@@ -105,57 +105,109 @@ type DeclaredRegionsRow struct {
 	Truncated  bool
 }
 
-// AllCurrentDeclaredRegions returns the latest declared-region row for EVERY
-// target that has ever answered, in one indexed query — idx_ndr_target(target,
-// observed_at) covers the PARTITION BY/ORDER BY below — rather than one
-// CurrentDeclaredRegions call per repeater. "Latest" is the same rule as
-// CurrentDeclaredRegions: greatest observed_at, never ingested_at.
+// AllCurrentDeclaredRegions returns the newest confirmed region list per node,
+// merged across every source this database happens to carry.
 //
-// A repeater that has never answered is simply absent from the result — it
-// is never synthesized as a row declaring nothing, which would be
-// indistinguishable from a repeater that genuinely answered with an empty
-// list.
+// A confirmed list is a repeater's own answer about which regions it is
+// configured to forward, read back off the node rather than inferred from
+// traffic. Upstream that answer arrives one way, via the observer /neighbors
+// report which #1865/#1971 writes to nodes.configured_scope. It is not the
+// only possible collector: neighbor reports have also landed in
+// meshcore-packet-capture and openHop, and some deployments gather the same
+// answer over a companion app. So the lookup merges rather than hard-coding a
+// single table, and an instance with only the stock source is simply the
+// one-source case.
+//
+// Newest answer wins, compared on the recorded instant. Both sources store
+// that in canonical UTC RFC3339, so a lexicographic compare is chronological;
+// a row with no instant loses to any row that has one, and only wins against
+// nothing at all.
+//
+// A node that has never answered is absent, never synthesized as declaring
+// nothing: "no answer" and "answered with nothing" are different states and
+// the audit distinguishes them.
 func (db *DB) AllCurrentDeclaredRegions() ([]DeclaredRegionsRow, error) {
-	// #1975: upstream reads the CONFIRMED scope list that an observer
-	// /neighbors report wrote onto the node (#1865/#1971), not the
-	// node_declared_regions table the original fork implementation used. That
-	// table is fed by a custom companion-app MQTT topic that only one operator
-	// runs, so shipping it would give everyone else an empty page.
-	//
-	// A node that has never been confirmed is simply absent, never synthesized
-	// as a row declaring nothing: "no answer" and "answered with nothing" are
-	// different states and the page distinguishes them.
-	if !db.hasConfiguredScope {
+	merged := map[string]DeclaredRegionsRow{}
+
+	keep := func(r DeclaredRegionsRow) {
+		if r.Target == "" {
+			return
+		}
+		if cur, ok := merged[r.Target]; ok && cur.ObservedAt >= r.ObservedAt {
+			return
+		}
+		merged[r.Target] = r
+	}
+
+	if db.hasConfiguredScope {
+		rows, err := db.conn.Query(`
+			SELECT public_key, COALESCE(configured_scope_at, ''), configured_scope
+			FROM nodes
+			WHERE configured_scope IS NOT NULL
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("declared regions from configured_scope: %w", err)
+		}
+		for rows.Next() {
+			var d DeclaredRegionsRow
+			if err := rows.Scan(&d.Target, &d.ObservedAt, &d.RegionsCSV); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("declared regions from configured_scope scan: %w", err)
+			}
+			// Truncated has no equivalent on this source: the /neighbors report
+			// has a size cap but does not say whether it fired, and claiming
+			// false would invent a fact. The page omits the caveat instead.
+			keep(d)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("declared regions from configured_scope rows: %w", err)
+		}
+		rows.Close()
+	}
+
+	if db.hasDeclaredRegionsTable {
+		rows, err := db.conn.Query(`
+			WITH ranked AS (
+				SELECT target, observed_at, regions_csv, truncated,
+					ROW_NUMBER() OVER (PARTITION BY target ORDER BY observed_at DESC) AS rn
+				FROM node_declared_regions
+			)
+			SELECT target, observed_at, regions_csv, truncated
+			FROM ranked
+			WHERE rn = 1
+		`)
+		if err != nil {
+			return nil, fmt.Errorf("declared regions from node_declared_regions: %w", err)
+		}
+		for rows.Next() {
+			var d DeclaredRegionsRow
+			var truncated int
+			if err := rows.Scan(&d.Target, &d.ObservedAt, &d.RegionsCSV, &truncated); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("declared regions from node_declared_regions scan: %w", err)
+			}
+			d.Truncated = truncated == 1
+			keep(d)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("declared regions from node_declared_regions rows: %w", err)
+		}
+		rows.Close()
+	}
+
+	if len(merged) == 0 {
 		return nil, nil
 	}
-	rows, err := db.conn.Query(`
-		SELECT public_key, COALESCE(configured_scope_at, ''), configured_scope
-		FROM nodes
-		WHERE configured_scope IS NOT NULL
-		ORDER BY public_key
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("all current declared regions: %w", err)
+	out := make([]DeclaredRegionsRow, 0, len(merged))
+	for _, r := range merged {
+		out = append(out, r)
 	}
-	defer rows.Close()
-
-	var result []DeclaredRegionsRow
-	for rows.Next() {
-		var d DeclaredRegionsRow
-		if err := rows.Scan(&d.Target, &d.ObservedAt, &d.RegionsCSV); err != nil {
-			return nil, fmt.Errorf("all current declared regions scan: %w", err)
-		}
-		// Truncated has no equivalent on this source yet. The /neighbors report
-		// has its own size cap, but #1971 does not surface whether it fired, so
-		// claiming false would be inventing a fact. The page simply omits the
-		// caveat rather than showing a wrong one.
-		d.Truncated = false
-		result = append(result, d)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("all current declared regions rows: %w", err)
-	}
-	return result, nil
+	// Stable output: the handler ranks rows itself, but a deterministic order
+	// keeps responses comparable between calls on unchanged data.
+	sort.Slice(out, func(i, j int) bool { return out[i].Target < out[j].Target })
+	return out, nil
 }
 
 // scopeAuditNodeIdentity is the name/role display identity for one

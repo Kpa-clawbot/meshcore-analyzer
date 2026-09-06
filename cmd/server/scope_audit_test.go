@@ -718,3 +718,138 @@ func TestHandleScopeAuditConfigStateAllFourShapes(t *testing.T) {
 // TestHandleNodeScopesDifferentWindowIsSeparateCacheEntry confirms the cache
 // key includes window: a request for a different window must recompute
 // rather than reuse another window's cached entry.
+
+// --- Merging confirmed-scope sources (#1975) ---
+
+// createDeclaredRegionsTable adds the optional second source and re-probes the
+// schema, so hasDeclaredRegionsTable flips. Without the re-probe the merge
+// would skip the table and every assertion below would pass vacuously.
+func createDeclaredRegionsTable(t *testing.T, srv *Server) {
+	t.Helper()
+	if _, err := srv.db.conn.Exec(`
+		CREATE TABLE node_declared_regions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			target TEXT NOT NULL,
+			rx_pubkey TEXT NOT NULL,
+			observed_at TEXT NOT NULL,
+			ingested_at TEXT NOT NULL,
+			regions_csv TEXT NOT NULL,
+			truncated INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(target, rx_pubkey, observed_at)
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.db.detectSchema(context.Background(), srv.db.conn); err != nil {
+		t.Fatal(err)
+	}
+	if !srv.db.hasDeclaredRegionsTable {
+		t.Fatal("hasDeclaredRegionsTable is false after creating the table: the fixture would test nothing")
+	}
+}
+
+func seedSecondSource(t *testing.T, srv *Server, target, observedAt, regionsCSV string, truncated int) {
+	t.Helper()
+	if _, err := srv.db.conn.Exec(
+		`INSERT INTO node_declared_regions (target, rx_pubkey, observed_at, ingested_at, regions_csv, truncated)
+		 VALUES (?, 'rxpubkeyhex', ?, ?, ?, ?)`,
+		target, observedAt, observedAt, regionsCSV, truncated); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func declaredFor(t *testing.T, srv *Server, target string) (DeclaredRegionsRow, bool) {
+	t.Helper()
+	rows, err := srv.db.AllCurrentDeclaredRegions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Target == target {
+			return r, true
+		}
+	}
+	return DeclaredRegionsRow{}, false
+}
+
+func TestDeclaredRegionsMergeUsesConfiguredScopeAlone(t *testing.T) {
+	srv, _ := setupScopeAuditServer(t)
+	insertDeclared(t, srv, testFullPubkeyA, "2026-09-01T00:00:00Z", "#be,#eu", 0)
+	got, ok := declaredFor(t, srv, testFullPubkeyA)
+	if !ok || got.RegionsCSV != "#be,#eu" {
+		t.Fatalf("got %+v (found=%v), want the configured_scope answer", got, ok)
+	}
+}
+
+func TestDeclaredRegionsMergeUsesSecondSourceAlone(t *testing.T) {
+	// The case that made this merge necessary: an instance collecting confirmed
+	// scopes by another route, with no configured_scope written yet. Reading
+	// only configured_scope would render an empty page on real data.
+	srv, _ := setupScopeAuditServer(t)
+	createDeclaredRegionsTable(t, srv)
+	seedSecondSource(t, srv, testFullPubkeyA, "2026-09-01T00:00:00Z", "be,eu", 0)
+	got, ok := declaredFor(t, srv, testFullPubkeyA)
+	if !ok || got.RegionsCSV != "be,eu" {
+		t.Fatalf("got %+v (found=%v), want the second source's answer", got, ok)
+	}
+}
+
+func TestDeclaredRegionsMergeNewestAnswerWins(t *testing.T) {
+	srv, _ := setupScopeAuditServer(t)
+	createDeclaredRegionsTable(t, srv)
+	insertDeclared(t, srv, testFullPubkeyA, "2026-09-01T00:00:00Z", "#old", 0)
+	seedSecondSource(t, srv, testFullPubkeyA, "2026-09-02T00:00:00Z", "newer", 0)
+	got, _ := declaredFor(t, srv, testFullPubkeyA)
+	if got.RegionsCSV != "newer" {
+		t.Errorf("regions = %q, want the later answer regardless of which source it came from", got.RegionsCSV)
+	}
+
+	// And the other way round, so the rule is "newest wins" and not "one source
+	// always beats the other".
+	insertDeclared(t, srv, testFullPubkeyB, "2026-09-03T00:00:00Z", "#newer", 0)
+	seedSecondSource(t, srv, testFullPubkeyB, "2026-09-02T00:00:00Z", "old", 0)
+	gotB, _ := declaredFor(t, srv, testFullPubkeyB)
+	if gotB.RegionsCSV != "#newer" {
+		t.Errorf("regions = %q, want the later answer from the other source", gotB.RegionsCSV)
+	}
+}
+
+func TestDeclaredRegionsMergeAnswerWithAnInstantBeatsOneWithout(t *testing.T) {
+	// An empty instant means "we do not know when this was answered". It must
+	// not outrank a dated answer, but it must still be used when it is all we
+	// have.
+	srv, _ := setupScopeAuditServer(t)
+	createDeclaredRegionsTable(t, srv)
+	insertDeclared(t, srv, testFullPubkeyA, "", "#undated", 0)
+	seedSecondSource(t, srv, testFullPubkeyA, "2026-09-01T00:00:00Z", "dated", 0)
+	got, _ := declaredFor(t, srv, testFullPubkeyA)
+	if got.RegionsCSV != "dated" {
+		t.Errorf("regions = %q, want the dated answer to win", got.RegionsCSV)
+	}
+
+	insertDeclared(t, srv, testFullPubkeyB, "", "#undated", 0)
+	gotB, ok := declaredFor(t, srv, testFullPubkeyB)
+	if !ok || gotB.RegionsCSV != "#undated" {
+		t.Errorf("got %+v (found=%v), want an undated answer to be used when it is the only one", gotB, ok)
+	}
+}
+
+func TestDeclaredRegionsMergeCarriesTruncatedFromTheSourceThatHasIt(t *testing.T) {
+	srv, _ := setupScopeAuditServer(t)
+	createDeclaredRegionsTable(t, srv)
+	seedSecondSource(t, srv, testFullPubkeyA, "2026-09-01T00:00:00Z", "be", 1)
+	got, _ := declaredFor(t, srv, testFullPubkeyA)
+	if !got.Truncated {
+		t.Error("truncated must survive the merge from a source that records it")
+	}
+}
+
+func TestDeclaredRegionsMergeWithNoSourcesIsEmptyNotAnError(t *testing.T) {
+	db := setupScopeConformanceDB(t)
+	rows, err := db.AllCurrentDeclaredRegions()
+	if err != nil {
+		t.Fatalf("no sources must not be an error: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("rows = %+v, want empty", rows)
+	}
+}

@@ -76,7 +76,7 @@
     row.notObserved.forEach(function (n) { missing[n] = true; });
     var chips = row.declaredRegions.map(function (n) {
       var observed = !missing[n];
-      return '<span class="sa-chip ' + (observed ? 'sa-chip-observed' : 'sa-chip-missing') +
+      return '<span class="sa-chip ' + (observed ? 'sa-chip-observed' : 'sa-chip-unobserved') +
         '" title="' + escapeHtml(n) +
         (observed ? ': observed forwarding in this window' : ': declared, but no forwarding observed in this window') +
         '">' + escapeHtml(n) + '</span>';
