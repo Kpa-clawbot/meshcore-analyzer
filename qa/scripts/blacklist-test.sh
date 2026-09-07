@@ -30,59 +30,15 @@
 #
 # Exit code = number of failures (0 = pass).
 # PUBLIC repo: zero PII — no real pubkeys, IPs, or hostnames as defaults.
+#
+# Structure: helpers live at top level and the imperative body lives in main(),
+# so test-blacklist-sql.sh can source this file and exercise individual helpers
+# without running the suite. Same idiom as scripts/staging/disk-monitor.sh.
 
 set -uo pipefail
 
-BASELINE_URL="${1:-}"
-TARGET_URL="${2:-}"
-if [[ -z "$BASELINE_URL" || -z "$TARGET_URL" ]]; then
-  echo "usage: $0 BASELINE_URL TARGET_URL  (TEST_NODE_PUBKEY+TARGET_* via env)" >&2
-  exit 2
-fi
-
-TEST_PUBKEY="${TEST_NODE_PUBKEY:-}"
-TARGET_SSH_HOST="${TARGET_SSH_HOST:-}"
-TARGET_SSH_KEY="${TARGET_SSH_KEY:-/root/.ssh/id_ed25519}"
-TARGET_CONFIG_PATH="${TARGET_CONFIG_PATH:-}"
-TARGET_CONTAINER="${TARGET_CONTAINER:-}"
-TARGET_DB_PATH="${TARGET_DB_PATH:-}"
-ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
-
-if [[ -z "$TEST_PUBKEY" || -z "$TARGET_SSH_HOST" || -z "$TARGET_CONFIG_PATH" || -z "$TARGET_CONTAINER" ]]; then
-  echo "error: TEST_NODE_PUBKEY, TARGET_SSH_HOST, TARGET_CONFIG_PATH, TARGET_CONTAINER are required" >&2
-  exit 2
-fi
-
-# Hard input validation — these strings are interpolated into remote shell/SQL.
-# Pubkey must be hex (MeshCore pubkeys are hex-encoded ed25519 prefixes).
-if ! [[ "$TEST_PUBKEY" =~ ^[0-9a-fA-F]+$ ]]; then
-  echo "error: TEST_NODE_PUBKEY must be hex (got: redacted)" >&2
-  exit 2
-fi
-# Container name must match docker's allowed chars: [a-zA-Z0-9][a-zA-Z0-9_.-]*
-if ! [[ "$TARGET_CONTAINER" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
-  echo "error: TARGET_CONTAINER has illegal chars" >&2
-  exit 2
-fi
-# Config path must be an absolute, sane path (no spaces, quotes, $, ;, etc.).
-if ! [[ "$TARGET_CONFIG_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
-  echo "error: TARGET_CONFIG_PATH must be a sane absolute path" >&2
-  exit 2
-fi
-if [[ -n "$TARGET_DB_PATH" ]] && ! [[ "$TARGET_DB_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
-  echo "error: TARGET_DB_PATH must be a sane absolute path" >&2
-  exit 2
-fi
-
-CURL_TIMEOUT="${CURL_TIMEOUT:-60}"
-RESTART_WAIT_S="${RESTART_WAIT_S:-120}"
-
-SSH_OPTS=(-i "$TARGET_SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o BatchMode=yes)
+SSH_OPTS=()  # populated by main() from TARGET_SSH_KEY
 ssh_t() { ssh "${SSH_OPTS[@]}" "$TARGET_SSH_HOST" "$@"; }
-
-TMP=$(mktemp -d)
-fails=0
-TEARDOWN_DONE=0
 
 # -----------------------------------------------------------------------------
 # Teardown — MANDATORY in all exit paths.
@@ -106,7 +62,6 @@ teardown() {
   rm -rf "$TMP"
   exit "$rc"
 }
-trap teardown EXIT INT TERM
 
 # -----------------------------------------------------------------------------
 # Helpers
@@ -197,75 +152,136 @@ node_visible() {
 }
 
 # -----------------------------------------------------------------------------
-# §10.1 — hide
+# main
 # -----------------------------------------------------------------------------
-echo "=== §10.1 add $TEST_PUBKEY to nodeBlacklist ==="
-if ! add_to_blacklist; then fails=$((fails+1)); exit "$fails"; fi
-if ! restart_target;    then fails=$((fails+1)); exit "$fails"; fi
-if ! wait_for_stats;    then fails=$((fails+1)); exit "$fails"; fi
-
-detail_code=$(fetch_code "$TARGET_URL/api/nodes/$TEST_PUBKEY" "$TMP/detail.json")
-list_code=$(fetch_code "$TARGET_URL/api/nodes?limit=10000" "$TMP/list.json")
-in_list=0
-if [[ "$list_code" == "200" ]] && grep -qF -- "\"$TEST_PUBKEY\"" "$TMP/list.json"; then
-  in_list=1
-fi
-if [[ "$detail_code" == "404" || "$in_list" == "0" ]]; then
-  echo "  ✅ hide ok: detail=$detail_code in_list=$in_list"
-else
-  echo "  ❌ hide-failed: detail=$detail_code in_list=$in_list — pubkey still surfaced"
-  fails=$((fails+1))
-fi
-
-topo_code=$(fetch_code "$TARGET_URL/api/topology" "$TMP/topo.json")
-if [[ "$topo_code" != "200" ]]; then
-  echo "  ⚠️  /api/topology HTTP $topo_code — skipping topology assertion"
-elif grep -qF -- "$TEST_PUBKEY" "$TMP/topo.json"; then
-  echo "  ❌ hide-failed: /api/topology references blacklisted pubkey"
-  fails=$((fails+1))
-else
-  echo "  ✅ topology clean"
-fi
-
-# -----------------------------------------------------------------------------
-# §10.2 — DB retain
-# -----------------------------------------------------------------------------
-echo "=== §10.2 verify packets retained in DB ==="
-count=""
-if [[ -n "$ADMIN_API_TOKEN" ]]; then
-  # Read auth header from stdin so the token never enters argv (ps-safe).
-  code=$(printf 'header = "Authorization: Bearer %s"\n' "$ADMIN_API_TOKEN" | \
-    curl -s -m "$CURL_TIMEOUT" -K - -o "$TMP/admin.json" -w "%{http_code}" \
-      "$TARGET_URL/api/admin/transmissions?from_node=$TEST_PUBKEY&count=1" 2>/dev/null || echo "000")
-  if [[ "$code" == "200" ]]; then
-    count=$(jq -r '.count // ((.transmissions // []) | length)' "$TMP/admin.json" 2>/dev/null || echo "")
+main() {
+  BASELINE_URL="${1:-}"
+  TARGET_URL="${2:-}"
+  if [[ -z "$BASELINE_URL" || -z "$TARGET_URL" ]]; then
+    echo "usage: $0 BASELINE_URL TARGET_URL  (TEST_NODE_PUBKEY+TARGET_* via env)" >&2
+    exit 2
   fi
-fi
-if [[ -z "$count" ]]; then
-  if [[ -z "$TARGET_DB_PATH" ]]; then
-    echo "  ❌ retain-failed: TARGET_DB_PATH unset and no ADMIN_API_TOKEN — cannot probe"
+
+  TEST_PUBKEY="${TEST_NODE_PUBKEY:-}"
+  TARGET_SSH_HOST="${TARGET_SSH_HOST:-}"
+  TARGET_SSH_KEY="${TARGET_SSH_KEY:-/root/.ssh/id_ed25519}"
+  TARGET_CONFIG_PATH="${TARGET_CONFIG_PATH:-}"
+  TARGET_CONTAINER="${TARGET_CONTAINER:-}"
+  TARGET_DB_PATH="${TARGET_DB_PATH:-}"
+  ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
+
+  if [[ -z "$TEST_PUBKEY" || -z "$TARGET_SSH_HOST" || -z "$TARGET_CONFIG_PATH" || -z "$TARGET_CONTAINER" ]]; then
+    echo "error: TEST_NODE_PUBKEY, TARGET_SSH_HOST, TARGET_CONFIG_PATH, TARGET_CONTAINER are required" >&2
+    exit 2
+  fi
+
+  # Hard input validation — these strings are interpolated into remote shell/SQL.
+  # Pubkey must be hex (MeshCore pubkeys are hex-encoded ed25519 prefixes).
+  if ! [[ "$TEST_PUBKEY" =~ ^[0-9a-fA-F]+$ ]]; then
+    echo "error: TEST_NODE_PUBKEY must be hex (got: redacted)" >&2
+    exit 2
+  fi
+  # Container name must match docker's allowed chars: [a-zA-Z0-9][a-zA-Z0-9_.-]*
+  if ! [[ "$TARGET_CONTAINER" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+    echo "error: TARGET_CONTAINER has illegal chars" >&2
+    exit 2
+  fi
+  # Config path must be an absolute, sane path (no spaces, quotes, $, ;, etc.).
+  if ! [[ "$TARGET_CONFIG_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
+    echo "error: TARGET_CONFIG_PATH must be a sane absolute path" >&2
+    exit 2
+  fi
+  if [[ -n "$TARGET_DB_PATH" ]] && ! [[ "$TARGET_DB_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
+    echo "error: TARGET_DB_PATH must be a sane absolute path" >&2
+    exit 2
+  fi
+
+  CURL_TIMEOUT="${CURL_TIMEOUT:-60}"
+  RESTART_WAIT_S="${RESTART_WAIT_S:-120}"
+
+  SSH_OPTS=(-i "$TARGET_SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o BatchMode=yes)
+
+  TMP=$(mktemp -d)
+  fails=0
+  TEARDOWN_DONE=0
+  trap teardown EXIT INT TERM
+
+  # ---------------------------------------------------------------------------
+  # §10.1 — hide
+  # ---------------------------------------------------------------------------
+  echo "=== §10.1 add $TEST_PUBKEY to nodeBlacklist ==="
+  if ! add_to_blacklist; then fails=$((fails+1)); exit "$fails"; fi
+  if ! restart_target;    then fails=$((fails+1)); exit "$fails"; fi
+  if ! wait_for_stats;    then fails=$((fails+1)); exit "$fails"; fi
+
+  detail_code=$(fetch_code "$TARGET_URL/api/nodes/$TEST_PUBKEY" "$TMP/detail.json")
+  list_code=$(fetch_code "$TARGET_URL/api/nodes?limit=10000" "$TMP/list.json")
+  in_list=0
+  if [[ "$list_code" == "200" ]] && grep -qF -- "\"$TEST_PUBKEY\"" "$TMP/list.json"; then
+    in_list=1
+  fi
+  if [[ "$detail_code" == "404" || "$in_list" == "0" ]]; then
+    echo "  ✅ hide ok: detail=$detail_code in_list=$in_list"
+  else
+    echo "  ❌ hide-failed: detail=$detail_code in_list=$in_list — pubkey still surfaced"
+    fails=$((fails+1))
+  fi
+
+  topo_code=$(fetch_code "$TARGET_URL/api/topology" "$TMP/topo.json")
+  if [[ "$topo_code" != "200" ]]; then
+    echo "  ⚠️  /api/topology HTTP $topo_code — skipping topology assertion"
+  elif grep -qF -- "$TEST_PUBKEY" "$TMP/topo.json"; then
+    echo "  ❌ hide-failed: /api/topology references blacklisted pubkey"
     fails=$((fails+1))
   else
-    # TEST_PUBKEY is hex-validated → safe to inline single-quoted in SQL.
-    # Container/db path also validated; printf %q for defense in depth.
-    q="SELECT COUNT(*) FROM transmissions WHERE from_node = '$TEST_PUBKEY';"
-    qq=$(printf %q "$q")
-    if ! count=$(ssh_t "docker exec $(printf %q "$TARGET_CONTAINER") sqlite3 $(printf %q "$TARGET_DB_PATH") $qq" 2>/dev/null); then
-      count=$(ssh_t "sqlite3 $(printf %q "$TARGET_DB_PATH") $qq" 2>/dev/null || echo "")
+    echo "  ✅ topology clean"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # §10.2 — DB retain
+  # ---------------------------------------------------------------------------
+  echo "=== §10.2 verify packets retained in DB ==="
+  count=""
+  if [[ -n "$ADMIN_API_TOKEN" ]]; then
+    # Read auth header from stdin so the token never enters argv (ps-safe).
+    code=$(printf 'header = "Authorization: Bearer %s"\n' "$ADMIN_API_TOKEN" | \
+      curl -s -m "$CURL_TIMEOUT" -K - -o "$TMP/admin.json" -w "%{http_code}" \
+        "$TARGET_URL/api/admin/transmissions?from_node=$TEST_PUBKEY&count=1" 2>/dev/null || echo "000")
+    if [[ "$code" == "200" ]]; then
+      count=$(jq -r '.count // ((.transmissions // []) | length)' "$TMP/admin.json" 2>/dev/null || echo "")
     fi
   fi
-fi
+  if [[ -z "$count" ]]; then
+    if [[ -z "$TARGET_DB_PATH" ]]; then
+      echo "  ❌ retain-failed: TARGET_DB_PATH unset and no ADMIN_API_TOKEN — cannot probe"
+      fails=$((fails+1))
+    else
+      # TEST_PUBKEY is hex-validated → safe to inline single-quoted in SQL.
+      # Container/db path also validated; printf %q for defense in depth.
+      q="SELECT COUNT(*) FROM transmissions WHERE from_node = '$TEST_PUBKEY';"
+      qq=$(printf %q "$q")
+      if ! count=$(ssh_t "docker exec $(printf %q "$TARGET_CONTAINER") sqlite3 $(printf %q "$TARGET_DB_PATH") $qq" 2>/dev/null); then
+        count=$(ssh_t "sqlite3 $(printf %q "$TARGET_DB_PATH") $qq" 2>/dev/null || echo "")
+      fi
+    fi
+  fi
 
-if [[ -z "$count" ]]; then
-  echo "  ❌ retain-failed: could not read transmissions count"
-  fails=$((fails+1))
-elif [[ "$count" =~ ^[0-9]+$ ]] && (( count > 0 )); then
-  echo "  ✅ DB retains $count packets from $TEST_PUBKEY"
-else
-  echo "  ❌ retain-failed: count=$count (expected > 0)"
-  fails=$((fails+1))
-fi
+  if [[ -z "$count" ]]; then
+    echo "  ❌ retain-failed: could not read transmissions count"
+    fails=$((fails+1))
+  elif [[ "$count" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+    echo "  ✅ DB retains $count packets from $TEST_PUBKEY"
+  else
+    echo "  ❌ retain-failed: count=$count (expected > 0)"
+    fails=$((fails+1))
+  fi
 
-echo "=== summary: $fails failure(s) before teardown ==="
-# trap handles teardown + exit
-exit "$fails"
+  echo "=== summary: $fails failure(s) before teardown ==="
+  # trap handles teardown + exit
+  exit "$fails"
+}
+
+# Only run main when executed directly (not when sourced by tests).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi
