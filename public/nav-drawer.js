@@ -85,6 +85,28 @@
            '<use href="/icons/phosphor-sprite.svg#ph-' + name + '"></use></svg>';
   }
 
+  // ── Version footer (frontend version display) ───────────────────────────
+  // GET /api/health reports {version, commit, buildTime}. Fetch once and cache
+  // the promise for the page lifetime so re-opening the drawer doesn't refetch.
+  var versionPromise = null;
+  function fetchVersion() {
+    if (versionPromise) return versionPromise;
+    versionPromise = fetch('/api/health', { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+    return versionPromise;
+  }
+  function fillVersion(el) {
+    fetchVersion().then(function (h) {
+      if (!h || !h.version) return; // leave the neutral "CoreScope" label as-is
+      el.textContent = 'CoreScope ' + h.version;
+      var bits = [];
+      if (h.commit) bits.push('commit ' + h.commit);
+      if (h.buildTime) bits.push('built ' + h.buildTime);
+      if (bits.length) el.title = bits.join(' \u00B7 ');
+    });
+  }
+
   var EDGE_PX = 44;          // pointerdown must start within left N px (drawer trigger zone)
   var EDGE_MIN_PX = 24;      // first N px reserved for iOS Safari back-swipe (do not claim)
   var NARROW_MAX = 768;      // Option A: disabled at ≤ this width
@@ -163,6 +185,19 @@
       list.appendChild(a);
     });
     drawerEl.appendChild(list);
+
+    var footer = document.createElement('div');
+    footer.className = 'nav-drawer-footer';
+    var ver = document.createElement('a');
+    ver.className = 'nav-drawer-version';
+    ver.setAttribute('data-nav-drawer-version', '');
+    ver.href = 'https://github.com/Kpa-clawbot/CoreScope/releases';
+    ver.target = '_blank';
+    ver.rel = 'noopener noreferrer';
+    ver.textContent = 'CoreScope';
+    footer.appendChild(ver);
+    drawerEl.appendChild(footer);
+    fillVersion(ver);
 
     document.body.appendChild(backdropEl);
     document.body.appendChild(drawerEl);
