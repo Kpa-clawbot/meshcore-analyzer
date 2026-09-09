@@ -7446,3 +7446,65 @@ console.log('\n=== scope-audit.js: sourcesLineHtml ===');
     assert.ok(/newest answer per repeater wins/i.test(line));
   });
 }
+
+// ===== live.js: one WebSocket per viewer =====
+// app.js opens a socket on every page load and fans messages out through
+// onWS()/offWS(). live.js used to ignore that and open a second socket to the
+// same endpoint, and since the broadcast does no per-client filtering, both
+// carried the identical full packet stream. The live map is the page people
+// leave open for hours, so it doubled origin bandwidth for as long as the tab
+// was open.
+console.log('\n=== live.js: one WebSocket per viewer ===');
+{
+  function makeWSSandbox() {
+    const ctx = makeSandbox();
+    ctx.registerPage = () => {};
+    let constructed = 0;
+    const registered = [];
+    ctx.WebSocket = function () { constructed++; };
+    ctx.onWS = (fn) => registered.push(fn);
+    ctx.offWS = (fn) => {
+      const i = registered.indexOf(fn);
+      if (i >= 0) registered.splice(i, 1);
+    };
+    ctx.L = { map: () => ({ setView: () => ({}), on: () => {}, remove: () => {} }) };
+    ctx.IATA_COORDS_GEO = {};
+    ctx.cancelAnimationFrame = () => {};
+    ctx.document.createElementNS = () => ctx.document.createElement();
+    loadInCtx(ctx, 'public/roles.js');
+    try {
+      loadInCtx(ctx, 'public/live.js');
+    } catch (e) {
+      for (const k of Object.keys(ctx.window)) ctx[k] = ctx.window[k];
+    }
+    return { ctx, registered, constructedCount: () => constructed };
+  }
+
+  test('the live map subscribes to the shared channel instead of opening a socket', () => {
+    const { ctx, registered, constructedCount } = makeWSSandbox();
+    const connect = ctx.window._liveConnectWS;
+    assert.ok(connect, '_liveConnectWS must be exposed');
+    connect();
+    assert.strictEqual(constructedCount(), 0, 'live.js must not construct a WebSocket of its own');
+    assert.strictEqual(registered.length, 1, 'it must register exactly one listener on the shared channel');
+  });
+
+  test('subscribing twice does not double up', () => {
+    // Navigating away and back re-runs the page init. Before, that closed and
+    // reopened a socket; now a second registration would silently double every
+    // packet the map renders.
+    const { ctx, registered } = makeWSSandbox();
+    ctx.window._liveConnectWS();
+    ctx.window._liveConnectWS();
+    assert.strictEqual(registered.length, 1, 'a second call must be a no-op while still subscribed');
+  });
+
+  test('the handler only reacts to packet messages', () => {
+    const { ctx, registered } = makeWSSandbox();
+    ctx.window._liveConnectWS();
+    const handler = registered[0];
+    // Neither of these carries packet data; the handler must not throw on them.
+    assert.doesNotThrow(() => handler({ type: 'stats' }));
+    assert.doesNotThrow(() => handler(null));
+  });
+}
