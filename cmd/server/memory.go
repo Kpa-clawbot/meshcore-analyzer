@@ -32,9 +32,22 @@ import (
 // eviction; both can shrink when packets age out. goHeapInuseMB and goSysMB
 // fluctuate with GC.
 //
-// cgoBytesMB intentionally absent: this build uses the pure-Go
-// modernc.org/sqlite driver, so there is no cgo allocator to measure.
-// Reintroduce only if we ever switch back to mattn/go-sqlite3.
+// There is no cgo-allocation field, but for a different reason than before:
+// the driver is github.com/mattn/go-sqlite3 now, so SQLite's page cache IS a C
+// allocation — the Go runtime simply exposes no byte counter for it.
+//
+// processRSSMB does include it, since VmRSS counts every resident page whoever
+// allocated it. Resist the temptation to read `processRSSMB - goSysMB` as "the
+// C share": goSysMB is address space the runtime has reserved, not what is
+// resident, so the subtraction mixes two different things and can even go
+// negative. It is a smell test, not a measurement. To size native usage,
+// measure RSS against a build with the store disabled, or profile.
+//
+// What is bounded is SQLite's page cache specifically: both DSNs pin
+// _cache_size=-2000, i.e. ~2 MiB per connection, so roughly 8 MiB across
+// SetMaxOpenConns(4) here and 2 MiB in the ingestor. That is a cap on the page
+// cache, not on everything SQLite allocates — statement and schema memory sit
+// outside it. See memlimit.go for why any of it matters to GOMEMLIMIT.
 type MemorySnapshot struct {
 	ProcessRSSMB  float64 `json:"processRSSMB"`
 	GoHeapInuseMB float64 `json:"goHeapInuseMB"`

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // createTestDBPathJSONNoResolvedPath builds a fixture that mirrors the LIVE
@@ -25,7 +25,7 @@ func createTestDBPathJSONNoResolvedPath(t *testing.T, relayPubkey, hopPrefix, fi
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func createTestDBPathJSONNoResolvedPath(t *testing.T, relayPubkey, hopPrefix, fi
 		resolved_path TEXT
 	)`)
 	// PREFLIGHT: async=true reason="test fixture, in-memory tmpdir DB"
-	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	// Production nodes schema uses public_key (not pubkey) — getAllNodes /
 	// buildPrefixMap reads public_key, role, advert_count, first_seen.
 	// PREFLIGHT: async=true reason="test fixture, in-memory tmpdir DB"

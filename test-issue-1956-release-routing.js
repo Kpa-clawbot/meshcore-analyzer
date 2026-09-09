@@ -56,6 +56,12 @@ function runSteps(source, context, edge, mutateFails = false) {
   const log = path.join(dir, 'commands');
   fs.writeFileSync(log, '');
   fs.mkdirSync(path.join(dir, 'cmd/decrypt'), { recursive: true });
+  // go() only logs, so nothing real is produced; the release job's own
+  // static/runnable verification step still needs these to exist.
+  for (const arch of ['amd64', 'arm64']) {
+    fs.writeFileSync(path.join(dir, `corescope-decrypt-linux-${arch}`),
+      '#!/bin/sh\necho "corescope-decrypt stub"\n', { mode: 0o755 });
+  }
   const stubs = `
     log() { node -e 'require("fs").appendFileSync(process.env.COMMAND_LOG, JSON.stringify(process.argv.slice(1))+"\\n")' "$@"; }
     crane() {
@@ -69,7 +75,8 @@ function runSteps(source, context, edge, mutateFails = false) {
     }
     gh() { log gh "$@"; }
     tar() { log tar "$@"; }
-    go() { log go "$GOOS" "$GOARCH" "$CGO_ENABLED" "$@"; }
+    go() { log go "$GOOS" "$GOARCH" "$CGO_ENABLED" "$CC" "$@"; }
+    file() { log file "$@"; echo "$1: ELF 64-bit LSB executable, statically linked"; }
     jq() {
       node -e 'const fs=require("fs"); const assert=require("assert/strict"); assert.equal(process.argv[1], ".config.Labels[\\"org.opencontainers.image.revision\\"] // \\\"\\\""); console.log(JSON.parse(fs.readFileSync(0,"utf8")).config.Labels["org.opencontainers.image.revision"] || "")' "$2"
     }
@@ -151,8 +158,19 @@ for (const [ref, event] of [['refs/heads/master', 'push'], ['refs/heads/master',
   const jobs = route(context(ref, event, { images_published: true }));
   assert.equal(jobs['release-artifacts'].result, 'skipped', `${event}: no GitHub release`);
   assert.equal(jobs['build-and-publish'].result, 'success', `${event}: tag-only input must not skip branch/PR checks`);
-  const publishing = steps(block(deploy, 'build-and-publish', 2)).find(step => step.includes('uses: docker/build-push-action'));
-  assert.equal(Boolean(evaluate(value(publishing, 'if', 8), context(ref, event))), event === 'push', `${event}: GHCR publishing`);
+  // There is more than one build-push-action step now: a PR-only two-arch build
+  // that must NOT publish, and the GHCR push. Pin the pushing one by `push: true`
+  // rather than by being first in the job.
+  const buildSteps = steps(block(deploy, 'build-and-publish', 2)).filter(step => step.includes('uses: docker/build-push-action'));
+  const publishing = buildSteps.filter(step => value(step, 'push', 10) === 'true');
+  assert.equal(publishing.length, 1, 'exactly one step may publish to GHCR');
+  assert.equal(Boolean(evaluate(value(publishing[0], 'if', 8), context(ref, event))), event === 'push', `${event}: GHCR publishing`);
+  // The cross-toolchain gate: since the SQLite driver became cgo, a PR must
+  // still build both architectures, and must do it without publishing.
+  const prBuild = buildSteps.filter(step => value(step, 'push', 10) === 'false');
+  assert.equal(prBuild.length, 1, 'PRs must get exactly one non-publishing two-arch build');
+  assert.equal(value(prBuild[0], 'platforms', 10), 'linux/amd64,linux/arm64', 'the PR gate must cover both shipped architectures');
+  assert.equal(Boolean(evaluate(value(prBuild[0], 'if', 8), context(ref, event))), event === 'pull_request', `${event}: PR-only two-arch gate`);
 }
 assert.equal(route(context(), 'go-test')['release-artifacts'].result, 'skipped', 'failed Go validation must block release');
 const dispatchInput = block(deploy, 'images_published', 6);
@@ -161,8 +179,17 @@ assert.equal(value(dispatchInput, 'default', 8), 'false', 'manual and fallback d
 
 const release = block(deploy, 'release-artifacts', 2);
 const builds = runSteps(release, context(), null).commands.filter(command => command[0] === 'go');
-assert.deepEqual(builds.map(command => command.slice(1, 4)), [['linux', 'amd64', '0'], ['linux', 'arm64', '0']]);
-for (const command of builds) assert.ok(command.includes('-ldflags=-s -w -X main.version=v9.8.7'), 'binary version must come from tag');
+// CGO_ENABLED=1 since the SQLite driver became github.com/mattn/go-sqlite3, and
+// CC must be zig targeting musl — that is what makes the artifact static and
+// cross-buildable. A silent revert to the Go-only toolchain fails here.
+assert.deepEqual(builds.map(command => command.slice(1, 5)), [
+  ['linux', 'amd64', '1', 'zig cc -target x86_64-linux-musl'],
+  ['linux', 'arm64', '1', 'zig cc -target aarch64-linux-musl'],
+]);
+for (const command of builds) {
+  assert.ok(command.includes("-ldflags=-s -w -extldflags '-static -Wl,-s' -X main.version=v9.8.7"), 'binary version must come from tag, and the artifact must stay static');
+  assert.ok(command.includes('-tags'), 'netgo/osusergo/sqlite_omit_load_extension must survive');
+}
 const upload = steps(release).filter(step => step.includes('uses: softprops/action-gh-release@v2'));
 assert.equal(upload.length, 1, 'publish both architectures together, before the release becomes immutable');
 assert.equal(value(upload[0], 'fail_on_unmatched_files', 10), 'true', 'missing assets must prevent publication');

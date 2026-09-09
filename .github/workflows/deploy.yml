@@ -107,9 +107,10 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.27'
-          cache-dependency-path: |
-            cmd/server/go.sum
-            cmd/ingestor/go.sum
+          # All modules, not just two: the cgo SQLite build is expensive to
+          # redo, and setup-go caches ~/.cache/go-build as well as the module
+          # cache, so a key that misses on an unrelated module hurts.
+          cache-dependency-path: "**/go.sum"
 
       - name: Enforce gofmt + go vet (issue #1859)
         run: |
@@ -156,9 +157,21 @@ jobs:
           go test ./...
           echo "--- Channel library tests passed ---"
           cd ../../cmd/decrypt
-          CGO_ENABLED=0 go build -ldflags="-s -w" -o corescope-decrypt .
+          go build -ldflags="-s -w" -o corescope-decrypt .
           go test ./...
           echo "--- Decrypt CLI tests passed ---"
+
+      - name: Test migrate CLI + dbschema
+        run: |
+          set -e -o pipefail
+          # Neither module had CI test execution before the mattn/go-sqlite3
+          # migration; both open the database, and dbschema owns the migrations.
+          cd internal/dbschema
+          go test ./...
+          cd ../../cmd/migrate
+          go build -o /dev/null .
+          go test ./...
+          echo "--- migrate + dbschema tests passed ---"
 
       - name: Verify Dockerfile COPY invariants (issue #1316)
         run: bash scripts/check-dockerfile-internal-pkgs.sh
@@ -350,7 +363,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.27'
-          cache-dependency-path: cmd/server/go.sum
+          cache-dependency-path: "**/go.sum"
 
       - name: Build Go server
         run: |
@@ -702,13 +715,57 @@ jobs:
           docker compose -f "$STAGING_COMPOSE_FILE" -p corescope-staging build "$STAGING_SERVICE"
           echo "Built Go staging image ✅"
 
+      # Needed by the PR two-arch gate below as well as the GHCR push, so the
+      # condition covers both rather than push/tag only.
       - name: Set up Docker Buildx
-        if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
         uses: docker/setup-buildx-action@v3
 
-      - name: Set up QEMU (arm64 runtime stage)
-        if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
+      - name: Set up QEMU (arm64 runtime stage + arm64 smoke)
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
         uses: docker/setup-qemu-action@v3
+
+      # Since the SQLite driver became cgo, the container build depends on a zig
+      # cross-toolchain and static musl linking. The GHCR step below is
+      # push/tag-only, so without this a PR never exercises either, and the
+      # first signal would arrive on master. Builds both architectures and
+      # actually runs the arm64 binaries under QEMU.
+      - name: Two-arch build (no publish)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64,linux/arm64
+          tags: corescope:pr-${{ github.event.pull_request.number }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.app_version }}
+            GIT_COMMIT=${{ steps.meta.outputs.git_commit }}
+            BUILD_TIME=${{ steps.meta.outputs.build_time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke the arm64 binaries under QEMU
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -e
+          # Export the arm64 binaries so the runner's own `file` can confirm
+          # they are static, then execute one under QEMU. Cheap: the build above
+          # already populated the layer cache.
+          docker buildx build . --platform linux/arm64 \
+            --build-arg APP_VERSION=smoke --cache-from type=gha \
+            --output type=local,dest=./arm64-image
+          for b in corescope-server corescope-ingestor corescope-decrypt; do
+            file "./arm64-image/app/$b" | tee /dev/stderr | grep -q 'statically linked' \
+              || { echo "::error::$b is not statically linked"; exit 1; }
+            file "./arm64-image/app/$b" | grep -q 'ARM aarch64' \
+              || { echo "::error::$b is not an arm64 binary"; exit 1; }
+          done
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD/arm64-image/app:/bin-under-test:ro" alpine:3.20 \
+            /bin-under-test/corescope-decrypt --version
+          rm -rf ./arm64-image
+          echo "arm64 static binaries run under QEMU ✅"
 
       - name: Log in to GHCR
         if: ${{ github.event_name == 'push' || startsWith(github.ref, 'refs/tags/v') }}
@@ -765,16 +822,37 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.27'
+          cache-dependency-path: |
+            cmd/decrypt/go.sum
+            internal/channel/go.sum
+
+      # The SQLite driver is cgo now (github.com/mattn/go-sqlite3), so the Go
+      # toolchain alone cannot cross-compile these. zig cc is the C compiler
+      # that can target both architectures; musl makes the result static.
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
 
       - name: Build corescope-decrypt (static, linux/amd64)
         run: |
           cd cmd/decrypt
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o ../../corescope-decrypt-linux-amd64 .
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC="zig cc -target x86_64-linux-musl" go build -trimpath -tags netgo,osusergo,sqlite_omit_load_extension -ldflags="-s -w -extldflags '-static -Wl,-s' -X main.version=${{ github.ref_name }}" -o ../../corescope-decrypt-linux-amd64 .
 
       - name: Build corescope-decrypt (static, linux/arm64)
         run: |
           cd cmd/decrypt
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o ../../corescope-decrypt-linux-arm64 .
+          CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" go build -trimpath -tags netgo,osusergo,sqlite_omit_load_extension -ldflags="-s -w -extldflags '-static -Wl,-s' -X main.version=${{ github.ref_name }}" -o ../../corescope-decrypt-linux-arm64 .
+
+      - name: Verify release binaries are static and runnable
+        run: |
+          set -e
+          for f in corescope-decrypt-linux-amd64 corescope-decrypt-linux-arm64; do
+            file "$f" | grep -q 'statically linked' || { echo "::error::$f is not statically linked"; exit 1; }
+          done
+          # amd64 runs natively on the runner; arm64 is only checked structurally
+          # here (the container image job exercises arm64 under QEMU).
+          ./corescope-decrypt-linux-amd64 --version
 
       - name: Upload release assets
         # Standard releases upload both assets to a draft before publishing.

@@ -8,7 +8,9 @@ import (
 )
 
 // Pure-Go hexagonal binning for RX coverage display. We deliberately avoid the
-// CGO-based uber/h3-go (this project builds with CGO_ENABLED=0). Points are
+// CGO-based uber/h3-go. (That predates the SQLite driver move to cgo; this
+// stays pure Go because it needs no C library, not because cgo is unavailable.)
+// Points are
 // projected to Web Mercator and snapped to a pointy-top hex grid whose size
 // depends on the display resolution. Cell ids are "res:q:r" (axial coords).
 // At city/region scale this looks like H3/mapme.sh coverage without any deps.

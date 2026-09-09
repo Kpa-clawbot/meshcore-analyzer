@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // createTestDBMultiDay creates a test DB with packets spread across numDays days.
@@ -24,7 +24,7 @@ func createTestDBMultiDay(t *testing.T, numDays, txPerDay int) string {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,8 +37,8 @@ func createTestDBMultiDay(t *testing.T, numDays, txPerDay int) string {
 	}
 	execOrFail(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, raw_hex TEXT, hash TEXT, first_seen TEXT, route_type INTEGER, payload_type INTEGER, payload_version INTEGER, decoded_json TEXT)`)
 	execOrFail(`CREATE TABLE observations (id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_id TEXT, observer_name TEXT, direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT, raw_hex TEXT)`)
-	execOrFail(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
-	execOrFail(`CREATE TABLE nodes (pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
+	execOrFail(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
+	execOrFail(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
 	execOrFail(`CREATE TABLE schema_version (version INTEGER)`)
 	execOrFail(`INSERT INTO schema_version (version) VALUES (1)`)
 	execOrFail(`CREATE INDEX idx_tx_first_seen ON transmissions(first_seen)`)

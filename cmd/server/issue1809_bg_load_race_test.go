@@ -138,7 +138,7 @@ func createTestDBSpreadOverDays(t *testing.T, dbPath string, numTx, spanDays int
 // (adv #11: prior code carried a duplicated annotation on every line)."
 func seedTestDBRows(t *testing.T, dbPath string, numTx, obsPerTx int, rowTimes func(i int) (string, int64)) {
 	t.Helper()
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,9 +164,9 @@ func seedTestDBRows(t *testing.T, dbPath string, numTx, obsPerTx int, rowTimes f
 		path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
 	// PREFLIGHT: async=true reason="unit-test fixture seeder"
-	execOrFail(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	execOrFail(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	// PREFLIGHT: async=true reason="unit-test fixture seeder"
-	execOrFail(`CREATE TABLE nodes (pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
+	execOrFail(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
 	// PREFLIGHT: async=true reason="unit-test fixture seeder"
 	execOrFail(`CREATE TABLE schema_version (version INTEGER)`)
 	execOrFail(`INSERT INTO schema_version (version) VALUES (1)`)

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func serveReach(srv *Server, path string) *httptest.ResponseRecorder {
@@ -57,7 +57,7 @@ func resetReachState(t *testing.T, servers ...*Server) {
 // build the zero-reach case (identifiable node, no matching observations).
 func newReachIntegrationDB(t *testing.T, obsPath string) (*DB, string) {
 	t.Helper()
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func newReachIntegrationDB(t *testing.T, obsPath string) (*DB, string) {
 	stmts := []string{
 		`CREATE TABLE nodes (public_key TEXT, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, advert_count INTEGER)`,
 		`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, from_pubkey TEXT, payload_type INTEGER)`,
-		`CREATE TABLE observers (id TEXT)`,
+		`CREATE TABLE observers (id TEXT, inactive INTEGER)`,
 		`CREATE TABLE observations (id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_idx INTEGER, snr REAL, path_json TEXT, timestamp INTEGER)`,
 		`CREATE TABLE neighbor_edges (node_a TEXT, node_b TEXT, count INTEGER)`,
 	}

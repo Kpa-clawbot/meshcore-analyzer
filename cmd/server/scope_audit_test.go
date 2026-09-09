@@ -30,7 +30,7 @@ var (
 // fiction, so the join behaves the way it does against a real database.
 func setupScopeConformanceDB(t *testing.T) *DB {
 	t.Helper()
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

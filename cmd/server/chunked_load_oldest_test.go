@@ -31,7 +31,7 @@ import (
 // This mirrors the freshen-fixture-shifted e2e DB exactly.
 func createTestDBReverseTime(tb testing.TB, dbPath string, numTx int) {
 	tb.Helper()
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -50,9 +50,9 @@ func createTestDBReverseTime(tb testing.TB, dbPath string, numTx int) {
 			direction TEXT, snr REAL, rssi REAL, score INTEGER,
 			path_json TEXT, timestamp TEXT, raw_hex TEXT
 		)`,
-		`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`,
+		`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS nodes (
-			pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
+			public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
 			last_seen TEXT, first_seen TEXT, frequency REAL
 		)`,
 		`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)`,

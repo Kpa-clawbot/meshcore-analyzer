@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // TestServerSourceHasNoCachedRWCalls enforces issue #1287: after the
@@ -129,7 +129,7 @@ func TestServerDBConnIsReadOnly(t *testing.T) {
 
 	// Bootstrap a minimal DB with the ingestor-style WAL opener so the
 	// server can attach in read-only mode.
-	if err := bootstrapMinimalDB(path); err != nil {
+	if err := bootstrapMinimalDB(t, path); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
@@ -149,9 +149,9 @@ func TestServerDBConnIsReadOnly(t *testing.T) {
 // need, opened with WAL so the read-only opener in OpenDB can attach.
 // Kept in *_test.go so it does NOT add any write capability to the
 // production server binary.
-func bootstrapMinimalDB(path string) error {
+func bootstrapMinimalDB(tb testing.TB, path string) error {
 	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", path)
-	rw, err := sql.Open("sqlite", dsn)
+	rw, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return err
 	}
@@ -159,6 +159,9 @@ func bootstrapMinimalDB(path string) error {
 	if _, err := rw.Exec(`CREATE TABLE IF NOT EXISTS nodes (public_key TEXT PRIMARY KEY, name TEXT)`); err != nil {
 		return err
 	}
+	// prepareStatements compiles eagerly under mattn; give it the rest of the
+	// surface it references so OpenDB gets far enough to test read-onlyness.
+	ensurePreparable(tb, rw)
 	return nil
 }
 
@@ -210,4 +213,38 @@ func nodeTableWritePattern(verb, trailer string) *regexp.Regexp {
 		expr += `\b`
 	}
 	return regexp.MustCompile(expr)
+}
+
+// TestOpenDBRefusesMissingDatabase pins the behaviour that makes mode=ro
+// meaningful: OpenDB must fail on a path that does not exist rather than
+// creating an empty database there.
+//
+// This is worth a test of its own because the guarantee is not obvious from the
+// call site. github.com/mattn/go-sqlite3 always passes
+// SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE to sqlite3_open_v2; what restricts it
+// is the mode=ro parameter in the URI, which only takes effect because mattn's
+// C wrapper ORs SQLITE_OPEN_URI into the flags (sqlite3.go _sqlite3_open_v2).
+// Lose the file: prefix, or the URI flag, and this silently degrades into a
+// read-write open that manufactures a fresh empty database — which the server
+// would then happily serve. cmd/decrypt shipped exactly that bug for a while by
+// building its DSN without the file: prefix.
+func TestOpenDBRefusesMissingDatabase(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "absent.db")
+
+	db, err := OpenDB(missing)
+	if err == nil {
+		db.Close()
+		t.Fatal("OpenDB succeeded against a nonexistent database; mode=ro is not in effect")
+	}
+
+	// Neither the database itself nor a file literally named after the DSN
+	// (what happens when URI handling is off) may have been created.
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatalf("read temp dir: %v", rerr)
+	}
+	for _, e := range entries {
+		t.Errorf("OpenDB created %q; a read-only open must not write anything", e.Name())
+	}
 }

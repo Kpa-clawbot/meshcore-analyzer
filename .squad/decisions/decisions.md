@@ -211,7 +211,9 @@ Reconciled `manage.sh` and `docker-compose.yml` Docker volume names:
 Standalone Go MQTT ingestor service. Separate process from Node.js web server that handles MQTT packet ingestion + writes to shared SQLite DB.
 
 **Architecture:**
-- Single binary, no CGO (uses `modernc.org/sqlite` pure Go)
+- Single statically-linked binary. Was CGO-free via `modernc.org/sqlite`; now cgo,
+  using `github.com/mattn/go-sqlite3` for read performance, cross-compiled with
+  `zig cc` against musl so the artifact stays a single self-contained file
 - Reads same `config.json` (mqttSources array)
 - Shares SQLite DB with Node.js (WAL mode for concurrent access)
 - Format 1 (raw packet) MQTT only — companion bridge stays in Node.js

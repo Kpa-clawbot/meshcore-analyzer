@@ -15,14 +15,14 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // --- helpers ---
 
 func setupTestDBv2(t *testing.T) *DB {
 	t.Helper()
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

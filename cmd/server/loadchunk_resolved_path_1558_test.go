@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // createTestDBWithResolvedPath creates a fixture DB containing numTx old
@@ -20,7 +20,7 @@ func createTestDBWithResolvedPath(t *testing.T, numTx int, relayPubkeys []string
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,8 +47,8 @@ func createTestDBWithResolvedPath(t *testing.T, numTx int, relayPubkeys []string
 		raw_hex TEXT,
 		resolved_path TEXT
 	)`)
-	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
-	exec(`CREATE TABLE nodes (pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
+	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
+	exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
 	exec(`CREATE TABLE schema_version (version INTEGER)`)
 	exec(`INSERT INTO schema_version (version) VALUES (1)`)
 	exec(`CREATE INDEX idx_tx_first_seen ON transmissions(first_seen)`)

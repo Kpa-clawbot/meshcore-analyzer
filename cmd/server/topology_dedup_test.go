@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // TestTopologyDedup_RepeatersMergeByPubkey verifies that topRepeaters
@@ -15,7 +15,7 @@ import (
 func TestTopologyDedup_RepeatersMergeByPubkey(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestTopologyDedup_RepeatersMergeByPubkey(t *testing.T) {
 		id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_id TEXT, observer_name TEXT,
 		direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
-	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	exec(`CREATE TABLE nodes (
 		public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
 		last_seen TEXT, frequency REAL
@@ -139,7 +139,7 @@ func TestTopologyDedup_RepeatersMergeByPubkey(t *testing.T) {
 func TestTopologyDedup_AmbiguousPrefixNotMerged(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestTopologyDedup_AmbiguousPrefixNotMerged(t *testing.T) {
 		id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_id TEXT, observer_name TEXT,
 		direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
-	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	exec(`CREATE TABLE nodes (
 		public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
 		last_seen TEXT, frequency REAL
@@ -245,7 +245,7 @@ func TestTopologyDedup_AmbiguousPrefixNotMerged(t *testing.T) {
 func TestTopologyDedup_PairsMergeByPubkey(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestTopologyDedup_PairsMergeByPubkey(t *testing.T) {
 		id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_id TEXT, observer_name TEXT,
 		direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
-	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	exec(`CREATE TABLE nodes (
 		public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
 		last_seen TEXT, frequency REAL

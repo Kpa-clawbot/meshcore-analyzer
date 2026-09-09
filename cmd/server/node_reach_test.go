@@ -6,20 +6,20 @@ import (
 	"strconv"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // newReachScanTestDB builds a minimal observer_idx-schema DB with two rows whose
 // path contains "01FA" and one that does not, for scanReachRows coverage.
 func newReachScanTestDB(t *testing.T) *DB {
 	t.Helper()
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	stmts := []string{
 		`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, from_pubkey TEXT, payload_type INTEGER)`,
-		`CREATE TABLE observers (id TEXT)`,
+		`CREATE TABLE observers (id TEXT, inactive INTEGER)`,
 		`CREATE TABLE observations (id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_idx INTEGER, snr REAL, path_json TEXT, timestamp INTEGER)`,
 		`INSERT INTO observers (id) VALUES ('OBS1')`, // rowid 1
 		`INSERT INTO transmissions (id, from_pubkey, payload_type) VALUES (1,'FF00',4),(2,'',5),(3,'',5)`,

@@ -203,7 +203,8 @@ server-side (read-only). Each feature:
 ```
 
 - Hex binning is a pure-Go pointy-top grid over Web Mercator (`cmd/server/hexgrid.go`). We do **not**
-  use `uber/h3-go` because it is CGO and the project builds with `CGO_ENABLED=0`. Latitude is only
+  use `uber/h3-go`, which would add a C dependency for no benefit (the SQLite driver
+  is cgo since the mattn/go-sqlite3 move, but that is a library we need). Latitude is only
   defined within ±85.05° (Web Mercator limit) and is clamped to that range.
 - `z` (Leaflet zoom) selects the hex resolution (zoom-adaptive). Raw points never leave the server
   (privacy: contributors' tracks are not exposed).

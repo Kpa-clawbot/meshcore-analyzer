@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // createTestDBWithLastSeen seeds a DB with the post-fix schema (last_seen

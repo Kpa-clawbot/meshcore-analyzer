@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // TestLoad_PanicsWhenGraphNotLoadedAndEdgesExist pins the startup-ordering
@@ -22,7 +22,7 @@ func TestLoad_PanicsWhenGraphNotLoadedAndEdgesExist(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	rw, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
+	rw, err := sql.Open("sqlite3", "file:"+dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestLoad_PanicsWhenGraphNotLoadedAndEdgesExist(t *testing.T) {
 		path_json TEXT, timestamp TEXT, raw_hex TEXT, resolved_path TEXT
 	)`)
 	// PREFLIGHT: async=true reason="test fixture, in-memory tmpdir DB"
-	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	exec(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	// PREFLIGHT: async=true reason="test fixture, in-memory tmpdir DB"
 	exec(`CREATE TABLE nodes (
 		public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,

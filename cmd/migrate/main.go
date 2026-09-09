@@ -18,8 +18,8 @@ import (
 	"flag"
 	"log"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/meshcore-analyzer/dbschema"
-	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -33,7 +33,10 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	log.SetPrefix("[migrate] ")
 
-	db, err := sql.Open("sqlite", *dbPath)
+	// Same DSN as the ingestor. A bare path here would mean synchronous=NORMAL
+	// under mattn, quietly weakening durability for a process that writes — and
+	// this one runs dbschema.Apply, which now also deletes duplicate rows.
+	db, err := sql.Open("sqlite3", dbschema.WriterDSN(*dbPath))
 	if err != nil {
 		log.Fatalf("open %s: %v", *dbPath, err)
 	}

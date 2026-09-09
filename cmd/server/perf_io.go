@@ -260,7 +260,7 @@ func (s *Server) handlePerfSqlite(w http.ResponseWriter, r *http.Request) {
 		resp.CacheSize = cacheSize
 
 		// Cache hit rate: derived from PacketStore cache (rw_cache). We don't
-		// have a direct SQLite cache counter via the modernc driver, so we
+		// have a direct SQLite cache counter through the driver, so we
 		// surface the closest available proxy — the in-process row cache.
 		if s.store != nil {
 			cs := s.store.GetCacheStatsTyped()

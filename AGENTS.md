@@ -90,7 +90,9 @@ Every change must consider performance impact BEFORE implementation. This codeba
 No proof = no merge.
 
 ### 1. No commit without tests
-Every change that touches logic MUST have tests. For Go backend: `cd cmd/server && go test ./...` and `cd cmd/ingestor && go test ./...`. For frontend: `node test-packet-filter.js && node test-aging.js && node test-frontend-helpers.js`. If you add new logic, add tests. No exceptions.
+Every change that touches logic MUST have tests. For Go backend: `cd cmd/server && go test ./...` and `cd cmd/ingestor && go test ./...`, or `make test` for all 14 modules. For frontend: `node test-packet-filter.js && node test-aging.js && node test-frontend-helpers.js`. If you add new logic, add tests. No exceptions.
+
+The SQLite driver (`github.com/mattn/go-sqlite3`) is cgo. **`CGO_ENABLED=0` still *builds*** — that is the trap. It links a stub, and the binary dies on the first query with `go-sqlite3 requires cgo to work. This is a stub`, so a green build proves nothing. A plain `GOOS=linux go build` likewise cannot cross-compile it. Use `make build` / `make crossbuild` — the latter needs [`zig`](https://ziglang.org/download/) as the cross C compiler and produces static musl binaries. Never re-add `CGO_ENABLED=0`.
 
 ### 2. No commit without browser validation
 After pushing, verify the change works in an actual browser. Use `browser profile=openclaw` against the running instance. Take a screenshot if the change is visual. If you can't validate it, say so — don't claim it works.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // minimalDB bootstraps a SQLite DB with just enough tables for the
@@ -16,7 +16,7 @@ func minimalDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "schema.db")
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}

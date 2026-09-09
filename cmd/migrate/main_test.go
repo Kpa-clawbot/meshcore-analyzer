@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/meshcore-analyzer/dbschema"
-	_ "modernc.org/sqlite"
 )
 
 // fixtureCandidates lists possible locations of the committed e2e
@@ -61,7 +61,7 @@ func TestMigrateBringsFixtureToReady(t *testing.T) {
 	dst := filepath.Join(t.TempDir(), "fixture-copy.db")
 	copyFile(t, src, dst)
 
-	db, err := sql.Open("sqlite", dst)
+	db, err := sql.Open("sqlite3", dst)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
