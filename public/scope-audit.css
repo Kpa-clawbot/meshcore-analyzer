@@ -79,3 +79,8 @@
 .sa-empty { line-height: 1.6; max-width: 70ch; }
 .sa-empty ul { margin: 8px 0; padding-left: 20px; }
 .sa-empty li { margin: 4px 0; }
+
+/* Same muted, dashed treatment as .sa-chip-ambiguous on purpose: both are
+   caveats on the row's finding, not findings themselves, and neither may
+   compete visually with the red/green scope chips beside them. */
+.sa-chip-unmatched { background: var(--section-bg, var(--card-bg)); color: var(--text-muted); border: 1px dashed var(--border); font-family: inherit; font-style: italic; }
