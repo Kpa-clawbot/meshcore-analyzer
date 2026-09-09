@@ -7229,6 +7229,63 @@ console.log('\n=== scope-audit.js: mergedScopeChips ===');
   });
 }
 
+// ===== scope-audit.js: unmatchedCaveat =====
+// A declared region this instance holds no hashRegions key for can never turn
+// green, however much traffic the repeater forwards: the ingestor stores such
+// packets with an empty scope_name, so there is no name for the audit to match
+// the declaration against. On live data that explains a large share of all
+// notObserved entries, so the column must be able to say so instead of
+// presenting every grey chip as a confirmed gap.
+console.log('\n=== scope-audit.js: unmatchedCaveat ===');
+{
+  const ctx = makeSandbox();
+  ctx.registerPage = () => {};
+  loadInCtx(ctx, 'public/app.js');
+  loadInCtx(ctx, 'public/scope-audit.js');
+  const caveat = ctx.__meshcoreScopeAuditInternals.unmatchedCaveat;
+
+  test('zero unmatched packets renders nothing at all', () => {
+    assert.strictEqual(caveat({ observedUnmatchedPackets: 0 }), '');
+  });
+
+  test('a missing field renders nothing (older server, field absent)', () => {
+    assert.strictEqual(caveat({}), '');
+  });
+
+  test('a non-zero count renders a chip carrying the number', () => {
+    const h = caveat({ observedUnmatchedPackets: 148 });
+    assert.ok(h.includes('sa-chip-unmatched'), 'should carry its own class');
+    assert.ok(h.includes('148'), 'should state the count, not just that there is one');
+  });
+
+  test('singular and plural are both grammatical', () => {
+    assert.ok(caveat({ observedUnmatchedPackets: 1 }).includes('1 forwarded packet '));
+    assert.ok(caveat({ observedUnmatchedPackets: 2 }).includes('2 forwarded packets '));
+  });
+
+  test('the title names the cause, not just the symptom', () => {
+    // The operator fix is a hashRegions edit; a caveat that does not say so
+    // sends them looking at the repeater instead of at their own config.
+    const h = caveat({ observedUnmatchedPackets: 5 });
+    assert.ok(h.includes('hashRegions'), 'must name the config key that fixes it');
+  });
+
+  test('a non-numeric count renders nothing rather than NaN', () => {
+    // observedUnmatchedPackets is server-supplied. A truthiness check accepts
+    // a string, and the chip then reads "NaN forwarded packets".
+    assert.strictEqual(caveat({ observedUnmatchedPackets: '12' }), '');
+    assert.strictEqual(caveat({ observedUnmatchedPackets: NaN }), '');
+  });
+
+  test('the count is not injected raw into markup', () => {
+    // observedUnmatchedPackets is server-supplied. It is a number in every
+    // sane response, but the chip must not become an injection point if that
+    // ever stops holding.
+    const h = caveat({ observedUnmatchedPackets: '1"><script>alert(1)</script>' });
+    assert.ok(!h.includes('<script'), 'must not emit raw markup from a server-supplied value');
+  });
+}
+
 // The empty state is what a stock install sees: neither collector ships with
 // CoreScope, so most deployments open this page and find nothing. It therefore
 // has to explain where the data comes from, not just report its absence.

@@ -183,6 +183,31 @@
       ' in this window matched more than one declared target\'s pubkey prefix and could not be attributed to any of them. Any “not observed” entry on this row may be explained by that prefix collision rather than a real gap.">possibly ambiguous</span>';
   }
 
+  // unmatchedCaveat flags rows where this instance saw the repeater forward
+  // transport-scoped traffic it holds no region key for. The ingestor stores
+  // those packets with an empty scope_name (see scopeNameForDB), so they name
+  // no region and can never satisfy a declared one — a repeater forwarding a
+  // region this instance cannot name looks exactly like one forwarding
+  // nothing.
+  //
+  // Distinct from ambiguousCaveat, and the distinction is the whole point:
+  // that one is a prefix collision between two repeaters and is nobody's
+  // fault, this one is a missing entry in this instance's own hashRegions and
+  // the reader can fix it. Saying so is what stops them investigating an
+  // innocent repeater.
+  //
+  // The count is server-supplied, so a non-numeric value renders nothing
+  // rather than the string "NaN forwarded packets".
+  function unmatchedCaveat(row) {
+    var n = row.observedUnmatchedPackets;
+    if (typeof n !== 'number' || !isFinite(n) || n <= 0) return '';
+    var label = escapeHtml(n) + ' forwarded packet' + (n === 1 ? '' : 's');
+    return ' <span class="sa-chip sa-chip-unmatched" title="' + label +
+      ' in this window carried a region scope this CoreScope instance holds no key for, so it could not be named. ' +
+      'Any &#39;not observed&#39; entry on this row may be a missing entry in this instance&#39;s hashRegions config rather than a repeater that is not forwarding.">' +
+      label + ' unnameable</span>';
+  }
+
   // statusScore ranks a row's Status column numerically for sorting — a
   // simple weighted count (notObserved dominates, matching the server's own
   // findings-first ranking) rather than the badge text, which the Status
@@ -210,7 +235,7 @@
       '<td class="sa-name" data-value="' + escapeHtml(nameSortValue) + '">' + nameHtml(row) + (row.role != null && row.role !== '' ? '<span class="text-muted sa-role"> ' + escapeHtml(row.role) + '</span>' : '') + '</td>' +
       '<td data-value="' + statusScore(row) + '">' + issuesHtml + '</td>' +
       '<td data-value="' + escapeHtml(CONFIG_STATES[row.configState].label) + '">' + configStateHtml(row) + '</td>' +
-      '<td data-value="' + row.notObserved.length + '">' + mergedScopeChips(row) + (row.declaredWildcard ? ' <span class="sa-chip sa-chip-wildcard" title="Declares the \'*\' wildcard — allows plain unscoped floods.">*</span>' : '') + ambiguousCaveat(row) + '</td>' +
+      '<td data-value="' + row.notObserved.length + '">' + mergedScopeChips(row) + (row.declaredWildcard ? ' <span class="sa-chip sa-chip-wildcard" title="Declares the \'*\' wildcard — allows plain unscoped floods.">*</span>' : '') + ambiguousCaveat(row) + unmatchedCaveat(row) + '</td>' +
       '<td data-value="' + (isNaN(declaredAtMs) ? '' : declaredAtMs) + '">' + ageHtml(row) + (row.truncated ? ' <span class="ns-truncated" title="Declared list was truncated by the repeater — a missing region here is not necessarily a real absence.">truncated</span>' : '') + '</td>' +
       '</tr>';
   }
@@ -360,7 +385,7 @@
     // Exposed so the helper tests can assert what the Scopes column RENDERS
     // rather than grepping this file, the same reason map.js exposes its label
     // builder (#1356/#1933).
-    window.__meshcoreScopeAuditInternals = { mergedScopeChips: mergedScopeChips, emptyStateHtml: emptyStateHtml, sourcesLineHtml: sourcesLineHtml };
+    window.__meshcoreScopeAuditInternals = { mergedScopeChips: mergedScopeChips, emptyStateHtml: emptyStateHtml, sourcesLineHtml: sourcesLineHtml, unmatchedCaveat: unmatchedCaveat };
   }
 
   registerPage('scope-audit', { init: init, destroy: destroy });

@@ -1084,3 +1084,92 @@ func TestHandleScopeAuditServesSecondRequestFromCache(t *testing.T) {
 // keeps the '#' (hashRegions config), regions_csv arrives from the firmware
 // with it already stripped. Declared "be-van" and observed "#be-van" must be
 // recognised as the same scope, not reported as both missing and undeclared.
+
+// TestScopeAuditForwardingCountsUnmatchedPackets: a transport-scoped packet
+// whose code1 matched no configured region key is stored with scope_name = ""
+// (scopeNameForDB's "transport-scoped but unnameable" state). It is not a
+// named scope, so it must not enter agg.scopes, and it is not an unscoped
+// plain flood either, so it must not enter unscopedPackets. It is its own
+// fact: this instance saw the target forward traffic it holds no key for.
+//
+// Without this counter the audit reports the declared region as "not
+// observed", which reads as a finding about the repeater when it is really a
+// gap in this instance's own hashRegions.
+func TestScopeAuditForwardingCountsUnmatchedPackets(t *testing.T) {
+	s := newScopeTestStore(t)
+	hop := testFullPubkeyA[:4]
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	seedTransmissionRouteAt(t, s, hop, scopeUnmatched(), RouteFlood, recent)
+
+	got, err := s.ScopeAuditForwarding("2026-01-01T00:00:00Z", []string{testFullPubkeyA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agg := got[testFullPubkeyA]
+	if agg == nil {
+		t.Fatalf("want an agg for the target, got none (result = %+v)", got)
+	}
+	if agg.unmatchedPackets != 1 {
+		t.Errorf("unmatchedPackets = %d, want 1", agg.unmatchedPackets)
+	}
+	if len(agg.scopes) != 0 {
+		t.Errorf("scopes = %+v, want empty — an unmatched packet names no region", agg.scopes)
+	}
+	if agg.unscopedPackets != 0 {
+		t.Errorf("unscopedPackets = %d, want 0 — unmatched is not the same as unscoped", agg.unscopedPackets)
+	}
+}
+
+// TestScopeAuditForwardingCountsUnmatchedOnMidPathHop is the post-M0 case that
+// carries almost all of this counter's real volume: before M0 only a last hop
+// was attributed, so a repeater deep in a flood path contributed nothing at
+// all. Now every hop counts, and the same de-duplication that protects the
+// named-scope tally must protect this one — a target appearing twice in one
+// path is still one packet, not two.
+func TestScopeAuditForwardingCountsUnmatchedOnMidPathHop(t *testing.T) {
+	s := newScopeTestStore(t)
+	hop := testFullPubkeyA[:4]
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	seedTransmissionPathAt(t, s, []string{"AAAA", hop, "BBBB", hop}, scopeUnmatched(), RouteFlood, recent)
+
+	got, err := s.ScopeAuditForwarding("2026-01-01T00:00:00Z", []string{testFullPubkeyA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agg := got[testFullPubkeyA]
+	if agg == nil {
+		t.Fatalf("want an agg for the mid-path target, got none (result = %+v)", got)
+	}
+	if agg.unmatchedPackets != 1 {
+		t.Errorf("unmatchedPackets = %d, want 1 — one transmission, matched on two of its hops", agg.unmatchedPackets)
+	}
+}
+
+// TestHandleScopeAuditSurfacesUnmatchedPackets: a repeater declares "behss",
+// and this instance sees it forward transport-scoped traffic it cannot name.
+// The row must still list "behss" as notObserved — an unmatched packet names
+// no region, so it cannot satisfy the declaration — but it must also carry
+// observedUnmatchedPackets, so a client can say the finding might be a missing
+// region key rather than a silent repeater.
+func TestHandleScopeAuditSurfacesUnmatchedPackets(t *testing.T) {
+	srv, router := setupScopeAuditServer(t)
+	pk := testFullPubkeyA
+	insertDeclared(t, srv, pk, time.Now().UTC().Format(time.RFC3339), "behss", 0)
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	seedTransmissionRouteAt(t, srv.store, pk[:4], scopeUnmatched(), RouteFlood, recent)
+
+	got := getScopeAudit(t, router, "")
+	if len(got.Repeaters) != 1 {
+		t.Fatalf("repeaters = %+v, want 1", got.Repeaters)
+	}
+	row := got.Repeaters[0]
+	if row.ObservedUnmatchedPackets != 1 {
+		t.Errorf("observedUnmatchedPackets = %d, want 1", row.ObservedUnmatchedPackets)
+	}
+	if len(row.NotObserved) != 1 || row.NotObserved[0] != "behss" {
+		t.Errorf("notObserved = %v, want [\"behss\"] — an unmatched packet names no region and cannot satisfy a declaration", row.NotObserved)
+	}
+	if row.WildcardContradiction {
+		t.Error("wildcardContradiction = true, want false — unmatched traffic is scoped, so it says nothing about '*'")
+	}
+}

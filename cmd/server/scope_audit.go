@@ -283,6 +283,20 @@ func normScope(s string) string {
 type scopeAuditTargetAgg struct {
 	scopes          map[string]*ScopeObservation
 	unscopedPackets int64
+	// unmatchedPackets counts packets this target was observed forwarding
+	// that carried a transport scope no configured region key matched
+	// (transmissions.scope_name = the empty string). Deliberately NOT folded
+	// into unscopedPackets: those two are opposites. Unscoped means the packet
+	// carried no scope at all (scope_name SQL NULL) and is what '*' governs;
+	// unmatched means it IS scoped and this instance simply holds no key for
+	// that region, so '*' says nothing about it. See scopeNameForDB in the
+	// ingestor for the encoding.
+	//
+	// A non-zero value is a caveat on this target's notObserved entries: any
+	// of them may be a region this instance cannot name rather than one the
+	// repeater is not forwarding.
+	unmatchedPackets int64
+
 	// ambiguousHops counts forwarder-hop observations in the window whose
 	// truncated hash prefix matched this target AND at least one other
 	// declared target — see ScopeAuditForwarding's doc comment for why
@@ -622,7 +636,14 @@ func (s *PacketStore) ScopeAuditForwarding(sinceISO string, targets []string) (m
 				continue
 			}
 			if scopeName.String == "" {
-				continue // unmatched — not part of the declared/observed comparison
+				// Unmatched: transport-scoped, but no configured region key
+				// matched code1. Still not part of the declared/observed
+				// comparison — it names no region, so it can never satisfy a
+				// declaration — but it is the evidence that a notObserved
+				// finding on this row may be a gap in this instance's
+				// hashRegions rather than in the repeater's forwarding.
+				agg.unmatchedPackets++
+				continue
 			}
 			name := normScope(scopeName.String)
 			so, ok := agg.scopes[name]
@@ -741,6 +762,21 @@ type ScopeAuditRow struct {
 	// UndeclaredObserved entry is unaffected by it (ambiguous hops are never
 	// attributed to a scope at all).
 	AmbiguousHops int64 `json:"ambiguousHops"`
+
+	// ObservedUnmatchedPackets counts packets this repeater was observed
+	// forwarding whose transport scope matched no region key this instance
+	// holds. Like AmbiguousHops it is a caveat rather than a finding, but the
+	// two have different causes and different fixes: AmbiguousHops is a
+	// pubkey-prefix collision between two repeaters and nobody's fault,
+	// ObservedUnmatchedPackets is a missing entry in this instance's own
+	// hashRegions and the reader can act on it. A non-zero value means any
+	// NotObserved entry on this row may name a region this instance cannot
+	// name rather than one the repeater is not forwarding.
+	//
+	// It says nothing about DeclaredWildcard: unmatched traffic IS scoped, so
+	// it never feeds WildcardContradiction, which counts only plain unscoped
+	// floods.
+	ObservedUnmatchedPackets int64 `json:"observedUnmatchedPackets"`
 }
 
 // ScopeAuditResponse is the payload for GET /api/scope-audit. Only
@@ -1057,26 +1093,28 @@ func (s *Server) computeScopeAudit(window, sinceISO string) (*ScopeAuditResponse
 			}
 		}
 
-		var unscopedPackets, ambiguousHops int64
+		var unscopedPackets, ambiguousHops, unmatchedPackets int64
 		if agg != nil {
 			unscopedPackets = agg.unscopedPackets
 			ambiguousHops = agg.ambiguousHops
+			unmatchedPackets = agg.unmatchedPackets
 		}
 
 		resp.Repeaters = append(resp.Repeaters, ScopeAuditRow{
-			PublicKey:               pk,
-			Name:                    id.Name,
-			Role:                    id.Role,
-			DeclaredRegions:         declaredNamed,
-			DeclaredWildcard:        declaredWildcard,
-			ConfigState:             scopeAuditConfigState(declaredNamed, declaredWildcard),
-			DeclaredAt:              d.ObservedAt,
-			Truncated:               d.Truncated,
-			NotObserved:             notObserved,
-			UndeclaredObserved:      undeclared,
-			ObservedUnscopedPackets: unscopedPackets,
-			WildcardContradiction:   unscopedPackets > 0 && !declaredWildcard,
-			AmbiguousHops:           ambiguousHops,
+			PublicKey:                pk,
+			Name:                     id.Name,
+			Role:                     id.Role,
+			DeclaredRegions:          declaredNamed,
+			DeclaredWildcard:         declaredWildcard,
+			ConfigState:              scopeAuditConfigState(declaredNamed, declaredWildcard),
+			DeclaredAt:               d.ObservedAt,
+			Truncated:                d.Truncated,
+			NotObserved:              notObserved,
+			UndeclaredObserved:       undeclared,
+			ObservedUnscopedPackets:  unscopedPackets,
+			WildcardContradiction:    unscopedPackets > 0 && !declaredWildcard,
+			AmbiguousHops:            ambiguousHops,
+			ObservedUnmatchedPackets: unmatchedPackets,
 		})
 	}
 
