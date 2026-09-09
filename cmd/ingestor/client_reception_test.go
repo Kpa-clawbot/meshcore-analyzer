@@ -638,7 +638,7 @@ func TestClientObservationScopeNameFromTransportCode(t *testing.T) {
 		"timestamp": ts1,
 		"gps":       map[string]interface{}{"lat": 51.2, "lon": 4.4},
 	}
-	handleClientPacket(s, cfgWithObservations(), "test", "aa11", msg, nil, regionKeys)
+	handleClientPacket(s, cfgWithObservations(), "test", "aa11", msg, nil, regionKeySetFromKeys(regionKeys))
 
 	// ComputeContentHash deliberately excludes the transport-code bytes (so the
 	// same content dedups across scopes), so raw and raw2 below share one
@@ -667,7 +667,7 @@ func TestClientObservationScopeNameFromTransportCode(t *testing.T) {
 		"timestamp": ts2,
 		"gps":       map[string]interface{}{"lat": 51.2, "lon": 4.4},
 	}
-	handleClientPacket(s, cfgWithObservations(), "test", "aa11", msg2, nil, regionKeys)
+	handleClientPacket(s, cfgWithObservations(), "test", "aa11", msg2, nil, regionKeySetFromKeys(regionKeys))
 
 	var code1b, scopeNameB sql.NullString
 	if err := s.db.QueryRow(`SELECT code1, scope_name FROM client_rx_observations WHERE rx_at = ?`, ts2).

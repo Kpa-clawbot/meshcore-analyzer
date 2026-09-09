@@ -22,7 +22,7 @@ var clientPubkeyRe = regexp.MustCompile(`^[0-9a-f]{2,64}$`)
 // companion reports WHERE it directly heard a node, so we write a
 // client_receptions row and never touch the observers/observations tables.
 // rxPubkey is the companion pubkey from the topic (ACL-bound by the broker).
-func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map[string]interface{}, channelKeys map[string]string, regionKeys map[string][]byte) {
+func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map[string]interface{}, channelKeys map[string]string, regionSet *regionKeySet) {
 	// The companion identity IS the (ACL-bound) topic pubkey. Reject non-hex
 	// topic segments so a no-ACL broker can't pollute the coverage tables, and
 	// never fall back to a payload-supplied id (that would defeat the ACL trust
@@ -91,7 +91,7 @@ func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map
 		// collapse them and ON CONFLICT DO NOTHING would silently drop all but
 		// the first.
 		rxAtMillis := rxTime.Format(rxTimeMillisLayout)
-		if obs := buildClientRxObservation(direction, rxPubkey, rawHex, rxAtMillis, ingestedAt, decoded, regionKeys, snrPtr, rssiPtr, lat, lon, accPtr); obs != nil {
+		if obs := buildClientRxObservation(direction, rxPubkey, rawHex, rxAtMillis, ingestedAt, decoded, regionSet, snrPtr, rssiPtr, lat, lon, accPtr); obs != nil {
 			if _, err := store.InsertClientRxObservation(obs); err != nil {
 				log.Printf("MQTT [%s] client observation insert: %v", tag, err)
 			}
@@ -328,7 +328,7 @@ type ClientRxObservation struct {
 // signal — per-flood row multiplicity meant to measure forwarder
 // amplification of traffic actually heard over the air.
 func buildClientRxObservation(
-	direction, rxPubkey, rawHex, rxAt, ingestedAt string, decoded *DecodedPacket, regionKeys map[string][]byte,
+	direction, rxPubkey, rawHex, rxAt, ingestedAt string, decoded *DecodedPacket, regionSet *regionKeySet,
 	snr *float64, rssi *int, lat, lon float64, posAccM *float64,
 ) *ClientRxObservation {
 	if !strings.EqualFold(direction, "rx") {
@@ -353,7 +353,7 @@ func buildClientRxObservation(
 		obs.Code1 = &decoded.TransportCodes.Code1
 		obs.Code2 = &decoded.TransportCodes.Code2
 		if decoded.TransportCodes.Code1 != "0000" {
-			sn := matchScope(regionKeys, byte(decoded.Header.PayloadType), decoded.payloadRaw, decoded.TransportCodes.Code1)
+			sn := regionSet.matchScopeName(byte(decoded.Header.PayloadType), decoded.payloadRaw, decoded.TransportCodes.Code1)
 			obs.ScopeName = &sn
 		}
 	}

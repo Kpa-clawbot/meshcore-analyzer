@@ -52,6 +52,7 @@ type Config struct {
 	ChannelKeys          map[string]string           `json:"channelKeys,omitempty"`
 	HashChannels         []string                    `json:"hashChannels,omitempty"`
 	HashRegions          []string                    `json:"hashRegions,omitempty"`
+	AutoRegionKeys       *AutoRegionKeysConfig       `json:"autoRegionKeys,omitempty"`
 	Retention            *RetentionConfig            `json:"retention,omitempty"`
 	Metrics              *MetricsConfig              `json:"metrics,omitempty"`
 	Runtime              *RuntimeConfig              `json:"runtime,omitempty"`
@@ -439,4 +440,59 @@ func (c *Config) ResolvedSources() []MQTTSource {
 		// connections natively via gorilla/websocket.
 	}
 	return c.MQTTSources
+}
+
+// AutoRegionKeysConfig controls the opt-in derivation of region keys from the
+// names repeaters declare over RF (node_declared_regions), on top of the
+// explicit hashRegions list.
+//
+// TOP-LEVEL BLOCK, a sibling of hashRegions — not nested inside it. Config
+// loading is plain json.Unmarshal with no DisallowUnknownFields, so a
+// mis-nested key is silently ignored and derivation stays off with no error,
+// the same trap clientRxObservations documents.
+type AutoRegionKeysConfig struct {
+	Enabled        bool `json:"enabled"`
+	MaxDerived     int  `json:"maxDerived"`
+	RefreshMinutes int  `json:"refreshMinutes"`
+}
+
+// autoRegionKeysDefaultMaxDerived bounds the derived tier. Every added key
+// raises the random ambiguity rate by 1/65536 per scoped packet (code1 is two
+// bytes) and costs one more HMAC per transport-scoped packet — the match is
+// O(keys) and cannot be indexed, because the code depends on the payload. 256
+// on top of a typical explicit set puts the ambiguity rate near 0.5%, which is
+// the ceiling this design accepts.
+const autoRegionKeysDefaultMaxDerived = 256
+
+// autoRegionKeysDefaultRefreshMinutes is how often the derived tier is rebuilt
+// from the database. Declared-region answers arrive at human pace (a drive-by
+// with a companion app, or a 24h observer report), so minutes-scale staleness
+// is irrelevant and a tighter interval only burns queries.
+const autoRegionKeysDefaultRefreshMinutes = 15
+
+// AutoRegionKeysEnabled reports whether region keys may be derived from
+// declared-region answers. Default false.
+func (c *Config) AutoRegionKeysEnabled() bool {
+	return c.AutoRegionKeys != nil && c.AutoRegionKeys.Enabled
+}
+
+// AutoRegionKeysMaxDerived returns the derived-tier cap, falling back to the
+// default for absent, zero, or negative values — a zero is indistinguishable
+// from "key omitted" after json.Unmarshal, and neither should silently mean
+// "derive nothing" when the operator has switched the feature on.
+func (c *Config) AutoRegionKeysMaxDerived() int {
+	if c.AutoRegionKeys == nil || c.AutoRegionKeys.MaxDerived <= 0 {
+		return autoRegionKeysDefaultMaxDerived
+	}
+	return c.AutoRegionKeys.MaxDerived
+}
+
+// AutoRegionKeysRefreshMinutes returns the refresh interval in minutes,
+// falling back to the default for absent, zero, or negative values — a zero
+// here would otherwise panic time.NewTicker.
+func (c *Config) AutoRegionKeysRefreshMinutes() int {
+	if c.AutoRegionKeys == nil || c.AutoRegionKeys.RefreshMinutes <= 0 {
+		return autoRegionKeysDefaultRefreshMinutes
+	}
+	return c.AutoRegionKeys.RefreshMinutes
 }
