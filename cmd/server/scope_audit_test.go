@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1180,13 +1181,32 @@ func TestHandleScopeAuditSurfacesUnmatchedPackets(t *testing.T) {
 // forwarded are stored unmatched. Verification derives the key from the
 // repeater's own declaration, finds two corroborating packets, and the region
 // must leave notObserved with its evidence count reported.
+// transportFloodPacketFor builds a TRANSPORT_FLOOD packet whose code1 is the
+// code `region` derives over this payload, so the verifier will match it. The
+// shape mirrors realTransportFloodPacket: header 0x14 (route 0, payload type
+// 5), the two transport codes, path byte 0x41 (hash size 2, one hop), the hop,
+// then the payload.
+//
+// It exists because corroboration has to come from DIFFERENT payloads. Two
+// copies of one packet derive the same code by construction, so they are one
+// observation counted twice, not the two independent matches the threshold
+// argument rests on.
+func transportFloodPacketFor(region string, payload []byte) string {
+	code1 := regionCode(region, 5, payload)
+	return "14" + code1 + "0000" + "41" + "E3D3" + strings.ToUpper(hex.EncodeToString(payload))
+}
+
 func TestHandleScopeAuditVerifiesDeclaredRegion(t *testing.T) {
 	srv, router := setupScopeAuditServer(t)
 	pk := testFullPubkeyA
 	insertDeclared(t, srv, pk, time.Now().UTC().Format(time.RFC3339), "fm-112,behss", 0)
 	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	// Two DIFFERENT payloads, each deriving to #fm-112 on its own. The first is
+	// the real packet captured from a live instance; the second is built for
+	// this test. Seeding the same packet twice would prove only that the
+	// verifier counts rows.
 	seedUnmatchedRawAt(t, srv.store, pk[:4], realTransportFloodPacket, RouteTransportFlood, recent)
-	seedUnmatchedRawAt(t, srv.store, pk[:4], realTransportFloodPacket, RouteTransportFlood, recent)
+	seedUnmatchedRawAt(t, srv.store, pk[:4], transportFloodPacketFor("fm-112", []byte{0x51, 0x52, 0x53, 0x54, 0x55}), RouteTransportFlood, recent)
 
 	got := getScopeAudit(t, router, "")
 	if len(got.Repeaters) != 1 {
@@ -1292,3 +1312,39 @@ func seedUnmatchedRawAt(t *testing.T, s *PacketStore, forwarder, rawHex string, 
 // TestHandleNodeScopesDifferentWindowIsSeparateCacheEntry confirms the cache
 // key includes window: a request for a different window must recompute
 // rather than reuse another window's cached entry.
+
+// TestHandleScopeAuditNamedRegionNeedsNoVerification pins the interaction
+// between naming a packet at ingest and verifying it at read time, which are
+// built separately and had no test together.
+//
+// Deriving region keys from what nodes declare means a packet that used to be
+// stored unnameable now arrives with a name. The audit must then report that
+// region as observed by the ordinary route: present in agg.scopes, absent from
+// notObserved, and NOT claimed by regionEvidence, which exists to explain
+// regions that could only be established by verification.
+//
+// Getting this wrong is not loud. A region would still be green, so the page
+// looks right while the reason underneath it is wrong, and a reader chasing
+// "how do we know this" is told the wrong story.
+func TestHandleScopeAuditNamedRegionNeedsNoVerification(t *testing.T) {
+	srv, router := setupScopeAuditServer(t)
+	pk := testFullPubkeyA
+	insertDeclared(t, srv, pk, time.Now().UTC().Format(time.RFC3339), "fm-112", 0)
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	// scopeMatched is the state the ingestor writes once it holds a key for
+	// the region, whether that key was configured by hand or derived.
+	seedTransmissionRouteAt(t, srv.store, pk[:4], scopeMatched("#fm-112"), RouteTransportFlood, recent)
+
+	row := getScopeAudit(t, router, "").Repeaters[0]
+	for _, rgn := range row.NotObserved {
+		if rgn == "fm-112" {
+			t.Errorf("notObserved = %v, must not contain fm-112 — it was observed under its own name", row.NotObserved)
+		}
+	}
+	if n, ok := row.RegionEvidence["fm-112"]; ok {
+		t.Errorf("regionEvidence[fm-112] = %d, want absent — verification explains regions that could not be named, and this one was", n)
+	}
+	if row.ObservedUnmatchedPackets != 0 {
+		t.Errorf("observedUnmatchedPackets = %d, want 0 — a named packet is not unnameable traffic", row.ObservedUnmatchedPackets)
+	}
+}

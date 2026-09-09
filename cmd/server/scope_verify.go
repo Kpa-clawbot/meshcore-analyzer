@@ -99,7 +99,14 @@ func scopeHMACInputs(rawHex string) (payloadType byte, payload []byte, code1 str
 		return 0, nil, "", false
 	}
 	rest := buf[offset:]
-	if len(rest) == 0 {
+	if len(rest) == 0 || len(rest) > maxPacketPayload {
+		// The upper bound mirrors DecodePacket, which rejects a payload past
+		// the firmware's MAX_PACKET_PAYLOAD. Unreachable in practice, because
+		// such a packet never reaches the database with an empty scope_name in
+		// the first place, but the comment above claims this walks the same
+		// offsets as the decoder and that should be true rather than nearly
+		// true. A verifier that accepts what the decoder rejects is a small
+		// divergence today and a confusing one to debug later.
 		return 0, nil, "", false
 	}
 	return byte(header.PayloadType), rest, code1, true
