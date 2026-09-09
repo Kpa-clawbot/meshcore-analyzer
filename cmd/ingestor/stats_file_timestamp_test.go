@@ -69,7 +69,7 @@ func TestStatsFileWriter_SampledAtMatchesProcIOSampledAt(t *testing.T) {
 		}
 	}
 
-	StartStatsFileWriter(store, 50*time.Millisecond)
+	t.Cleanup(StartStatsFileWriter(store, 50*time.Millisecond))
 
 	// Wait for the file to land with a populated procIO block.
 	deadline := time.Now().Add(3 * time.Second)

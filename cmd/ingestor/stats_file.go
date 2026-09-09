@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/meshcore-analyzer/perfio"
@@ -240,11 +241,20 @@ func procIORate(prev, cur procIOSnapshot, stamp string) *PerfIOSample {
 // The stats file path is resolved via statsFilePath() once at writer-loop
 // start; the env var (CORESCOPE_INGESTOR_STATS) is only re-read on process
 // restart, not per tick.
-func StartStatsFileWriter(s *Store, interval time.Duration) {
+// The returned stop function ends the writer goroutine and returns once it has
+// exited. Production ignores it and runs for the process lifetime; tests must
+// call it, because this goroutine reads package-level hooks (readProcSelfIOFn)
+// that a later test may replace, and a writer left running past its own test
+// races with whoever runs next. It is safe to call more than once.
+func StartStatsFileWriter(s *Store, interval time.Duration) (stop func()) {
 	if interval <= 0 {
 		interval = time.Second
 	}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	var once sync.Once
 	go func() {
+		defer close(stopped)
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		path := statsFilePath()
@@ -257,7 +267,12 @@ func StartStatsFileWriter(s *Store, interval time.Duration) {
 		// The buffer grows once and stays.
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
-		for range t.C {
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+			}
 			// Capture time.Now() ONCE per tick (Carmack must-fix #5).
 			// Both snapshot.SampledAt and procIO.SampledAt MUST share the
 			// same string so the freshness guard isn't validating one
@@ -305,4 +320,8 @@ func StartStatsFileWriter(s *Store, interval time.Duration) {
 			}
 		}
 	}()
+	return func() {
+		once.Do(func() { close(done) })
+		<-stopped
+	}
 }
