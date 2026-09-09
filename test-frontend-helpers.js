@@ -7489,14 +7489,19 @@ console.log('\n=== live.js: one WebSocket per viewer ===');
     assert.strictEqual(registered.length, 1, 'it must register exactly one listener on the shared channel');
   });
 
-  test('subscribing twice does not double up', () => {
-    // Navigating away and back re-runs the page init. Before, that closed and
-    // reopened a socket; now a second registration would silently double every
-    // packet the map renders.
+  test('re-entering the page keeps one listener, and it is the current one', () => {
+    // Navigating away and back re-runs the page init. Two failure modes sit
+    // either side of this: registering again without dropping the old one
+    // doubles every packet, and skipping the registration leaves the previous
+    // visit's closure subscribed, which renders into a page that is gone. That
+    // second one is not theoretical: it was measured against a running
+    // instance, where packets kept arriving and the live counter stayed at 0.
     const { ctx, registered } = makeWSSandbox();
     ctx.window._liveConnectWS();
+    const first = registered[0];
     ctx.window._liveConnectWS();
-    assert.strictEqual(registered.length, 1, 'a second call must be a no-op while still subscribed');
+    assert.strictEqual(registered.length, 1, 'exactly one listener must remain');
+    assert.notStrictEqual(registered[0], first, 'and it must be the new one, bound to the current page');
   });
 
   test('the handler only reacts to packet messages', () => {

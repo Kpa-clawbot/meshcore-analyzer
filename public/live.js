@@ -3326,7 +3326,13 @@
   // socket, and the listener registered here survives a reconnect because the
   // listener list does.
   function connectWS() {
-    if (wsHandler) return; // already subscribed; navigating back must not double up
+    // Re-subscribe rather than skip when a handler is already registered.
+    // Returning early here looks like the right guard against double
+    // subscription, but it keeps the PREVIOUS visit's closure registered, and
+    // that one renders into a page that no longer exists: packets keep
+    // arriving and nothing appears. Dropping the old registration first is
+    // idempotent in the same way and always binds the current page.
+    if (wsHandler) offWS(wsHandler);
     wsHandler = (msg) => {
       if (msg && msg.type === 'packet') bufferPacket(msg.data);
     };
