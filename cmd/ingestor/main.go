@@ -1635,12 +1635,25 @@ func loadRegionKeys(cfg *Config) map[string][]byte {
 	return keys
 }
 
-// matchScope performs one HMAC-SHA256 per configured region. Expected
-// len(regionKeys) ≤ 50; beyond that, consider a pre-indexed lookup table.
-func matchScope(regionKeys map[string][]byte, payloadType byte, payloadRaw []byte, code1 string) string {
+// matchingRegions returns every configured region whose derived code equals
+// the packet's code1, rather than the first one found.
+//
+// The distinction matters because code1 is two bytes: two configured regions
+// collide on a given payload with probability 1/65536, and at 159 keys on a
+// live instance that is roughly 0.25% of transport-scoped packets, hundreds a
+// week rather than a curiosity. Returning the first match made the stored
+// region name depend on Go's randomised map iteration order, so the same
+// packet could be named differently on two runs and neither answer was
+// evidence of anything.
+//
+// The cost is unchanged: this is the same single pass over the same keys, it
+// just does not stop early. There is no indexable shortcut, because code1 is
+// an HMAC over the payload and nothing here is payload-independent.
+func matchingRegions(regionKeys map[string][]byte, payloadType byte, payloadRaw []byte, code1 string) []string {
 	if code1 == "0000" || len(regionKeys) == 0 || len(payloadRaw) == 0 {
-		return ""
+		return nil
 	}
+	var matched []string
 	for name, key := range regionKeys {
 		mac := hmac.New(sha256.New, key)
 		mac.Write([]byte{payloadType})
@@ -1654,9 +1667,35 @@ func matchScope(regionKeys map[string][]byte, payloadType byte, payloadRaw []byt
 		}
 		codeBytes := [2]byte{byte(code & 0xFF), byte(code >> 8)}
 		if strings.ToUpper(hex.EncodeToString(codeBytes[:])) == code1 {
-			return name
+			matched = append(matched, name)
 		}
 	}
+	return matched
+}
+
+// matchScope names one packet's region scope, or returns "" when it cannot be
+// named with confidence.
+//
+// Exactly one match names the packet. Several matches name nothing: the two
+// candidates are equally sourced, there is no principled winner, and storing
+// a wrong region name is worse than storing none. "" is already the ingestor's
+// "transport-scoped but unnameable" state (scopeNameForDB), so an ambiguous
+// packet lands in a state the rest of the system already understands rather
+// than in a new one.
+//
+// The collision is logged because it is otherwise invisible: the packet is
+// stored exactly like one whose region this instance holds no key for, and an
+// operator looking at a growing unnameable count deserves to see which of
+// their configured regions are colliding.
+func matchScope(regionKeys map[string][]byte, payloadType byte, payloadRaw []byte, code1 string) string {
+	matched := matchingRegions(regionKeys, payloadType, payloadRaw, code1)
+	switch len(matched) {
+	case 0:
+		return ""
+	case 1:
+		return matched[0]
+	}
+	log.Printf("[regions] ambiguous collision between %v; storing unmatched", matched)
 	return ""
 }
 
