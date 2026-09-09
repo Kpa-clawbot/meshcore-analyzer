@@ -51,6 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.scope.outputs.code }}
+      ingestor: ${{ steps.scope.outputs.ingestor }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -66,6 +67,7 @@ jobs:
           # never skipped.
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "ingestor=true" >> "$GITHUB_OUTPUT"
             echo "event=${{ github.event_name }} -> full pipeline"
             exit 0
           fi
@@ -73,6 +75,7 @@ jobs:
           # Empty diff means something is off; run everything rather than guess.
           if [ -z "$CHANGED" ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "ingestor=true" >> "$GITHUB_OUTPUT"
             echo "empty diff -> full pipeline"
             exit 0
           fi
@@ -85,6 +88,49 @@ jobs:
             echo "code=false" >> "$GITHUB_OUTPUT"
             echo "-> documentation only, heavy jobs skip (and report Success)"
           fi
+          # The race detector is its own job, and it only earns its ten minutes
+          # when the code it inspects changed. A frontend or docs PR cannot
+          # introduce a data race in the ingestor.
+          if echo "$CHANGED" | grep -qE '^cmd/ingestor/.*[.]go$'; then
+            echo "ingestor=true" >> "$GITHUB_OUTPUT"
+            echo "-> ingestor Go files changed, race detector runs"
+          else
+            echo "ingestor=false" >> "$GITHUB_OUTPUT"
+            echo "-> no ingestor Go changes, race detector skips"
+          fi
+
+  # ───────────────────────────────────────────────────────────────
+  # 1a. Race detector (ingestor) — its own job on purpose
+  # ───────────────────────────────────────────────────────────────
+  # Runs beside "Go Build & Test" rather than inside it, so its ten-odd
+  # minutes overlap the E2E job instead of extending the critical path, and
+  # only when ingestor Go files changed. A frontend or documentation PR cannot
+  # introduce a data race here, and paying for the check on every PR is what
+  # gets a check switched off again.
+  #
+  # The server has -race in its own step already; this closes the same gap for
+  # the ingestor, which carries an atomic.Pointer snapshot (the region key
+  # set) whose safety is an argument until something checks it.
+  race-test:
+    name: "🏁 Race detector (ingestor)"
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.ingestor == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+          cache-dependency-path: cmd/ingestor/go.sum
+
+      - name: go test -race
+        run: |
+          set -e -o pipefail
+          cd cmd/ingestor
+          go test -timeout 30m -race ./...
 
   # ───────────────────────────────────────────────────────────────
   # 1. Go Build & Test
