@@ -7219,6 +7219,31 @@ console.log('\n=== scope-audit.js: mergedScopeChips ===');
     assert.ok(h.includes('&lt;img'));
   });
 
+  test('a region verified against the repeater own declaration is green, and says so', () => {
+    const h = chips({ declaredRegions: ['fm-112'], notObserved: [], regionEvidence: { 'fm-112': 23 } });
+    assert.ok(h.includes('sa-chip-observed'), 'still green — it is observed');
+    assert.ok(h.includes('sa-chip-verified'), 'but marked as established differently');
+    assert.ok(h.includes('23'), 'the tooltip states how much evidence there is');
+  });
+
+  test('a region observed by name carries no verified marker', () => {
+    const h = chips({ declaredRegions: ['be'], notObserved: [], regionEvidence: {} });
+    assert.ok(h.includes('sa-chip-observed'));
+    assert.ok(!h.includes('sa-chip-verified'), 'a normally-named region is not a verification');
+  });
+
+  test('a single-hit region stays grey and its tooltip explains why', () => {
+    const h = chips({ declaredRegions: ['fm-112'], notObserved: ['fm-112'], regionEvidence: { 'fm-112': 1 } });
+    assert.ok(h.includes('sa-chip-unobserved'), 'one hit is not enough to turn it green');
+    assert.ok(/one match/i.test(h), 'must say why one hit was not accepted');
+  });
+
+  test('a missing regionEvidence field renders as before (older server)', () => {
+    const h = chips({ declaredRegions: ['be'], notObserved: ['be'] });
+    assert.ok(h.includes('sa-chip-unobserved'));
+    assert.ok(!h.includes('sa-chip-verified'));
+  });
+
   test('a notObserved entry that is not declared cannot invent a chip', () => {
     // Defensive: the server guarantees notObserved is a subset (197 of 197
     // rows checked), but the column must not grow a phantom chip if that ever
@@ -7252,10 +7277,11 @@ console.log('\n=== scope-audit.js: unmatchedCaveat ===');
     assert.strictEqual(caveat({}), '');
   });
 
-  test('a non-zero count renders a chip carrying the number', () => {
+  test('a non-zero unexplained count renders a chip carrying the number', () => {
     const h = caveat({ observedUnmatchedPackets: 148 });
     assert.ok(h.includes('sa-chip-unmatched'), 'should carry its own class');
-    assert.ok(h.includes('148'), 'should state the count, not just that there is one');
+    assert.ok(h.includes('148'), 'with no evidence to subtract, the whole count is unexplained');
+    assert.ok(h.includes('unexplained'), 'the word changed with the meaning');
   });
 
   test('singular and plural are both grammatical', () => {
@@ -7263,18 +7289,77 @@ console.log('\n=== scope-audit.js: unmatchedCaveat ===');
     assert.ok(caveat({ observedUnmatchedPackets: 2 }).includes('2 forwarded packets '));
   });
 
-  test('the title names the cause, not just the symptom', () => {
-    // The operator fix is a hashRegions edit; a caveat that does not say so
-    // sends them looking at the repeater instead of at their own config.
+  test('the title says what unexplained traffic implies', () => {
+    // The cause is no longer only a hashRegions gap: after verification, what
+    // is left over is traffic for a region the repeater does not declare.
     const h = caveat({ observedUnmatchedPackets: 5 });
-    assert.ok(h.includes('hashRegions'), 'must name the config key that fixes it');
+    assert.ok(/does not declare/i.test(h), 'must state the sharper conclusion');
+  });
+
+  test('traffic fully explained by verification raises no caveat', () => {
+    assert.strictEqual(caveat({ observedUnmatchedPackets: 23, regionEvidence: { 'fm-112': 23 } }), '');
+  });
+
+  test('only the unexplained remainder is reported', () => {
+    const h = caveat({ observedUnmatchedPackets: 30, regionEvidence: { 'fm-112': 23 } });
+    assert.ok(h.includes('7 forwarded packets '), 'want the remainder, not the total');
+  });
+
+  test('evidence the server refused to count is not subtracted either', () => {
+    // A region with a single deriving packet stays in notObserved on purpose:
+    // one match in 65536 is chance, not evidence (scopeVerifyMinCorroboration).
+    // Subtracting it here would call that packet explained while the chip
+    // beside it says the opposite. Keyed on notObserved rather than on the
+    // number, so the threshold lives in one place: the server.
+    const h = caveat({
+      observedUnmatchedPackets: 3,
+      regionEvidence: { 'fm-112': 1 },
+      notObserved: ['fm-112'],
+    });
+    assert.ok(h.includes('3 forwarded packets '), 'all three are still unexplained');
+  });
+
+  test('evidence that did establish a region is still subtracted', () => {
+    const h = caveat({
+      observedUnmatchedPackets: 10,
+      regionEvidence: { 'nl-nb': 3, belml: 1 },
+      notObserved: ['belml'],
+    });
+    assert.ok(h.includes('7 forwarded packets '), 'subtract the verified 3, keep the uncorroborated 1');
+  });
+
+  test('a sampled count is reported as an upper bound', () => {
+    // observedUnmatchedPackets counts every packet; the evidence can only come
+    // from the packets the verifier actually held. Subtracting an undercounted
+    // number from a complete one overstates what is unexplained, so the chip
+    // says at most rather than pretending to an exact figure.
+    const h = caveat({
+      observedUnmatchedPackets: 900,
+      observedUnmatchedSampled: 512,
+      regionEvidence: { 'nl-nb': 40 },
+    });
+    assert.ok(h.includes('at most 860 forwarded packets '), 'want the bound, stated as one');
+  });
+
+  test('an unsampled count keeps its exact wording', () => {
+    const h = caveat({
+      observedUnmatchedPackets: 30,
+      observedUnmatchedSampled: 30,
+      regionEvidence: { 'fm-112': 23 },
+    });
+    assert.ok(h.includes('7 forwarded packets '), 'exact remainder');
+    assert.ok(!/at most/.test(h), 'nothing was sampled away, so do not hedge');
   });
 
   test('a non-numeric count renders nothing rather than NaN', () => {
-    // observedUnmatchedPackets is server-supplied. A truthiness check accepts
-    // a string, and the chip then reads "NaN forwarded packets".
     assert.strictEqual(caveat({ observedUnmatchedPackets: '12' }), '');
     assert.strictEqual(caveat({ observedUnmatchedPackets: NaN }), '');
+  });
+
+  test('evidence exceeding the count cannot produce a negative remainder', () => {
+    // One packet can derive to two of a repeater's declared regions, so the
+    // evidence values can sum past the number of distinct packets.
+    assert.strictEqual(caveat({ observedUnmatchedPackets: 4, regionEvidence: { a: 3, b: 3 } }), '');
   });
 
   test('the count is not injected raw into markup', () => {

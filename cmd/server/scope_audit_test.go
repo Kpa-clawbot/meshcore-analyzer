@@ -1173,3 +1173,122 @@ func TestHandleScopeAuditSurfacesUnmatchedPackets(t *testing.T) {
 		t.Error("wildcardContradiction = true, want false — unmatched traffic is scoped, so it says nothing about '*'")
 	}
 }
+
+// TestHandleScopeAuditVerifiesDeclaredRegion is the case this milestone exists
+// for, built from the real packet that started the investigation. A repeater
+// declares "fm-112"; this instance holds no key for it, so both packets it
+// forwarded are stored unmatched. Verification derives the key from the
+// repeater's own declaration, finds two corroborating packets, and the region
+// must leave notObserved with its evidence count reported.
+func TestHandleScopeAuditVerifiesDeclaredRegion(t *testing.T) {
+	srv, router := setupScopeAuditServer(t)
+	pk := testFullPubkeyA
+	insertDeclared(t, srv, pk, time.Now().UTC().Format(time.RFC3339), "fm-112,behss", 0)
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	seedUnmatchedRawAt(t, srv.store, pk[:4], realTransportFloodPacket, RouteTransportFlood, recent)
+	seedUnmatchedRawAt(t, srv.store, pk[:4], realTransportFloodPacket, RouteTransportFlood, recent)
+
+	got := getScopeAudit(t, router, "")
+	if len(got.Repeaters) != 1 {
+		t.Fatalf("repeaters = %+v, want 1", got.Repeaters)
+	}
+	row := got.Repeaters[0]
+	if row.RegionEvidence["fm-112"] != 2 {
+		t.Errorf("regionEvidence = %v, want fm-112:2", row.RegionEvidence)
+	}
+	for _, n := range row.NotObserved {
+		if n == "fm-112" {
+			t.Errorf("notObserved = %v, must not contain fm-112 - two corroborating packets prove it is forwarded", row.NotObserved)
+		}
+	}
+	if len(row.NotObserved) != 1 || row.NotObserved[0] != "behss" {
+		t.Errorf("notObserved = %v, want [behss] - that region has no corroborating traffic here", row.NotObserved)
+	}
+}
+
+// TestHandleScopeAuditReportsTheVerificationSampleSize pins the field a client
+// needs to subtract RegionEvidence from ObservedUnmatchedPackets honestly.
+// RegionEvidence can only ever count packets inside the sample, so a client
+// that subtracts it from an uncapped total overstates what is unexplained. The
+// two are equal here, which is the case that says "this subtraction is exact".
+
+// TestHandleScopeAuditDoesNotVerifyOnOnePacket: a single match is 1-in-65536
+// and must leave the region in notObserved, with its count still reported so a
+// client can say "one hit, not enough".
+func TestHandleScopeAuditDoesNotVerifyOnOnePacket(t *testing.T) {
+	srv, router := setupScopeAuditServer(t)
+	pk := testFullPubkeyA
+	insertDeclared(t, srv, pk, time.Now().UTC().Format(time.RFC3339), "fm-112", 0)
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	seedUnmatchedRawAt(t, srv.store, pk[:4], realTransportFloodPacket, RouteTransportFlood, recent)
+
+	got := getScopeAudit(t, router, "")
+	row := got.Repeaters[0]
+	if row.RegionEvidence["fm-112"] != 1 {
+		t.Errorf("regionEvidence = %v, want fm-112:1", row.RegionEvidence)
+	}
+	if len(row.NotObserved) != 1 || row.NotObserved[0] != "fm-112" {
+		t.Errorf("notObserved = %v, want [fm-112] - one corroborating packet is not evidence", row.NotObserved)
+	}
+}
+
+// TestHandleScopeAuditLeavesCleanRowsAlone: a repeater whose declared regions
+// are all observed by name, with no unmatched traffic at all, must be untouched
+// by verification - no evidence, no change to notObserved, and an empty (not
+// null) regionEvidence so a client can iterate it without a guard.
+
+// TestHandleScopeAuditReportsTheVerificationSampleSize pins the field a client
+// needs to subtract RegionEvidence from ObservedUnmatchedPackets honestly.
+// RegionEvidence can only ever count packets inside the sample, so a client
+// that subtracts it from an uncapped total overstates what is unexplained. The
+// two are equal here, which is the case that says "this subtraction is exact".
+func TestHandleScopeAuditReportsTheVerificationSampleSize(t *testing.T) {
+	srv, router := setupScopeAuditServer(t)
+	pk := testFullPubkeyA
+	insertDeclared(t, srv, pk, time.Now().UTC().Format(time.RFC3339), "fm-112", 0)
+	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	seedUnmatchedRawAt(t, srv.store, pk[:4], realTransportFloodPacket, RouteTransportFlood, recent)
+	seedUnmatchedRawAt(t, srv.store, pk[:4], realTransportFloodPacket, RouteTransportFlood, recent)
+
+	row := getScopeAudit(t, router, "").Repeaters[0]
+	if row.ObservedUnmatchedPackets != 2 {
+		t.Fatalf("observedUnmatchedPackets = %d, want 2", row.ObservedUnmatchedPackets)
+	}
+	if row.ObservedUnmatchedSampled != row.ObservedUnmatchedPackets {
+		t.Errorf("observedUnmatchedSampled = %d, want %d — nothing was capped away at this size, and a client can only tell from this field",
+			row.ObservedUnmatchedSampled, row.ObservedUnmatchedPackets)
+	}
+}
+
+// TestHandleScopeAuditDoesNotVerifyOnOnePacket: a single match is 1-in-65536
+// and must leave the region in notObserved, with its count still reported so a
+// client can say "one hit, not enough".
+
+// seedUnmatchedRawAt seeds one unmatched transmission carrying a real raw_hex,
+// attributed to forwarder. Distinct from seedTransmissionRouteAt, which seeds
+// raw_hex 'AA' - fine for tests that never parse it, useless here.
+func seedUnmatchedRawAt(t *testing.T, s *PacketStore, forwarder, rawHex string, routeType int, firstSeen string) {
+	t.Helper()
+	scopeSeedCounter++
+	hash := fmt.Sprintf("scoperaw%d", scopeSeedCounter)
+	res, err := s.db.conn.Exec(
+		`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, code1, code2, scope_name)
+		 VALUES (?, ?, ?, ?, 5, '9209', '0000', '')`,
+		rawHex, hash, firstSeen, routeType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	txID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.conn.Exec(
+		`INSERT INTO observations (transmission_id, path_json, timestamp) VALUES (?, ?, 0)`,
+		txID, `["`+strings.ToUpper(forwarder)+`"]`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHandleNodeScopesDifferentWindowIsSeparateCacheEntry confirms the cache
+// key includes window: a request for a different window must recompute
+// rather than reuse another window's cached entry.

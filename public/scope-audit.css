@@ -84,3 +84,8 @@
    caveats on the row's finding, not findings themselves, and neither may
    compete visually with the red/green scope chips beside them. */
 .sa-chip-unmatched { background: var(--section-bg, var(--card-bg)); color: var(--text-muted); border: 1px dashed var(--border); font-family: inherit; font-style: italic; }
+
+/* Verified-by-declaration: the same green as any observed chip, because the
+   region IS observed. The dotted underline says how that was established
+   without introducing a third colour into a column that already carries two. */
+.sa-chip-verified { text-decoration: underline dotted; text-underline-offset: 2px; }
