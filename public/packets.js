@@ -1592,7 +1592,12 @@
         <div class="filter-group filter-group-dropdowns">
           <div class="multi-select-wrap" id="observerFilterWrap">
             <button class="multi-select-trigger" id="observerTrigger" title="Show only packets seen by selected observer stations">All Observers ▾</button>
-            <div class="multi-select-menu" id="observerMenu"></div>
+            <div class="multi-select-menu" id="observerMenu">
+              <div class="multi-select-search-wrap">
+                <input type="text" id="observerSearchInput" class="multi-select-search" placeholder="Search observers…" autocomplete="off" aria-label="Search observers">
+              </div>
+              <div class="multi-select-list" id="observerList"></div>
+            </div>
           </div>
           <div id="packetsRegionFilter" class="region-filter-container" style="display:inline-block;vertical-align:middle"></div>
           <div id="packetsAreaFilter" style="display:none;vertical-align:middle"></div>
@@ -1703,8 +1708,16 @@
 
     // --- Observer multi-select ---
     const obsMenu = document.getElementById('observerMenu');
+    const obsList = document.getElementById('observerList');
+    const obsSearchInput = document.getElementById('observerSearchInput');
     const obsTrigger = document.getElementById('observerTrigger');
     const selectedObservers = new Set(filters.observer ? filters.observer.split(',') : []);
+    function applyObserverSearchFilter() {
+      const term = (obsSearchInput.value || '').trim().toLowerCase();
+      obsList.querySelectorAll('.multi-select-item[data-obs-name]').forEach((item) => {
+        item.style.display = (!term || item.dataset.obsName.startsWith(term)) ? '' : 'none';
+      });
+    }
     function buildObserverMenu() {
       const allChecked = selectedObservers.size === 0;
       let html = `<label class="multi-select-item"><input type="checkbox" data-obs-id="__all__" ${allChecked ? 'checked' : ''}> All Observers</label>`;
@@ -1716,11 +1729,15 @@
       } else {
         for (const o of observers) {
           const checked = selectedObservers.has(String(o.id)) ? 'checked' : '';
-          html += `<label class="multi-select-item"><input type="checkbox" data-obs-id="${o.id}" ${checked}> ${escapeHtml(o.name || o.id)}</label>`;
+          const name = o.name || String(o.id);
+          html += `<label class="multi-select-item" data-obs-name="${escapeHtml(name.toLowerCase())}"><input type="checkbox" data-obs-id="${o.id}" ${checked}> ${escapeHtml(name)}</label>`;
         }
       }
-      obsMenu.innerHTML = html;
+      obsList.innerHTML = html;
+      applyObserverSearchFilter();
     }
+    obsSearchInput.addEventListener('click', (e) => e.stopPropagation());
+    obsSearchInput.addEventListener('input', applyObserverSearchFilter);
     // #1693 — expose for loadObservers() to refresh on resolve.
     _rebuildObserverMenu = () => { buildObserverMenu(); updateObsTrigger(); };
     function updateObsTrigger() {
@@ -1736,7 +1753,12 @@
     }
     buildObserverMenu();
     updateObsTrigger();
-    obsTrigger.addEventListener('click', (e) => { e.stopPropagation(); obsMenu.classList.toggle('open'); typeMenu.classList.remove('open'); });
+    obsTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      obsMenu.classList.toggle('open');
+      typeMenu.classList.remove('open');
+      if (obsMenu.classList.contains('open')) obsSearchInput.focus();
+    });
     obsMenu.addEventListener('change', (e) => {
       const id = e.target.dataset.obsId;
       if (id === '__all__') {

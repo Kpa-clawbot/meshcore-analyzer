@@ -3528,6 +3528,16 @@ button.region-pill-active:hover { opacity: 0.85; color: var(--text-on-accent); }
   box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 4px 0; display: none;
 }
 .multi-select-menu.open { display: block; }
+.multi-select-search-wrap {
+  position: sticky; top: 0; z-index: 1; background: var(--card-bg, #fff);
+  padding: 4px 8px 6px; border-bottom: 1px solid var(--border);
+}
+.multi-select-search {
+  width: 100%; box-sizing: border-box; padding: 5px 8px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--input-bg); color: var(--text);
+  font-size: 13px;
+}
+.multi-select-search:focus { border-color: var(--accent); outline: none; }
 .multi-select-item {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
   font-size: 13px; cursor: pointer; color: var(--text); white-space: nowrap;
