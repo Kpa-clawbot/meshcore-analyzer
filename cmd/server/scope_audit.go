@@ -22,6 +22,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -296,6 +297,16 @@ type scopeAuditTargetAgg struct {
 	// of them may be a region this instance cannot name rather than one the
 	// repeater is not forwarding.
 	unmatchedPackets int64
+
+	// unmatchedTxIDs are the transmissions behind unmatchedPackets, kept so
+	// declared-region verification can test this target's own declarations
+	// against this target's own unnameable traffic (scope_verify.go). The same
+	// (target, txID) de-duplication that guards unmatchedPackets guards this,
+	// so one packet reaching a target by two hops cannot corroborate twice.
+	//
+	// Bounded by scopeVerifyMaxPacketsPerTarget, which unmatchedPackets is NOT:
+	// the count stays the honest total, this is the working set.
+	unmatchedTxIDs []int64
 
 	// ambiguousHops counts forwarder-hop observations in the window whose
 	// truncated hash prefix matched this target AND at least one other
@@ -643,6 +654,9 @@ func (s *PacketStore) ScopeAuditForwarding(sinceISO string, targets []string) (m
 				// finding on this row may be a gap in this instance's
 				// hashRegions rather than in the repeater's forwarding.
 				agg.unmatchedPackets++
+				if len(agg.unmatchedTxIDs) < scopeVerifyMaxPacketsPerTarget {
+					agg.unmatchedTxIDs = append(agg.unmatchedTxIDs, txID)
+				}
 				continue
 			}
 			name := normScope(scopeName.String)
@@ -777,6 +791,32 @@ type ScopeAuditRow struct {
 	// it never feeds WildcardContradiction, which counts only plain unscoped
 	// floods.
 	ObservedUnmatchedPackets int64 `json:"observedUnmatchedPackets"`
+
+	// ObservedUnmatchedSampled is how many of those packets verification could
+	// actually look at: the per-target list is capped at
+	// scopeVerifyMaxPacketsPerTarget and the window sample at
+	// scopeVerifyMaxWindowPackets, while ObservedUnmatchedPackets keeps
+	// counting past both.
+	//
+	// It exists because a client cannot otherwise subtract the two fields
+	// honestly. RegionEvidence can only ever count packets inside this sample,
+	// so on a row where this is smaller than ObservedUnmatchedPackets the
+	// difference between them is an upper bound on the unexplained traffic, not
+	// a figure. Equal values mean the subtraction is exact.
+	ObservedUnmatchedSampled int64 `json:"observedUnmatchedSampled"`
+
+	// RegionEvidence maps a declared region to how many of this repeater's own
+	// unmatched forwarded packets derive to it — see scope_verify.go. A region
+	// reaching scopeVerifyMinCorroboration is removed from NotObserved, so this
+	// field is NOT what decides the chip's colour; NotObserved remains the sole
+	// source of that. This exists so a client can say HOW a region was
+	// established, and can explain a region that got exactly one hit and
+	// therefore stayed in NotObserved.
+	//
+	// Absent regions simply had no matching traffic. Never nil in the response
+	// — an empty object and a missing key mean the same thing, and an empty map
+	// is the cheaper thing for a client to iterate.
+	RegionEvidence map[string]int `json:"regionEvidence"`
 }
 
 // ScopeAuditResponse is the payload for GET /api/scope-audit. Only
@@ -1036,6 +1076,33 @@ func (s *Server) computeScopeAudit(window, sinceISO string) (*ScopeAuditResponse
 		}
 	}
 
+	// Declared-region verification: a region this instance holds no key for is
+	// unnameable, not absent, and the audit can settle which by deriving the key
+	// from the repeater's own declaration and testing it against that
+	// repeater's own unnameable traffic. One verifier serves every row so each
+	// (region, transmission) pair is derived at most once — see scope_verify.go
+	// for why that memo is what keeps this affordable.
+	//
+	// A failure here degrades to "no verification" rather than failing the
+	// request: the audit was useful before this existed and must stay useful if
+	// the extra query errors.
+	var verifier *scopeVerifier
+	if s.store != nil {
+		unmatchedRows, truncated, uErr := s.store.unmatchedTransmissionsInWindow(sinceISO)
+		if uErr != nil {
+			log.Printf("[scope-audit] declared-region verification unavailable: %v", uErr)
+		} else {
+			if truncated {
+				// Said out loud rather than absorbed: past the cap a region can
+				// hold evidence this refresh did not look at, so a grey chip
+				// means "not corroborated in this sample", not "not forwarded".
+				log.Printf("[scope-audit] window %s holds more than %d unnameable packets; verification used the most recent %d and may under-report evidence",
+					window, scopeVerifyMaxWindowPackets, scopeVerifyMaxWindowPackets)
+			}
+			verifier = newScopeVerifier(unmatchedRows)
+		}
+	}
+
 	identities := s.db.scopeAuditNodeIdentities(targets)
 
 	resp := &ScopeAuditResponse{Window: window, Since: sinceISO, Repeaters: []ScopeAuditRow{}}
@@ -1072,9 +1139,32 @@ func (s *Server) computeScopeAudit(window, sinceISO string) (*ScopeAuditResponse
 
 		agg := forwarding[pk]
 
-		notObserved := []string{}
+		// Verify the declared regions this repeater has no NAMED evidence for,
+		// against its own unmatched traffic. Regions already observed by name
+		// need no verification and are not tested — that keeps the candidate
+		// set to exactly the open questions, which is also what keeps the
+		// verifier's work proportional to the problem rather than to the fleet.
+		unnamed := []string{}
 		for _, rgn := range declaredNamed {
 			if agg == nil || agg.scopes[rgn] == nil {
+				unnamed = append(unnamed, rgn)
+			}
+		}
+		regionEvidence := map[string]int{}
+		verifiedSet := map[string]bool{}
+		if verifier != nil && agg != nil && len(unnamed) > 0 {
+			// capVerifyRegions bounds the per-target half of the verifier's
+			// work. The declared list arrives from a collector and its LENGTH
+			// is not validated anywhere on the way in, while each distinct name
+			// costs a full pass over the packet set.
+			regionEvidence = verifier.evidence(agg.unmatchedTxIDs, capVerifyRegions(unnamed))
+			for _, rgn := range verifier.verified(regionEvidence) {
+				verifiedSet[rgn] = true
+			}
+		}
+		notObserved := []string{}
+		for _, rgn := range unnamed {
+			if !verifiedSet[rgn] {
 				notObserved = append(notObserved, rgn)
 			}
 		}
@@ -1093,11 +1183,14 @@ func (s *Server) computeScopeAudit(window, sinceISO string) (*ScopeAuditResponse
 			}
 		}
 
-		var unscopedPackets, ambiguousHops, unmatchedPackets int64
+		var unscopedPackets, ambiguousHops, unmatchedPackets, unmatchedSampled int64
 		if agg != nil {
 			unscopedPackets = agg.unscopedPackets
 			ambiguousHops = agg.ambiguousHops
 			unmatchedPackets = agg.unmatchedPackets
+			// What verification could actually see, against what was counted.
+			// The list is capped; the count is not.
+			unmatchedSampled = int64(len(agg.unmatchedTxIDs))
 		}
 
 		resp.Repeaters = append(resp.Repeaters, ScopeAuditRow{
@@ -1115,6 +1208,8 @@ func (s *Server) computeScopeAudit(window, sinceISO string) (*ScopeAuditResponse
 			WildcardContradiction:    unscopedPackets > 0 && !declaredWildcard,
 			AmbiguousHops:            ambiguousHops,
 			ObservedUnmatchedPackets: unmatchedPackets,
+			ObservedUnmatchedSampled: unmatchedSampled,
+			RegionEvidence:           regionEvidence,
 		})
 	}
 
