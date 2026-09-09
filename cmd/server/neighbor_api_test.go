@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -467,7 +467,7 @@ func TestBuildNodeInfoMap_ObserverEnrichment(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := tmpDir + "/test.db"
 
-	conn, err := sql.Open("sqlite", dbPath)
+	conn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,15 +476,16 @@ func TestBuildNodeInfoMap_ObserverEnrichment(t *testing.T) {
 	// Create tables
 	for _, stmt := range []string{
 		"CREATE TABLE nodes (public_key TEXT, name TEXT, role TEXT, lat REAL, lon REAL)",
-		"CREATE TABLE observers (id TEXT, name TEXT, iata TEXT)",
+		"CREATE TABLE observers (id TEXT, name TEXT, iata TEXT, inactive INTEGER)",
 		"INSERT INTO nodes VALUES ('AAAA1111', 'Repeater-1', 'repeater', 0, 0)",
-		"INSERT INTO observers VALUES ('BBBB2222', 'Observer-Alpha', '')",
-		"INSERT INTO observers VALUES ('AAAA1111', 'Obs-also-repeater', '')",
+		"INSERT INTO observers (id, name, iata) VALUES ('BBBB2222', 'Observer-Alpha', '')",
+		"INSERT INTO observers (id, name, iata) VALUES ('AAAA1111', 'Obs-also-repeater', '')",
 	} {
 		if _, err := conn.Exec(stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
 		}
 	}
+	ensurePreparable(t, conn)
 	conn.Close()
 
 	// Open via our DB wrapper
@@ -542,20 +543,21 @@ func TestBuildNodeInfoMap_FirstSeenIsCached(t *testing.T) {
 	dbPath := tmpDir + "/test.db"
 
 	// Seed via rw connection.
-	rw, err := sql.Open("sqlite", dbPath)
+	rw, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rw.Close()
 	for _, stmt := range []string{
 		"CREATE TABLE nodes (public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, advert_count INTEGER)",
-		"CREATE TABLE observers (id TEXT, name TEXT, iata TEXT)",
+		"CREATE TABLE observers (id TEXT, name TEXT, iata TEXT, inactive INTEGER)",
 		"INSERT INTO nodes VALUES ('AAAA1111', 'Repeater-1', 'repeater', 0, 0, '', '2024-01-01T00:00:00Z', 0)",
 	} {
 		if _, err := rw.Exec(stmt); err != nil {
 			t.Fatalf("seed exec %q: %v", stmt, err)
 		}
 	}
+	ensurePreparable(t, rw)
 
 	db, err := OpenDB(dbPath)
 	if err != nil {
@@ -608,20 +610,21 @@ func TestGetAllNodes_FirstSeenSchemaFallback(t *testing.T) {
 	dbPath := tmpDir + "/test.db"
 
 	// Seed a nodes table WITHOUT first_seen (advert_count + last_seen present).
-	rw, err := sql.Open("sqlite", dbPath)
+	rw, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rw.Close()
 	for _, stmt := range []string{
 		"CREATE TABLE nodes (public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, advert_count INTEGER)",
-		"CREATE TABLE observers (id TEXT, name TEXT, iata TEXT)",
+		"CREATE TABLE observers (id TEXT, name TEXT, iata TEXT, inactive INTEGER)",
 		"INSERT INTO nodes VALUES ('BBBB2222', 'Repeater-2', 'repeater', 0, 0, '2024-02-02T00:00:00Z', 3)",
 	} {
 		if _, err := rw.Exec(stmt); err != nil {
 			t.Fatalf("seed exec %q: %v", stmt, err)
 		}
 	}
+	ensurePreparable(t, rw)
 
 	db, err := OpenDB(dbPath)
 	if err != nil {

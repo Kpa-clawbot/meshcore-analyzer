@@ -37,7 +37,7 @@ chmod +x corescope-decrypt-linux-amd64
 
 ```bash
 cd cmd/decrypt
-CGO_ENABLED=0 go build -ldflags="-s -w" -o corescope-decrypt .
+go build -ldflags="-s -w" -o corescope-decrypt .   # cgo: the SQLite driver needs it
 ```
 
 The binary is statically linked — no dependencies, runs on any Linux.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // createTestDB creates a temporary SQLite database with N transmissions (1 obs each).
@@ -149,7 +149,7 @@ func createTestDBWithAgedPackets(t *testing.T, numRecent, numOld int) string {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +162,8 @@ func createTestDBWithAgedPackets(t *testing.T, numRecent, numOld int) string {
 	}
 	execOrFail(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, raw_hex TEXT, hash TEXT, first_seen TEXT, route_type INTEGER, payload_type INTEGER, payload_version INTEGER, decoded_json TEXT)`)
 	execOrFail(`CREATE TABLE observations (id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_id TEXT, observer_name TEXT, direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT, raw_hex TEXT)`)
-	execOrFail(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
-	execOrFail(`CREATE TABLE nodes (pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
+	execOrFail(`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
+	execOrFail(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL, last_seen TEXT, first_seen TEXT, frequency REAL)`)
 	execOrFail(`CREATE TABLE schema_version (version INTEGER)`)
 	execOrFail(`INSERT INTO schema_version (version) VALUES (1)`)
 	execOrFail(`CREATE INDEX idx_tx_first_seen ON transmissions(first_seen)`)
@@ -171,7 +171,7 @@ func createTestDBWithAgedPackets(t *testing.T, numRecent, numOld int) string {
 	now := time.Now().UTC()
 	id := 1
 	// Single transaction for all inserts — see createTestDBAt for the rationale
-	// (modernc.org/sqlite auto-commit per Exec fsyncs per row). numOld+numRecent
+	// (auto-commit per Exec fsyncs per row). numOld+numRecent
 	// is small here today, but wrapping keeps the fixture robust if callers scale
 	// it up, and is consistent with the other builders.
 	if _, err := conn.Exec("BEGIN"); err != nil {
@@ -308,7 +308,7 @@ func BenchmarkLoad_30K_Unlimited(b *testing.B) {
 // createTestDBAt is like createTestDB but writes to a specific path.
 func createTestDBAt(tb testing.TB, dbPath string, numTx int) {
 	tb.Helper()
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -331,9 +331,9 @@ func createTestDBAt(tb testing.TB, dbPath string, numTx int) {
 		direction TEXT, snr REAL, rssi REAL, score INTEGER,
 		path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
-	execOrFail(`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	execOrFail(`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS nodes (
-		pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
+		public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
 		last_seen TEXT, first_seen TEXT, frequency REAL
 	)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)`)
@@ -352,7 +352,7 @@ func createTestDBAt(tb testing.TB, dbPath string, numTx int) {
 	defer obsStmt.Close()
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	// Wrap the inserts in a single transaction. Without this, modernc.org/sqlite
+	// Wrap the inserts in a single transaction. Without this, SQLite
 	// (pure-Go driver) auto-commits every Exec → one fsync per row → ~2N fsyncs
 	// for N transmissions (tx + obs). At numTx=5000 that is ~10k fsyncs and the
 	// fixture blows past the test timeout (the #1741 hang). A single
@@ -379,7 +379,7 @@ func createTestDBAt(tb testing.TB, dbPath string, numTx int) {
 // createTestDBWithObs creates a test DB with realistic observation counts (1–5 per tx).
 func createTestDBWithObs(tb testing.TB, dbPath string, numTx int) {
 	tb.Helper()
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -398,9 +398,9 @@ func createTestDBWithObs(tb testing.TB, dbPath string, numTx int) {
 		id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_id TEXT, observer_name TEXT,
 		direction TEXT, snr REAL, rssi REAL, score INTEGER, path_json TEXT, timestamp TEXT, raw_hex TEXT
 	)`)
-	execOrFail(`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`)
+	execOrFail(`CREATE TABLE IF NOT EXISTS observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS nodes (
-		pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
+		public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
 		last_seen TEXT, first_seen TEXT, frequency REAL
 	)`)
 	execOrFail(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)`)
@@ -423,7 +423,7 @@ func createTestDBWithObs(tb testing.TB, dbPath string, numTx int) {
 	obsID := 1
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// Single transaction for all inserts — see createTestDBAt for the rationale
-	// (modernc.org/sqlite auto-commit per Exec would fsync per row; at numTx=30000
+	// (auto-commit per Exec would fsync per row; at numTx=30000
 	// the benchmarks would otherwise stall for minutes). One BEGIN/COMMIT.
 	if _, err := conn.Exec("BEGIN"); err != nil {
 		tb.Fatalf("test DB BEGIN: %v", err)

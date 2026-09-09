@@ -95,7 +95,7 @@ func TestObsRawHexNotRetainedOnLoad(t *testing.T) {
 	const txHex = "deadbeefcafe"
 	const obsHex = "c0ffee0102" // distinct from txHex: proves we DON'T keep it
 
-	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,9 +109,9 @@ func TestObsRawHexNotRetainedOnLoad(t *testing.T) {
 			observer_name TEXT, direction TEXT, snr REAL, rssi REAL, score INTEGER,
 			path_json TEXT, timestamp TEXT, raw_hex TEXT
 		)`,
-		`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT)`,
+		`CREATE TABLE observers (rowid INTEGER PRIMARY KEY, id TEXT, name TEXT, iata TEXT, inactive INTEGER)`,
 		`CREATE TABLE nodes (
-			pubkey TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
+			public_key TEXT PRIMARY KEY, name TEXT, role TEXT, lat REAL, lon REAL,
 			last_seen TEXT, first_seen TEXT, frequency REAL
 		)`,
 		`CREATE INDEX idx_tx_first_seen ON transmissions(first_seen)`,

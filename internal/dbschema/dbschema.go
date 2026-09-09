@@ -43,6 +43,9 @@ func Apply(rw *sql.DB, logf Logger) error {
 	if err := ensureServerIndexes(rw); err != nil {
 		return fmt.Errorf("ensure server indexes: %w", err)
 	}
+	if err := ensureObservationsDedupIndex(rw, logf); err != nil {
+		return fmt.Errorf("ensure observations dedup index: %w", err)
+	}
 	if err := ensureNeighborEdgesTable(rw); err != nil {
 		return fmt.Errorf("ensure neighbor_edges: %w", err)
 	}

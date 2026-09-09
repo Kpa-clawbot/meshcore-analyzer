@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/meshcore-analyzer/dbschema"
 	"github.com/meshcore-analyzer/packetpath"
-	_ "modernc.org/sqlite"
 )
 
 // DBStats tracks operational metrics for the ingestor database.
@@ -130,7 +130,7 @@ func OpenStoreWithInterval(dbPath string, sampleIntervalSec int) (*Store, error)
 		return nil, fmt.Errorf("creating data dir: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=auto_vacuum(INCREMENTAL)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite3", dbschema.WriterDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
@@ -141,7 +141,7 @@ func OpenStoreWithInterval(dbPath string, sampleIntervalSec int) (*Store, error)
 
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	log.Printf("SQLite config: busy_timeout=5000ms, max_open_conns=1, max_idle_conns=1, journal=WAL")
+	log.Printf("SQLite config: busy_timeout=5000ms, max_open_conns=1, max_idle_conns=1, journal=WAL, synchronous=FULL")
 
 	if err := applySchema(db); err != nil {
 		return nil, fmt.Errorf("applying schema: %w", err)

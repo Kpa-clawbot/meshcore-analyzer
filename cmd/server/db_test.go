@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // setupTestDB creates an in-memory SQLite database with the v3 schema.
 func setupTestDB(t *testing.T) *DB {
 	t.Helper()
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1197,7 +1197,7 @@ func TestGetNodesFiltering(t *testing.T) {
 // where observations use observer_id TEXT instead of observer_idx INTEGER.
 func setupTestDBV2(t *testing.T) *DB {
 	t.Helper()
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1225,7 +1225,8 @@ func setupTestDBV2(t *testing.T) *DB {
 			last_seen TEXT,
 			first_seen TEXT,
 			packet_count INTEGER DEFAULT 0,
-			last_packet_at TEXT DEFAULT NULL
+			last_packet_at TEXT DEFAULT NULL,
+			inactive INTEGER DEFAULT 0
 		);
 
 		CREATE TABLE transmissions (
@@ -1453,7 +1454,7 @@ func TestOpenDBValid(t *testing.T) {
 	dbPath := filepath.Join(dir, "test.db")
 
 	// Create DB with a table using a writable connection first
-	conn, err := sql.Open("sqlite", dbPath)
+	conn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1462,6 +1463,7 @@ func TestOpenDBValid(t *testing.T) {
 		conn.Close()
 		t.Fatal(err)
 	}
+	ensurePreparable(t, conn)
 	conn.Close()
 
 	// Now test OpenDB (read-only)
@@ -1494,7 +1496,7 @@ func TestDetectSchemaScopeName(t *testing.T) {
 	dbPath := filepath.Join(dir, "detect.db")
 
 	// Create file-based DB with the scope_name and default_scope columns.
-	conn, err := sql.Open("sqlite", dbPath)
+	conn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1511,6 +1513,7 @@ func TestDetectSchemaScopeName(t *testing.T) {
 		conn.Close()
 		t.Fatalf("create observations: %v", err)
 	}
+	ensurePreparable(t, conn)
 	conn.Close()
 
 	db, err := OpenDB(dbPath)
@@ -1528,7 +1531,7 @@ func TestDetectSchemaScopeName(t *testing.T) {
 
 	// Verify the flags stay false when the columns are absent.
 	dbPath2 := filepath.Join(dir, "detect2.db")
-	conn2, err := sql.Open("sqlite", dbPath2)
+	conn2, err := sql.Open("sqlite3", dbPath2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1536,6 +1539,7 @@ func TestDetectSchemaScopeName(t *testing.T) {
 	conn2.Exec(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, hash TEXT)`)
 	conn2.Exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`)
 	conn2.Exec(`CREATE TABLE observations (id INTEGER PRIMARY KEY)`)
+	ensurePreparable(t, conn2)
 	conn2.Close()
 
 	db2, err := OpenDB(dbPath2)
@@ -2232,7 +2236,7 @@ func TestPerObservationRawHexEnrich(t *testing.T) {
 }
 
 func TestGetScopeStats(t *testing.T) {
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
@@ -2352,7 +2356,7 @@ func (f *failingQuerier) QueryContext(ctx context.Context, query string, args ..
 // a v3 database for the whole process lifetime.
 func TestDetectSchemaFailsLoudOnProbeError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "v3.db")
-	conn, err := sql.Open("sqlite", dbPath)
+	conn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2366,7 +2370,7 @@ func TestDetectSchemaFailsLoudOnProbeError(t *testing.T) {
 	conn.Exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`)
 	conn.Close()
 
-	real, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	real, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2388,7 +2392,7 @@ func TestDetectSchemaV3AndV2(t *testing.T) {
 	dir := t.TempDir()
 
 	v3 := filepath.Join(dir, "v3.db")
-	c, err := sql.Open("sqlite", v3)
+	c, err := sql.Open("sqlite3", v3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2396,6 +2400,7 @@ func TestDetectSchemaV3AndV2(t *testing.T) {
 	c.Exec(`CREATE TABLE observations (id INTEGER PRIMARY KEY, observer_idx INTEGER)`)
 	c.Exec(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, hash TEXT)`)
 	c.Exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`)
+	ensurePreparable(t, c)
 	c.Close()
 	db, err := OpenDB(v3)
 	if err != nil {
@@ -2407,7 +2412,7 @@ func TestDetectSchemaV3AndV2(t *testing.T) {
 	db.Close()
 
 	v2 := filepath.Join(dir, "v2.db")
-	c2, err := sql.Open("sqlite", v2)
+	c2, err := sql.Open("sqlite3", v2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2415,6 +2420,7 @@ func TestDetectSchemaV3AndV2(t *testing.T) {
 	c2.Exec(`CREATE TABLE observations (id INTEGER PRIMARY KEY, observer_id INTEGER)`)
 	c2.Exec(`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, hash TEXT)`)
 	c2.Exec(`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`)
+	ensurePreparable(t, c2)
 	c2.Close()
 	db2, err := OpenDB(v2)
 	if err != nil {

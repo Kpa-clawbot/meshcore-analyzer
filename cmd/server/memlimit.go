@@ -36,6 +36,21 @@ func applyMemoryLimit(maxMemoryMB int, envSet bool) (int64, string) {
 	// 1.5x headroom over the steady-state packet store budget covers
 	// transient peaks (cold-load row-scan / decode pipeline, Go's NextGC
 	// trigger at ~2x live heap). See issue #836 heap profile.
+	//
+	// GOMEMLIMIT covers memory the Go runtime manages — heap, stacks and
+	// runtime structures — and nothing else. Since the SQLite driver became
+	// cgo (github.com/mattn/go-sqlite3), what SQLite allocates in C is
+	// outside it, so this limit is not an RSS ceiling: actual RSS is this
+	// plus the native allocations plus whatever the runtime has reserved
+	// but not returned.
+	//
+	// The page cache, at least, is deliberately bounded: both DSNs pin
+	// _cache_size=-2000, i.e. ~2 MiB per connection, ~8 MiB across
+	// SetMaxOpenConns(4). That fits inside the headroom above rather than
+	// eating into the store budget. It does not bound SQLite's other native
+	// allocations, so if the connection count or _cache_size grows
+	// materially, or a workload starts holding many prepared statements,
+	// this derivation needs revisiting against measured RSS.
 	limit := int64(maxMemoryMB) * 1024 * 1024 * 3 / 2
 	debug.SetMemoryLimit(limit)
 	return limit, "derived"

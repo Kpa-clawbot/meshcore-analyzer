@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // TestIngestorPruneOldPackets enforces #1283: the writer for
@@ -64,7 +64,7 @@ func TestIngestorVacuumOnStartupMigratesNONEtoINCREMENTAL(t *testing.T) {
 	path := filepath.Join(dir, "vac.db")
 
 	// Create a NONE-auto_vacuum DB (simulates an older deployment).
-	seed, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
+	seed, err := sql.Open("sqlite3", path+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}

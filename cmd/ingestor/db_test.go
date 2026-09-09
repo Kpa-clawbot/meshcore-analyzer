@@ -1627,7 +1627,7 @@ func TestObsTimestampIndexMigration(t *testing.T) {
 
 		// Build a bare-bones DB that mimics an old installation:
 		// observations table exists but idx_observations_timestamp does NOT.
-		db, err := sql.Open("sqlite", path)
+		db, err := sql.Open("sqlite3", path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2676,7 +2676,7 @@ func TestCleanupLegacyNullHashTimestamp(t *testing.T) {
 	path := tempDBPath(t)
 
 	// Create a bare-bones DB with legacy bad data
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2806,7 +2806,7 @@ func TestBackfillPathJSONAsync(t *testing.T) {
 	dbPath := filepath.Join(dir, "async_test.db")
 
 	// Bootstrap schema manually so we can insert test data BEFORE OpenStore
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2995,7 +2995,7 @@ func TestBackfillPathJSONAsync_BracketRowsTerminate(t *testing.T) {
 
 	// Bootstrap a minimal schema directly so we can seed pre-existing '[]' rows
 	// before OpenStore runs.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		t.Fatal(err)
 	}

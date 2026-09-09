@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/meshcore-analyzer/dbschema"
-	_ "modernc.org/sqlite"
 )
 
 // TestNeighborGraphRecomputerLoadsSnapshot enforces #1287 Option 4:
@@ -19,7 +19,7 @@ func TestNeighborGraphRecomputerLoadsSnapshot(t *testing.T) {
 	dbPath := filepath.Join(dir, "neighbor_recomp.db")
 
 	// Bootstrap a WAL DB with the neighbor_edges table.
-	rw, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
+	rw, err := sql.Open("sqlite3", "file:"+dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +33,7 @@ func TestNeighborGraphRecomputerLoadsSnapshot(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
+	ensurePreparable(t, rw)
 
 	// Stage one edge.
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -85,9 +86,15 @@ func TestServerStartupRequiresMigratedSchema(t *testing.T) {
 
 	// Bootstrap with ONLY transmissions/observations (the things
 	// server tries to read) but WITHOUT the columns dbschema asserts
-	// (resolved_path, inactive, last_packet_at, iata, foreign_advert,
-	// from_pubkey, neighbor_edges).
-	rw, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
+	// (resolved_path, last_packet_at, iata, foreign_advert, from_pubkey,
+	// neighbor_edges).
+	//
+	// observers.inactive used to be in that list. It no longer is: OpenDB
+	// prepares statements eagerly under github.com/mattn/go-sqlite3 and one of
+	// them selects on inactive, so a fixture without it cannot reach
+	// AssertReady at all. The other missing surfaces above still make
+	// AssertReady fail, which is what this test asserts.
+	rw, err := sql.Open("sqlite3", "file:"+dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +102,7 @@ func TestServerStartupRequiresMigratedSchema(t *testing.T) {
 	for _, s := range []string{
 		`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, hash TEXT, payload_type INTEGER)`,
 		`CREATE TABLE observations (id INTEGER PRIMARY KEY, transmission_id INTEGER)`,
-		`CREATE TABLE observers (id TEXT PRIMARY KEY, name TEXT)`,
+		`CREATE TABLE observers (id TEXT PRIMARY KEY, name TEXT, inactive INTEGER)`,
 		`CREATE TABLE nodes (public_key TEXT PRIMARY KEY)`,
 		`CREATE TABLE inactive_nodes (public_key TEXT PRIMARY KEY)`,
 	} {
@@ -103,6 +110,8 @@ func TestServerStartupRequiresMigratedSchema(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
+	ensurePreparable(t, rw)
 
 	// Open the read-only server handle and call AssertReady directly
 	// (production path: main.go does this before any business logic).

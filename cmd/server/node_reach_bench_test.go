@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // benchReachDB builds an in-memory DB with nObs observations. matchEvery
@@ -24,13 +24,13 @@ func benchReachDB(b *testing.B, nObs, matchEvery int, lowerHops bool) *DB {
 		// path_json is uppercase; this measures the worst case Carmack flagged).
 		matchPath, fillerPath = `["aa","01fa","bb"]`, `["aa","cc","bb"]`
 	}
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		b.Fatal(err)
 	}
 	schema := []string{
 		`CREATE TABLE transmissions (id INTEGER PRIMARY KEY, hash TEXT, first_seen TEXT, payload_type INTEGER, from_pubkey TEXT)`,
-		`CREATE TABLE observers (id TEXT PRIMARY KEY, name TEXT)`,
+		`CREATE TABLE observers (id TEXT PRIMARY KEY, name TEXT, inactive INTEGER)`,
 		`CREATE TABLE observations (id INTEGER PRIMARY KEY, transmission_id INTEGER, observer_idx INTEGER, snr REAL, path_json TEXT, timestamp INTEGER)`,
 		`CREATE INDEX idx_obs_ts ON observations(timestamp)`,
 	}
@@ -155,12 +155,12 @@ func BenchmarkNodeReachAttribute(b *testing.B) {
 // must surface an error, not a swallowed nil. Lives in this file because
 // the bench callers in the same file rely on the same signature.
 func TestScanReachRows_ErrorReturn(t *testing.T) {
-	conn, err := sql.Open("sqlite", ":memory:")
+	conn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	// PREFLIGHT: async=true reason="test-only in-memory scratch schema, immediately closed"
-	if _, err := conn.Exec(`CREATE TABLE observations (id INTEGER); CREATE TABLE transmissions (id INTEGER); CREATE TABLE observers (rowid INTEGER, id TEXT)`); err != nil {
+	if _, err := conn.Exec(`CREATE TABLE observations (id INTEGER); CREATE TABLE transmissions (id INTEGER); CREATE TABLE observers (rowid INTEGER, id TEXT, inactive INTEGER)`); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
 	conn.Close() // force QueryContext to fail

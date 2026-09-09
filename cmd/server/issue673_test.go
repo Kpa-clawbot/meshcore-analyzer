@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const issue673NodePK = "7502f19f44cad6d7b626e1d811c00a914af452636182ccded3fd019803395ec9"
