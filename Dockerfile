@@ -3,7 +3,7 @@
 # BUILDPLATFORM is auto-set by buildx; default to linux/amd64 so plain
 # `docker build` (without buildx) doesn't fail on an empty platform string.
 ARG BUILDPLATFORM=linux/amd64
-FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
 ARG APP_VERSION=unknown
 ARG GIT_COMMIT=unknown

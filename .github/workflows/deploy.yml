@@ -103,10 +103,10 @@ jobs:
       - name: Clean Go module cache
         run: rm -rf ~/go/pkg/mod 2>/dev/null || true
 
-      - name: Set up Go 1.22
+      - name: Set up Go 1.27
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version: '1.27'
           cache-dependency-path: |
             cmd/server/go.sum
             cmd/ingestor/go.sum
@@ -343,10 +343,10 @@ jobs:
       - name: Clean Go module cache
         run: rm -rf ~/go/pkg/mod 2>/dev/null || true
 
-      - name: Set up Go 1.22
+      - name: Set up Go 1.27
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version: '1.27'
           cache-dependency-path: cmd/server/go.sum
 
       - name: Build Go server
@@ -758,10 +758,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Go 1.22
+      - name: Set up Go 1.27
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version: '1.27'
 
       - name: Build corescope-decrypt (static, linux/amd64)
         run: |
