@@ -75,6 +75,7 @@ type Server struct {
 	scopeAuditMu       sync.Mutex
 	scopeAuditCache    map[string]*ScopeAuditResponse
 	scopeAuditCachedAt map[string]time.Time
+	scopeAuditSF       singleflight.Group
 
 	// #1975: /api/scope-audit window cache and its single-flight guard, so a
 	// burst of viewers on a cold cache recomputes the network-wide scan once

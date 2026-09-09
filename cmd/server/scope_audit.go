@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -320,6 +319,14 @@ func scopeAuditPrefixIndex(targets []string) map[int]map[string][]string {
 // call per pubkey — fine for one node, but 37+ repeater-sized loop of them
 // would each re-scan the same first_seen index range), this scans the
 // FLOOD-family window exactly once and returns every forwarder hop found.
+//
+// "Every forwarder hop" means every hop of the path, not only path[last] —
+// see scopeConformanceQuery's doc comment for why, and note that this query
+// returns one ROW PER HOP, so a single transmission now yields as many rows as
+// it has hops (mean 7.08 on the live network). ScopeAuditForwarding's
+// "<target>|<txID>" de-duplication is what keeps that from counting a
+// transmission twice for one target, and it is now load-bearing rather than
+// belt-and-braces: one path can carry the same target on several hops.
 // It applies the SAME three conditions scopeConformanceQuery does —
 // minForwarderHopHexLen, scopeConformanceForwarderRouteTypesSQL, and the
 // explicit json_valid guard against a single malformed path_json row
@@ -329,10 +336,10 @@ func scopeAuditPrefixIndex(targets []string) map[int]map[string][]string {
 // scopeAuditPrefixIndex, so the SQL cost stays O(rows in window) regardless
 // of len(targets).
 var scopeAuditForwarderScanQuery = `
-	SELECT t.id, je.value, t.scope_name, t.first_seen
+	SELECT t.id, je.value
 	FROM transmissions t
 	JOIN observations o ON o.transmission_id = t.id
-	JOIN json_each(o.path_json) je ON je.key = json_array_length(o.path_json) - 1
+	JOIN json_each(o.path_json) je
 	WHERE t.first_seen >= ?
 	  AND ` + scopeConformanceForwarderRouteTypesSQL + `
 	  AND o.path_json IS NOT NULL
@@ -340,6 +347,26 @@ var scopeAuditForwarderScanQuery = `
 	  AND json_array_length(o.path_json) > 0
 	  AND LENGTH(je.value) >= ` + fmt.Sprint(minForwarderHopHexLen) + `
 `
+
+// scopeAuditWindowMetaQuery reads the two per-TRANSMISSION facts the hop scan
+// used to carry on every hop row: the scope name and the timestamp. It applies
+// the identical window and route-type filter, so it covers every transmission
+// the hop scan can produce, and both run inside one read transaction so the
+// two see the same snapshot.
+//
+// Splitting these out is why the hop scan carries two columns instead of four.
+// Measured on the live-shaped staging database on 2026-09-07, a 7d window
+// yields 3,470,188 hop rows against 79,652 transmissions: 43 hop rows per
+// transmission, each of which was re-reading the same scope_name and
+// first_seen. SQLite spends 2.7s of the 16.7s that window cost; the rest was
+// the Go side scanning columns it already knew.
+//
+// Every SQL-side attempt to shrink the hop scan itself measured worse on that
+// same database and was rejected: a first-4-hex prefix filter against the
+// declared targets takes 20.9s (and needs lower() on both sides, because 80%
+// of stored hops are uppercase), GROUP BY t.id, hop takes 38.0s, and
+// SELECT DISTINCT t.id, path_json takes 17.7s. The 3.47M rows are inherent:
+// 1,368,761 observations carrying a path, ~2.5 usable hops each.
 
 // ScopeAuditForwarding runs scopeAuditForwarderScanQuery once for the whole
 // window and attributes every forwarder hop it finds to targets, by the same
@@ -362,11 +389,159 @@ var scopeAuditForwarderScanQuery = `
 // the same de-duplication scopeConformanceQuery gets for free from EXISTS,
 // done explicitly here since this scan is not correlated per target.
 
+// scopeAuditWindowMetaQuery reads the two per-TRANSMISSION facts the hop scan
+// used to carry on every hop row: the scope name and the timestamp. It applies
+// the identical window and route-type filter, so it covers every transmission
+// the hop scan can produce, and both run inside one read transaction so the
+// two see the same snapshot.
+//
+// Splitting these out is why the hop scan carries two columns instead of four.
+// Measured on the live-shaped staging database on 2026-09-07, a 7d window
+// yields 3,470,188 hop rows against 79,652 transmissions: 43 hop rows per
+// transmission, each of which was re-reading the same scope_name and
+// first_seen. SQLite spends 2.7s of the 16.7s that window cost; the rest was
+// the Go side scanning columns it already knew.
+//
+// Every SQL-side attempt to shrink the hop scan itself measured worse on that
+// same database and was rejected: a first-4-hex prefix filter against the
+// declared targets takes 20.9s (and needs lower() on both sides, because 80%
+// of stored hops are uppercase), GROUP BY t.id, hop takes 38.0s, and
+// SELECT DISTINCT t.id, path_json takes 17.7s. The 3.47M rows are inherent:
+// 1,368,761 observations carrying a path, ~2.5 usable hops each.
+var scopeAuditWindowMetaQuery = `
+	SELECT t.id, t.scope_name, t.first_seen
+	FROM transmissions t
+	WHERE t.first_seen >= ?
+	  AND ` + scopeConformanceForwarderRouteTypesSQL + `
+`
+
+// scopeAuditTxMeta is one transmission's contribution to the aggregate, held
+// once per transmission rather than once per hop.
+
+// scopeAuditTxMeta is one transmission's contribution to the aggregate, held
+// once per transmission rather than once per hop.
+type scopeAuditTxMeta struct {
+	scopeName sql.NullString
+	firstSeen string
+}
+
+// scopeAuditWindowMeta loads scopeAuditWindowMetaQuery into a map keyed by
+// transmission id. Runs on the caller's transaction so it shares the hop
+// scan's snapshot.
+
+// scopeAuditWindowMeta loads scopeAuditWindowMetaQuery into a map keyed by
+// transmission id. Runs on the caller's transaction so it shares the hop
+// scan's snapshot.
+func scopeAuditWindowMeta(tx *sql.Tx, sinceISO string) (map[int64]scopeAuditTxMeta, error) {
+	rows, err := tx.Query(scopeAuditWindowMetaQuery, sinceISO)
+	if err != nil {
+		return nil, fmt.Errorf("scope audit window meta: %w", err)
+	}
+	defer rows.Close()
+
+	meta := map[int64]scopeAuditTxMeta{}
+	for rows.Next() {
+		var id int64
+		var m scopeAuditTxMeta
+		if err := rows.Scan(&id, &m.scopeName, &m.firstSeen); err != nil {
+			return nil, fmt.Errorf("scope audit window meta scan: %w", err)
+		}
+		meta[id] = m
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scope audit window meta rows: %w", err)
+	}
+	return meta, nil
+}
+
+// scopeAuditSeenKey identifies one (target, transmission) pair for the
+// de-duplication below. A struct key rather than the string it used to be
+// built into: the hop scan reaches millions of rows on a 7d window, and every
+// candidate hop was allocating a fresh "<target>|<txID>" string to ask a
+// question that a comparable struct answers without allocating.
+
+// scopeAuditSeenKey identifies one (target, transmission) pair for the
+// de-duplication below. A struct key rather than the string it used to be
+// built into: the hop scan reaches millions of rows on a 7d window, and every
+// candidate hop was allocating a fresh "<target>|<txID>" string to ask a
+// question that a comparable struct answers without allocating.
+type scopeAuditSeenKey struct {
+	target string
+	txID   int64
+}
+
+// ScopeAuditForwarding runs scopeAuditForwarderScanQuery once for the whole
+// window and attributes every forwarder hop it finds to targets, by the same
+// truncated-hash prefix match ScopeConformance uses for a single pubkey.
+//
+// A hop is attributed only when its prefix matches EXACTLY ONE declared
+// target. This endpoint exists to find a repeater that declares a region and
+// is not actually forwarding it — crediting a hop to every target sharing
+// its prefix would let a colliding neighbour's traffic silently paper over a
+// real gap, and crediting nobody (the alternative of dropping the hop
+// entirely) would invent failures for targets that simply share a collision-
+// prone prefix. Instead, an ambiguous hop is credited to NEITHER candidate,
+// and every candidate's ambiguousHops counter is incremented instead, so the
+// row can say "this notObserved might just be a prefix collision" rather
+// than presenting it as a confirmed finding. See scopeAuditTargetAgg's
+// ambiguousHops field and ScopeAuditRow.AmbiguousHops.
+//
+// Each (target, transmission) pair is counted at most once even if seen via
+// multiple observations OR via several hops of one path (a routing loop, or two
+// hops colliding on the same truncated prefix), for both the attributed and the
+// ambiguous count — the same de-duplication scopeConformanceQuery gets for free
+// from EXISTS, done explicitly here since this scan is not correlated per
+// target. Since the scan reads every hop rather than only path[last], this is
+// the only thing keeping one transmission from counting several times for the
+// same target; TestScopeAuditForwardingCountsOneTransmissionOncePerTarget pins
+// it.
+
+// ScopeAuditForwarding runs scopeAuditForwarderScanQuery once for the whole
+// window and attributes every forwarder hop it finds to targets, by the same
+// truncated-hash prefix match ScopeConformance uses for a single pubkey.
+//
+// A hop is attributed only when its prefix matches EXACTLY ONE declared
+// target. This endpoint exists to find a repeater that declares a region and
+// is not actually forwarding it — crediting a hop to every target sharing
+// its prefix would let a colliding neighbour's traffic silently paper over a
+// real gap, and crediting nobody (the alternative of dropping the hop
+// entirely) would invent failures for targets that simply share a collision-
+// prone prefix. Instead, an ambiguous hop is credited to NEITHER candidate,
+// and every candidate's ambiguousHops counter is incremented instead, so the
+// row can say "this notObserved might just be a prefix collision" rather
+// than presenting it as a confirmed finding. See scopeAuditTargetAgg's
+// ambiguousHops field and ScopeAuditRow.AmbiguousHops.
+//
+// Each (target, transmission) pair is counted at most once even if seen via
+// multiple observations OR via several hops of one path (a routing loop, or two
+// hops colliding on the same truncated prefix), for both the attributed and the
+// ambiguous count — the same de-duplication scopeConformanceQuery gets for free
+// from EXISTS, done explicitly here since this scan is not correlated per
+// target. Since the scan reads every hop rather than only path[last], this is
+// the only thing keeping one transmission from counting several times for the
+// same target; TestScopeAuditForwardingCountsOneTransmissionOncePerTarget pins
+// it.
 func (s *PacketStore) ScopeAuditForwarding(sinceISO string, targets []string) (map[string]*scopeAuditTargetAgg, error) {
 	byLen := scopeAuditPrefixIndex(targets)
 	result := make(map[string]*scopeAuditTargetAgg, len(targets))
 
-	rows, err := s.db.conn.Query(scopeAuditForwarderScanQuery, sinceISO)
+	// One read transaction for both queries. The hop scan and the per-
+	// transmission metadata are two passes over the same window, and a
+	// transmission arriving between them would otherwise appear in the hop scan
+	// with no metadata to attribute it by — rare, but the fix is a shared
+	// snapshot rather than a rule about what to do with the leftovers.
+	tx, err := s.db.conn.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("scope audit forwarder scan begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	meta, err := scopeAuditWindowMeta(tx, sinceISO)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.Query(scopeAuditForwarderScanQuery, sinceISO)
 	if err != nil {
 		return nil, fmt.Errorf("scope audit forwarder scan: %w", err)
 	}
@@ -381,21 +556,43 @@ func (s *PacketStore) ScopeAuditForwarding(sinceISO string, targets []string) (m
 		return agg
 	}
 
-	seen := make(map[string]bool) // "<target>|<txID>" already counted (attributed or ambiguous)
+	seen := make(map[scopeAuditSeenKey]bool) // (target, txID) already counted (attributed or ambiguous)
+
+	// hopBuf lower-cases the hop in place instead of through strings.ToLower.
+	// 80% of the hops in this database are stored uppercase (1,026,814 of
+	// 1,284,897 in a 24h window, measured 2026-09-07) because
+	// packetpath.DecodePathFromRawHex writes them that way, and the great
+	// majority of them match no declared target at all — so the allocation
+	// ToLower makes is paid millions of times to answer "no". byLen's keys are
+	// lowercase, and a map index expression on string(bytes) does not allocate.
+	var hopBuf [64]byte
 	for rows.Next() {
 		var txID int64
-		var hop string
-		var scopeName sql.NullString
-		var firstSeen string
-		if err := rows.Scan(&txID, &hop, &scopeName, &firstSeen); err != nil {
+		var hopRaw sql.RawBytes
+		if err := rows.Scan(&txID, &hopRaw); err != nil {
 			return nil, fmt.Errorf("scope audit forwarder scan scan: %w", err)
 		}
-		hop = strings.ToLower(hop)
-		candidates := byLen[len(hop)][hop]
+		n := len(hopRaw)
+		if n > len(hopBuf) {
+			// Longer than a full pubkey: cannot be any target's prefix. The
+			// SQL floor guards the short end, this guards the long one.
+			continue
+		}
+		for i := 0; i < n; i++ {
+			c := hopRaw[i]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			hopBuf[i] = c
+		}
+		candidates := byLen[n][string(hopBuf[:n])]
+		if len(candidates) == 0 {
+			continue
+		}
 
 		if len(candidates) > 1 {
 			for _, target := range candidates {
-				key := target + "|" + strconv.FormatInt(txID, 10)
+				key := scopeAuditSeenKey{target: target, txID: txID}
 				if seen[key] {
 					continue
 				}
@@ -404,8 +601,16 @@ func (s *PacketStore) ScopeAuditForwarding(sinceISO string, targets []string) (m
 			}
 			continue
 		}
+		txMeta, ok := meta[txID]
+		if !ok {
+			// Impossible while both queries share one snapshot and one WHERE
+			// clause; treated as "nothing to attribute" rather than silently
+			// counted as unscoped, which is what a zero-valued meta would do.
+			continue
+		}
+		scopeName, firstSeen := txMeta.scopeName, txMeta.firstSeen
 		for _, target := range candidates {
-			key := target + "|" + strconv.FormatInt(txID, 10)
+			key := scopeAuditSeenKey{target: target, txID: txID}
 			if seen[key] {
 				continue
 			}
@@ -685,8 +890,6 @@ func nodeScopesWindowLookback(window string) (time.Duration, bool) {
 // pass — see scopes.go's AllCurrentDeclaredRegions and ScopeAuditForwarding
 // for why that stays a single scan rather than one query per repeater.
 func (s *Server) handleScopeAudit(w http.ResponseWriter, r *http.Request) {
-	const scopeAuditTTL = 30 * time.Second
-
 	window := r.URL.Query().Get("window")
 	if window == "" {
 		window = "24h"
@@ -697,20 +900,91 @@ func (s *Server) handleScopeAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.scopeAuditMu.Lock()
-	if s.scopeAuditCache != nil {
-		if cached, ok := s.scopeAuditCache[window]; ok && time.Since(s.scopeAuditCachedAt[window]) < scopeAuditTTL {
-			s.scopeAuditMu.Unlock()
-			writeJSON(w, cached)
-			return
-		}
-	}
-	s.scopeAuditMu.Unlock()
+	sinceISO := time.Now().Add(-lookback).UTC().Format(time.RFC3339)
 
-	declared, err := s.db.AllCurrentDeclaredRegions()
+	if cached, ok := s.scopeAuditCached(window); ok {
+		writeJSON(w, cached)
+		return
+	}
+
+	// singleflight: the compute below runs outside the cache mutex, so without
+	// this every request arriving on a cold window ran its own full scan
+	// concurrently. Reading every hop makes that scan seconds of work over
+	// millions of rows, which is the shape that turns a thundering herd from
+	// wasteful into expensive. Same treatment /api/observers and
+	// /api/nodes/{pubkey}/reach already have.
+	v, err, _ := s.scopeAuditSF.Do(window, func() (interface{}, error) {
+		// Waiters that arrive while a scan is in flight are served by that
+		// scan's result; this second look is for the caller that acquires the
+		// group right after a winner stored one.
+		if cached, ok := s.scopeAuditCached(window); ok {
+			return cached, nil
+		}
+		resp, cErr := s.computeScopeAudit(window, sinceISO)
+		if cErr != nil {
+			return nil, cErr
+		}
+		s.scopeAuditStore(window, resp)
+		return resp, nil
+	})
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	writeJSON(w, v.(*ScopeAuditResponse))
+}
+
+// scopeAuditTTLFor is how long one window's computed audit stays fresh.
+//
+// 7d is not 30s because it does not cost what the others cost. Measured on a
+// live-shaped database with 206 declared repeaters and 965k transmissions:
+// 16.7s cold for 7d against 4.0s for 24h and 0.15s for 1h, with the 7d scan
+// reading 3,470,188 hop rows. At a 30s TTL a single reader with that window
+// open keeps the instance recomputing more than half the time, for an
+// aggregate that moves at the pace of a week of traffic. Five minutes of
+// staleness on a seven-day window is not a fact the reader can act on
+// differently.
+func scopeAuditTTLFor(window string) time.Duration {
+	if window == "7d" {
+		return 5 * time.Minute
+	}
+	return 30 * time.Second
+}
+
+// scopeAuditCached returns the cached response for a window while it is within
+// that window's TTL.
+func (s *Server) scopeAuditCached(window string) (*ScopeAuditResponse, bool) {
+	s.scopeAuditMu.Lock()
+	defer s.scopeAuditMu.Unlock()
+	if s.scopeAuditCache == nil {
+		return nil, false
+	}
+	cached, ok := s.scopeAuditCache[window]
+	if !ok || time.Since(s.scopeAuditCachedAt[window]) >= scopeAuditTTLFor(window) {
+		return nil, false
+	}
+	return cached, true
+}
+
+// scopeAuditStore publishes a freshly computed response for a window.
+func (s *Server) scopeAuditStore(window string, resp *ScopeAuditResponse) {
+	s.scopeAuditMu.Lock()
+	defer s.scopeAuditMu.Unlock()
+	if s.scopeAuditCache == nil {
+		s.scopeAuditCache = make(map[string]*ScopeAuditResponse)
+		s.scopeAuditCachedAt = make(map[string]time.Time)
+	}
+	s.scopeAuditCache[window] = resp
+	s.scopeAuditCachedAt[window] = time.Now()
+}
+
+// computeScopeAudit builds one window's audit response: the declared lists and
+// the forwarding evidence attributed to them. Split out of the handler so the
+// cache and its singleflight wrap a plain function instead of a request.
+func (s *Server) computeScopeAudit(window, sinceISO string) (*ScopeAuditResponse, error) {
+	declared, err := s.db.AllCurrentDeclaredRegions()
+	if err != nil {
+		return nil, err
 	}
 
 	targets := make([]string, 0, len(declared))
@@ -718,13 +992,11 @@ func (s *Server) handleScopeAudit(w http.ResponseWriter, r *http.Request) {
 		targets = append(targets, strings.ToLower(d.Target))
 	}
 
-	sinceISO := time.Now().Add(-lookback).UTC().Format(time.RFC3339)
 	forwarding := map[string]*scopeAuditTargetAgg{}
 	if s.store != nil {
 		forwarding, err = s.store.ScopeAuditForwarding(sinceISO, targets)
 		if err != nil {
-			writeError(w, 500, err.Error())
-			return
+			return nil, err
 		}
 	}
 
@@ -838,14 +1110,5 @@ func (s *Server) handleScopeAudit(w http.ResponseWriter, r *http.Request) {
 		return an < bn
 	})
 
-	s.scopeAuditMu.Lock()
-	if s.scopeAuditCache == nil {
-		s.scopeAuditCache = make(map[string]*ScopeAuditResponse)
-		s.scopeAuditCachedAt = make(map[string]time.Time)
-	}
-	s.scopeAuditCache[window] = resp
-	s.scopeAuditCachedAt[window] = time.Now()
-	s.scopeAuditMu.Unlock()
-
-	writeJSON(w, resp)
+	return resp, nil
 }
