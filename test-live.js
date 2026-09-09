@@ -891,9 +891,25 @@ console.log('\n=== live.js: source-level safety checks ===');
       'tab restore should clear propagation buffer');
   });
 
-  test('connectWS has reconnect on close', () => {
-    assert.ok(src.includes('ws.onclose = () => setTimeout(connectWS, WS_RECONNECT_MS)'),
-      'WebSocket should auto-reconnect on close');
+  test('the live map owns no socket of its own', () => {
+    // It used to open a second WebSocket to the endpoint app.js already holds
+    // open, and the broadcast does no per-client filtering, so every viewer on
+    // this page pulled the full packet stream twice.
+    assert.ok(!src.includes('new WebSocket'),
+      'live.js must not construct a WebSocket; app.js owns the one socket');
+    assert.ok(src.includes('onWS(wsHandler)'),
+      'it must subscribe to the shared channel instead');
+    assert.ok(src.includes('offWS(wsHandler)'),
+      'and unsubscribe rather than closing a socket the rest of the app needs');
+  });
+
+  test('reconnect lives with the socket owner and honours wsReconnectMs', () => {
+    // Moving the subscription took the live map's own reconnect with it. That
+    // was the only place WS_RECONNECT_MS was honoured, so app.js has to use it
+    // now or the operator's `wsReconnectMs` setting applies nowhere.
+    const appSrc = fs.readFileSync('public/app.js', 'utf8');
+    assert.ok(appSrc.includes('setTimeout(connectWS, window.WS_RECONNECT_MS || 3000)'),
+      'app.js should reconnect on the configured interval, defaulting to 3s');
   });
 
   test('addNodeMarker avoids duplicates', () => {
