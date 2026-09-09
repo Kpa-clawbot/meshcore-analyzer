@@ -861,7 +861,7 @@ func TestMatchScope(t *testing.T) {
 	// Key = SHA256("#test")[:16] = 9cd8fcf22a47333b591d96a2b848b73f
 	testKey, _ := hex.DecodeString("9cd8fcf22a47333b591d96a2b848b73f")
 	testKeys := map[string][]byte{"#test": testKey}
-	if got := matchScope(testKeys, 5, []byte("hello"), "2AB5"); got != "#test" {
+	if got := regionKeySetFromKeys(testKeys).matchScopeName(5, []byte("hello"), "2AB5"); got != "#test" {
 		t.Errorf("#test vector: matchScope = %q, want #test", got)
 	}
 
@@ -869,17 +869,17 @@ func TestMatchScope(t *testing.T) {
 	// Key = SHA256("#belgium")[:16] = 7085b78ed010599094f8c8e7d1aa0e27
 	belgiumKey, _ := hex.DecodeString("7085b78ed010599094f8c8e7d1aa0e27")
 	belgiumKeys := map[string][]byte{"#belgium": belgiumKey}
-	if got := matchScope(belgiumKeys, 5, []byte("hello"), "4A75"); got != "#belgium" {
+	if got := regionKeySetFromKeys(belgiumKeys).matchScopeName(5, []byte("hello"), "4A75"); got != "#belgium" {
 		t.Errorf("#belgium vector: matchScope = %q, want #belgium", got)
 	}
 
 	// Code1=0000 (unscoped transport) → no region matched
-	if got := matchScope(belgiumKeys, 5, []byte("hello"), "0000"); got != "" {
+	if got := regionKeySetFromKeys(belgiumKeys).matchScopeName(5, []byte("hello"), "0000"); got != "" {
 		t.Errorf("unscoped: matchScope = %q, want empty", got)
 	}
 
 	// Code1 present but matches no configured region → empty string
-	if got := matchScope(belgiumKeys, 5, []byte("hello"), "BEEF"); got != "" {
+	if got := regionKeySetFromKeys(belgiumKeys).matchScopeName(5, []byte("hello"), "BEEF"); got != "" {
 		t.Errorf("no match: matchScope = %q, want empty", got)
 	}
 }
@@ -899,7 +899,7 @@ func TestBuildPacketDataScopeMatching(t *testing.T) {
 	}
 
 	msg := &MQTTPacketMessage{Raw: rawHex}
-	pktData := BuildPacketData(msg, decoded, "obs1", "region1", regionKeys)
+	pktData := BuildPacketData(msg, decoded, "obs1", "region1", regionKeySetFromKeys(regionKeys))
 	if pktData.ScopeName != "#test" {
 		t.Errorf("ScopeName = %q, want #test", pktData.ScopeName)
 	}
@@ -1078,7 +1078,7 @@ func TestBuildPacketDataScopeMatchingNoMatch(t *testing.T) {
 		t.Fatalf("DecodePacket: %v", err)
 	}
 	msg := &MQTTPacketMessage{Raw: rawHex}
-	pktData := BuildPacketData(msg, decoded, "obs1", "region1", regionKeys)
+	pktData := BuildPacketData(msg, decoded, "obs1", "region1", regionKeySetFromKeys(regionKeys))
 
 	if !pktData.IsTransportScoped {
 		t.Fatalf("precondition: IsTransportScoped should be true (Code1 != 0000)")
@@ -1127,7 +1127,7 @@ func TestHandleMessageAdvert_EmptyScopeSkipsDefaultScopeUpdate(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, map[string][]byte{}, &Config{})
+	handleMessage(store, "test", source, msg, nil, nil, &Config{})
 
 	var got sql.NullString
 	if err := store.db.QueryRow(`SELECT default_scope FROM nodes WHERE public_key = ?`, pubkey).Scan(&got); err != nil {
@@ -1179,7 +1179,7 @@ func TestHandleMessageAdvert_MatchedScopeUpdatesDefaultScope(t *testing.T) {
 		topic:   "meshcore/SJC/obs1/packets",
 		payload: []byte(`{"raw":"` + rawHex + `"}`),
 	}
-	handleMessage(store, "test", source, msg, nil, map[string][]byte{"#de": regionKey}, &Config{})
+	handleMessage(store, "test", source, msg, nil, regionKeySetFromKeys(map[string][]byte{"#de": regionKey}), &Config{})
 
 	var got sql.NullString
 	if err := store.db.QueryRow(`SELECT default_scope FROM nodes WHERE public_key = ?`, pubkey).Scan(&got); err != nil {
@@ -1238,7 +1238,7 @@ func TestMatchScopeNamesAnUnambiguousPacket(t *testing.T) {
 	payload := []byte{0x01, 0x02, 0x03, 0x04}
 	code1 := codeForRegion("#be", 5, payload)
 
-	if got := matchScope(keys, 5, payload, code1); got != "#be" {
+	if got := regionKeySetFromKeys(keys).matchScopeName(5, payload, code1); got != "#be" {
 		t.Errorf("matchScope = %q, want %q", got, "#be")
 	}
 }
@@ -1255,7 +1255,7 @@ func TestMatchScopeStoresAmbiguousAsUnmatched(t *testing.T) {
 	if n := len(matchingRegions(keys, 5, payload, code1)); n != 2 {
 		t.Fatalf("matchingRegions returned %d names, want 2 — the collision fixture is wrong", n)
 	}
-	if got := matchScope(keys, 5, payload, code1); got != "" {
+	if got := regionKeySetFromKeys(keys).matchScopeName(5, payload, code1); got != "" {
 		t.Errorf("matchScope = %q, want the unmatched state: two equally-sourced candidates have no principled winner", got)
 	}
 }
@@ -1269,7 +1269,7 @@ func TestMatchScopeIsOrderIndependent(t *testing.T) {
 	keys := loadRegionKeys(&Config{HashRegions: []string{"#be", "#zz"}})
 
 	for i := 0; i < 50; i++ {
-		if got := matchScope(keys, 5, payload, code1); got != "" {
+		if got := regionKeySetFromKeys(keys).matchScopeName(5, payload, code1); got != "" {
 			t.Fatalf("iteration %d: matchScope = %q, want a stable answer across map iteration orders", i, got)
 		}
 	}

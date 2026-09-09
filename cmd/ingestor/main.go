@@ -101,8 +101,15 @@ func main() {
 		log.Printf("No channel keys loaded — GRP_TXT packets will not be decrypted")
 	}
 
-	regionKeys := loadRegionKeys(cfg)
-	store.BackfillDefaultScopeAsync(regionKeys)
+	regionSet := newRegionKeySet(cfg)
+	if cfg.AutoRegionKeysEnabled() {
+		// Fill the derived tier before the first packet is matched, so a
+		// restart does not spend a refresh interval naming nothing.
+		regionSet.refreshFromStore(store)
+	} else {
+		log.Printf("[regions] autoRegionKeys disabled — only the %d configured hashRegions key(s) are in force", len(regionSet.snapshot().all))
+	}
+	store.BackfillDefaultScopeAsync(regionSet)
 	store.BackfillTransportCodesAsync()
 
 	// Subscribe-early + buffer (#1608): the MQTT subscription is brought up
@@ -181,7 +188,7 @@ func main() {
 			markReceiptForTag(tag, time.Now())
 			status.MarkPacket(time.Now())
 			ingestBuffer.Submit(func() {
-				handleMessage(store, tag, src, m, channelKeys, regionKeys, cfg)
+				handleMessage(store, tag, src, m, channelKeys, regionSet, cfg)
 			})
 		})
 
@@ -420,6 +427,22 @@ func main() {
 		}
 	}
 
+	// Derived region keys refresh on their own ticker rather than the daily
+	// retention one: declared-region answers arrive continuously (an observer
+	// report lands, a node is asked again), and waiting up to 24h to name a
+	// newly-discovered region would defeat the point of deriving them.
+	if cfg.AutoRegionKeysEnabled() {
+		interval := time.Duration(cfg.AutoRegionKeysRefreshMinutes()) * time.Minute
+		regionRefreshTicker := time.NewTicker(interval)
+		go func() {
+			for range regionRefreshTicker.C {
+				regionSet.refreshFromStore(store)
+				logScopeMatchCounters()
+			}
+		}()
+		log.Printf("[regions] auto-derived region keys enabled: refreshing every %v, cap %d", interval, cfg.AutoRegionKeysMaxDerived())
+	}
+
 	// Hourly WAL checkpoint to prevent unbounded WAL growth.
 	// TRUNCATE resets the WAL file to zero bytes when all frames are flushed;
 	// if the server's read connection holds frames, remaining pages stay in the
@@ -654,7 +677,7 @@ func buildForceReconnectFn(client mqtt.Client, tag string) func() {
 	}
 }
 
-func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, regionKeys map[string][]byte, cfg *Config) {
+func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, regionSet *regionKeySet, cfg *Config) {
 	// Liveness watchdog (#1212): record receipt before any processing so a
 	// slow handler still counts as "source is alive". Cheap atomic store.
 	markLivenessForTag(tag, time.Now())
@@ -698,7 +721,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		switch parts[3] {
 		case "packets":
 			if cfg.ClientRxCoverageEnabled() {
-				handleClientPacket(store, cfg, tag, parts[2], msg, channelKeys, regionKeys)
+				handleClientPacket(store, cfg, tag, parts[2], msg, channelKeys, regionSet)
 			}
 		case "rf":
 			if cfg.ClientRfSamplesEnabled() {
@@ -946,7 +969,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 				log.Printf("MQTT [%s] foreign advert: node=%s name=%s lat=%.4f lon=%.4f observer=%s",
 					tag, truncPK, sanitizeLogString(decoded.Payload.Name), lat, lon, sanitizeLogString(firstNonEmpty(mqttMsg.Origin, observerID)))
 			}
-			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionKeys)
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionSet)
 			pktData.Foreign = foreign
 			isNew, err := store.InsertTransmission(pktData)
 			if err != nil {
@@ -981,7 +1004,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 		} else {
 			// Non-ADVERT packets: store normally (routing/channel messages from
 			// in-area observers are relevant regardless of relay hop origin).
-			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionKeys)
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionSet)
 			if _, err := store.InsertTransmission(pktData); err != nil {
 				log.Printf("MQTT [%s] db insert error: %v", tag, err)
 			}
@@ -1671,32 +1694,6 @@ func matchingRegions(regionKeys map[string][]byte, payloadType byte, payloadRaw 
 		}
 	}
 	return matched
-}
-
-// matchScope names one packet's region scope, or returns "" when it cannot be
-// named with confidence.
-//
-// Exactly one match names the packet. Several matches name nothing: the two
-// candidates are equally sourced, there is no principled winner, and storing
-// a wrong region name is worse than storing none. "" is already the ingestor's
-// "transport-scoped but unnameable" state (scopeNameForDB), so an ambiguous
-// packet lands in a state the rest of the system already understands rather
-// than in a new one.
-//
-// The collision is logged because it is otherwise invisible: the packet is
-// stored exactly like one whose region this instance holds no key for, and an
-// operator looking at a growing unnameable count deserves to see which of
-// their configured regions are colliding.
-func matchScope(regionKeys map[string][]byte, payloadType byte, payloadRaw []byte, code1 string) string {
-	matched := matchingRegions(regionKeys, payloadType, payloadRaw, code1)
-	switch len(matched) {
-	case 0:
-		return ""
-	case 1:
-		return matched[0]
-	}
-	log.Printf("[regions] ambiguous collision between %v; storing unmatched", matched)
-	return ""
 }
 
 // Version info (set via ldflags)
